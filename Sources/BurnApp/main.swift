@@ -82,10 +82,14 @@ import UserNotifications
   }
   private func schedule() {
     timer?.invalidate()
-    timer = Timer.scheduledTimer(withTimeInterval: state.interval, repeats: false) {
+    let next = Timer(timeInterval: state.interval, repeats: false) {
       [weak self] _ in Task { @MainActor in self?.refresh() }
     }
-    timer?.tolerance = min(10, state.interval / 6)
+    next.tolerance = min(10, state.interval / 6)
+    // MainActor execution does not select a Foundation run loop. Attach explicitly,
+    // and keep observing during AppKit menu tracking and modal interactions.
+    RunLoop.main.add(next, forMode: .common)
+    timer = next
   }
   func suspend() {
     timer?.invalidate()
@@ -533,6 +537,10 @@ struct Dashboard: View {
           format: "Last scan %.1f ms · checkpoint %@", model.state.scanMS,
           bytes(UInt64(model.state.checkpointBytes)))
       ).font(.caption.monospaced()).foregroundStyle(.secondary)
+      if let observed = model.state.catalog.lastSample {
+        Text("Last observation \(observed.formatted(date: .omitted, time: .standard))")
+          .font(.caption.monospaced()).foregroundStyle(.secondary)
+      }
       Link(
         "Build, safety, and uninstall guide",
         destination: URL(string: "https://github.com/swordfish444/BurnZombies")!
