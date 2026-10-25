@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Installation and MCP setup
+    url: https://github.com/swordfish444/BurnZombies/blob/main/docs/INSTALL.md
+    about: One-line install and client options.
+  - name: Private security report
+    url: https://github.com/swordfish444/BurnZombies/blob/main/SECURITY.md
+    about: Unsafe targeting, permission bypasses or private evidence belong here.

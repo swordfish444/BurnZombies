@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real stdio client against the shipped SDK server and a private native monitor."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,9 @@ import tempfile
 
 repo = Path(__file__).resolve().parents[1]
 binary = repo / ".build/debug"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--server", type=Path, default=binary / "burnzombies-mcp")
+server_binary = parser.parse_args().server.resolve()
 def line(process, timeout=10):
     if not select.select([process.stdout], [], [], timeout)[0]:
         raise AssertionError("MCP response timed out")
@@ -24,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
     try:
         assert line(fixture).strip() == b"READY"
         env = dict(os.environ, BURNZOMBIES_HOME=root)
-        server = subprocess.Popen([str(binary / "burnzombies-mcp")], env=env,
+        server = subprocess.Popen([str(server_binary)], env=env,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         sequence = 0
         def send(method, params=None, notification=False):

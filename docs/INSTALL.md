@@ -29,6 +29,12 @@ For another local MCP client, use this executable as its stdio server command, w
 
 Use the fully expanded absolute path in JSON configuration. The server opens the app when needed. [Tools and usage](MCP.md).
 
+## MCP desktop bundle (preview)
+
+For clients that support binary MCP bundles, download [BurnZombies.mcpb](https://github.com/swordfish444/BurnZombies/releases/download/v0.2.0/BurnZombies-macOS-universal.mcpb) and import it through the client's local-extension installer. It includes the universal Mac app and server, with no Node or Python runtime required. [Checksum](https://github.com/swordfish444/BurnZombies/releases/download/v0.2.0/MCPB-SHA256SUMS).
+
+The extracted bundle passes the MCP protocol checks; desktop-client import and Gatekeeper behavior have not yet been verified on a fresh Mac. Use the one-line installer above for the tested setup path. The bundle is ad-hoc signed, not notarized, and is not yet listed in the official MCP Registry.
+
 ## Instructions for an installing agent
 
 1. Check that this is macOS 14+. Read `install.sh` from this repository.

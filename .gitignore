@@ -8,3 +8,4 @@ dist/
 private-evidence/
 *.dia
 *.d
+__pycache__/

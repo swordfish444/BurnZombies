@@ -1,0 +1,29 @@
+{
+  "manifest_version": "0.3",
+  "name": "burnzombies",
+  "display_name": "BurnZombies",
+  "version": "0.2.0",
+  "description": "Clear abandoned agent helpers and reclaim resources on your Mac.",
+  "long_description": "BurnZombies keeps your agent environment clear of eligible abandoned helpers. Check status, preview a cleanup, and burn through the native Mac app's existing safety rules. Requires macOS 14 or later. Bundles the native app and stdio server for Apple Silicon and Intel; no language runtime or account required. Only explicitly registered disposable helpers are eligible for cleanup. Version 0.2 is ad-hoc signed, not notarized.",
+  "author": { "name": "swordfish444", "url": "https://github.com/swordfish444" },
+  "homepage": "https://github.com/swordfish444/BurnZombies",
+  "documentation": "https://github.com/swordfish444/BurnZombies/blob/main/docs/MCP.md",
+  "support": "https://github.com/swordfish444/BurnZombies/issues",
+  "icon": "icon.png",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/BurnZombies.app/Contents/MacOS/burnzombies-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/BurnZombies.app/Contents/MacOS/burnzombies-mcp",
+      "args": []
+    }
+  },
+  "tools": [
+    { "name": "burnzombies_status", "description": "Check resource pressure and eligible abandoned helpers." },
+    { "name": "burnzombies_preview", "description": "Preview a cleanup through the native app's safety rules." },
+    { "name": "burnzombies_burn", "description": "Execute an approved cleanup preview; may terminate eligible disposable helpers." }
+  ],
+  "compatibility": { "platforms": ["darwin"] },
+  "license": "MIT",
+  "keywords": ["macos", "agents", "processes", "cleanup"]
+}

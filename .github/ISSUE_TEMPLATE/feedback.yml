@@ -1,0 +1,35 @@
+name: What do your agents leave behind?
+description: Share a workflow, a useful result or an integration you need.
+title: "[Workflow] "
+body:
+  - type: input
+    id: harness
+    attributes:
+      label: Which agent or harness do you use?
+      placeholder: "Codex, Claude Code, or a custom harness"
+    validations:
+      required: true
+  - type: textarea
+    id: experience
+    attributes:
+      label: What piles up, or what did BurnZombies help with?
+      description: Describe the workflow in your own words. A small redacted example is more useful than a process dump.
+    validations:
+      required: true
+  - type: dropdown
+    id: first_try
+    attributes:
+      label: How far did you get?
+      options:
+        - Looking at the project
+        - Installed the app
+        - Connected MCP
+        - Registered disposable helpers
+        - Completed a verified cleanup
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Where did you find BurnZombies? (optional)
+      placeholder: "A friend, GitHub, a post, or a directory"

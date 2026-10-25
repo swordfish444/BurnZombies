@@ -30,7 +30,7 @@ Or ask your agent to handle setup:
 
 ## Dead weight. Gone.
 
-![BurnZombies after a completed cleanup](docs/media/live-impact.jpg)
+![BurnZombies verifies a real helper cleanup and updates Impact](docs/media/live-cleanup.gif)
 
 - **Find the buildup.** See abandoned helpers, growing resource use and recurring processes grouped into activities.
 - **Reclaim room for the next run.** Stop eligible leftovers while active and uncertain work stays protected.
@@ -39,18 +39,12 @@ Or ask your agent to handle setup:
 
 Monitoring starts immediately. Cleanup covers explicitly registered disposable helpers; [connect your helper workflow](docs/MCP.md#track-disposable-helpers) to make them eligible.
 
-<details>
-<summary>Watch a real cleanup</summary>
-
-![A controlled helper cleanup in the native app](docs/media/live-cleanup.gif)
-
-A controlled disposable helper, real process measurements, and a verified exit. [How it was tested](docs/VALIDATION.md).
-</details>
-
 Local monitoring. No BurnZombies account, cloud service or subscription.
 
 **Next:** deeper harness integrations, notarized Mac releases, and Windows. [Roadmap →](docs/ROADMAP.md)
 
 [User guide](docs/USER_GUIDE.md) · [MCP](docs/MCP.md) · [How cleanup works](docs/SAFETY.md) · [Build & contribute](CONTRIBUTING.md) · [Security](SECURITY.md)
+
+If BurnZombies clears room for your next run, **give it a star**. [Tell us what your agents leave behind](https://github.com/swordfish444/BurnZombies/issues/new?template=feedback.yml).
 
 **You build. We burn.**

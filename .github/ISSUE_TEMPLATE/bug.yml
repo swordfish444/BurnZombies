@@ -1,0 +1,33 @@
+name: Something isn't working
+description: Help reproduce an install, monitoring, MCP or interface problem.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "Keep this small. Use invented labels and redact personal paths. Don't attach catalogs, process arguments, environment variables or full diagnostic dumps. Report unsafe targeting or permission bypasses privately through SECURITY.md."
+  - type: input
+    id: environment
+    attributes:
+      label: App version, macOS version and chip
+      placeholder: "0.2.0, macOS 15, Apple Silicon"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where did it happen?
+      options:
+        - Installation
+        - Mac app
+        - Codex MCP
+        - Claude Code MCP
+        - Another MCP client
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: What happened, and what did you expect?
+      description: Include the smallest safe reproduction. Never recreate a cleanup issue against important work.
+    validations:
+      required: true
