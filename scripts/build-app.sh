@@ -23,6 +23,8 @@ for executable in BurnZombiesApp burnzombies burnzombies-mcp; do
   fi
 done
 cp -R "$built/BurnZombies_BurnApp.bundle" "$bundle/Contents/Resources/"
+mkdir -p "$bundle/Contents/Resources/burnzombies"
+cp skills/burnzombies/SKILL.md "$bundle/Contents/Resources/burnzombies/SKILL.md"
 mkdir -p "$bundle/Contents/Resources/ThirdPartyNotices"
 for dependency in swift-sdk swift-system swift-log eventsource; do
   for license in .build/checkouts/"$dependency"/LICENSE*; do
@@ -38,8 +40,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>BurnZombies</string>
 <key>CFBundleExecutable</key><string>BurnZombiesApp</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>0.3.0</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

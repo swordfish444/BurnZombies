@@ -19,8 +19,6 @@ public actor Monitor {
   private let lock: InstanceLock
   private let native = Native()
   private var catalog: Catalog
-  private var leases = [Lease]()
-  private var owners = [UUID: OwnerState]()
   private var state = ViewState()
   private var lastSave = Date.distantPast
   private var receiptNeedsCheckpoint = false
@@ -30,20 +28,21 @@ public actor Monitor {
   public init(root: URL = Store.defaultRoot) throws {
     store = try Store(root: root)
     lock = try InstanceLock(url: root.appendingPathComponent("monitor.lock"))
-    catalog = try store.load()
-    if catalog.lifetimeResidentReleased == nil {
-      catalog.lifetimeResidentReleased = catalog.events.filter { $0.outcome == "verified" }.reduce(
+    var loaded = try store.load()
+    if loaded.lifetimeResidentReleased == nil {
+      loaded.lifetimeResidentReleased = loaded.events.filter { $0.outcome == "verified" }.reduce(
         0
       ) { $0 + $1.residentBefore }
     }
-    if catalog.lifetimeCPUSecondsSaved == nil {
-      let measured = catalog.events.filter { $0.outcome == "verified" }.compactMap(
+    if loaded.lifetimeCPUSecondsSaved == nil {
+      let measured = loaded.events.filter { $0.outcome == "verified" }.compactMap(
         \.cpuSecondsSavedEstimate)
-      if !measured.isEmpty || catalog.lifetimeVerified == 0 {
-        catalog.lifetimeCPUSecondsSaved = measured.reduce(0, +)
+      if !measured.isEmpty || loaded.lifetimeVerified == 0 {
+        loaded.lifetimeCPUSecondsSaved = measured.reduce(0, +)
       }
     }
-    catalog.resetContinuity()
+    loaded.resetContinuity()
+    catalog = loaded
   }
   public func snapshot() -> ViewState { state }
   public func resetContinuity() {
@@ -81,11 +80,6 @@ public actor Monitor {
     lastMonotonic = scan.observations.first?.monotonic
     lastWall = now
     do {
-      leases = try store.leases()
-      owners = Dictionary(uniqueKeysWithValues: leases.map { ($0.id, native.ownerState($0.owner)) })
-      let owned = Dictionary(
-        leases.flatMap { l in l.members.map { ($0.identity.key, l) } },
-        uniquingKeysWith: { a, _ in a })
       let present = Set(scan.observations.map { $0.identity.key })
       for observation in scan.observations.prefix(4096) {
         let key = observation.identity.key
@@ -98,11 +92,7 @@ public actor Monitor {
         }
         r.latest = observation
         r.missingSince = nil
-        if let l = owned[key], owners[l.id] == .gone {
-          if r.orphanSince == nil { r.orphanSince = now }
-        } else {
-          r.orphanSince = nil
-        }
+        r.orphanSince = nil
         catalog.records[key] = r
       }
       if !scan.partial {
@@ -116,24 +106,15 @@ public actor Monitor {
       receiptNeedsCheckpoint = receiptNeedsCheckpoint || priorOutcomes != catalog.events.map(\.outcome)
       catalog.lastSample = now
       catalog.prune(now: now)
-      state.findings = DecisionEngine.findings(
-        catalog: catalog, leases: leases, owners: owners, uid: getuid(), ownPID: getpid(), now: now)
-      if scan.partial {
-        state.findings = state.findings.map {
-          var f = $0
-          if f.disposition == .eligible {
-            f.disposition = .protected
-            f.reason = "Incomplete scan coverage; cleanup is paused."
-          }
-          return f
-        }
-      }
-      state.interval =
-        state.findings.contains { $0.leaseID != nil && $0.disposition != .protected }
-          || catalog.events.contains { $0.outcome == "verifying" } ? 15 : 60
+      // Observation is factual. The connected harness owns diagnosis and target selection.
+      state.findings = []
+      state.interval = catalog.events.contains { $0.outcome == "verifying" } ? 15 : 60
       if receiptNeedsCheckpoint || now.timeIntervalSince(lastSave) >= 300 {
-        try store.pruneLeases(now: now, native: native)
         try checkpoint()
+      }
+      if !scan.partial {
+        try HarnessHook.publish(.init(observedAt: now, processCount: scan.observations.count,
+          residentBytes: scan.observations.reduce(0) { $0 + $1.rss }, pressure: native.memoryPressure()), store: store)
       }
     } catch {
       state.error = error.localizedDescription
@@ -149,11 +130,10 @@ public actor Monitor {
       let elapsed = now.timeIntervalSince(e.date)
       guard elapsed >= 15 else { continue }
       let statuses = e.targets.map { native.ownerState($0.identity) }
-      let paths = Set(e.targets.map(\.executable))
-      let recurrence = observations.contains(where: {
-        paths.contains($0.executable) && !e.targets.contains(Member($0))
-          && Double($0.identity.seconds) >= e.date.timeIntervalSince1970 - 1 && !$0.zombie
-      })
+      let recurrence = Verification.recurrence(event: e, observations: observations) { parent in
+        guard case .found(let live) = native.probe(parent.identity.pid) else { return false }
+        return Member(live) == parent && !live.zombie
+      }
       let outcome = Verification.outcome(
         elapsed: elapsed, targets: statuses, recurrence: recurrence, partialScan: state.partial)
       catalog.events[i].outcome = outcome
@@ -166,14 +146,14 @@ public actor Monitor {
       }
       if outcome == "reappeared" {
         catalog.events[i].detail =
-          "A matching executable appeared during verification. Recurrence is inferred; no benefit credited. Inspect the creator."
+          "A new matching helper appeared under the same verified parent after cleanup. Possible recurrence; no benefit credited. Inspect the creator."
       }
       if outcome == "verified" {
         catalog.events[i].outcome = "verified"
         catalog.events[i].verifiedCount = e.targets.count
         catalog.events[i].verificationDate = now
         catalog.events[i].detail =
-          "Exact targets exited; no matching executable was observed at samples during the 120-second watch. Resident footprint is an upper-bound attribution, not physical RAM reclaimed or speed gained."
+          "Exact targets exited; no replacement was observed under the same verified parent during the 120-second watch. Reparented or differently owned replacements cannot be attributed. Resident footprint is an upper-bound attribution."
         catalog.lifetimeVerified += e.targets.count
         catalog.lifetimeActions += 1
         catalog.lifetimeResidentReleased =
@@ -248,87 +228,69 @@ public actor Monitor {
       "\(candidates.count) activities are worth a look. Open BurnZombies to review the evidence."
   }
   public func cleanup(_ requested: Finding, automatic: Bool = false) async throws -> String {
+    throw StoreError.message("Cleanup is agent-led. Ask your connected harness to tame the horde.")
+  }
+
+  public func previewTargets(_ ids: [String], callerPID: Int32) throws -> [Observation] {
+    let before = refresh()
+    guard before.error == nil, !before.partial,
+      !ids.isEmpty, ids.count <= 64, Set(ids).count == ids.count,
+      let callerAncestors = AgentSafety.ancestors(of: callerPID),
+      let ownAncestors = AgentSafety.ancestors(of: getpid())
+    else { throw StoreError.message("Complete visibility and 1–64 distinct process identities are required.") }
+    let protectedPIDs = callerAncestors.union(ownAncestors)
+    var targets = [Observation]()
+    for id in ids {
+      guard let r = catalog.records[id], r.missingSince == nil else {
+        throw StoreError.message("Target identity expired. Inspect again.")
+      }
+      if let reason = AgentSafety.refusal(r, preferences: catalog.preferences, protectedPIDs: protectedPIDs) {
+        throw StoreError.message("PID \(r.latest.identity.pid): \(reason)")
+      }
+      targets.append(r.latest)
+    }
+    let pids = Set(targets.map { $0.identity.pid })
+    guard !catalog.records.values.contains(where: {
+      $0.missingSince == nil && pids.contains($0.latest.parent) && !pids.contains($0.latest.identity.pid)
+    }) else { throw StoreError.message("A target has unreviewed live children. Inspect the tree or use its owner's teardown.") }
+    return targets
+  }
+
+  public func burnTargets(_ reviewed: [Observation], label: String, rationale: String,
+    callerPID: Int32) throws -> String {
     guard !busy else { throw StoreError.message("A cleanup is already in progress.") }
     busy = true
     defer { busy = false }
     let responseBefore = Responsiveness.sample()
-    let before = refresh()
-    guard !before.partial, before.error == nil,
-      let f = before.findings.first(where: { $0.id == requested.id }), f.disposition == .eligible,
-      let id = f.leaseID, let index = leases.firstIndex(where: { $0.id == id }),
-      Set(f.members) == Set(requested.members),
-      !automatic || catalog.preferences.automaticCleanup
-    else { throw StoreError.message("Eligibility changed. Refresh and review the finding again.") }
-    let records = f.members.compactMap { catalog.records[$0] }
-    let reviewedLease = leases[index]
-    // Unknown live descendants make whole-activity teardown unsafe.
-    let pids = Set(records.map { $0.latest.identity.pid })
-    guard
-      !catalog.records.values.contains(where: {
-        $0.missingSince == nil && pids.contains($0.latest.parent) && !f.members.contains($0.id)
-      })
-    else {
-      throw StoreError.message(
-        "An unregistered descendant is active. Use the owning tool's teardown.")
+    let targets = try previewTargets(reviewed.map { $0.identity.key }, callerPID: callerPID)
+    guard zip(targets, reviewed).allSatisfy({ Member($0.0) == Member($0.1) }) else {
+      throw StoreError.message("Process identity or executable changed since preview.")
     }
-    try await Task.sleep(nanoseconds: 300_000_000)
-    guard !automatic || catalog.preferences.automaticCleanup else {
-      throw StoreError.message("Automatic cleanup was disabled.")
+    // Refresh immediately before each syscall as well; no cached-PID or process-name kills.
+    var event = CleanupEvent(leaseID: UUID(), label: label, date: Date(),
+      targets: targets.map(Member.init), residentBefore: targets.reduce(0) { $0 + $1.rss },
+      outcome: "verifying", detail: "Agent decision: \(rationale). Graceful stop requested; verifying exits.")
+    event.recurrenceScopes = targets.compactMap { target in
+      guard target.parent > 1, case .found(let parent) = native.probe(target.parent) else { return nil }
+      return RecurrenceScope(executable: target.executable, parent: Member(parent))
     }
-    guard let currentIndex = leases.firstIndex(where: { $0.id == id }),
-      !leases[currentIndex].disarmed,
-      Set(leases[currentIndex].members) == Set(reviewedLease.members)
-    else {
-      throw StoreError.message("Ownership changed during revalidation.")
-    }
-    for r in records {
-      guard let currentRecord = catalog.records[r.id],
-        DecisionEngine.eligibility(
-          currentRecord, lease: leases[currentIndex], owner: native.ownerState(reviewedLease.owner),
-          preferences: catalog.preferences, uid: getuid(), ownPID: getpid(), now: Date()
-        ).0
-      else {
-        throw StoreError.message("Protection, snooze, or observation continuity changed.")
-      }
-      guard case .found(let o) = native.probe(r.latest.identity.pid),
-        o.metricsValid, !o.zombie,
-        o.identity == r.latest.identity, o.executable == r.latest.executable,
-        o.readBytes == r.latest.readBytes, o.writeBytes == r.latest.writeBytes,
-        o.cpuNS >= r.latest.cpuNS,
-        Double(o.cpuNS - r.latest.cpuNS) / 1e9 / max(0.001, o.monotonic - r.latest.monotonic)
-          < 0.01,
-        !catalog.preferences.protectedExecutables.contains(o.executable),
-        native.ownerState(reviewedLease.owner) == .gone
-      else {
-        throw StoreError.message(
-          "Identity, ownership, protection, or activity changed. Nothing was stopped.")
-      }
-    }
-    leases[currentIndex].disarmed = true
-    try store.saveLease(leases[currentIndex])
-    var event = CleanupEvent(
-      leaseID: id, label: f.title, date: Date(), targets: records.map { Member($0.latest) },
-      residentBefore: records.reduce(0) { $0 + $1.latest.rss }, outcome: "verifying",
-      detail: "Graceful stop requested. Waiting 15 seconds for exit and 120 seconds for recurrence."
-    )
-    event.cpuSecondsSavedEstimate = ImpactAccounting.cpuSecondsSaved(records)
+    event.cpuSecondsSavedEstimate = ImpactAccounting.cpuSecondsSaved(
+      targets.compactMap { catalog.records[$0.identity.key] })
     event.responseBeforeMS = responseBefore
     catalog.events.append(event)
-    try checkpoint()  // Write intent before the irreversible syscall. Failure means no signal.
+    try checkpoint()
     var failures = [String]()
-    for r in records {
-      let code = native.terminate(r.latest)
-      if code != 0 { failures.append("PID \(r.latest.identity.pid): errno \(code)") }
+    for target in targets {
+      let code = native.terminate(target)
+      if code != 0 { failures.append("PID \(target.identity.pid): errno \(code)") }
     }
     if !failures.isEmpty {
       catalog.events[catalog.events.count - 1].outcome = "partial"
-      catalog.events[catalog.events.count - 1].detail =
-        failures.joined(separator: "; ") + ". No benefit credited."
+      catalog.events[catalog.events.count - 1].detail = failures.joined(separator: "; ") + ". No benefit credited."
     }
     try checkpoint()
     _ = refresh()
-    return failures.isEmpty
-      ? "Stop requested. Verifying exit and watching for reappearance…"
-      : "Some helpers could not be stopped. See History."
+    return failures.isEmpty ? "Graceful stop requested. Exit receipts are pending; continue your work and check later."
+      : "Some targets could not be stopped. No escalation. Inspect the receipt."
   }
 }

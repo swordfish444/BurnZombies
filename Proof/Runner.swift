@@ -34,30 +34,12 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       catch { print("FAIL: \(error)"); exit(1) }
       return
     }
-    let d = DecisionTests()
+    let d = SafetyTests()
     let s = StorageNativeTests()
     let pressure = PressureTests()
     let tests: [(String, () throws -> Void)] = [
-      ("explicit abandoned ownership", d.testExplicitAbandonedIdleHelperQualifies),
-      ("active owner", d.testActiveOwnerAlwaysProtected),
-      ("unknown owner", d.testUnknownOwnerAlwaysProtected),
-      ("permission required", d.testPermissionRequired),
-      ("spent permission", d.testSpentPermissionNeverRearms),
-      ("PID reuse", d.testPIDReuseInvalidatesMembership),
-      ("exec change", d.testExecChangeInvalidatesMembership),
-      ("zombie", d.testZombieCannotBeKilled),
-      ("CPU activity", d.testActivityInvalidatesEligibility),
-      ("disk activity", d.testDiskActivityInvalidatesEligibility),
-      ("grace", d.testGraceAndRepeatedObservationsRequired),
-      ("sampling gap", d.testSamplingGapAndClockRollbackFailClosed),
-      ("visibility", d.testStaleAndMissingMetricsProtected),
-      ("protection and snooze", d.testProtectionAndSnoozeBlockAutomaticAndManual),
-      ("hard protection", d.testDeterministicProtection),
-      ("weak signals", d.testPPIDOneAgeAndMemoryDoNotAuthorize),
-      ("wake and restart", d.testRestartAndWakeResetEligibility),
-      ("independent jobs", d.testIndependentDuplicateLookingJobsStaySeparate),
-      ("sustained growth", d.testGrowthIsInvestigateOnly),
-      ("restart loop", d.testRestartLoopIsNotKillLoop),
+      ("agent execution safety boundaries", d.testExecutionBoundaries),
+      ("owner-scoped recurrence", d.testRecurrenceScope),
       ("checkpoint", s.testCheckpointRoundTripAndPermissions),
       ("corruption", s.testCorruptionFailsClosed), ("symlink", s.testSymlinkReadRejected),
       ("single instance", s.testOnlyOneMonitorOwnsCatalog),
@@ -70,7 +52,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       ("real kernel zombie", s.testRealKernelZombie),
       ("real wrapper cancellation", s.testWrapperCancellation),
       ("32 real zombies with 8 live controls across 5 scans", pressure.testMixedKernelBurst),
-      ("4096 mixed ownership and activity simulations", pressure.testMixedPolicyPressure),
+      ("4096 mixed mechanical safety simulations", pressure.testMixedSafetyPressure),
       ("bounded CPU time projection", pressure.testCPUProjection),
     ]
     for (name, test) in tests {
@@ -125,33 +107,24 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     let monitor = try Monitor(root: root)
     let service = AgentService(monitor: monitor)
     let start = Date()
-    var candidates = [Finding]()
-    while Date().timeIntervalSince(start) < 270 {
-      let state = await monitor.refresh()
-      candidates = state.findings.filter { $0.disposition == .eligible }
-      if candidates.count == workerCount { break }
-      try await Task.sleep(nanoseconds: 15_000_000_000)
-    }
-    guard candidates.count == workerCount else {
-      throw StoreError.message("Not all controlled helpers became eligible.")
-    }
-    print(
-      "PASS three independent detached helpers detected after \(Int(Date().timeIntervalSince(start))) seconds"
-    )
-    for (index, candidate) in candidates.enumerated() {
-      if index == 0 {
-        let preview = await service.call(AgentRequest("preview", findingID: candidate.id))
-        guard let token = preview.previewToken else { throw StoreError.message("Agent preview failed: \(preview.message)") }
-        let burn = await service.call(AgentRequest("burn", previewToken: token))
-        check(burn.ok && burn.message.contains("Verifying"))
-        equal(burn.verifiedHelpers, 0, "pending MCP request earned credit")
-        let replay = await service.call(AgentRequest("burn", previewToken: token))
-        checkFalse(replay.ok, "agent preview replay accepted")
-        continue
+    for lease in leases {
+      let targets = lease.members.compactMap { member -> Observation? in
+        if case .found(let o) = Native().probe(member.identity.pid), o.identity == member.identity, !o.zombie { return o }
+        return nil
       }
-      let result = try await monitor.cleanup(candidate)
-      check(result.contains("Verifying"))
+      equal(targets.count, 1)
+      var request = AgentRequest("preview", processIDs: targets.map { $0.identity.key },
+        label: "Controlled detached fixture", rationale: "The test created these exact helpers; the owning job finished and its recorded descendants are disposable.")
+      request.callerPID = getpid()
+      let preview = await service.call(request)
+      guard let token = preview.previewToken else { throw StoreError.message(preview.message) }
+      var burnRequest = AgentRequest("burn", previewToken: token)
+      burnRequest.callerPID = getpid()
+      let burn = await service.call(burnRequest)
+      check(burn.ok, burn.message)
+      equal(burn.verifiedHelpers, 0)
     }
+    print("PASS agent-selected detached helpers stopped without scripted eligibility delay")
     let deadline = Date().addingTimeInterval(150)
     while Date() < deadline {
       try await Task.sleep(nanoseconds: 15_000_000_000)
@@ -167,21 +140,21 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         let memory = events.reduce(UInt64(0)) { $0 + $1.residentBefore }
         let cpu = events.compactMap(\.cpuSecondsSavedEstimate).reduce(0, +)
         equal(state.catalog.lifetimeResidentReleased, memory)
-        equal(state.catalog.lifetimeCPUSecondsSaved, cpu)
-        check(events.allSatisfy { $0.cpuSecondsSavedEstimate != nil })
+        equal(state.catalog.lifetimeCPUSecondsSaved ?? 0, cpu)
+        // Fresh first observations do not fabricate a CPU projection.
         check(
           events.allSatisfy { ($0.responseBeforeMS ?? 0) > 0 && ($0.responseAfterMS ?? 0) > 0 },
           "missing responsiveness probes")
         _ = await monitor.refresh()
         let next = await monitor.snapshot()
         equal(next.catalog.lifetimeVerified, workerCount, "double count")
-        equal(next.catalog.lifetimeCPUSecondsSaved, cpu, "double CPU count")
+        equal(next.catalog.lifetimeCPUSecondsSaved ?? 0, cpu, "double CPU count")
         equal(next.catalog.lifetimeResidentReleased, memory, "double memory count")
         // Verification itself must persist the receipt; an explicit checkpoint here
         // would hide a crash window between displayed credit and saved accounting.
         let saved = try store.load()
         equal(saved.lifetimeVerified, workerCount, "verified count was not immediately durable")
-        equal(saved.lifetimeCPUSecondsSaved, cpu)
+        equal(saved.lifetimeCPUSecondsSaved ?? 0, cpu)
         equal(saved.lifetimeResidentReleased, memory)
         check(saved.events.allSatisfy { $0.outcome == "verified" && $0.responseAfterMS != nil })
         print(

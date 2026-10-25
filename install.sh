@@ -2,29 +2,21 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.2.0"
+version="0.3.0"
 client="auto"
 launch=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --mcp) client="${2:?Choose auto, codex, claude, or none}"; shift 2 ;;
+    --mcp) client="${2:?Choose auto, all, codex, claude, cursor, copilot, gemini or none}"; shift 2 ;;
     --no-open) launch=false; shift ;;
-    --help) echo 'Install BurnZombies: install.sh [--mcp auto|codex|claude|none] [--no-open]'; exit 0 ;;
+    --help) echo 'Install BurnZombies: install.sh [--mcp auto|all|codex|claude|cursor|copilot|gemini|none] [--no-open]'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
-case "$client" in auto|codex|claude|none) ;; *) echo 'Unknown MCP client.' >&2; exit 1 ;; esac
+case "$client" in auto|all|codex|claude|cursor|copilot|gemini|none) ;; *) echo 'Unknown MCP client.' >&2; exit 1 ;; esac
 [[ "$(uname -s)" == Darwin ]] || { echo 'BurnZombies needs macOS 14 or later.' >&2; exit 1; }
 os_major="$(sw_vers -productVersion | cut -d. -f1)"
 [[ "$os_major" -ge 14 ]] || { echo 'BurnZombies needs macOS 14 or later.' >&2; exit 1; }
-if [[ "$client" == auto ]]; then
-  if command -v codex >/dev/null 2>&1; then client=codex
-  elif command -v claude >/dev/null 2>&1; then client=claude
-  else client=none; fi
-fi
-if [[ "$client" != none ]] && ! command -v "$client" >/dev/null 2>&1; then
-  echo "$client was not found. Install it first, or use --mcp none for the Mac app." >&2; exit 1
-fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/burnzombies-install.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
@@ -65,21 +57,13 @@ if ! ditto "$work/BurnZombies.app" "$app"; then
   echo 'Install failed; previous app restored.' >&2; exit 1
 fi
 
-server="$app/Contents/MacOS/burnzombies-mcp"
-if $launch; then open "$app"; fi
-case "$client" in
-  codex|claude)
-    if "$client" mcp get burnzombies > "$work/existing-mcp" 2>/dev/null; then
-      echo 'Existing burnzombies MCP settings preserved. Check its command if your install location changed.'
-    elif [[ "$client" == codex ]]; then
-      codex mcp add burnzombies -- "$server"
-    else
-      claude mcp add --scope user --transport stdio burnzombies -- "$server"
-    fi ;;
-esac
-echo "Installed BurnZombies $version."
 if [[ "$client" != none ]]; then
-  echo "MCP connected to $client. Start a new agent session and ask: Tame the horde with BurnZombies."
-else
-  echo "MCP command: $server"
+  if ! "$app/Contents/MacOS/burnzombies" install --harness "$client"; then
+    rm -rf "$app"
+    [[ ! -d "$work/previous.app" ]] || mv "$work/previous.app" "$app"
+    echo 'Harness configuration failed; previous app restored. Configurations were preserved.' >&2
+    exit 1
+  fi
 fi
+if $launch; then open -g -j "$app"; fi
+echo "Installed BurnZombies $version. Your work can keep running."

@@ -1,51 +1,31 @@
-# Install BurnZombies
-
-macOS 14 or later, Apple Silicon or Intel:
+# Install once. Keep working.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-This downloads the universal app, checks its SHA-256 and local code signature, installs it in `~/Applications`, and opens it. No sudo, compiler, Node or Python. Existing BurnZombies data is preserved.
+macOS 14+, Apple Silicon or Intel. The installer checks the release checksum and signature, installs `~/Applications/BurnZombies.app`, and connects all detected supported local harnesses with MCP, the skill and one quiet checkpoint. No sudo, Node, Python, API key or BurnZombies account.
 
-The installer connects **Codex** if its CLI is available, otherwise **Claude Code**. It preserves an existing `burnzombies` MCP entry. Start a new agent session after installation, then ask **“Tame the horde with BurnZombies.”** If neither client is installed, the app still works normally.
+Ask: **Tame the horde with BurnZombies and keep this session healthy.** This gives the agent the intended ongoing-cleanup scope; its normal tool permissions still apply. The agent decides which disposable leftovers are safe to stop. Unknown work remains running.
 
-## Choose a client
+## First connection
 
-```sh
-# Claude Code
-curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash -s -- --mcp claude
-# Codex
-curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash -s -- --mcp codex
-# Mac app only
-curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash -s -- --mcp none
-```
+No computer reboot is needed. A running client may need its supported MCP/skill reload or a new conversation to discover newly installed tools. Existing jobs can keep running. Codex requires review and trust of new hooks through `/hooks` before automatic checkpoints execute; the installer does not bypass that review or alter tool-approval policy. Claude Desktop's local Code tab shares Claude Code's configuration. Chat and Cowork are separate integrations.
 
-For another local MCP client, use this executable as its stdio server command, with no arguments:
+Codex and Claude callbacks reuse the existing MCP connection. No startup or Stop hooks are installed. The app stays in the background when a client connects.
 
-```sh
-"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies-mcp"
-```
+After connection, cleanup runs at natural checkpoints in the ongoing session. **Safe cleanup** in the app queues a review for the next hook; asking the agent directly starts one now. The adapter never launches a hidden model process or requires a harness restart to reclaim resources.
 
-Use the fully expanded absolute path in JSON configuration. The server opens the app when needed. [Tools and usage](MCP.md).
+## Installer behavior
 
-## MCP desktop bundle (preview)
+The single default command detects Codex, Claude Code, Cursor, GitHub Copilot CLI and Gemini CLI. For deployment tooling, `--mcp` accepts `auto`, `all`, an individual harness name or `none`; `--no-open` skips launching the app. The bundled native installer also accepts `--checkpoints off` to retain on-demand MCP/skill access without callbacks. `BURNZOMBIES_INSTALL_DIR` changes the app destination.
 
-For clients that support binary MCP bundles, download [BurnZombies.mcpb](https://github.com/swordfish444/BurnZombies/releases/download/v0.2.0/BurnZombies-macOS-universal.mcpb) and import it through the client's local-extension installer. It includes the universal Mac app and server, with no Node or Python runtime required. [Checksum](https://github.com/swordfish444/BurnZombies/releases/download/v0.2.0/MCPB-SHA256SUMS).
+Unrelated MCP servers, settings, hooks and credentials are preserved. Changed config files get private backups; conflicting BurnZombies entries or malformed config are reported instead of overwritten. Re-running installation is idempotent. Existing cleanup history remains in Application Support. Custom harness config roots and JSON-with-comments configuration need explicit validation before installation; do not silently redirect or rewrite them.
 
-The extracted bundle passes the MCP protocol checks; desktop-client import and Gatekeeper behavior have not yet been verified on a fresh Mac. Use the one-line installer above for the tested setup path. The bundle is ad-hoc signed, not notarized, and is not yet listed in the official MCP Registry.
+This release is locally ad-hoc signed, not Developer ID notarized. The installer does not remove quarantine or disable Gatekeeper. [Build from source](../CONTRIBUTING.md) if local macOS policy blocks the distributed app.
 
-## Instructions for an installing agent
+## Installing agent acceptance
 
-1. Check that this is macOS 14+. Read `install.sh` from this repository.
-2. Run the installer with `--mcp codex` or `--mcp claude` for your client; use `--mcp none` if your client needs a different configuration flow. Do not change unrelated MCP entries.
-3. Verify the installed app and the `burnzombies` server entry. If a previous entry points elsewhere, preserve it and explain the mismatch before replacing it.
-4. Tell the user to start a new agent session, then call `burnzombies_status`. Installation alone does not authorize termination of arbitrary processes or registration of existing unknown workloads.
+Read the installer, run the one command, then verify the configured command, skill and hooks. Call `burnzombies_status` in the actual target client. A configuration file alone does not prove an already-running session loaded it. Respect the client's hook-trust UI. Do not restart the computer, terminate active tasks, change credentials or widen tool permissions to make setup pass.
 
-## Updates and installation details
-
-Quit BurnZombies, run the same command, and reopen your agent session. The installer uses a versioned GitHub release and retains the previous app until replacement succeeds. `BURNZOMBIES_INSTALL_DIR` selects another app directory; `--no-open` skips launching it.
-
-Version 0.2 uses an ad-hoc signature, not Developer ID notarization. The installer does not remove quarantine attributes, change Gatekeeper, or install a privileged helper. If macOS blocks a manually downloaded copy, use a local source build or wait for a notarized release; do not disable system protections.
-
-[Build from source](../CONTRIBUTING.md) · [Uninstall](USER_GUIDE.md#privacy-recovery-and-uninstall)
+[Protocol and harness formats](MCP.md) · [Safety](SAFETY.md) · [Uninstall](USER_GUIDE.md#privacy-recovery-and-uninstall)

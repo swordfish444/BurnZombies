@@ -1,40 +1,43 @@
 # Architecture
 
 ```text
-NSStatusItem / SwiftUI impact + detail views
-             │
-          Monitor actor ── deterministic DecisionEngine
-             │            finite Verification states
-     private bounded Catalog + receipt journal
-             │
-       Native adapter ── small C / libproc / sysctl boundary
-
-burnzombies run ── observed identity/parent edges ── private Lease files
+Existing agent harness + Agent Skill (reasoning and ownership)
+              │ MCP: status → inspect → preview → burn
+     Native stdio server (no independent model)
+              │ private same-user Unix socket; authenticated peer PID
+         Monitor actor ── finite exit/recurrence verification
+              │
+       libproc / sysctl / identity-checked SIGTERM
+              │
+      private catalog ── menu-bar impact + burn log
 ```
 
-One monitor holds a nonblocking advisory lock on its state directory. The actor serializes catalog changes and permits only one cleanup at a time. A second instance can show an error but cannot become a competing monitor or cleanup worker. Wrappers serialize lease admission separately, then run independently. Lock descriptors are close-on-exec and released by process exit.
+The harness decides which work is abandoned. BurnZombies supplies evidence and mechanical execution boundaries. There is no idle-age classifier or mandatory launch wrapper. A separate callback delivers a small, rate-limited resource-change signal through the already-connected MCP server in Codex and Claude Code. Other supported harnesses use a short native callback. No callback invokes a model, scans processes, stops a process or presents UI.
 
-## Sampling and storage
+## Observation and storage
 
-The monitor reads current-user processes every 60 seconds when stable, or 15 seconds around actionable owned activities and receipt verification. Timer tolerance permits coalescing. It retains approximately minute-spaced samples so a brief faster polling period does not destroy the multi-minute growth baseline. Observation time and continuous monotonic time are separate; clock jumps and long gaps reset continuity.
+One monitor owns a nonblocking private lock. It observes current-user processes every 60 seconds, or every 15 seconds while verifying a cleanup. It retains up to eight minute-spaced samples per identity. Monotonic time and wall time are separate; sampling gaps, sleep and incomplete coverage invalidate continuity.
 
-Catalog persistence uses a compressed Codable checkpoint instead of a database dependency. At this bounded scale, a five-minute atomic checkpoint plus immediate writes for settings/actions is simple to inspect and recover. Recent uncheckpointed observations can be lost on a crash; cleanup intent and consumed permissions are persisted before irreversible action. Decompression and encoded sizes have fixed limits. No continuous diagnostic log is written.
+The catalog is compressed Codable data with bounded reads/decompression, a five-minute checkpoint and immediate durable action/settings writes. Before signaling, the monitor persists intent. Only a completed verified receipt contributes impact. A crash cannot turn absent processes into labeled training examples.
 
-The catalog is intentionally not a complete forensic flight recorder. A system-wide crash ends an observation epoch. It cannot turn missing processes into labeled abandonment examples. A longer event history would require a separate storage/overhead decision.
+A separate aggregate signal contains observation time, process count, summed RSS and OS pressure. Checkpoints read this small file; they do not rescan the machine. Normal first contact records a baseline. A pending manual request, pressure increase, 20 additional processes or 512 MiB of additional RSS can request model attention, with a shared ten-minute cooldown for automatic requests. These are notification thresholds, never kill criteria. Stale signals and unchanged state return an empty object. No startup hook, Stop hook or forced continuation exists.
 
-## Clean separation
+## Execution
 
-- `Models.swift`: stable identities, samples, leases, findings, receipts, preferences.
-- `DecisionEngine.swift`: pure classification; accepts owner facts rather than making OS calls.
-- `Verification.swift`: finite receipt states with conservative partial/unknown/recurrence outcomes.
-- `Monitor.swift`: actor, sampling, revalidation, journal, one-attempt action orchestration.
-- `Store.swift`: private bounded atomic persistence; no arbitrary filesystem exploration.
-- `Native.swift` / `CBurn`: OS observations, identity-checked SIGTERM, descriptor summaries and measurement counters.
-- `ImpactAccounting.swift`: bounded CPU-time projection; `Responsiveness.swift`: timed local probe.
-- `BurnApp`: native views, verified-receipt celebration and opt-in system integration.
-- `BurnCLI`: explicit launch ownership; standard streams are inherited without capture.
-- `AgentBridge.swift` / `AgentSocket.c`: same-user private IPC to the app's existing monitor; bounded frames, single-use previews, and a blocking listener with an explicit shutdown signal.
-- `BurnMCP`: official SDK stdio server; exposes status, preview and burn plus the `tame_the_horde` prompt. It does not own a catalog or create a second cleanup worker.
-- `Proof`: dependency-free tests and sacrificial processes.
+The agent supplies exact process identities and an ownership rationale. The app refreshes visibility, protects current caller/app ancestry, rejects protected identities and unreviewed children, and issues a single-use 60-second preview. Burn consumes that token, repeats checks and requests SIGTERM. The final syscall rechecks boot/start/PID/path/UID. macOS's PID-based API leaves a small unavoidable exit/reuse race.
 
-The native app and monitor have no third-party dependencies. The separate MCP executable links the official MCP Swift SDK, Swift System, Swift Log and EventSource; their notices ship in the app bundle. No Node or Python runtime is needed to use the release. The macOS-specific call boundary is narrow enough to replace later; it is not hidden behind a speculative platform abstraction. Windows needs handle/creation-time identity and Job Objects, plus a native tray UI. Its semantics must be tested independently rather than translating POSIX signals mechanically.
+Verification distinguishes unknown, partial, possible recurrence and verified exits. Recurrence requires a new same-executable child of the same still-live parent identity after the action. An existing sibling or unrelated new Node job is not a respawn. Reparented replacements cannot be reliably attributed. There is no kill loop or force escalation.
+
+## Components
+
+- `AgentSafety.swift`: mechanical protections; no abandonment classifier.
+- `Monitor.swift`, `Verification.swift`: observation, durable intent, identity checks and receipts.
+- `AgentBridge.swift`, `AgentSocket.c`: bounded same-user IPC, peer-PID authentication, expiring previews.
+- `HarnessHook.swift`: cached signals and quiet cross-client coalescing.
+- `HarnessInstall.swift`: transactional configuration/skill installation and owned-hook migration.
+- `BurnMCP`: official Swift SDK protocol server; compatibility adapter for SDK 0.12.1 experimental capabilities.
+- `BurnApp`: impact UI and optional details. Reopen events never show windows; presenting UI requires a menu action.
+- `Store.swift`, `Native.swift`, `CBurn`: bounded persistence and small macOS API boundary.
+- `Proof`: native fixtures, real OS zombies, active controls, pressure simulations and protocol tests.
+
+The app and monitor have no third-party runtime dependencies. The MCP executable links the official SDK and its Swift dependencies. End users need neither Node nor Python. Legacy lease records remain readable for migration; they no longer authorize or block cleanup.

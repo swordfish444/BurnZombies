@@ -30,6 +30,16 @@ import UserNotifications
   @Published var selection: Finding?
   @Published var tab = "Overview"
   @Published var preview = false
+  @Published var cleanupQueued = false
+
+  func requestAgentCleanup() {
+    guard !demo else { previewBurn(); return }
+    do {
+      try HarnessHook.requestCleanup()
+      cleanupQueued = true
+      message = "Cleanup queued for your agent's next lifecycle checkpoint. You can also ask it to tame the horde now."
+    } catch { message = error.localizedDescription }
+  }
   @Published var working = false
   @Published var message: String?
   @Published var technical = [String]()
@@ -69,6 +79,7 @@ import UserNotifications
   }
   private func receiveAgentSnapshot(_ snapshot: ViewState) {
     state = snapshot
+    cleanupQueued = FileManager.default.fileExists(atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
     pressure = Native().memoryPressure()
     onUpdate?()
     schedule()
@@ -78,6 +89,7 @@ import UserNotifications
     working = true
     Task {
       state = await monitor.refresh()
+      cleanupQueued = FileManager.default.fileExists(atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
       pressure = Native().memoryPressure()
       working = false
       if let selected = selection { selection = state.findings.first { $0.id == selected.id } }
@@ -91,14 +103,7 @@ import UserNotifications
               UNNotificationRequest(identifier: "grouped-findings", content: content, trigger: nil))
           }
         } catch { message = "Notification delivery unavailable: \(error.localizedDescription)" }
-        if state.catalog.preferences.automaticCleanup,
-          let eligible = state.findings.first(where: { $0.disposition == .eligible })
-        {
-          do {
-            message = try await monitor.cleanup(eligible, automatic: true)
-            state = await monitor.snapshot()
-          } catch { message = error.localizedDescription }
-        }
+
       }
       onUpdate?()
       schedule()
@@ -341,8 +346,7 @@ struct Dashboard: View {
         Label(
           model.demo
             ? "Preview mode"
-            : model.state.catalog.preferences.automaticCleanup
-              ? "Disposable-helper cleanup on" : "Monitoring · cleanup is manual",
+            : "Agent-led cleanup",
           systemImage: "lock.shield"
         ).font(.caption).foregroundStyle(.secondary)
         Spacer()
@@ -359,7 +363,7 @@ struct Dashboard: View {
         ).font(.system(size: 25, weight: .semibold, design: .rounded))
         Text(
           attention == 0
-            ? "No sustained issues found in the visible processes. Unknown work stays protected."
+            ? "Your connected agent reviews live evidence and decides what is safe to stop."
             : "\(attention) activities need a look. \(eligible) have enough ownership evidence to review for cleanup."
         ).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
@@ -377,12 +381,12 @@ struct Dashboard: View {
       }
       if model.state.findings.isEmpty {
         VStack(alignment: .leading, spacing: 10) {
-          Label("Quiet is a good outcome", systemImage: "leaf").font(.headline)
+          Label("Your agent takes it from here", systemImage: "leaf").font(.headline)
           Text(
-            "Keep using your tools. BurnZombies looks for sustained changes and preserves unknown workloads."
+            "Keep working. Lifecycle checkpoints bring buildup to your agent while the app records verified impact."
           ).font(.callout).foregroundStyle(.secondary)
           Text(
-            "For owned helper cleanup, launch disposable jobs through the included burnzombies run command."
+            "Ask your agent to tame the horde, or use Safe cleanup to queue a review. No wrapper or reboot needed."
           ).font(.caption).foregroundStyle(.secondary)
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(
           .quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
@@ -518,13 +522,9 @@ struct Dashboard: View {
   var settings: some View {
     Group {
       Text("Quiet by default.").font(.title2.weight(.semibold))
-      Toggle(
-        "Automatic disposable-helper cleanup",
-        isOn: Binding(
-          get: { model.state.catalog.preferences.automaticCleanup }, set: model.setAutomatic))
-      Text(
-        "Only helpers launched with explicit --allow-cleanup permission qualify. The same preview rules apply. One attempt per registered activity; no force kill, unknown workloads, or file cleanup."
-      ).font(.caption).foregroundStyle(.secondary)
+      Text("Your agent handles cleanup.").font(.headline)
+      Text("BurnZombies connects to your harness through MCP and the burnzombies skill. Lifecycle hooks bring buildup to the agent during long sessions. Active and uncertain work stays running.")
+        .font(.caption).foregroundStyle(.secondary)
       Toggle(
         "Grouped notifications",
         isOn: Binding(
@@ -681,7 +681,8 @@ struct Dashboard: View {
   @objc func waking() { model.wake() }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
   {
-    if !popover.isShown { toggle() }
+    // Background connections and installers can send reopen events. Only an explicit
+    // menu-bar click or window action may present UI and take keyboard focus.
     return false
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

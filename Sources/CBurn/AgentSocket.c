@@ -8,6 +8,12 @@
 #include <string.h>
 #include <poll.h>
 
+int32_t bz_agent_peer_pid(int fd) {
+    pid_t pid = 0;
+    socklen_t size = sizeof(pid);
+    return getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0 ? pid : -1;
+}
+
 static int address(const char *path, struct sockaddr_un *a) {
     if (strlen(path) >= sizeof(a->sun_path)) { errno = ENAMETOOLONG; return -1; }
     memset(a, 0, sizeof(*a));

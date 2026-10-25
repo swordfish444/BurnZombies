@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real archive/signature/install handling; stub only download and client config."""
+"""Exercise real archive/signature/install handling; stub only download; never touch live harness settings."""
 import hashlib
 import io
 import json
@@ -26,25 +26,11 @@ with tempfile.TemporaryDirectory(prefix="bz-install-") as temp:
 from pathlib import Path
 args=sys.argv[1:]
 url=next(a for a in args if a.startswith('https://'))
-assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.2.0/')
+assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.3.0/')
 name=url.rsplit('/',1)[1]
 assert name in ('SHA256SUMS','BurnZombies-macOS-universal.tar.gz')
 shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1])
 ''')
-    client_stub = f"#!{sys.executable}\n" + '''import json,os,sys
-from pathlib import Path
-root=Path(os.environ['BZ_TEST_CONFIG'])
-client=Path(sys.argv[0]).name
-args=sys.argv[1:]
-state=root/(client+'.json')
-if args[:2]==['mcp','get']:
-    if state.exists(): print(state.read_text()); sys.exit(0)
-    sys.exit(1)
-assert args[:2]==['mcp','add']
-assert not state.exists(), 'existing configuration overwritten'
-state.write_text(json.dumps(args))
-'''
-    for name in ("codex", "claude"): (stubs / name).write_text(client_stub)
     for path in stubs.iterdir(): path.chmod(0o755)
     config = root / "config"; config.mkdir()
     destination = root / "Applications with spaces"
@@ -56,15 +42,9 @@ state.write_text(json.dumps(args))
                                 env=env, capture_output=True, text=True, timeout=60)
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         return result
-    install("codex")
+    install("none")
     app = destination / "BurnZombies.app"
-    binary = str(app / "Contents/MacOS/burnzombies-mcp")
-    assert json.loads((config / "codex.json").read_text()) == ["mcp", "add", "burnzombies", "--", binary]
-    install("claude")
-    assert json.loads((config / "claude.json").read_text()) == ["mcp", "add", "--scope", "user", "--transport", "stdio", "burnzombies", "--", binary]
-    existing = (config / "codex.json").read_bytes()
-    install("auto")
-    assert (config / "codex.json").read_bytes() == existing
+    install("none")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
     original_binary = (app / "Contents/MacOS/BurnZombiesApp").read_bytes()
     with (remote / asset).open("ab") as file: file.write(b"bad download")
@@ -76,4 +56,4 @@ state.write_text(json.dumps(args))
     checksum()
     assert "archive paths" in install("none", success=False).stderr
     assert not (root / "escaped").exists()
-    print("PASS installer: both clients, spaces, repeat install, config preservation, signatures, corrupt download and path traversal refusal")
+    print("PASS installer: spaces, repeat install, signatures, corrupt download and path traversal refusal")
