@@ -58,6 +58,11 @@ public actor Monitor {
     receiptNeedsCheckpoint = false
   }
   public func refresh() -> ViewState {
+    // Swift concurrency workers do not drain Cocoa temporaries per observation.
+    // Bound Foundation path/encoding allocations to this scan, including on errors.
+    autoreleasepool { observe() }
+  }
+  private func observe() -> ViewState {
     let start = ProcessInfo.processInfo.systemUptime
     let scan = native.scan()
     let now = Date()

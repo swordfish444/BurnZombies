@@ -7,6 +7,12 @@ import UserNotifications
 @MainActor final class AppModel: ObservableObject {
   @Published var state = ViewState() {
     didSet {
+      let pending = Set(oldValue.catalog.events.filter { $0.outcome == "verifying" }.map(\.id))
+      if let finished = state.catalog.events.last(where: {
+        pending.contains($0.id) && $0.outcome != "verifying"
+      }) {
+        message = finished.outcome == "verified" ? "Cleanup verified." : finished.detail
+      }
       if didLoadState && state.catalog.lifetimeVerified > oldValue.catalog.lifetimeVerified {
         burnPulse += 1
       }
