@@ -14,8 +14,12 @@ jobs:
   prove:
     runs-on: macos-15
     timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+      - name: Build toolchain
+        run: swift --version
       - name: Safety and native lifecycle checks
         run: scripts/test.sh --integration
       - name: Build local app bundle
