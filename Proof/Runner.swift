@@ -158,9 +158,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         equal(next.catalog.lifetimeVerified, workerCount, "double count")
         equal(next.catalog.lifetimeCPUSecondsSaved, cpu, "double CPU count")
         equal(next.catalog.lifetimeResidentReleased, memory, "double memory count")
-        try await monitor.checkpoint()
-        equal(try store.load().lifetimeVerified, workerCount)
-        equal(try store.load().lifetimeCPUSecondsSaved, cpu)
+        // Verification itself must persist the receipt; an explicit checkpoint here
+        // would hide a crash window between displayed credit and saved accounting.
+        let saved = try store.load()
+        equal(saved.lifetimeVerified, workerCount, "verified count was not immediately durable")
+        equal(saved.lifetimeCPUSecondsSaved, cpu)
+        equal(saved.lifetimeResidentReleased, memory)
+        check(saved.events.allSatisfy { $0.outcome == "verified" && $0.responseAfterMS != nil })
         print(
           "PASS three real cleanups, no respawn, deduplication, CPU projections and persisted accounting (\(Int(Date().timeIntervalSince(start))) seconds)"
         )

@@ -23,6 +23,7 @@ public actor Monitor {
   private var owners = [UUID: OwnerState]()
   private var state = ViewState()
   private var lastSave = Date.distantPast
+  private var receiptNeedsCheckpoint = false
   private var busy = false
   private var lastMonotonic: Double?
   private var lastWall: Date?
@@ -46,6 +47,7 @@ public actor Monitor {
   }
   public func snapshot() -> ViewState { state }
   public func resetContinuity() {
+    receiptNeedsCheckpoint = receiptNeedsCheckpoint || catalog.events.contains { $0.outcome == "verifying" }
     catalog.resetContinuity()
     lastMonotonic = nil
     lastWall = nil
@@ -53,6 +55,7 @@ public actor Monitor {
   public func checkpoint() throws {
     state.checkpointBytes = try store.save(catalog)
     lastSave = Date()
+    receiptNeedsCheckpoint = false
   }
   public func refresh() -> ViewState {
     let start = ProcessInfo.processInfo.systemUptime
@@ -62,6 +65,7 @@ public actor Monitor {
     state.partial = scan.partial
     state.hiddenCount = scan.hidden
     state.processCount = scan.observations.count
+    let priorOutcomes = catalog.events.map(\.outcome)
     if scan.partial { catalog.resetContinuity() }
     if let current = scan.observations.first?.monotonic, let previous = lastMonotonic,
       let wall = lastWall,
@@ -104,6 +108,7 @@ public actor Monitor {
         }
       }
       verifyPending(now: now, observations: scan.observations)
+      receiptNeedsCheckpoint = receiptNeedsCheckpoint || priorOutcomes != catalog.events.map(\.outcome)
       catalog.lastSample = now
       catalog.prune(now: now)
       state.findings = DecisionEngine.findings(
@@ -121,7 +126,7 @@ public actor Monitor {
       state.interval =
         state.findings.contains { $0.leaseID != nil && $0.disposition != .protected }
           || catalog.events.contains { $0.outcome == "verifying" } ? 15 : 60
-      if now.timeIntervalSince(lastSave) >= 300 {
+      if receiptNeedsCheckpoint || now.timeIntervalSince(lastSave) >= 300 {
         try store.pruneLeases(now: now, native: native)
         try checkpoint()
       }
