@@ -1,0 +1,22 @@
+name: macOS proof
+on:
+  push:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+permissions:
+  contents: read
+jobs:
+  prove:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Safety and native lifecycle checks
+        run: scripts/test.sh --integration
+      - name: Build local app bundle
+        run: scripts/build-app.sh
