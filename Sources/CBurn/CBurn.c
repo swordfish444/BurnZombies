@@ -11,6 +11,12 @@
 #include <string.h>
 #include <mach/mach_time.h>
 #include <stdlib.h>
+int bz_cwd(int32_t pid, char *path, int capacity) {
+    struct proc_vnodepathinfo info;
+    if (capacity <= 0 || proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, sizeof(info)) != sizeof(info)) return 0;
+    strlcpy(path, info.pvi_cdir.vip_path, (size_t)capacity);
+    return path[0] != 0;
+}
 int32_t bz_zombie_fixture(void) {
     pid_t pid=fork();
     if(pid==0)_exit(0);

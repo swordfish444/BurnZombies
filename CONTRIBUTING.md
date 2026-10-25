@@ -6,7 +6,7 @@ Run `scripts/test.sh` before opening a PR. For lifecycle/action changes, also ru
 
 Build with macOS 14+ and Swift 6.2+: `scripts/build-app.sh`. Use `scripts/build-app.sh --universal` for an Apple Silicon + Intel bundle. The app's monitor has no third-party dependencies; the separate MCP executable uses the official Swift SDK and its pinned dependencies. `Package.resolved` is committed.
 
-Run `python3 scripts/test-harness-install.py` for configuration preservation, legacy-hook migration and the quiet lifecycle contract. Run `python3 scripts/test-mcp.py` after building to exercise the actual stdio server. `scripts/test.sh --integration` includes a real preview/burn/replay-refusal lifecycle through the shared agent service. Installer validation accepts a locally packaged release: `python3 scripts/test-install.py PATH_TO_ARCHIVE`.
+Run `python3 scripts/test-machine-setup.py` for private setup, provider pinning and reviewer cancellation. `python3 scripts/test-harness-install.py` covers the optional legacy interactive integration. Run `python3 scripts/test-mcp.py` after building to exercise the actual stdio server. `scripts/test.sh --integration` includes a real preview/burn/replay-refusal lifecycle through the shared agent service. Installer validation accepts a locally packaged release: `python3 scripts/test-install.py PATH_TO_ARCHIVE`.
 
 Format Swift with `swift format format --in-place --recursive Package.swift Sources Proof`. Keep C in the small platform adapter.
 

@@ -1,6 +1,6 @@
 # Research and decisions
 
-> Historical design research for the initial release. The 0.3 implementation moves abandonment decisions to the existing agent harness and removes mandatory wrapper registration. See [current architecture](ARCHITECTURE.md) and [safety boundaries](SAFETY.md).
+> Historical design research for the initial release. The 0.4 implementation keeps observation and review scheduling computer-wide, delegates abandonment decisions to an installed harness, and requires no active chat or wrapper. See [current architecture](ARCHITECTURE.md) and [safety boundaries](SAFETY.md).
 
 Research checked 2026-10-25. Links are primary documentation or upstream source. Version and maintenance observations are a dated snapshot, not an ongoing maintenance guarantee. No third-party implementation code is copied into the app.
 

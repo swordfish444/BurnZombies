@@ -11,7 +11,7 @@ enum HarnessInstall {
     }
     let home = URL(fileURLWithPath: try option("--home", fallback: NSHomeDirectory()), isDirectory: true)
     let selected = try option("--harness", fallback: "auto")
-    let checkpoints = try option("--checkpoints", fallback: "on")
+    let checkpoints = try option("--checkpoints", fallback: "off")
     guard ["on", "off"].contains(checkpoints) else { throw NSError(domain: "Use --checkpoints on or off", code: 1) }
     if !args.contains("--home") {
       for key in ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GEMINI_CLI_HOME", "COPILOT_HOME"] {

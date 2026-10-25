@@ -5,10 +5,12 @@ universal=false
 if [[ "${1:-}" == "--universal" ]]; then universal=true; fi
 if $universal; then
   for arch in arm64 x86_64; do
-    swift build -c release --triple "$arch-apple-macosx14.0"
+    # SwiftBuild can reuse Products/Release for different triples. Separate roots
+    # keep the second architecture from replacing the first before lipo runs.
+    swift build -c release --scratch-path ".build/universal-$arch" --triple "$arch-apple-macosx14.0"
   done
-  built="$(swift build -c release --triple arm64-apple-macosx14.0 --show-bin-path)"
-  intel="$(swift build -c release --triple x86_64-apple-macosx14.0 --show-bin-path)"
+  built="$(swift build -c release --scratch-path .build/universal-arm64 --triple arm64-apple-macosx14.0 --show-bin-path)"
+  intel="$(swift build -c release --scratch-path .build/universal-x86_64 --triple x86_64-apple-macosx14.0 --show-bin-path)"
 else
   swift build -c release
   built="$(swift build -c release --show-bin-path)"
@@ -40,8 +42,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>BurnZombies</string>
 <key>CFBundleExecutable</key><string>BurnZombiesApp</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleShortVersionString</key><string>0.4.0</string>
+<key>CFBundleVersion</key><string>4</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

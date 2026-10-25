@@ -19,7 +19,8 @@ with tempfile.TemporaryDirectory(prefix='bz-e2e-', dir='/tmp') as tmp:
     try:
         assert select.select([monitor.stdout], [], [], 10)[0] and monitor.stdout.readline().strip() == b'READY'
         for index in range(3):
-            worker = subprocess.Popen([node, '-e', 'const b=Buffer.alloc(8*1024*1024,7);setInterval(()=>b[0]++,1000);setTimeout(()=>process.exit(0),600000)'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            project = root / ('project-' + str(index)); project.mkdir()
+            worker = subprocess.Popen([node, '-e', 'const b=Buffer.alloc(8*1024*1024,7);setInterval(()=>b[0]++,1000);setTimeout(()=>process.exit(0),600000)'], cwd=project, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             workers.append(worker)
         # All three look like live idle Node workers; the agent must use lifecycle ownership evidence.
         manifest = [
@@ -28,22 +29,18 @@ with tempfile.TemporaryDirectory(prefix='bz-e2e-', dir='/tmp') as tmp:
             {'pid': workers[2].pid, 'job': 'fixture-live-session', 'owner_job_state': 'running', 'disposable': False, 'consumers': ['active user task']},
         ]
         (args.output/'fixture-manifest.json').write_text(json.dumps(manifest, indent=2))
-        prompt = '''BurnZombies acceptance test. You have authorization to clean only abandoned disposable helpers in this test-owned manifest. Read it as lifecycle evidence and choose the targets yourself. Call BurnZombies inspect for the listed PIDs, preview the targets supported by the evidence with your rationale, and burn that preview. Preserve the live job. Do not use shell kill, touch any other process, modify files, spawn agents or wait for receipt verification. Report pending versus verified accurately. All entries are real test-owned Node processes created just now; the completed/cancelled job state is established by the test controller, not inferred from age or parent. Manifest:\n''' + json.dumps(manifest)
+        prompt = '''BurnZombies computer-wide acceptance test. These workers belong to three separate project directories and were created before this background review. There is no active user chat or lifecycle hook. Inspect workingDirectory to corroborate their different origins. You have authorization to clean only abandoned disposable helpers in this test-owned manifest. Read it as lifecycle evidence and choose the targets yourself. Call BurnZombies inspect for the listed PIDs, preview the targets supported by the evidence with your rationale, and burn that preview. Preserve the live job. Do not use shell kill, touch any other process, modify files, spawn agents or wait for receipt verification. Report pending versus verified accurately. All entries are real test-owned Node processes created just now; the completed/cancelled job state is established by the test controller, not inferred from age or parent. Manifest:\n''' + json.dumps(manifest)
         env = dict(os.environ, BURNZOMBIES_HOME=str(root))
-        server = str(args.server.resolve())
-        if args.client == 'claude':
-            config=root/'mcp.json';config.write_text(json.dumps({'mcpServers':{'burnzombies':{'type':'stdio','command':server,'env':{'BURNZOMBIES_HOME':str(root)}}}}))
-            command=['claude','-p',prompt,'--output-format','json','--no-session-persistence','--strict-mcp-config','--mcp-config',str(config),'--allowedTools','mcp__burnzombies__*','--tools','']
-        else:
-            command=['codex','exec','--ephemeral','--skip-git-repo-check','--json','--approve-for-me','-C',str(root)]
-            config=tomllib.loads((pathlib.Path.home()/'.codex/config.toml').read_text())
-            for name in config.get('mcp_servers',{}):
-                if name != 'burnzombies':
-                    assert re.fullmatch(r'[A-Za-z0-9_-]+',name)
-                    command += ['-c',f'mcp_servers.{name}.enabled=false']
-            command += ['-c','mcp_servers.burnzombies.enabled=true','-c','features.hooks=false','-c','mcp_servers.burnzombies.command='+json.dumps(server),'-c','mcp_servers.burnzombies.env.BURNZOMBIES_HOME='+json.dumps(str(root)),prompt]
+        # Exercise the production computer-wide dispatcher with no foreground chat or hook.
+        config = {'harness': args.client, 'executable': shutil.which(args.client),
+                  'launcher': str((repo/'.build/debug/burnzombies').resolve()),
+                  'server': str(args.server.resolve()), 'enabled': True}
+        (root/'machine-review.json').write_text(json.dumps(config))
+        (root/'review-prompt.txt').write_text(prompt)
+        command = [str(repo/'.build/debug/BurnProof'), '--review-model', str(root), args.client, str(root/'review-prompt.txt')]
         with (args.output/'client-output.jsonl').open('w') as out, (args.output/'client-stderr.txt').open('w') as err:
-            result=subprocess.run(command,cwd=root,env=env,stdout=out,stderr=err,timeout=180)
+            result=subprocess.run(command,cwd=root,env=env,stdout=out,stderr=err,timeout=200)
+        if (root/'last-review.log').exists(): shutil.copy2(root/'last-review.log', args.output/'review.log')
         assert result.returncode == 0, 'Harness failed; inspect private client output.'
         def status():
             with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as client:
@@ -64,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix='bz-e2e-', dir='/tmp') as tmp:
             assert workers[2].poll() is None
         assert report['verifiedHelpers']==2, report
         (args.output/'receipt.json').write_text(json.dumps(report,indent=2))
-        print('PASS',args.client,': model selected 2 abandoned Node workers, preserved live Node job, used MCP graceful stops, verified receipts; no reboot')
+        print('PASS',args.client,': background reviewer selected 2 abandoned Node workers across projects, preserved live Node job, used MCP graceful stops, verified receipts; no reboot')
     finally:
         for worker in workers:
             if worker.poll() is None: worker.terminate()

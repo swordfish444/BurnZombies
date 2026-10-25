@@ -29,6 +29,15 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 
 @main struct ProofRunner {
   static func main() async {
+    if CommandLine.arguments.count == 5 && CommandLine.arguments[1] == "--review-model" {
+      do {
+        let root = URL(fileURLWithPath: CommandLine.arguments[2])
+        guard let config = try MachineReviewConfiguration.load(root: root) else { throw StoreError.message("Missing proof config") }
+        let prompt = try String(contentsOfFile: CommandLine.arguments[4], encoding: .utf8)
+        try MachineReviewer.execute(config, root: root, prompt: prompt)
+      } catch { print("FAIL: \(error)"); exit(1) }
+      return
+    }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--agent-fixture" {
       do { try await runAgentFixture(root: URL(fileURLWithPath: CommandLine.arguments[2])) }
       catch { print("FAIL: \(error)"); exit(1) }
@@ -63,10 +72,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     let beforeAgent = failures
     do { try await agentBridgeProof() } catch { failTest("Agent bridge: \(error)") }
     if failures == beforeAgent { print("PASS private agent bridge, refusal and socket protection") }
+    let beforeMachine = failures
+    do { try await machineReviewProof() } catch { failTest("Machine review: \(error)") }
+    if failures == beforeMachine { print("PASS computer-wide review without chat events, coalescing, failure pause and cross-project visibility") }
     if CommandLine.arguments.contains("--integration") {
       do { try await integration() } catch { failTest("Integration: \(error)") }
     }
-    print("\(tests.count + 1) checks; \(failures) failures")
+    print("\(tests.count + 2) checks; \(failures) failures")
     exit(failures == 0 ? 0 : 1)
   }
   static func integration() async throws {

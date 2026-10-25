@@ -28,6 +28,8 @@ jobs:
         run: python3 scripts/test-mcp.py
       - name: Five-harness configuration proof
         run: python3 scripts/test-harness-install.py
+      - name: Machine-wide setup and reviewer lifetime
+        run: python3 scripts/test-machine-setup.py
       - name: Installer proof
         run: |
           COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/BurnZombies-test.tar.gz" -C dist BurnZombies.app

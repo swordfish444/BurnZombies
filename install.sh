@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.3.0"
+version="0.4.0"
 client="auto"
 launch=true
 while [[ $# -gt 0 ]]; do
@@ -58,12 +58,12 @@ if ! ditto "$work/BurnZombies.app" "$app"; then
 fi
 
 if [[ "$client" != none ]]; then
-  if ! "$app/Contents/MacOS/burnzombies" install --harness "$client"; then
+  if ! "$app/Contents/MacOS/burnzombies" setup --harness "$client"; then
     rm -rf "$app"
     [[ ! -d "$work/previous.app" ]] || mv "$work/previous.app" "$app"
     echo 'Harness configuration failed; previous app restored. Configurations were preserved.' >&2
     exit 1
   fi
 fi
-if $launch; then open -g -j "$app"; fi
+if $launch; then "$app/Contents/MacOS/burnzombies" start-observer; fi
 echo "Installed BurnZombies $version. Your work can keep running."

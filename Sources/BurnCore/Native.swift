@@ -91,6 +91,13 @@ public struct Native {
     return
       "\(count) descriptors · \(sockets) sockets · \(files) file handles. Socket endpoints and file contents are not collected."
   }
+  public func workingDirectory(_ expected: Observation) -> String? {
+    guard case .found(let current) = probe(expected.identity.pid), current.identity == expected.identity else { return nil }
+    var path = [CChar](repeating: 0, count: 4096)
+    guard bz_cwd(expected.identity.pid, &path, Int32(path.count)) == 1,
+      case .found(let after) = probe(expected.identity.pid), after.identity == expected.identity else { return nil }
+    return String(cString: path)
+  }
 }
 
 public final class InstanceLock {

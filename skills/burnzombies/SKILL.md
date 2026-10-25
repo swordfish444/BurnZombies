@@ -1,6 +1,6 @@
 ---
 name: burnzombies
-description: Keep long-running local agent sessions healthy by identifying and cleaning up abandoned disposable helpers with BurnZombies. Use at session hygiene checkpoints, after finished or cancelled jobs, or when process buildup and memory pressure slow the machine. Preserve active work; no reboot.
+description: Keep the whole Mac healthy across all projects and agent sessions by identifying and cleaning up abandoned disposable helpers with BurnZombies. Use at session hygiene checkpoints, after finished or cancelled jobs, or when process buildup and memory pressure slow the machine. Preserve active work; no reboot.
 ---
 
 # Tame the horde
@@ -16,4 +16,4 @@ When the user has enabled ongoing cleanup, handle clear abandoned disposable hel
 5. Call `burnzombies_burn` using the fresh preview token within the existing authorization. It requests SIGTERM, never SIGKILL. If identity, protection or descendants changed, inspect again; do not bypass the refusal with a shell kill. Never bulk-kill by executable name or stop a current harness, terminal, shared service, upload or recording.
 6. Continue useful work. The menu bar app verifies exits and watches for recurrence. Read later receipts with status; pending is not verified. If a helper remains or respawns, investigate its owner rather than entering a kill loop. A true exited OS zombie must be reaped by its parent; signaling that child cannot free RAM.
 
-Revisit after completed/cancelled helper-producing work and when the lifecycle reminder arrives during a long session. A no-op is quiet. Report actual reclaimed resources when verified, and actionable uncertainty when it prevents a cleanup. Do not manufacture impact or repeatedly audit unchanged processes.
+The resident observer schedules background reviews independently of chats. A direct request can review the whole computer too; do not restrict inspection to this conversation, repository or process tree. A no-op is quiet. Report actual reclaimed resources when verified, and actionable uncertainty when it prevents a cleanup. Do not manufacture impact or repeatedly audit unchanged processes.

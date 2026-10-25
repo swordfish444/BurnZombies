@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory(prefix='bz-harness-install-') as temp:
     # Migrate the intrusive three-hook version without disturbing unrelated handlers.
     legacy = {event: [{'hooks':[{'type':'command','command':"'"+str(cli)+"' hook --client codex --event "+event,'timeout':5}]}] for event in ['SessionStart','PostToolUse','Stop']}
     (home/'.codex/hooks.json').write_text(json.dumps({'hooks':legacy}))
-    command = [str(cli), 'install', '--harness', 'all', '--home', str(home), '--skill-file', str(repo/'skills/burnzombies/SKILL.md')]
+    command = [str(cli), 'install', '--harness', 'all', '--checkpoints', 'on', '--home', str(home), '--skill-file', str(repo/'skills/burnzombies/SKILL.md')]
     result = subprocess.run(command, capture_output=True, text=True, check=True)
     config = tomllib.loads((home/'.codex/config.toml').read_text())
     assert config['model'] == 'keep-user-model' and config['mcp_servers']['other']['command'] == '/keep/other'
@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix='bz-harness-install-') as temp:
     # Turning checkpoints off removes only BZ callbacks; skill/tools remain usable.
     content['mcpServers']['burnzombies']['command'] = str(cli.parent/'burnzombies-mcp')
     conflict.write_text(json.dumps(content))
-    subprocess.run(command + ['--checkpoints', 'off'], check=True, capture_output=True)
+    subprocess.run([arg if i == 0 or command[i-1] != '--checkpoints' else 'off' for i, arg in enumerate(command)], check=True, capture_output=True)
     assert json.loads((home/'.codex/hooks.json').read_text())['hooks'] == {}
     assert json.loads((home/'.claude/settings.json').read_text())['hooks'] == settings['hooks']
 print('PASS five harness configurations, preserved preferences/tools/hooks, idempotence, atomic conflict refusal, bounded lifecycle formats')

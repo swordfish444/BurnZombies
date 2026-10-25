@@ -115,8 +115,11 @@ public actor Monitor {
       if !scan.partial {
         try HarnessHook.publish(.init(observedAt: now, processCount: scan.observations.count,
           residentBytes: scan.observations.reduce(0) { $0 + $1.rss }, pressure: native.memoryPressure()), store: store)
+      } else {
+        try? FileManager.default.removeItem(at: store.root.appendingPathComponent("review-signal"))
       }
     } catch {
+      try? FileManager.default.removeItem(at: store.root.appendingPathComponent("review-signal"))
       state.error = error.localizedDescription
       state.findings = []
     }
