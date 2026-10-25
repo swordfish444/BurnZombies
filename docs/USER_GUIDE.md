@@ -4,11 +4,11 @@
 
 A small native macOS menu bar utility for machines that run agent tools for long stretches. Monitoring starts immediately. Cleanup starts with explicit ownership, not a guess about a process name.
 
-**0.1.0 is an early, locally built release.** It has no privileged daemon, account, network service, telemetry, or LLM dependency. It does not promise to safely kill arbitrary orphan processes. Read the [safety boundaries](SAFETY.md) before opting into cleanup.
+**0.2.0 includes a universal Mac app and local MCP server.** [Install in one command](INSTALL.md). It has no privileged daemon, account, cloud service, telemetry, or LLM dependency. It does not promise to safely kill arbitrary orphan processes. Read the [safety boundaries](SAFETY.md) before opting into cleanup.
 
 ## Build and run
 
-Requires macOS 14 or later and Swift 6 (Apple Command Line Tools or Xcode). No package dependencies.
+Source builds require macOS 14 or later and Swift 6.2 (Apple Command Line Tools or Xcode). The separate MCP executable uses the official Swift SDK. The downloaded app does not require a compiler.
 
 ```sh
 git clone https://github.com/swordfish444/BurnZombies.git
@@ -17,7 +17,7 @@ scripts/build-app.sh
 open dist/BurnZombies.app
 ```
 
-Look for the flame in the menu bar. The bundle includes the `burnzombies` command-line wrapper in `Contents/MacOS/`. Copy the app to your Applications folder if desired. The build script applies a local ad-hoc signature; **Developer ID signing, notarization, and a downloadable release are not provided yet**. Do not disable Gatekeeper to install an untrusted binary.
+Look for the flame in the menu bar. The bundle includes the `burnzombies` command-line wrapper and `burnzombies-mcp` server in `Contents/MacOS/`. The build and universal download have a local ad-hoc signature; **Developer ID signing and notarization are not provided yet**. Do not disable Gatekeeper to install an untrusted binary.
 
 ```sh
 scripts/test.sh                 # dependency-free deterministic and native checks
@@ -84,7 +84,7 @@ State lives in `~/Library/Application Support/BurnZombies`, owned by your user w
 
 The catalog has a 4 MiB compressed checkpoint ceiling, 4,096 process records with eight samples each, 500 receipts/30 days, and 256 ownership leases with at most 512 identities each. Expired, fully exited leases are pruned. A corrupt or oversized catalog pauses monitoring/cleanup with an error; it is not silently deleted. Quit the app and move the state directory aside to preserve it before starting fresh. Permission files must never be imported from someone else.
 
-To uninstall: disable **Start at login** if enabled, quit BurnZombies, and move its app bundle to Trash. Optionally move its Application Support directory to Trash. No root helper, launch daemon, browser extension, or system policy is installed. A wrapper you started belongs to that running command; cancel it normally before removing its executable. Quit does not stop your workloads.
+To uninstall: disable **Start at login** if enabled, quit BurnZombies, remove its MCP entry from your agent client, and move its app bundle to Trash. Optionally move its Application Support directory to Trash. No root helper, launch daemon, browser extension, or system policy is installed. A wrapper you started belongs to that running command; cancel it normally before removing its executable. Quit does not stop your workloads.
 
 ## Development
 

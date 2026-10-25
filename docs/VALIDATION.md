@@ -2,7 +2,25 @@
 
 Validation date: 2026-10-25. Development host: Apple Silicon, macOS 15.8.1, 16 logical CPUs, 128 GiB RAM, Swift 6.2.3 / Command Line Tools. The application targets macOS 14+. Other OS versions and Intel hardware have not been locally validated.
 
-## Automated evidence
+## Version 0.2: installation and MCP
+
+The complete local integration suite passed **36 checks with zero failures**. Three independently owned detached helpers became eligible after **192 seconds**; their graceful exits, recurrence watch, deduplication and durable impact accounting completed at **322 seconds**. One cleanup used the same preview-token service exposed through MCP, including rejection of a reused token.
+
+The real stdio server passed MCP initialization, tool discovery, live native monitoring, argument validation, refused unauthorized cleanup, prompt discovery and clean stdin-EOF shutdown. The native bridge also passed private-socket permissions, competing-listener refusal, symlink refusal and clean shutdown. A blocked socket accept discovered during testing was replaced with an explicit shutdown wakeup.
+
+Installer tests exercised the actual packaged app and code signature with mocked downloads and client configuration commands: Codex and Claude Code arguments, paths containing spaces, repeat installation, existing configuration preservation, checksum failure and archive traversal refusal. The app, CLI and MCP executables each contain **arm64 and x86_64** slices. Local execution was on Apple Silicon; this is not an Intel hardware test.
+
+The universal app is approximately **18 MiB** uncompressed and **5.2 MiB** downloaded. It bundles the MCP runtime; users need no Swift, Node or Python installation. The monitor itself does not link the MCP SDK. The operating measurements below predate this release and are retained as historical evidence, not new MCP overhead measurements.
+
+[Version 0.2 source CI](https://github.com/swordfish444/BurnZombies/actions/runs/40227631808) runs the native integration suite, app build, MCP protocol and installer checks at source commit `4199dc8`. CI explicitly selects Xcode 26.2 to match the required Swift 6.2 generation instead of the runner's older default.
+
+### Real MCP-to-app cleanup
+
+The shipped universal MCP executable connected to the actual native app in isolated storage. A registered, abandoned test helper passed the production grace and repeated-idle checks. The agent client previewed it, received a token and requested cleanup. Impact remained at zero during verification, then automatically became **one verified helper / 51 MB released** after the recurrence watch. The child was gone, the receipt was `verified`, and the server exited cleanly when its input closed. No active user workload was stopped.
+
+The README's [Impact capture](media/live-impact.jpg) and [before/after clip](media/live-cleanup.gif) come from this run. The clip shortens the verification wait. CPU time stayed at zero for this idle helper; the local launch probe produced the displayed before/after values. These are a controlled cleanup demonstration, not a general performance benchmark. The broader pressure-test coverage is described below.
+
+## Version 0.1 automated evidence
 
 `scripts/test.sh --integration`: **35 checks, zero failures**, plus the full three-worker lifecycle. The latest local receipt-regression run found the three independently owned detached helpers eligible after **192 seconds** of monitoring; cleanup, recurrence watching, CPU projections, deduplication and immediate persisted accounting completed at **321 seconds**. The wrapper setup occurs before this timed monitor interval.
 
@@ -23,7 +41,7 @@ The cancellation test uses the real wrapper and `/bin/sleep`, verifies membershi
 
 Sleep/wake, app restart, PID reuse, missing metrics and partial visibility are state-machine tests. No physical sleep, forced system crash, permission-policy change, notification grant or login-item enablement was performed. Full OS-matrix and long-uptime field validation remain future work.
 
-## Native operator journeys
+## Version 0.1 native operator journeys
 
 The final 428 × 795-point compact view and 1008 × 930-point Impact window were inspected in native macOS rendering. Public [Impact](media/impact.jpg), [compact](media/menu-bar.jpg) and [Burn Log](media/burn-log.jpg) captures use synthetic demo data only.
 
@@ -94,4 +112,4 @@ open dist/BurnZombies.app
 dist/BurnZombies.app/Contents/MacOS/burnzombies measure APP_PID 900
 ```
 
-Use an isolated `BURNZOMBIES_HOME` for fixtures. Keep catalogs, personal paths and raw diagnostics private. Public evidence contains only synthetic screenshots, fixture outcomes, aggregate measurements and reproducible commands.
+Use an isolated `BURNZOMBIES_HOME` for fixtures. Keep catalogs, personal paths and raw diagnostics private. Public evidence contains only controlled preview captures, fixture outcomes, aggregate measurements and reproducible commands.

@@ -33,6 +33,8 @@ The catalog is intentionally not a complete forensic flight recorder. A system-w
 - `ImpactAccounting.swift`: bounded CPU-time projection; `Responsiveness.swift`: timed local probe.
 - `BurnApp`: native views, verified-receipt celebration and opt-in system integration.
 - `BurnCLI`: explicit launch ownership; standard streams are inherited without capture.
+- `AgentBridge.swift` / `AgentSocket.c`: same-user private IPC to the app's existing monitor; bounded frames, single-use previews, and a blocking listener with an explicit shutdown signal.
+- `BurnMCP`: official SDK stdio server; exposes status, preview and burn plus the `tame_the_horde` prompt. It does not own a catalog or create a second cleanup worker.
 - `Proof`: dependency-free tests and sacrificial processes.
 
-No third-party runtime or library is shipped. The macOS-specific call boundary is narrow enough to replace later; it is not hidden behind a speculative platform abstraction. Windows needs handle/creation-time identity and Job Objects, plus a native tray UI. Its semantics must be tested independently rather than translating POSIX signals mechanically.
+The native app and monitor have no third-party dependencies. The separate MCP executable links the official MCP Swift SDK, Swift System, Swift Log and EventSource; their notices ship in the app bundle. No Node or Python runtime is needed to use the release. The macOS-specific call boundary is narrow enough to replace later; it is not hidden behind a speculative platform abstraction. Windows needs handle/creation-time identity and Job Objects, plus a native tray UI. Its semantics must be tested independently rather than translating POSIX signals mechanically.
