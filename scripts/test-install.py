@@ -32,10 +32,13 @@ assert name in ('SHA256SUMS','BurnZombies-macOS-universal.tar.gz')
 shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1])
 ''')
     for path in stubs.iterdir(): path.chmod(0o755)
+    (stubs / "codex").write_text("#!/bin/sh\nexit 0\n")
+    (stubs / "codex").chmod(0o755)
     config = root / "config"; config.mkdir()
     destination = root / "Applications with spaces"
     env = dict(os.environ, PATH=str(stubs) + os.pathsep + os.environ["PATH"],
                BZ_TEST_REMOTE=str(remote), BZ_TEST_CONFIG=str(config),
+               BURNZOMBIES_HOME=str(root / "observer-state"),
                BURNZOMBIES_INSTALL_DIR=str(destination))
     def install(client, success=True):
         result = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--mcp", client, "--no-open"],
@@ -47,6 +50,12 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     install("none")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
     original_binary = (app / "Contents/MacOS/BurnZombiesApp").read_bytes()
+    install("auto")
+    configured = json.loads((root / "observer-state/machine-review.json").read_text())
+    assert configured['harness'] == 'codex' and configured['enabled']
+    assert configured['server'] == str(app / 'Contents/MacOS/burnzombies-mcp')
+    install("auto")
+    assert json.loads((root / "observer-state/machine-review.json").read_text()) == configured
     with (remote / asset).open("ab") as file: file.write(b"bad download")
     assert "checksum failed" in install("none", success=False).stderr
     assert (app / "Contents/MacOS/BurnZombiesApp").read_bytes() == original_binary
@@ -56,4 +65,4 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     checksum()
     assert "archive paths" in install("none", success=False).stderr
     assert not (root / "escaped").exists()
-    print("PASS installer: spaces, repeat install, signatures, corrupt download and path traversal refusal")
+    print("PASS installer: private default reviewer setup, spaces, repeat install, signatures, corrupt download and path traversal refusal")
