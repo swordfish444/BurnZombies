@@ -18,7 +18,7 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.1.0
+      BurnZombies 0.2.0
       run --label NAME [--allow-cleanup] -- /absolute/command [arguments]
         Track this NEW command and observed descendants. Opt in only for disposable,
         noninteractive helpers. Standard streams pass through. Arguments are not saved.

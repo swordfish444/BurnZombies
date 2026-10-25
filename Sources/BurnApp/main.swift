@@ -41,6 +41,7 @@ import UserNotifications
   var openAudit: (() -> Void)?
   let demo = CommandLine.arguments.contains("--demo")
   private var monitor: Monitor?
+  private var agentListener: AgentListener?
   private var timer: Timer?
   var onUpdate: (() -> Void)?
   init() {
@@ -53,7 +54,24 @@ import UserNotifications
       state.error = error.localizedDescription
       return
     }
+    if let monitor {
+      let service = AgentService(monitor: monitor)
+      do {
+        agentListener = try AgentListener { [weak self] request in
+          let reply = await service.call(request)
+          let snapshot = await monitor.snapshot()
+          await self?.receiveAgentSnapshot(snapshot)
+          return reply
+        }
+      } catch { message = error.localizedDescription }
+    }
     refresh()
+  }
+  private func receiveAgentSnapshot(_ snapshot: ViewState) {
+    state = snapshot
+    pressure = Native().memoryPressure()
+    onUpdate?()
+    schedule()
   }
   func refresh() {
     guard !working, let monitor else { return }

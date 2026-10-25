@@ -11,7 +11,7 @@ public enum Demo {
       rss: 48 * 1024 * 1024, time: now, monotonic: 200)
     state.catalog.records[o.identity.key] = Record(o)
     let lease = Lease(
-      label: "Finished browser test", owner: owner, members: [Member(o)], allowCleanup: true)
+      label: "Finished helper job", owner: owner, members: [Member(o)], allowCleanup: true)
     state.findings = [
       Finding(
         id: lease.id.uuidString, title: lease.label, disposition: .eligible,

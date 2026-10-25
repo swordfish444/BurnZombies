@@ -131,7 +131,7 @@ struct ImpactNumbers {
         memory: 6_400_000_000 + UInt64(model.demoBurnCount / 18) * 1_200_000_000,
         cpuSeconds: 3.8 * 3600 + Double(model.demoBurnCount / 18) * 60,
         before: 2100, after: 1700, last: Date().addingTimeInterval(-120), latestCount: 18,
-        latestMemory: 1_200_000_000, latestLabel: "18 abandoned browser workers burned")
+        latestMemory: 1_200_000_000, latestLabel: "18 abandoned helpers burned")
     }
     let catalog = model.state.catalog
     let start: Date =
@@ -528,7 +528,7 @@ struct ImpactWindowView: View {
         if model.state.catalog.events.isEmpty {
           Text(
             model.demo
-              ? "18 browser workers · 1.2 GB released · 2m ago"
+              ? "18 disposable helpers · 1.2 GB released · 2m ago"
               : "No burns yet. Your work comes first."
           ).foregroundStyle(BurnTheme.muted).padding(.vertical, 24)
         }

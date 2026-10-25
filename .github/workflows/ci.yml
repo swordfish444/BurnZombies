@@ -20,3 +20,9 @@ jobs:
         run: scripts/test.sh --integration
       - name: Build local app bundle
         run: scripts/build-app.sh
+      - name: MCP client protocol proof
+        run: python3 scripts/test-mcp.py
+      - name: Installer proof
+        run: |
+          COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/BurnZombies-test.tar.gz" -C dist BurnZombies.app
+          python3 scripts/test-install.py "$RUNNER_TEMP/BurnZombies-test.tar.gz"

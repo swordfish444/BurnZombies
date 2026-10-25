@@ -29,6 +29,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 
 @main struct ProofRunner {
   static func main() async {
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--agent-fixture" {
+      do { try await runAgentFixture(root: URL(fileURLWithPath: CommandLine.arguments[2])) }
+      catch { print("FAIL: \(error)"); exit(1) }
+      return
+    }
     let d = DecisionTests()
     let s = StorageNativeTests()
     let pressure = PressureTests()
@@ -73,10 +78,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try test() } catch { failTest("\(name): \(error)") }
       if failures == before { print("PASS \(name)") }
     }
+    let beforeAgent = failures
+    do { try await agentBridgeProof() } catch { failTest("Agent bridge: \(error)") }
+    if failures == beforeAgent { print("PASS private agent bridge, refusal and socket protection") }
     if CommandLine.arguments.contains("--integration") {
       do { try await integration() } catch { failTest("Integration: \(error)") }
     }
-    print("\(tests.count) checks; \(failures) failures")
+    print("\(tests.count + 1) checks; \(failures) failures")
     exit(failures == 0 ? 0 : 1)
   }
   static func integration() async throws {
@@ -115,6 +123,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       }
     }
     let monitor = try Monitor(root: root)
+    let service = AgentService(monitor: monitor)
     let start = Date()
     var candidates = [Finding]()
     while Date().timeIntervalSince(start) < 270 {
@@ -129,7 +138,17 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     print(
       "PASS three independent detached helpers detected after \(Int(Date().timeIntervalSince(start))) seconds"
     )
-    for candidate in candidates {
+    for (index, candidate) in candidates.enumerated() {
+      if index == 0 {
+        let preview = await service.call(AgentRequest("preview", findingID: candidate.id))
+        guard let token = preview.previewToken else { throw StoreError.message("Agent preview failed: \(preview.message)") }
+        let burn = await service.call(AgentRequest("burn", previewToken: token))
+        check(burn.ok && burn.message.contains("Verifying"))
+        equal(burn.verifiedHelpers, 0, "pending MCP request earned credit")
+        let replay = await service.call(AgentRequest("burn", previewToken: token))
+        checkFalse(replay.ok, "agent preview replay accepted")
+        continue
+      }
       let result = try await monitor.cleanup(candidate)
       check(result.contains("Verifying"))
     }

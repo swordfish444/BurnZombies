@@ -24,4 +24,10 @@ int bz_fixture(const char *mode);
 int bz_usage(int32_t pid, uint64_t values[6]);
 int32_t bz_zombie_fixture(void);
 int bz_memory_pressure(void);
+int bz_agent_listen(const char *path);
+int bz_agent_accept(int listener, int wakeup);
+int bz_agent_wakeup_pair(int *fds);
+int bz_agent_connect(const char *path);
+int bz_agent_read(int fd, char *buffer, int capacity);
+int bz_agent_write(int fd, const char *buffer, int count);
 #endif

@@ -7,7 +7,11 @@ let package = Package(
   products: [
     .executable(name: "BurnZombiesApp", targets: ["BurnApp"]),
     .executable(name: "burnzombies", targets: ["BurnCLI"]),
+    .executable(name: "burnzombies-mcp", targets: ["BurnMCP"]),
     .library(name: "BurnCore", targets: ["BurnCore"]),
+  ],
+  dependencies: [
+    .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1")
   ],
   targets: [
     .target(name: "CBurn"),
@@ -15,6 +19,7 @@ let package = Package(
     .executableTarget(
       name: "BurnApp", dependencies: ["BurnCore"], resources: [.process("Resources")]),
     .executableTarget(name: "BurnCLI", dependencies: ["BurnCore", "CBurn"]),
+    .executableTarget(name: "BurnMCP", dependencies: ["BurnCore", .product(name: "MCP", package: "swift-sdk")]),
     .executableTarget(name: "BurnProof", dependencies: ["BurnCore", "CBurn"], path: "Proof"),
   ],
   swiftLanguageModes: [.v5]
