@@ -1,43 +1,39 @@
-# Your harness is the brain
+# One computer-wide observer. Your harness supplies the intelligence.
 
-BurnZombies uses two portable standards: [Agent Skills](https://agentskills.io) for the cleanup workflow and [MCP](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) for local evidence and guarded actions. Small lifecycle adapters deliver a review reminder to the active agent. They do not diagnose processes, call another model, or kill anything.
+The native observer watches all visible processes owned by the logged-in macOS user. It is not scoped to a conversation, repository, terminal or agent process tree. It continues sampling and verifying cleanup while chats are idle or closed.
 
-The agent uses its task context and normal investigation tools to distinguish finished, abandoned work from active dependencies. There are no mandatory wrappers, fixed idle thresholds or process-name kill lists. Native protection of OS services and current harness ancestry is an execution boundary, not a classifier.
+A small native coordinator requests a bounded review from one selected, installed harness. The harness uses MCP for live evidence, exact-identity previews and guarded cleanup. No chat lifecycle event is required. The coordinator does not classify processes or decide what to kill.
 
 | Tool | Result |
 |---|---|
-| `burnzombies_checkpoint` | Quiet lifecycle transport; cached aggregates only, empty unless attention is due |
-| `burnzombies_status` | Process-family counts, pressure, impact and recent receipts |
-| `burnzombies_inspect` | Bounded process evidence: exact identity, parent, executable, memory, CPU, I/O and protections; page or select PIDs |
-| `burnzombies_preview` | The agent supplies exact identities, a label and ownership rationale; returns a single-use token valid for 60 seconds |
-| `burnzombies_burn` | Revalidates the preview and requests SIGTERM; the app verifies exits and watches recurrence |
+| `burnzombies_status` | Computer-wide process-family counts, pressure, impact and receipts |
+| `burnzombies_inspect` | Exact identities, parents, executable, working directory, descriptor summary, memory, CPU, I/O and protections; page or select PIDs |
+| `burnzombies_preview` | Exact identities, a label and ownership rationale; single-use 60-second token |
+| `burnzombies_burn` | Revalidate and request SIGTERM; native observer independently verifies exits |
+| `burnzombies_checkpoint` | Legacy compatibility only; inert when machine review is configured |
 
-The skill is [short and instruction-first](../skills/burnzombies/SKILL.md). It asks the model to prefer owner-native teardown, preserve active/uncertain work, and continue the original task while receipts settle. A true OS zombie is an exited child awaiting its parent's reap; killing that child cannot release memory.
+## Scheduling and ownership
 
-## Alongside a long-running session
+The first complete scan can request a review. Subsequent pressure/buildup changes are coalesced with a ten-minute minimum interval; an hourly review also catches lifecycle changes without aggregate growth. **Safe cleanup** requests a review directly, without waiting for a chat. Reviews do not overlap. Stale/incomplete scans cannot dispatch them.
 
-Codex and Claude Code use **one PostToolUse MCP callback** on the existing connection. No shell launch per tool, startup hook, Stop hook or forced continuation. Cursor and Copilot CLI use one postToolUse native callback; Gemini uses one AfterTool callback. These callbacks read a small cached aggregate signal, never scan or invoke a model. Normal/unchanged state returns `{}`. A pending **Safe cleanup** request or meaningful pressure/buildup change can add a short review context, at most once per ten minutes across harnesses for automatic signals. The signal does not select a process or establish abandonment.
+Every review has a three-minute limit and one MiB output cap. A supervised process group owns its harness and MCP children, and closes them on completion, timeout or owner exit. The native observer continues separately, including the 120-second verification watch. A failure pauses reviews; there is no automatic retry or provider/model/account switch. The pause survives app restart.
 
-The installer can disable all callbacks with `--checkpoints off` while keeping the skill and on-demand MCP tools. This quieter mode cannot guarantee periodic automatic reviews. MCP callbacks run synchronously with a one-second timeout; their result never blocks a turn or replaces tool output. A timeout/error leaves the original work running.
+Default setup writes only private BurnZombies configuration. Codex/Claude use invocation-scoped MCP configuration; Cursor/Gemini use a private review directory, and Copilot uses its additional-MCP option. Harness tool permissions remain applicable. No foreground app is activated and no chat is resumed or messaged.
 
-Hooks run at harness lifecycle boundaries: they cannot interrupt a tool that never returns or wake an entirely idle/disconnected model. The app continues observation and receipt verification between agent turns. First-use hook trust and tool approvals remain with the harness. MCP alone cannot force a client to run a model; optional MCP sampling is not a portable scheduling guarantee.
+## Harness adapters
+
+[Codex exec](https://learn.chatgpt.com/docs/developer-commands#codex-exec) and [Claude print mode](https://code.claude.com/docs/en/headless) support bounded noninteractive invocation. The Codex adapter uses automatic approval review with its sandbox; Claude limits built-in tools to read-only file inspection and allows only the BurnZombies MCP server for cleanup. Neither uses a blanket bypass.
+
+[Cursor](https://cursor.com/docs/cli/headless), [Copilot](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference), and [Gemini](https://geminicli.com/docs/cli/headless/) also expose noninteractive modes. Their local MCP trust and permission rules can prevent unattended cleanup; unsupported or denied operations must pause, not escalate. See current live-test coverage in [VALIDATION.md](VALIDATION.md).
+
+MCP standardizes evidence and actions, not a universal background model scheduler. Small launch adapters supply that missing boundary. The cleanup workflow is also available as an optional [Agent Skill](../skills/burnzombies/SKILL.md) for direct interactive requests.
 
 ## Local boundary
 
-The native stdio server uses the official MCP Swift SDK and a private same-user Unix socket. The menu bar app owns the catalog and syscall execution. There is no HTTP listener or root helper. Inspect results include local executable paths and become visible to the configured harness/model provider; arguments, environments and file contents are not collected. Labels and paths are untrusted evidence.
+The stdio server uses the official MCP Swift SDK and a same-user Unix socket with peer-PID authentication. No root helper or HTTP listener. Restricted services and other users' processes remain outside cleanup authority.
 
-A cleanup request needs current user authorization (including standing session-hygiene authorization). A process count, age, low CPU or parent PID 1 alone does not establish abandonment. The app checks identity/start time/boot, same user, protections, current caller ancestry, complete scan coverage and reviewed children. No SIGKILL, bulk executable-name kill, file cleanup or credential operation is exposed. Pending receipts earn no credit. [Safety and residual limitations](SAFETY.md).
+Executable paths, working directories and resource evidence become visible to the selected harness/model provider. Arguments, environments and file contents are not collected by the observer. The model may inspect narrowly relevant lifecycle files using its permitted tools. Credentials, browser profiles and unrelated private data are excluded by the review instructions. Paths and labels are untrusted evidence.
 
-## Supported local harness formats
+Age, idleness, name or parent PID 1 alone never establishes abandonment. Active and uncertain work remains running. Cleanup targets receive SIGTERM only; timeout escalation applies solely to BurnZombies's own review worker group. True exited OS zombies must be reaped by their parent.
 
-| Harness | MCP configuration | Skill | Lifecycle configuration |
-|---|---|---|---|
-| Codex CLI / desktop local tasks | `~/.codex/config.toml` | `~/.agents/skills/burnzombies` | `~/.codex/hooks.json` |
-| Claude Code CLI / Desktop Code tab | `~/.claude.json` | `~/.claude/skills/burnzombies` | `~/.claude/settings.json` |
-| Cursor local agent | `~/.cursor/mcp.json` | `~/.cursor/skills/burnzombies` | `~/.cursor/hooks.json` |
-| GitHub Copilot CLI | `~/.copilot/mcp-config.json` | `~/.copilot/skills/burnzombies` | `~/.copilot/hooks/burnzombies.json` |
-| Gemini CLI | `~/.gemini/settings.json` | `~/.gemini/skills/burnzombies` | `~/.gemini/settings.json` |
-
-Local integrations cannot reach a different computer or a cloud-only agent sandbox. Claude Desktop's **Code tab** uses Claude Code configuration; Chat and Cowork are separate surfaces. A desktop-chat MCP bundle alone does not install the lifecycle skill.
-
-Primary references: [Codex skills](https://learn.chatgpt.com/docs/build-skills), [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp), [Codex hooks and trust](https://learn.chatgpt.com/docs/hooks), [Claude skills](https://code.claude.com/docs/en/skills), [Claude Desktop configuration sharing](https://code.claude.com/docs/en/desktop), [Claude hooks](https://code.claude.com/docs/en/hooks), [Cursor hooks](https://cursor.com/docs/hooks), [Copilot hooks](https://docs.github.com/en/copilot/reference/hooks-reference), [Gemini skills](https://geminicli.com/docs/cli/tutorials/skills-getting-started/), [Gemini hooks](https://geminicli.com/docs/hooks/reference/).
+The optional MCPB desktop bundle exposes interactive tools. The one-command installer enables the independent background reviewer; installing an MCPB alone does not select a background harness.

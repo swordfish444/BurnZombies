@@ -1,18 +1,19 @@
 # Architecture
 
 ```text
-Existing agent harness + Agent Skill (reasoning and ownership)
-              │ MCP: status → inspect → preview → burn
-     Native stdio server (no independent model)
-              │ private same-user Unix socket; authenticated peer PID
-         Monitor actor ── finite exit/recurrence verification
-              │
-       libproc / sysctl / identity-checked SIGTERM
-              │
-      private catalog ── menu-bar impact + burn log
+Resident macOS observer ── samples all current-user processes
+          │ own schedule, change coalescing, one review at a time
+          ▼
+Selected installed harness ── bounded background reasoning
+          │ MCP: status → inspect → preview → burn
+          ▼
+Native evidence / identity guards / graceful stop
+          │ independent exit and recurrence verification
+          ▼
+Private catalog ── menu-bar impact + burn log
 ```
 
-The harness decides which work is abandoned. BurnZombies supplies evidence and mechanical execution boundaries. There is no idle-age classifier or mandatory launch wrapper. A separate callback delivers a small, rate-limited resource-change signal through the already-connected MCP server in Codex and Claude Code. Other supported harnesses use a short native callback. No callback invokes a model, scans processes, stops a process or presents UI.
+Observation and scheduling belong to the computer, not a chat. One selected harness provides reasoning through a supervised, bounded invocation using its existing authentication. There is no fixed abandonment classifier or mandatory launch wrapper for user jobs. Default setup writes only BurnZombies configuration and installs no chat hooks.
 
 ## Observation and storage
 
@@ -20,7 +21,9 @@ One monitor owns a nonblocking private lock. It observes current-user processes 
 
 The catalog is compressed Codable data with bounded reads/decompression, a five-minute checkpoint and immediate durable action/settings writes. Before signaling, the monitor persists intent. Only a completed verified receipt contributes impact. A crash cannot turn absent processes into labeled training examples.
 
-A separate aggregate signal contains observation time, process count, summed RSS and OS pressure. Checkpoints read this small file; they do not rescan the machine. Normal first contact records a baseline. A pending manual request, pressure increase, 20 additional processes or 512 MiB of additional RSS can request model attention, with a shared ten-minute cooldown for automatic requests. These are notification thresholds, never kill criteria. Stale signals and unchanged state return an empty object. No startup hook, Stop hook or forced continuation exists.
+The aggregate signal contains observation time, process count, RSS and pressure. A complete fresh scan can start the initial review; later resource changes have a ten-minute cooldown, with an hourly review for ownership changes that do not increase totals. A manual request is independent of chats. These are scheduling rules, never kill criteria.
+
+`MachineReviewer` persists review intent before launching. It owns one three-minute process-group supervisor, caps output at one MiB, keeps its run directory private and removes it afterward. Completion does not stop observation or receipt verification. Errors, quota failures, cancellation and interrupted reviews pause further invocations until explicit resume. No automatic provider fallback. No LaunchAgent, recurring codex exec, chat mutation or UI activation is installed.
 
 ## Execution
 
@@ -33,8 +36,10 @@ Verification distinguishes unknown, partial, possible recurrence and verified ex
 - `AgentSafety.swift`: mechanical protections; no abandonment classifier.
 - `Monitor.swift`, `Verification.swift`: observation, durable intent, identity checks and receipts.
 - `AgentBridge.swift`, `AgentSocket.c`: bounded same-user IPC, peer-PID authentication, expiring previews.
-- `HarnessHook.swift`: cached signals and quiet cross-client coalescing.
-- `HarnessInstall.swift`: transactional configuration/skill installation and owned-hook migration.
+- `MachineReview.swift`, `ReviewWorker.c`: machine-wide scheduling, harness adapters and owned worker lifetime.
+- `HarnessHook.swift`: cached signal publishing and inert legacy-hook compatibility.
+- `MachineSetup.swift`: private provider selection without editing harness settings.
+- `HarnessInstall.swift`: optional legacy interactive MCP/skill setup.
 - `BurnMCP`: official Swift SDK protocol server; compatibility adapter for SDK 0.12.1 experimental capabilities.
 - `BurnApp`: impact UI and optional details. Reopen events never show windows; presenting UI requires a menu action.
 - `Store.swift`, `Native.swift`, `CBurn`: bounded persistence and small macOS API boundary.

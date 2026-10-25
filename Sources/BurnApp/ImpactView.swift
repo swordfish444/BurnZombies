@@ -190,14 +190,15 @@ struct BurnStatus: View {
       Text(
         model.state.error != nil
           ? "Needs attention"
-          : "Agent-led cleanup"
+          : model.machineReview.phase == "paused" ? "Review paused" : "Watching this Mac"
       )
       .font(.system(size: 18)).foregroundStyle(Color(white: 0.82))
       Button(model.cleanupQueued ? "Queued" : "Safe cleanup") { model.requestAgentCleanup() }
+        .disabled(!model.demo && !model.machineReviewEnabled)
         .font(.system(size: 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
         .padding(.horizontal, 9).padding(.vertical, 6)
         .background(BurnTheme.orange.opacity(0.08), in: Capsule())
-        .help("Queue an agent review at the next lifecycle checkpoint. No reboot; no automatic process-name kills.")
+        .help("Review buildup across this Mac now. No active chat or reboot needed.")
     }
   }
 }

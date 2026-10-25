@@ -26,8 +26,8 @@ def main():
         parser.error("App and MCPB versions differ; update the manifest before packaging.")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
     for name in ("BurnZombiesApp", "burnzombies", "burnzombies-mcp"):
-        subprocess.run(["lipo", str(app / "Contents/MacOS" / name),
-                        "-verify_arch", "arm64", "x86_64"], check=True)
+        architectures = subprocess.check_output(["lipo", "-archs", str(app / "Contents/MacOS" / name)], text=True).split()
+        assert {"arm64", "x86_64"}.issubset(architectures), f"Missing universal slice: {name}"
     output.mkdir(parents=True, exist_ok=True)
     artifact = output / "BurnZombies-macOS-universal.mcpb"
     if artifact.exists():

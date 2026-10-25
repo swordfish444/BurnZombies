@@ -1,31 +1,29 @@
-# Install once. Keep working.
+# Install once. Watch the whole Mac.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-macOS 14+, Apple Silicon or Intel. The installer checks the release checksum and signature, installs `~/Applications/BurnZombies.app`, and connects all detected supported local harnesses with MCP, the skill and one quiet checkpoint. No sudo, Node, Python, API key or BurnZombies account.
+macOS 14+, Apple Silicon or Intel. The installer checks the release checksum and signature, installs `~/Applications/BurnZombies.app`, selects an available harness CLI, and starts the menu bar observer in the background. No active chat, special job wrapper or computer reboot is required.
 
-Ask: **Tame the horde with BurnZombies and keep this session healthy.** This gives the agent the intended ongoing-cleanup scope; its normal tool permissions still apply. The agent decides which disposable leftovers are safe to stop. Unknown work remains running.
+The observer scans visible processes owned by your macOS user across every project and session. Its own schedule requests bounded reviews from the selected harness. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
 
-## First connection
+## Existing harness, existing login
 
-No computer reboot is needed. A running client may need its supported MCP/skill reload or a new conversation to discover newly installed tools. Existing jobs can keep running. Codex requires review and trust of new hooks through `/hooks` before automatic checkpoints execute; the installer does not bypass that review or alter tool-approval policy. Claude Desktop's local Code tab shares Claude Code's configuration. Chat and Cowork are separate integrations.
+Codex, Claude Code, Cursor CLI, GitHub Copilot CLI and Gemini CLI have launch adapters. The selected CLI must be installed and signed in. Codex's bundled desktop CLI is detected when available. A desktop app without a usable local CLI is not sufficient by itself. Authentication is reused, never copied or changed.
 
-Codex and Claude callbacks reuse the existing MCP connection. No startup or Stop hooks are installed. The app stays in the background when a client connects.
+Default selection order is Codex, Claude, Cursor, Copilot, Gemini. Reinstallation retains the previous provider; a failed or quota-limited provider is never replaced automatically. Reviews use that harness's existing account and usage allowance. Failed authentication, unsupported CLI options, permission refusals or usage errors pause reviews while native observation continues. Resolve the issue in the harness, then use **Resume reviews** in BurnZombies.
 
-After connection, cleanup runs at natural checkpoints in the ongoing session. **Safe cleanup** in the app queues a review for the next hook; asking the agent directly starts one now. The adapter never launches a hidden model process or requires a harness restart to reclaim resources.
+Default setup writes only BurnZombies's private reviewer configuration. It does not edit `~/.codex/config.toml`, install chat hooks, inject reminders into conversations, or change persistent tool permissions. Per-run MCP configuration connects the reviewer to the local observer. Legacy BurnZombies hooks become inert when computer-wide review is configured.
 
-## Installer behavior
+## Options
 
-The single default command detects Codex, Claude Code, Cursor, GitHub Copilot CLI and Gemini CLI. For deployment tooling, `--mcp` accepts `auto`, `all`, an individual harness name or `none`; `--no-open` skips launching the app. The bundled native installer also accepts `--checkpoints off` to retain on-demand MCP/skill access without callbacks. `BURNZOMBIES_INSTALL_DIR` changes the app destination.
+`--mcp codex|claude|cursor|copilot|gemini` selects the review provider; `auto` selects one available provider. The older `all` spelling also selects one provider rather than starting five competing reviewers. `--mcp none` skips reviewer configuration. `--no-open` skips starting the app. `BURNZOMBIES_INSTALL_DIR` changes the app destination.
 
-Unrelated MCP servers, settings, hooks and credentials are preserved. Changed config files get private backups; conflicting BurnZombies entries or malformed config are reported instead of overwritten. Re-running installation is idempotent. Existing cleanup history remains in Application Support. Custom harness config roots and JSON-with-comments configuration need explicit validation before installation; do not silently redirect or rewrite them.
+The native command `burnzombies setup --harness NAME` configures the background reviewer. The older `install` subcommand remains available for explicit interactive MCP/skill integration; chat checkpoints now default off. It is not needed for continuous observation or reviews.
 
-This release is locally ad-hoc signed, not Developer ID notarized. The installer does not remove quarantine or disable Gatekeeper. [Build from source](../CONTRIBUTING.md) if local macOS policy blocks the distributed app.
+No `--yolo`, blanket permission bypass, account fallback, quarantine removal or Gatekeeper disablement is used. This release is ad-hoc signed, not Developer ID notarized. [Build from source](../CONTRIBUTING.md) if local macOS policy blocks it.
 
-## Installing agent acceptance
+## Acceptance
 
-Read the installer, run the one command, then verify the configured command, skill and hooks. Call `burnzombies_status` in the actual target client. A configuration file alone does not prove an already-running session loaded it. Respect the client's hook-trust UI. Do not restart the computer, terminate active tasks, change credentials or widen tool permissions to make setup pass.
-
-[Protocol and harness formats](MCP.md) · [Safety](SAFETY.md) · [Uninstall](USER_GUIDE.md#privacy-recovery-and-uninstall)
+Check the menu bar observer and its selected harness, then verify a bounded background review and its receipts without sending a chat message. CLI configuration alone is not live model proof. Current validation and remaining harness limits are in [VALIDATION.md](VALIDATION.md).

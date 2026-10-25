@@ -1,4 +1,5 @@
 import BurnCore
+import AppKit
 import CBurn
 import Darwin
 import Foundation
@@ -7,6 +8,7 @@ func fail(_ message: String) -> Never {
   FileHandle.standardError.write(Data((message + "\n").utf8))
   exit(1)
 }
+func pause(_ seconds: Double) { Thread.sleep(forTimeInterval: seconds) }
 func json<T: Encodable>(_ value: T) throws {
   let e = JSONEncoder()
   e.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -15,10 +17,46 @@ func json<T: Encodable>(_ value: T) throws {
 let args = Array(CommandLine.arguments.dropFirst())
 do {
   switch args.first ?? "help" {
+  case "start-observer":
+    let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    let app = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    guard app.pathExtension == "app" else { fail("Start observer from the installed app bundle.") }
+    let previous = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.standardizedFileURL == app.standardizedFileURL }
+    for running in previous {
+      guard running.terminate() else { fail("Could not close the previous BurnZombies observer. Quit it and reopen BurnZombies to finish upgrading.") }
+    }
+    for _ in 0..<50 {
+      if previous.allSatisfy({ $0.isTerminated }) { break }
+      try await Task.sleep(nanoseconds: 100_000_000)
+    }
+    guard previous.allSatisfy({ $0.isTerminated }) else { fail("Previous observer is still closing. No force stop or reopen event was sent.") }
+    let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = false; configuration.hides = true
+    let _: NSRunningApplication = try await withCheckedThrowingContinuation { continuation in
+      NSWorkspace.shared.openApplication(at: app, configuration: configuration) { application, error in
+        if let application { continuation.resume(returning: application) }
+        else { continuation.resume(throwing: error ?? StoreError.message("Could not start the background observer.")) }
+      }
+    }
+  case "review-worker":
+    guard args.count >= 3, args[1] == "--", args[2].hasPrefix("/") else { fail("Internal worker requires an absolute harness executable.") }
+    let words = args.dropFirst(2).map { strdup($0) }
+    defer { words.forEach { free($0) } }
+    var pointers = words + [nil]
+    exit(bz_review_worker(&pointers, 180))
+  case "setup":
+    try MachineSetup.run(Array(args.dropFirst()))
+  case "review-once":
+    let reviewer = try MachineReviewer()
+    try await reviewer.resume()
+    try HarnessHook.requestCleanup()
+    await reviewer.tick()
+    try json(await reviewer.snapshot())
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.3.0
+      BurnZombies 0.4.0
+      setup [--harness auto|codex|claude|cursor|copilot|gemini|none]
+        Enable computer-wide background reviews. No chat hooks or live config edits.
       install [--harness auto|all|codex|claude|cursor|copilot|gemini]
         Connect installed harnesses: MCP, skill and lifecycle checkpoints. No reboot.
       hook --client NAME --event EVENT
@@ -67,7 +105,7 @@ do {
     var last = first
     var count = 1
     while Double(bz_continuous_ns()) / 1e9 - start < duration {
-      Thread.sleep(forTimeInterval: min(10, duration - (Double(bz_continuous_ns()) / 1e9 - start)))
+      pause(min(10, duration - (Double(bz_continuous_ns()) / 1e9 - start)))
       guard case .found(let current) = Native().probe(pid), current.identity == initial.identity,
         bz_usage(pid, &last) == 0
       else { fail("Target exited or identity/visibility changed; measurement incomplete.") }
@@ -172,7 +210,7 @@ do {
         }
       }
       if let cancel = cancellation, Date().timeIntervalSince(cancel) > 15 { break }
-      Thread.sleep(forTimeInterval: 1)
+      pause(1)
     }
     lease.ended = Date()
     try store.saveLease(lease)

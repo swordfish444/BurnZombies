@@ -38,6 +38,8 @@ public struct AgentProcess: Codable, Sendable {
   public let observationCount: Int
   public let exitedChild: Bool
   public let protectedReason: String?
+  public let workingDirectory: String?
+  public let descriptorSummary: String
 }
 public struct AgentGroup: Codable, Sendable {
   public let executableName: String
@@ -60,6 +62,7 @@ public struct AgentReply: Codable, Sendable {
   public var memoryPressure: String?
   public var observedProcesses = 0
   public var observedAt: Date?
+  public var observationScope = "all visible processes owned by the logged-in macOS user; all projects and sessions"
   public var previewToken: String?
   public init(ok: Bool = true, message: String) { self.ok = ok; self.message = message }
   public func json() throws -> String {
@@ -102,7 +105,7 @@ public actor AgentService {
       state = await monitor.refresh()
     }
     if let error = state.error { return AgentReply(ok: false, message: error) }
-    var reply = AgentReply(message: "Agent-led cleanup. Inspect live evidence and use your session context to distinguish abandoned helpers from active work. No wrapper or computer restart required.")
+    var reply = AgentReply(message: "Computer-wide observation across all projects and sessions for this macOS user. Inspect live ownership evidence to distinguish abandoned helpers from active work. No active chat, wrapper or reboot required.")
     do {
       if request.operation == "inspect" {
         let offset = request.offset ?? 0
@@ -121,10 +124,11 @@ public actor AgentService {
             executable: o.executable, residentBytes: o.rss, cpuPercent: r.cpuPercent,
             cpuTimeNS: o.cpuNS, readBytes: o.readBytes, writeBytes: o.writeBytes,
             observationCount: r.samples.count, exitedChild: o.zombie,
-            protectedReason: AgentSafety.refusal(r, preferences: state.catalog.preferences, protectedPIDs: protected))
+            protectedReason: AgentSafety.refusal(r, preferences: state.catalog.preferences, protectedPIDs: protected),
+            workingDirectory: Native().workingDirectory(o), descriptorSummary: Native().enrich(o))
         }
         if offset + 64 < live.count { reply.nextOffset = offset + 64 }
-        reply.message = "Process evidence, not a disposal verdict. Names, paths and parent=1 do not prove abandonment. Use workspace/session ownership and your harness tools to resolve uncertain work."
+        reply.message = "Computer-wide process evidence, not a disposal verdict. This list is not filtered to the calling chat, workspace or process tree. Names, paths and parent=1 do not prove abandonment. Corroborate live ownership; preserve uncertain work."
       } else if request.operation == "preview" {
         guard let ids = request.processIDs, let label = request.label,
           !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, label.count <= 120,

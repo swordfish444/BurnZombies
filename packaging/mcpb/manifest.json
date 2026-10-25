@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "burnzombies",
   "display_name": "BurnZombies",
-  "version": "0.3.0",
-  "description": "Clear abandoned agent helpers and reclaim resources on your Mac.",
-  "long_description": "Your existing agent harness diagnoses abandoned helpers; BurnZombies supplies live evidence, guarded graceful stops and verified impact. No launch wrapper or computer restart. Native macOS 14+ app and stdio server for Apple Silicon/Intel. Use the single-command installer for harness skills and quiet checkpoints. Ad-hoc signed, not notarized.",
+  "version": "0.4.0",
+  "description": "Computer-wide observation and guarded cleanup of abandoned agent helpers on macOS.",
+  "long_description": "Computer-wide process evidence, guarded graceful stops and verified impact through MCP. Use the single-command installer to enable the independent background observer and its selected harness reviewer; this MCP bundle alone provides interactive tools. Native macOS 14+, Apple Silicon/Intel. Ad-hoc signed, not notarized.",
   "author": {
     "name": "swordfish444",
     "url": "https://github.com/swordfish444"

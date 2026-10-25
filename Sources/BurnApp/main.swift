@@ -31,13 +31,16 @@ import UserNotifications
   @Published var tab = "Overview"
   @Published var preview = false
   @Published var cleanupQueued = false
+  @Published var machineReview = MachineReviewState()
+  @Published var machineReviewEnabled = false
 
   func requestAgentCleanup() {
     guard !demo else { previewBurn(); return }
     do {
       try HarnessHook.requestCleanup()
       cleanupQueued = true
-      message = "Cleanup queued for your agent's next lifecycle checkpoint. You can also ask it to tame the horde now."
+      message = "Computer-wide cleanup queued. No active chat needed."
+      Task { try? await reviewer?.resume(); await reviewer?.tick(); await receiveReviewState() }
     } catch { message = error.localizedDescription }
   }
   @Published var working = false
@@ -52,6 +55,7 @@ import UserNotifications
   let demo = CommandLine.arguments.contains("--demo")
   private var monitor: Monitor?
   private var agentListener: AgentListener?
+  private var reviewer: MachineReviewer?
   private var timer: Timer?
   var onUpdate: (() -> Void)?
   init() {
@@ -60,7 +64,10 @@ import UserNotifications
       pressure = "Low"
       return
     }
-    do { monitor = try Monitor() } catch {
+    do {
+      monitor = try Monitor(); reviewer = try MachineReviewer()
+      machineReviewEnabled = try MachineReviewConfiguration.load(root: Store.defaultRoot)?.enabled ?? false
+    } catch {
       state.error = error.localizedDescription
       return
     }
@@ -107,7 +114,13 @@ import UserNotifications
       }
       onUpdate?()
       schedule()
+      // Observation continues on its own timer while a bounded review runs.
+      if state.error == nil && !state.partial { Task { await reviewer?.tick(); await receiveReviewState() } }
     }
+  }
+  private func receiveReviewState() async {
+    if let reviewer { machineReview = await reviewer.snapshot() }
+    cleanupQueued = FileManager.default.fileExists(atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
   }
   private func schedule() {
     timer?.invalidate()
@@ -200,9 +213,14 @@ import UserNotifications
     }
   }
   func setAutomatic(_ enabled: Bool) {
-    var p = state.catalog.preferences
-    p.automaticCleanup = enabled
-    save(p)
+    do {
+      guard var config = try MachineReviewConfiguration.load(root: Store.defaultRoot) else {
+        message = "Run BurnZombies setup to select an installed harness."; return
+      }
+      config.enabled = enabled; try config.save(root: Store.defaultRoot)
+      machineReviewEnabled = enabled
+      if enabled { Task { try? await reviewer?.resume(); await reviewer?.tick(); await receiveReviewState() } }
+    } catch { message = error.localizedDescription }
   }
   func setNotifications(_ enabled: Bool) {
     if enabled && !demo {
@@ -383,7 +401,7 @@ struct Dashboard: View {
         VStack(alignment: .leading, spacing: 10) {
           Label("Your agent takes it from here", systemImage: "leaf").font(.headline)
           Text(
-            "Keep working. Lifecycle checkpoints bring buildup to your agent while the app records verified impact."
+            "BurnZombies watches this Mac across every project and session. Background reviews use your selected harness while the app records verified impact."
           ).font(.callout).foregroundStyle(.secondary)
           Text(
             "Ask your agent to tame the horde, or use Safe cleanup to queue a review. No wrapper or reboot needed."
@@ -522,9 +540,14 @@ struct Dashboard: View {
   var settings: some View {
     Group {
       Text("Quiet by default.").font(.title2.weight(.semibold))
-      Text("Your agent handles cleanup.").font(.headline)
-      Text("BurnZombies connects to your harness through MCP and the burnzombies skill. Lifecycle hooks bring buildup to the agent during long sessions. Active and uncertain work stays running.")
+      Text("Your whole Mac. One observer.").font(.headline)
+      Text("BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running.")
         .font(.caption).foregroundStyle(.secondary)
+      Toggle("Background reviews", isOn: Binding(get: { model.machineReviewEnabled }, set: model.setAutomatic))
+      Text(model.machineReview.detail).font(.caption).foregroundStyle(.secondary)
+      if model.machineReview.phase == "paused" {
+        Button("Resume reviews") { model.setAutomatic(true) }
+      }
       Toggle(
         "Grouped notifications",
         isOn: Binding(
@@ -554,7 +577,7 @@ struct Dashboard: View {
       Divider()
       Text("Local and bounded").font(.headline)
       Text(
-        "No accounts, analytics, cloud, or LLM. No command arguments or environment collected. At most 4,096 process records, eight samples each; private checkpoints every five minutes. Descriptor counts are inspected only when requested."
+        "No BurnZombies account or analytics. Reviews use your selected harness's existing account and usage allowance. Process evidence can reach that harness's model provider. No command arguments or environment collected. At most 4,096 process records, eight samples each."
       ).font(.caption).foregroundStyle(.secondary)
       Text(
         String(

@@ -29,8 +29,8 @@ with tempfile.TemporaryDirectory(prefix="bz-mcpb-proof-") as temporary:
     app = target / "server/BurnZombies.app"
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
     for name in ("BurnZombiesApp", "burnzombies", "burnzombies-mcp"):
-        subprocess.run(["lipo", str(app / "Contents/MacOS" / name),
-                        "-verify_arch", "arm64", "x86_64"], check=True)
+        architectures = subprocess.check_output(["lipo", "-archs", str(app / "Contents/MacOS" / name)], text=True).split()
+        assert {"arm64", "x86_64"}.issubset(architectures), f"Missing universal slice: {name}"
     subprocess.run([sys.executable, str(root / "scripts/test-mcp.py"),
                     "--server", str(target / entry)], check=True)
 print("PASS MCPB paths, executable modes, universal binaries, app signature and protocol")

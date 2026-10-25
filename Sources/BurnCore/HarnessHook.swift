@@ -2,7 +2,7 @@ import Foundation
 
 /// Lifecycle transport only: coalesces reminders. It never scans, classifies or stops processes.
 public enum HarnessHook {
-  public struct Signal: Codable {
+  public struct Signal: Codable, Sendable {
     public var observedAt: Date
     public var processCount: Int
     public var residentBytes: UInt64
@@ -33,6 +33,9 @@ public enum HarnessHook {
 
   public static func response(client: String, event: String, input: [String: Any],
     root: URL = Store.defaultRoot, now: Date = Date()) throws -> [String: Any] {
+    // Legacy installed hooks become inert once computer-wide review is configured.
+    // The observer owns scheduling; never inject a second review into a user's chat.
+    if FileManager.default.fileExists(atPath: root.appendingPathComponent("machine-review.json").path) { return [:] }
     guard ["codex", "claude", "cursor", "copilot", "gemini"].contains(client) else { return [:] }
     guard ["PostToolUse", "postToolUse", "AfterTool"].contains(event) else { return [:] }
     let tool = (input["tool_name"] as? String ?? input["toolName"] as? String ?? "").lowercased()
