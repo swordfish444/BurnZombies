@@ -4,6 +4,8 @@ Local validation on macOS 15.8.1 / Apple Silicon. The 0.3 source replaces the fi
 
 ## Verified
 
+The source revision `f753c341259669e83fb6740299aeb8b0cf89efe0` also passed [GitHub’s macOS proof workflow](https://github.com/swordfish444/BurnZombies/actions/runs/40239037042).
+
 - 18 native checks passed, including 32 real unreaped OS children with eight live controls across five scans, 4,096 mixed mechanical safety cases, corrupt storage, identity protection, unknown IPC peer refusal, and active-work preservation.
 - Three real detached helpers completed the production graceful-exit/120-second watch, with persistent, deduplicated impact accounting.
 - Real Claude Code CLI and Codex CLI used the MCP server to inspect three real Node workers, select the two completed/cancelled disposable jobs from controller-provided lifecycle evidence, and preserve the live job. The controller verified exits and receipts afterward. This is controlled lifecycle evidence, not a claim that process age proves abandonment.
