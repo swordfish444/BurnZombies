@@ -2,10 +2,13 @@
   "manifest_version": "0.3",
   "name": "burnzombies",
   "display_name": "BurnZombies",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Clear abandoned agent helpers and reclaim resources on your Mac.",
-  "long_description": "BurnZombies keeps your agent environment clear of eligible abandoned helpers. Check status, preview a cleanup, and burn through the native Mac app's existing safety rules. Requires macOS 14 or later. Bundles the native app and stdio server for Apple Silicon and Intel; no language runtime or account required. Only explicitly registered disposable helpers are eligible for cleanup. Version 0.2 is ad-hoc signed, not notarized.",
-  "author": { "name": "swordfish444", "url": "https://github.com/swordfish444" },
+  "long_description": "Your existing agent harness diagnoses abandoned helpers; BurnZombies supplies live evidence, guarded graceful stops and verified impact. No launch wrapper or computer restart. Native macOS 14+ app and stdio server for Apple Silicon/Intel. Use the single-command installer for harness skills and quiet checkpoints. Ad-hoc signed, not notarized.",
+  "author": {
+    "name": "swordfish444",
+    "url": "https://github.com/swordfish444"
+  },
   "homepage": "https://github.com/swordfish444/BurnZombies",
   "documentation": "https://github.com/swordfish444/BurnZombies/blob/main/docs/MCP.md",
   "support": "https://github.com/swordfish444/BurnZombies/issues",
@@ -19,11 +22,37 @@
     }
   },
   "tools": [
-    { "name": "burnzombies_status", "description": "Check resource pressure and eligible abandoned helpers." },
-    { "name": "burnzombies_preview", "description": "Preview a cleanup through the native app's safety rules." },
-    { "name": "burnzombies_burn", "description": "Execute an approved cleanup preview; may terminate eligible disposable helpers." }
+    {
+      "name": "burnzombies_status",
+      "description": "Read process-family counts, pressure and receipts."
+    },
+    {
+      "name": "burnzombies_inspect",
+      "description": "Inspect bounded live process evidence."
+    },
+    {
+      "name": "burnzombies_preview",
+      "description": "Preview agent-selected identities with ownership rationale."
+    },
+    {
+      "name": "burnzombies_burn",
+      "description": "Request guarded SIGTERM for a fresh preview."
+    },
+    {
+      "name": "burnzombies_checkpoint",
+      "description": "Quiet cached-signal lifecycle callback; never stops processes."
+    }
   ],
-  "compatibility": { "platforms": ["darwin"] },
+  "compatibility": {
+    "platforms": [
+      "darwin"
+    ]
+  },
   "license": "MIT",
-  "keywords": ["macos", "agents", "processes", "cleanup"]
+  "keywords": [
+    "macos",
+    "agents",
+    "processes",
+    "cleanup"
+  ]
 }

@@ -18,7 +18,11 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.2.0
+      BurnZombies 0.3.0
+      install [--harness auto|all|codex|claude|cursor|copilot|gemini]
+        Connect installed harnesses: MCP, skill and lifecycle checkpoints. No reboot.
+      hook --client NAME --event EVENT
+        Native lifecycle adapter. Emits context only; never stops processes.
       run --label NAME [--allow-cleanup] -- /absolute/command [arguments]
         Track this NEW command and observed descendants. Opt in only for disposable,
         noninteractive helpers. Standard streams pass through. Arguments are not saved.
@@ -29,6 +33,20 @@ do {
         Sacrificial 48 MiB helper, hard lifetime 20 minutes. Tests only.
       BURNZOMBIES_HOME overrides the private state directory for isolated tests.
       """)
+  case "install":
+    try HarnessInstall.run(Array(args.dropFirst()))
+  case "hook":
+    // Invalid/missing context must never disrupt the user's work.
+    do {
+      guard let ci = args.firstIndex(of: "--client"), ci + 1 < args.count,
+        let ei = args.firstIndex(of: "--event"), ei + 1 < args.count,
+        let data = try FileHandle.standardInput.read(upToCount: 1_048_576),
+        let input = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+      else { print("{}"); exit(0) }
+      let output = try HarnessHook.response(client: args[ci + 1], event: args[ei + 1], input: input)
+      let encoded = try JSONSerialization.data(withJSONObject: output, options: .sortedKeys)
+      print(String(decoding: encoded, as: UTF8.self))
+    } catch { print("{}") }
   case "scan":
     let start = ProcessInfo.processInfo.systemUptime
     let s = Native().scan()

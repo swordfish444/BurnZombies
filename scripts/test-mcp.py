@@ -7,6 +7,8 @@ from pathlib import Path
 import select
 import subprocess
 import tempfile
+import time
+import statistics
 
 repo = Path(__file__).resolve().parents[1]
 binary = repo / ".build/debug"
@@ -42,12 +44,12 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
             result = json.loads(line(server))
             assert result["id"] == sequence, result
             return result
-        initialized = send("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+        initialized = send("initialize", {"protocolVersion": "2025-11-25", "capabilities": {"experimental": {"codex/auth-change": {}}},
                                          "clientInfo": {"name": "BurnZombies proof", "version": "1"}})
         assert initialized["result"]["serverInfo"]["name"] == "BurnZombies"
         send("notifications/initialized", notification=True)
         tools = send("tools/list")["result"]["tools"]
-        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_preview", "burnzombies_burn"}
+        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint"}
         burn = next(t for t in tools if t["name"] == "burnzombies_burn")
         assert burn["annotations"]["destructiveHint"] is True
         def call(name, args): return send("tools/call", {"name": name, "arguments": args})
@@ -55,6 +57,26 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         assert not status.get("isError")
         actual = json.loads(status["content"][0]["text"])
         assert actual["ok"] and actual["observedProcesses"] > 0 and actual["verifiedHelpers"] == 0
+        checkpoint = call("burnzombies_checkpoint", {"client": "codex", "tool_name": "burnzombies_status"})["result"]
+        assert not checkpoint.get("isError") and json.loads(checkpoint["content"][0]["text"]) == {}
+        Path(root, "review-request").write_text("requested")
+        checkpoint = json.loads(call("burnzombies_checkpoint", {"client": "claude", "tool_name": "Bash"})["result"]["content"][0]["text"])
+        assert checkpoint["hookSpecificOutput"]["additionalContext"] and "decision" not in checkpoint
+        assert "error" in call("burnzombies_checkpoint", {"client": "codex", "event": "Stop"})
+        timings = []
+        for _ in range(100):
+            start = time.perf_counter()
+            quiet = call("burnzombies_checkpoint", {"client": "codex", "tool_name": "Bash"})["result"]
+            timings.append((time.perf_counter()-start)*1000)
+            assert json.loads(quiet["content"][0]["text"]) == {}, 'unchanged checkpoint emitted context'
+        print(f"PASS 100 quiet MCP checkpoints: median {statistics.median(timings):.2f} ms, p95 {sorted(timings)[94]:.2f} ms")
+
+        inspection = call("burnzombies_inspect", {"pids": [server.pid]})["result"]
+        inspected = json.loads(inspection["content"][0]["text"])
+        assert len(inspected["processes"]) == 1 and inspected["processes"][0]["protectedReason"]
+        assert "error" in call("burnzombies_inspect", {"pids": [True]})
+        assert "error" in call("burnzombies_inspect", {"offset": -1})
+        assert "error" in call("burnzombies_preview", {"finding_id": "11111111-1111-1111-1111-111111111111"})
         assert "error" in call("burnzombies_status", {"pid": 1})
         assert "error" in call("burnzombies_burn", {"preview_token": "fake"})
         denied = call("burnzombies_burn", {"preview_token": "11111111-1111-1111-1111-111111111111"})["result"]

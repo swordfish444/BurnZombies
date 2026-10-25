@@ -6,15 +6,53 @@ public struct AgentRequest: Codable, Sendable {
   public let operation: String
   public let findingID: String?
   public let previewToken: String?
-  public init(_ operation: String, findingID: String? = nil, previewToken: String? = nil) {
-    self.operation = operation; self.findingID = findingID; self.previewToken = previewToken
+  public let processIDs: [String]?
+  public let pids: [Int32]?
+  public let offset: Int?
+  public let label: String?
+  public let rationale: String?
+  // Populated from the authenticated Unix peer, never from request JSON.
+  public var callerPID: Int32 = -1
+  enum CodingKeys: String, CodingKey {
+    case operation, findingID, previewToken, processIDs, pids, offset, label, rationale
   }
+  public init(_ operation: String, findingID: String? = nil, previewToken: String? = nil,
+    processIDs: [String]? = nil, pids: [Int32]? = nil, offset: Int? = nil,
+    label: String? = nil, rationale: String? = nil) {
+    self.operation = operation; self.findingID = findingID; self.previewToken = previewToken
+    self.processIDs = processIDs; self.pids = pids; self.offset = offset
+    self.label = label; self.rationale = rationale
+  }
+}
+
+public struct AgentProcess: Codable, Sendable {
+  public let id: String
+  public let pid: Int32
+  public let parentPID: Int32
+  public let executable: String
+  public let residentBytes: UInt64
+  public let cpuPercent: Double?
+  public let cpuTimeNS: UInt64
+  public let readBytes: UInt64
+  public let writeBytes: UInt64
+  public let observationCount: Int
+  public let exitedChild: Bool
+  public let protectedReason: String?
+}
+public struct AgentGroup: Codable, Sendable {
+  public let executableName: String
+  public let count: Int
+  public let residentBytes: UInt64
 }
 
 public struct AgentReply: Codable, Sendable {
   public var ok: Bool
   public var message: String
   public var findings: [AgentFinding] = []
+  public var processes: [AgentProcess] = []
+  public var groups: [AgentGroup] = []
+  public var nextOffset: Int?
+  public var partial = false
   public var receipts: [AgentReceipt] = []
   public var verifiedHelpers = 0
   public var memoryReleasedBytes: UInt64 = 0
@@ -43,57 +81,83 @@ public struct AgentReceipt: Codable, Sendable {
   public let verifiedHelpers: Int
 }
 
-/// The app remains the only catalog owner. Agents use the same action authority.
+/// One local evidence/actuation bridge, shared by all harnesses. No model or classifier here.
 public actor AgentService {
   private let monitor: Monitor
-  private var previews: [String: (Finding, Date)] = [:]
+  private struct Preview {
+    let targets: [Observation]
+    let label: String
+    let rationale: String
+    let created: Date
+  }
+  private var previews: [String: Preview] = [:]
   public init(monitor: Monitor) { self.monitor = monitor }
   public func call(_ request: AgentRequest) async -> AgentReply {
-    guard ["status", "preview", "burn"].contains(request.operation) else {
+    guard ["status", "inspect", "preview", "burn"].contains(request.operation) else {
       return AgentReply(ok: false, message: "Unknown operation.")
     }
-    previews = previews.filter { Date().timeIntervalSince($0.value.1) < 60 }
+    previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
     var state = await monitor.snapshot()
     if request.operation != "status" || Date().timeIntervalSince(state.catalog.lastSample ?? .distantPast) >= 5 {
       state = await monitor.refresh()
     }
     if let error = state.error { return AgentReply(ok: false, message: error) }
-    var reply = AgentReply(message: "Monitoring is active. Only explicitly registered disposable helpers can be burned.")
-    if request.operation == "preview" {
-      guard let id = request.findingID, UUID(uuidString: id) != nil,
-        let finding = state.findings.first(where: { $0.id == id && $0.disposition == .eligible }),
-        !state.partial else {
-        return AgentReply(ok: false, message: "This activity is not eligible. Active, unknown and protected work stays untouched.")
-      }
-      guard previews.count < 16 else {
-        return AgentReply(ok: false, message: "Too many open previews. Wait for a preview to expire.")
-      }
-      let token = UUID().uuidString
-      previews[token] = (finding, Date())
-      reply.previewToken = token
-      reply.message = "Preview: stop \(finding.members.count) disposable helper(s) in \(finding.title). \(finding.reason) This requests SIGTERM and is irreversible. Token expires in 60 seconds."
-    } else if request.operation == "burn" {
-      guard let token = request.previewToken, let (finding, created) = previews.removeValue(forKey: token),
-        Date().timeIntervalSince(created) < 60 else {
-        return AgentReply(ok: false, message: "A fresh, unused preview token is required. Preview the activity again.")
-      }
-      do {
-        reply.message = try await monitor.cleanup(finding)
+    var reply = AgentReply(message: "Agent-led cleanup. Inspect live evidence and use your session context to distinguish abandoned helpers from active work. No wrapper or computer restart required.")
+    do {
+      if request.operation == "inspect" {
+        let offset = request.offset ?? 0
+        guard offset >= 0, offset <= 4096, (request.pids?.count ?? 0) <= 64,
+          request.pids?.allSatisfy({ $0 > 0 }) ?? true else {
+          return AgentReply(ok: false, message: "Use an offset from 0 to 4096 and at most 64 positive PIDs.")
+        }
+        let live = state.catalog.records.values.filter {
+          $0.missingSince == nil && (request.pids == nil || request.pids!.contains($0.latest.identity.pid))
+        }.sorted { $0.latest.identity.pid < $1.latest.identity.pid }
+        let protected = (AgentSafety.ancestors(of: request.callerPID) ?? []).union(
+          AgentSafety.ancestors(of: getpid()) ?? [])
+        reply.processes = live.dropFirst(offset).prefix(64).map { r in
+          let o = r.latest
+          return AgentProcess(id: r.id, pid: o.identity.pid, parentPID: o.parent,
+            executable: o.executable, residentBytes: o.rss, cpuPercent: r.cpuPercent,
+            cpuTimeNS: o.cpuNS, readBytes: o.readBytes, writeBytes: o.writeBytes,
+            observationCount: r.samples.count, exitedChild: o.zombie,
+            protectedReason: AgentSafety.refusal(r, preferences: state.catalog.preferences, protectedPIDs: protected))
+        }
+        if offset + 64 < live.count { reply.nextOffset = offset + 64 }
+        reply.message = "Process evidence, not a disposal verdict. Names, paths and parent=1 do not prove abandonment. Use workspace/session ownership and your harness tools to resolve uncertain work."
+      } else if request.operation == "preview" {
+        guard let ids = request.processIDs, let label = request.label,
+          !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, label.count <= 120,
+          let rationale = request.rationale, rationale.trimmingCharacters(in: .whitespacesAndNewlines).count >= 20,
+          rationale.count <= 2000, previews.count < 16 else {
+          return AgentReply(ok: false, message: "Provide exact process_ids from inspect, a short label and an evidence-based rationale (20–2000 characters).")
+        }
+        let targets = try await monitor.previewTargets(ids, callerPID: request.callerPID)
+        let token = UUID().uuidString
+        previews[token] = Preview(targets: targets, label: label, rationale: rationale, created: Date())
+        reply.previewToken = token
+        reply.message = "Preview: graceful stop of \(targets.count) exact process identities. The harness owns the abandonment decision and must have cleanup authorization. Token expires in 60 seconds. No process was stopped."
+      } else if request.operation == "burn" {
+        guard let token = request.previewToken, let preview = previews.removeValue(forKey: token) else {
+          return AgentReply(ok: false, message: "A fresh, unused preview token is required.")
+        }
+        reply.message = try await monitor.burnTargets(preview.targets, label: preview.label,
+          rationale: preview.rationale, callerPID: request.callerPID)
         state = await monitor.snapshot()
-      } catch { return AgentReply(ok: false, message: error.localizedDescription) }
-    }
+      }
+    } catch { return AgentReply(ok: false, message: error.localizedDescription) }
     reply.verifiedHelpers = state.catalog.lifetimeVerified
     reply.memoryReleasedBytes = state.catalog.lifetimeResidentReleased ?? 0
     reply.cpuSecondsSaved = state.catalog.lifetimeCPUSecondsSaved
     reply.memoryPressure = Native().memoryPressure()
     reply.observedProcesses = state.processCount
     reply.observedAt = state.catalog.lastSample
-    // Only owned activities expose actionable IDs. Inferred group IDs can contain paths.
-    let ordered = state.findings.sorted { ($0.disposition == .eligible ? 0 : 1) < ($1.disposition == .eligible ? 0 : 1) }
-    reply.findings = ordered.prefix(40).map { finding in
-      AgentFinding(id: finding.leaseID?.uuidString ?? "", label: finding.title,
-        disposition: finding.disposition.rawValue, reason: finding.reason,
-        helperCount: finding.members.count, residentBytes: finding.rss)
+    reply.partial = state.partial
+    if request.operation == "status" {
+      let groups = Dictionary(grouping: state.catalog.records.values.filter { $0.missingSince == nil }, by: { $0.latest.name })
+      reply.groups = groups.map { name, records in
+        AgentGroup(executableName: name, count: records.count, residentBytes: records.reduce(0) { $0 + $1.latest.rss })
+      }.sorted { $0.residentBytes > $1.residentBytes }.prefix(20).map { $0 }
     }
     reply.receipts = state.catalog.events.suffix(10).map {
       AgentReceipt(id: $0.id, outcome: $0.outcome, verifiedHelpers: $0.verifiedCount)
@@ -133,7 +197,11 @@ public final class AgentListener: @unchecked Sendable {
           guard count > 0 else { continue }
           let data = input.withUnsafeBytes { Data($0.prefix(Int(count))) }
           let reply: AgentReply
-          do { reply = await handler(try JSONDecoder().decode(AgentRequest.self, from: data)) }
+          do {
+            var request = try JSONDecoder().decode(AgentRequest.self, from: data)
+            request.callerPID = bz_agent_peer_pid(client)
+            reply = await handler(request)
+          }
           catch { reply = AgentReply(ok: false, message: "Invalid agent request.") }
           let line = try reply.json() + "\n"
           guard line.utf8.count <= 262_144 else { continue }

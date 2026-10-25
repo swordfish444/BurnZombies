@@ -61,48 +61,34 @@ final class PressureTests: TestSuite {
         checkFalse(observation.zombie, "Living idle worker mislabeled zombie")
         catalog.records[observation.identity.key] = Record(observation)
       }
-      let findings = DecisionEngine.findings(
-        catalog: catalog, leases: [], owners: [:], uid: getuid(), ownPID: getpid(), now: Date())
-      equal(
-        findings.filter {
-          $0.evidence.contains("Kernel zombie state; sending signals cannot reap it.")
-        }.count, 32)
-      checkFalse(
-        findings.contains { $0.disposition == .eligible },
-        "Burst created unauthorized cleanup targets")
+      for r in catalog.records.values where r.latest.zombie {
+        check(AgentSafety.refusal(r, preferences: catalog.preferences, protectedPIDs: []) != nil)
+      }
       check(live.allSatisfy(\.isRunning), "A legitimate worker did not survive")
     }
   }
 
-  func testMixedPolicyPressure() {
-    let fixture = DecisionTests()
-    var granted = 0
+  func testMixedSafetyPressure() {
     for index in 0..<4096 {
-      var record = fixture.record()
-      var lease = fixture.lease(record)
-      var owner = OwnerState.gone
-      let kind = index % 8
-      switch kind {
-      case 1: owner = .alive
-      case 2: owner = .unknown
-      case 3: lease.disarmed = true
-      case 4: record.latest.metricsValid = false
-      case 5:
-        record.latest.writeBytes += 1
-        record.latest.monotonic += 1
-      case 6: record.latest.identity.seconds += 1
-      case 7: record.protection = true
+      var r = SafetyTests().record()
+      r.latest.uid = getuid()
+      switch index % 8 {
+      case 1: r.latest.uid += 1
+      case 2: r.latest.zombie = true
+      case 3: r.protection = true
+      case 4: r.latest.metricsValid = false
+      case 5: r.latest.executable = "/System/service"
+      case 6: r.latest.identity.pid = 1
+      case 7: r.ignoreUntil = Date().addingTimeInterval(600)
       default: break
       }
-      let eligible = fixture.eligible(record, lease, owner)
-      equal(eligible, kind == 0, "Wrong decision in mixed simulation \(index)")
-      if eligible { granted += 1 }
+      equal(AgentSafety.refusal(r, preferences: Preferences(), protectedPIDs: []) == nil,
+        index % 8 == 0, "Wrong mechanical boundary at \(index)")
     }
-    equal(granted, 512)
   }
 
   func testCPUProjection() {
-    var record = DecisionTests().record()
+    var record = SafetyTests().record()
     for i in record.samples.indices {
       // A large historical total must not be mistaken for CPU saved.
       record.samples[i].cpuNS = 900_000_000_000 + UInt64(i) * 300_000_000
@@ -114,7 +100,7 @@ final class PressureTests: TestSuite {
     record.latest.metricsValid = false
     isNil(ImpactAccounting.cpuSecondsSaved([record]))
     isNil(ImpactAccounting.cpuSecondsSaved([]))
-    record = DecisionTests().record()
+    record = SafetyTests().record()
     equal(ImpactAccounting.cpuSecondsSaved([record]), 0)
     record.samples = [record.latest]
     isNil(ImpactAccounting.cpuSecondsSaved([record]))

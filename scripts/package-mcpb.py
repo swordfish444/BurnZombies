@@ -48,7 +48,7 @@ def main():
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "io.github.swordfish444/burnzombies",
         "title": "BurnZombies",
-        "description": "Clear eligible abandoned agent helpers and reclaim resources on macOS.",
+        "description": "Harness-led cleanup of abandoned agent helpers on macOS.",
         "version": manifest["version"],
         "repository": {"url": "https://github.com/swordfish444/BurnZombies", "source": "github"},
         "packages": [{

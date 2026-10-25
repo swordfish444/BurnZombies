@@ -20,6 +20,80 @@ func agentBridgeProof() async throws {
   checkFalse(forged.ok, "forged preview token accepted")
   let unknown = await service.call(AgentRequest("delete"))
   checkFalse(unknown.ok)
+  func call(_ request: AgentRequest) async throws -> AgentReply {
+    let raw = try await Task.detached { try AgentConnection.call(request, root: root) }.value
+    return try decoder.decode(AgentReply.self, from: Data(raw.utf8))
+  }
+  let inspected = try await call(AgentRequest("inspect", pids: [getpid()]))
+  equal(inspected.processes.count, 1)
+  check(inspected.processes.first?.protectedReason != nil, "authenticated caller ancestry was not protected")
+  let ownPreview = try await call(AgentRequest("preview", processIDs: inspected.processes.map(\.id),
+    label: "self", rationale: "Test must not allow terminating the requesting harness."))
+  checkFalse(ownPreview.ok)
+
+  let disposable = Process(), active = Process()
+  for process in [disposable, active] {
+    process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    process.arguments = ["300"]
+    try process.run()
+  }
+  defer {
+    for process in [disposable, active] {
+      if process.isRunning { process.terminate() }
+      process.waitUntilExit()
+    }
+  }
+  let targets = try await call(AgentRequest("inspect", pids: [disposable.processIdentifier]))
+  equal(targets.processes.count, 1)
+  let noPeer = await service.call(AgentRequest("preview", processIDs: targets.processes.map(\.id),
+    label: "Unknown peer", rationale: "An unauthenticated peer must not receive a cleanup preview."))
+  checkFalse(noPeer.ok, "missing peer PID did not fail closed")
+  check(disposable.isRunning && active.isRunning, "observation stopped work")
+  let preview = try await call(AgentRequest("preview", processIDs: targets.processes.map(\.id),
+    label: "Owned sacrificial fixture", rationale: "The test created this exact disposable process; its job is finished. The separate active control is excluded."))
+  guard let token = preview.previewToken else { throw StoreError.message(preview.message) }
+  check(disposable.isRunning, "preview stopped work")
+  let burned = try await call(AgentRequest("burn", previewToken: token))
+  check(burned.ok, burned.message)
+  equal(burned.verifiedHelpers, 0, "pending request credited as verified")
+  disposable.waitUntilExit()
+  check(active.isRunning, "active control was killed")
+  let replay = try await call(AgentRequest("burn", previewToken: token))
+  checkFalse(replay.ok, "single-use token replay accepted")
+  let stale = try await call(AgentRequest("preview", processIDs: targets.processes.map(\.id),
+    label: "Expired identity", rationale: "The selected process already exited and must be rejected."))
+  checkFalse(stale.ok, "exited identity accepted")
+
+  let hookTime = Date()
+  let store = try Store(root: root)
+  try HarnessHook.publish(.init(observedAt: hookTime, processCount: 10, residentBytes: 1024, pressure: "Low"), store: store)
+  let firstHook = try HarnessHook.response(client: "claude", event: "PostToolUse", input: [:], root: root, now: hookTime)
+  check(firstHook.isEmpty, "quiet baseline interrupted a session")
+  let later = hookTime.addingTimeInterval(700)
+  try HarnessHook.publish(.init(observedAt: later, processCount: 10, residentBytes: 1024, pressure: "Low"), store: store)
+  let hookResult1 = try HarnessHook.response(client: "codex", event: "PostToolUse", input: [:], root: root, now: later)
+  check(hookResult1.isEmpty,
+    "unchanged machine triggered a repeated review")
+  try HarnessHook.publish(.init(observedAt: later, processCount: 35, residentBytes: 1024, pressure: "Low"), store: store)
+  let hookResult2 = try HarnessHook.response(client: "claude", event: "PostToolUse", input: [:], root: root, now: later)
+  check(hookResult2["hookSpecificOutput"] != nil)
+  let hookResult3 = try HarnessHook.response(client: "codex", event: "PostToolUse", input: [:], root: root, now: later)
+  check(hookResult3.isEmpty,
+    "simultaneous harnesses caused a review storm")
+  try HarnessHook.requestCleanup(root: root)
+  let hookResult4 = try HarnessHook.response(client: "codex", event: "Stop", input: [:], root: root, now: later)
+  check(hookResult4.isEmpty,
+    "hygiene prevented a turn from ending")
+  let hookResult5 = try HarnessHook.response(client: "codex", event: "PostToolUse", input: ["tool_name": "mcp__burnzombies__status"], root: root, now: later)
+  check(hookResult5.isEmpty,
+    "hygiene triggered itself")
+  let requestedHook = try HarnessHook.response(client: "codex", event: "PostToolUse", input: [:], root: root, now: later)
+  check(requestedHook["hookSpecificOutput"] != nil)
+  check(requestedHook["decision"] == nil, "checkpoint must never block")
+  try HarnessHook.requestCleanup(root: root)
+  let hookResult6 = try HarnessHook.response(client: "codex", event: "PostToolUse", input: [:], root: root, now: later.addingTimeInterval(181))
+  check(hookResult6.isEmpty,
+    "stale observations triggered a review")
   throwsError(try AgentListener(root: root) { _ in AgentReply(message: "wrong owner") })
   var metadata = stat()
   equal(lstat(AgentListener.socketPath(root), &metadata), 0)

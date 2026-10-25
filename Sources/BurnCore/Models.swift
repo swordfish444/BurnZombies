@@ -135,6 +135,7 @@ public struct CleanupEvent: Codable, Identifiable, Sendable {
   public var label: String
   public var date: Date
   public var targets: [Member]
+  public var recurrenceScopes: [RecurrenceScope]?
   public var residentBefore: UInt64
   public var outcome: String
   public var detail: String
@@ -155,6 +156,12 @@ public struct CleanupEvent: Codable, Identifiable, Sendable {
     self.outcome = outcome
     self.detail = detail
   }
+}
+
+public struct RecurrenceScope: Codable, Sendable {
+  public var executable: String
+  public var parent: Member
+  public init(executable: String, parent: Member) { self.executable = executable; self.parent = parent }
 }
 
 public struct Preferences: Codable, Sendable {

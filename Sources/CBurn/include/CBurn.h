@@ -26,6 +26,7 @@ int32_t bz_zombie_fixture(void);
 int bz_memory_pressure(void);
 int bz_agent_listen(const char *path);
 int bz_agent_accept(int listener, int wakeup);
+int32_t bz_agent_peer_pid(int fd);
 int bz_agent_wakeup_pair(int *fds);
 int bz_agent_connect(const char *path);
 int bz_agent_read(int fd, char *buffer, int capacity);

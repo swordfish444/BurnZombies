@@ -2,11 +2,11 @@
 
 # BurnZombies
 
-**Keep yesterday’s agent runs from slowing down today’s.**
+**Keep your agents running. Lose the leftovers.**
 
-Long-running agents and harnesses leave more than code behind. Finished sessions, cancelled runs and retries can leave helpers running in the background, taking up resources your next job needs.
+Long sessions leave a mess: abandoned Node workers, forgotten browser helpers, cancelled jobs that never quite died. Eventually your Mac pays for work that already ended.
 
-BurnZombies lives in your Mac’s menu bar, spots the buildup, and burns eligible abandoned helpers. Get memory back. Clear the dead weight. Keep building.
+BurnZombies puts cleanup inside the agent harness you already use. **Your agent figures out what is abandoned. BurnZombies handles guarded stops and shows what you got back.** Keep the session. Skip the reboot.
 
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-242420?logo=apple&logoColor=white)](#install)
 [![MCP ready](https://img.shields.io/badge/MCP-ready-ff541f)](docs/MCP.md)
@@ -18,30 +18,28 @@ BurnZombies lives in your Mac’s menu bar, spots the buildup, and burns eligibl
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-Apple Silicon or Intel, macOS 14+. Installs the app and connects Codex or Claude Code when available. No compiler or package manager needed. [Install options](docs/INSTALL.md).
+Apple Silicon or Intel, macOS 14+. One command installs the menu bar app, MCP tools, agent skill and a quiet checkpoint for detected **Codex, Claude Code, Cursor, GitHub Copilot CLI and Gemini CLI**. No account, API key, compiler or package manager for BurnZombies.
 
-Start a new agent session and ask:
+Tell your agent once:
 
-> **Tame the horde with BurnZombies.**
+> **Tame the horde with BurnZombies and keep this session healthy.**
 
-Or ask your agent to handle setup:
-
-> Install BurnZombies and connect its MCP server using https://github.com/swordfish444/BurnZombies/blob/main/docs/INSTALL.md
+It checks buildup as you work, uses its session context to separate leftovers from live jobs, and cleans up within your permissions. No special launch wrapper. No computer restart. [Harness setup and first-use trust](docs/INSTALL.md).
 
 ## Dead weight. Gone.
 
 ![BurnZombies verifies a real helper cleanup and updates Impact](docs/media/live-cleanup.gif)
 
-- **Find the buildup.** See abandoned helpers, growing resource use and recurring processes grouped into activities.
-- **Reclaim room for the next run.** Stop eligible leftovers while active and uncertain work stays protected.
-- **Let your agent handle it.** Check, preview and burn through MCP, using the same cleanup rules as the app.
-- **See the payoff.** Verified burns, memory released, CPU time saved and before/after local responsiveness.
+- **Built for long runs.** A quiet checkpoint brings cleanup into the ongoing agent session. Unchanged state adds no chatter.
+- **Your harness does the thinking.** The model can inspect ownership, dependencies and current work instead of obeying a fixed “old process = zombie” rule.
+- **Keep the good stuff alive.** Exact identities, protected harnesses, graceful stops and verified receipts. Uncertain work stays running.
+- **See the payoff.** Zombies burned, memory released, CPU time saved and agent speed in a quiet menu bar app.
+- **Stays out of your way.** No startup audits, blocked end-of-turn hooks or windows opening when an agent connects.
+- **Safe cleanup, on demand.** Queue a review from the app or ask the agent directly.
 
-Monitoring starts immediately. Cleanup covers explicitly registered disposable helpers; [connect your helper workflow](docs/MCP.md#track-disposable-helpers) to make them eligible.
+The native app observes and verifies. It runs no separate model and makes no autonomous kill decisions. Your existing harness owns reasoning and tool approval. [How it works →](docs/MCP.md)
 
-Local monitoring. No BurnZombies account, cloud service or subscription.
-
-**Next:** deeper harness integrations, notarized Mac releases, and Windows. [Roadmap →](docs/ROADMAP.md)
+**Next:** more real-session validation, notarized Mac releases, and Windows. [Roadmap →](docs/ROADMAP.md)
 
 [User guide](docs/USER_GUIDE.md) · [MCP](docs/MCP.md) · [How cleanup works](docs/SAFETY.md) · [Build & contribute](CONTRIBUTING.md) · [Security](SECURITY.md)
 

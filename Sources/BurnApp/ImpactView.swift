@@ -190,10 +190,14 @@ struct BurnStatus: View {
       Text(
         model.state.error != nil
           ? "Needs attention"
-          : (model.demo || model.state.catalog.preferences.automaticCleanup
-            ? "Auto-burn on" : "Auto-burn off")
+          : "Agent-led cleanup"
       )
       .font(.system(size: 18)).foregroundStyle(Color(white: 0.82))
+      Button(model.cleanupQueued ? "Queued" : "Safe cleanup") { model.requestAgentCleanup() }
+        .font(.system(size: 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
+        .padding(.horizontal, 9).padding(.vertical, 6)
+        .background(BurnTheme.orange.opacity(0.08), in: Capsule())
+        .help("Queue an agent review at the next lifecycle checkpoint. No reboot; no automatic process-name kills.")
     }
   }
 }
