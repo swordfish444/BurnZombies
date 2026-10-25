@@ -4,7 +4,9 @@ Validation date: 2026-10-25. Development host: Apple Silicon, macOS 15.8.1, 16 l
 
 ## Automated evidence
 
-`scripts/test.sh --integration`: **35 checks, zero failures**, plus the full three-worker lifecycle. The three independently owned detached helpers became eligible after **196 seconds** of monitoring; cleanup, recurrence watching, CPU projections, deduplication and persisted accounting completed at **327 seconds**. The wrapper setup occurs before this timed monitor interval.
+`scripts/test.sh --integration`: **35 checks, zero failures**, plus the full three-worker lifecycle. The latest local receipt-regression run found the three independently owned detached helpers eligible after **192 seconds** of monitoring; cleanup, recurrence watching, CPU projections, deduplication and immediate persisted accounting completed at **321 seconds**. The wrapper setup occurs before this timed monitor interval.
+
+[Final source CI](https://github.com/swordfish444/BurnZombies/actions/runs/40221396685) passed the full integration suite and release app build on `macos-15` at source commit `a8b2db6`. Later documentation-only commits do not rerun the source workflow.
 
 Coverage includes explicit authority, active/unknown owners, consumed permissions, PID reuse and executable changes, real and synthetic zombies, CPU/disk activity, grace periods, stale/missing observations, protection/snooze, independent jobs, sustained growth, restart loops, restart/wake continuity reset, private storage, corruption, symlinks, single-instance locking, retention, partial/unknown/recurring outcomes, interrupted verification, actual SIGTERM, a real hung process, and real wrapper cancellation.
 
@@ -31,7 +33,9 @@ The final 428 × 795-point compact view and 1008 × 930-point Impact window were
 - Exercised Today / 7 days / All time, Impact details, Burn Log, finding details and Settings navigation.
 - Used the demo-only animation control: count changed from 128 to 146, memory from 6.4 to 7.6 GB; the flame perked, six embers rose, then the surface settled. [Native animation capture](media/burn.gif).
 - Verified the real NSPopover through accessibility. The persistent compact capture hosts the identical view to avoid transient dismissal during capture.
-- Earlier live UI testing reviewed an explicitly registered sacrificial helper, protected and unprotected it, previewed a graceful stop, requested it, and confirmed a persisted receipt with exactly one helper credited. No active user workload was terminated.
+- Live UI testing reviewed an explicitly registered sacrificial helper, protected and unprotected it, previewed a graceful stop, and requested it. A later independent helper became eligible automatically, was stopped through the native preview flow, and completed its recurrence watch. The lifetime count remained one while verification was pending, then became two; memory, CPU-time and before/after responsiveness values updated. The exact test child was gone and subsequent refreshes did not credit it again. No active user workload was terminated.
+
+Two integration gaps surfaced during native acceptance. First, observations were not advancing reliably without manual refresh: the timer now runs explicitly on the main run loop in common modes. Settings showed successive automatic observations at 12:17:00 and 12:17:53 on the development host, followed by automatic eligibility. Second, a direct saved-catalog read showed that newly displayed credit could wait for the periodic checkpoint. Terminal receipt changes now trigger an immediate checkpoint, retrying on storage failure. The lifecycle regression reads the saved receipt and totals without calling `checkpoint()` itself.
 
 The animation observes newly verified lifetime-count increments, skips initial catalog loading, and never credits a pending or failed request. Reduced Motion suppresses the custom burst and counter transitions; the OS preference itself was not changed on the development host. Full VoiceOver, multiple display arrangements and installed permission flows remain unvalidated.
 
@@ -53,19 +57,25 @@ Normal checkpoints occur every five minutes. Preferences, grants and receipts re
 
 ### Measured development soak
 
-A release build before the final visual refinement ran for **900.004 seconds**, with 91 samples across monitoring, native UI interaction and a controlled cleanup. Its five-minute settled interval was measured separately. These establish bounded development behavior, not weeks of reliability.
+The build with the corrected native scheduler ran for **600.001 seconds**, with 61 samples across automatic monitoring, native UI interaction and a controlled cleanup. The catalog reached its 4,096-record retention ceiling during development process churn. These establish bounded development behavior, not weeks of reliability.
 
-| Metric | 15-minute mixed activity | 5-minute settled interval |
-|---|---:|---:|
-| CPU, percent of one core | 0.00656% | 0.00239% |
-| Physical footprint start → end | 74.27 → 110.03 MiB | 102.69 → 110.05 MiB |
-| Sampled peak physical footprint | 112.14 MiB | 112.14 MiB |
-| Interrupt wakeups / second | 0.4211 | 0.0800 |
-| Package-idle wakeups / second | 0 | 0 |
-| Disk bytes written | 1,511,424 | 618,496 |
-| Logical bytes written | 1,617,920 | 630,784 |
+| Metric | 10-minute automatic monitoring and cleanup |
+|---|---:|
+| CPU, percent of one core | 0.01172% |
+| Physical footprint start → end | 92.49 → 133.02 MiB |
+| Sampled peak physical footprint | 133.06 MiB |
+| Interrupt wakeups / second | 0.7683 |
+| Package-idle wakeups / second | 0 |
+| Disk bytes written | 1,716,224 |
+| Logical bytes written | 1,859,584 |
 
-The settled write rate extrapolates to roughly **173 MiB/day**, not a measured day-long total. The observed catalog checkpoint was 615,817 bytes with 2,972 retained records. The final app bundle is approximately 3.2 MiB on disk, including artwork and the bundled font. Individual process visibility and unrelated workload churn vary over time.
+CPU and wakeups met their targets. Peak memory exceeded the 128 MiB target by 5.06 MiB. The subsequent build adds an autorelease pool around each synchronous observation pass to bound temporary Foundation allocations.
+
+A **300.005-second** follow-up on that final build, using the same full catalog after restart, collected 31 samples. It measured **0.00333% of one CPU core**, **91.95 → 103.70 MiB physical footprint** (103.70 MiB sampled peak), **0.2067 interrupt wakeups/second**, and zero package-idle wakeups. These sampled CPU, memory and wakeup results met the targets. This interval contained no checkpoint write; its zero disk/logical-write deltas are not a zero daily-write claim. The longer run above includes real durable writes. The five-minute follow-up does not establish a long-uptime memory ceiling.
+
+The app bundle is approximately 3.3 MiB on disk, including artwork and the bundled font. After testing, the final app was started with its normal private storage; test receipts remained in isolated validation storage, and automatic cleanup remained off.
+
+Earlier 15-minute and five-minute development measurements predated the scheduler repair. They are not used as proof of unattended monitoring. Raw process evidence remains private; only aggregate results are published.
 
 ## What the numbers mean
 
