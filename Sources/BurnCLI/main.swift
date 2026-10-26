@@ -54,8 +54,8 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.4.0
-      setup [--harness auto|codex|claude|cursor|copilot|gemini|none]
+      BurnZombies 0.5.0
+      setup [--harness auto|codex|claude|cursor|copilot|gemini|none] [--model ID|default] [--thinking LEVEL|default]
         Enable computer-wide background reviews. No chat hooks or live config edits.
       install [--harness auto|all|codex|claude|cursor|copilot|gemini]
         Connect installed harnesses: MCP, skill and lifecycle checkpoints. No reboot.

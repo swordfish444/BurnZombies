@@ -4,10 +4,11 @@ Validated on macOS 15.8.1 / Apple Silicon. Version 0.4 removes the dependency on
 
 ## Verified
 
-- 19 native checks include first-review dispatch without chat events, changed-state coalescing, stale-signal refusal, persistent failure pause, no provider fallback, inert legacy hooks and cross-project process visibility.
+- 20 native checks include model/effort migration and persistence, first-review dispatch without chat events, changed-state coalescing, stale-signal refusal, persistent failure pause, no provider fallback, inert legacy hooks and cross-project process visibility.
 - Existing execution safeguards cover 32 real OS zombies with eight live controls, 4,096 mixed mechanical safety scenarios, exact identities, unknown IPC-peer refusal, corrupt storage and active-work preservation.
 - Real Codex and Claude CLI tests use the production `MachineReviewer.execute` path, not interactive chats. Three real Node workers are created in separate project directories before the background review. Each model selects the two completed/cancelled disposable jobs from controller-provided lifecycle evidence, preserves the active job, and produces two verified exit receipts after the native watch. No test targets unrelated user work.
 - Native setup tests cover five providers, private configuration only, idempotent setup, provider pinning and cancellation of a TERM-resistant reviewer group while an unrelated active process survives.
+- Settings tests cover draft/save/reopen, default reset, invalid-input refusal, preservation of disabled reviews, and offscreen rendering of the native SwiftUI controls. Five-provider subprocess captures verify that saved model/effort selections reach the actual review worker; no model is invoked by those tests.
 - MCP protocol and compatibility tests cover live status/inspection, strict arguments, protected identities, invalid preview refusal, quiet legacy callbacks and EOF shutdown.
 
 ## Boundaries
@@ -16,7 +17,7 @@ The observer sees visible processes owned by the logged-in user across the compu
 
 Live background-model cleanup is verified for Codex and Claude. Cursor, Copilot and Gemini have launch/configuration adapters, but live execution is not verified on this machine. Their permissions may prevent unattended cleanup; there is no blanket bypass. Default setup selects one provider and never switches after a failure.
 
-Desktop UI acceptance and the background launch/upgrade UI path remain untested under the operator's no-focus restriction. No app windows were opened for validation. The installed app on the test Mac remains stopped and disconnected. Native observer, dispatcher and actual model/MCP behavior are exercised without launching the GUI.
+The public 0.4 installer launched the real menu bar observer without opening a window or taking focus. Automatic Codex reviews ran independently of chats. The ongoing 24-hour real-workload trial has not yet demonstrated naturally occurring cleanup; its first reviews preserved uncertain work and reported a denied supplemental process-inspection command. Controlled-fixture cleanup proof is separate from that trial. Settings rendering and save/reopen behavior are exercised offscreen; foreground mouse/keyboard interaction remains untested under the operator's no-focus restriction.
 
 Universal packaging supports arm64 and x86_64; execution is tested on Apple Silicon only. Releases are ad-hoc signed, not notarized. Source tests and local packages do not by themselves establish a published release; public installer verification is a separate delivery check.
 

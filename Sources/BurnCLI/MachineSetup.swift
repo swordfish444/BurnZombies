@@ -27,10 +27,16 @@ enum MachineSetup {
     let launcher = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.resolvingSymlinksInPath()
     var config = MachineReviewConfiguration(harness: harness, executable: executable, launcher: launcher.path,
       server: launcher.deletingLastPathComponent().appendingPathComponent("burnzombies-mcp").path)
-    if let old { config.enabled = old.enabled }
+    if let old {
+      config.enabled = old.enabled
+      if old.harness == harness { config.model = old.model; config.reasoningEffort = old.reasoningEffort }
+    }
+    if let model = try value("--model") { config.model = MachineReviewConfiguration.selectionValue(model) }
+    if let thinking = try value("--thinking") { config.reasoningEffort = MachineReviewConfiguration.selectionValue(thinking) }
     try config.save(root: root)
     print("BurnZombies will watch this Mac across all projects and sessions, using \(harness) for bounded background reviews.")
     print("No active chat, chat hooks, computer restart or edits to harness configuration required.")
     print("Reviews use your existing harness login and usage allowance. One provider; no automatic fallback.")
+    print("Model: \(config.model ?? "harness default") · Thinking: \(config.reasoningEffort ?? "harness default"). Change these in Settings.")
   }
 }

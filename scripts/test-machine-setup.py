@@ -7,7 +7,7 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
     root = pathlib.Path(temporary)
     fake = root/'bin'; fake.mkdir()
     for name in ['codex', 'claude', 'agent', 'copilot', 'gemini']:
-        path = fake/name; path.write_text('#!/bin/sh\nexit 0\n'); path.chmod(0o700)
+        path = fake/name; path.write_text('#!/usr/bin/python3\nimport json,sys\nprint(json.dumps({"argv":sys.argv[1:]}))\n'); path.chmod(0o700)
     env = dict(os.environ, PATH=str(fake)+':/usr/bin:/bin')
     for harness in ['codex', 'claude', 'cursor', 'copilot', 'gemini']:
         state = root/harness
@@ -23,6 +23,32 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
         subprocess.run([str(cli), 'setup', '--harness', 'auto', '--root', str(state)], env=env, check=True, capture_output=True)
         assert json.loads((state/'machine-review.json').read_text())['harness'] == harness
         assert not any((state/x).exists() for x in ['.codex', '.claude', '.cursor', '.gemini', '.copilot'])
+        selection = ['--model', 'example-model']
+        if harness in ['codex', 'claude', 'copilot']: selection += ['--thinking', 'high']
+        subprocess.run(command + selection, env=env, check=True, capture_output=True)
+        config = json.loads((state/'machine-review.json').read_text())
+        config['enabled'] = False
+        (state/'machine-review.json').write_text(json.dumps(config))
+        subprocess.run(command, env=env, check=True, capture_output=True)
+        retained = json.loads((state/'machine-review.json').read_text())
+        assert retained['model'] == 'example-model' and retained.get('reasoningEffort') == config.get('reasoningEffort')
+        assert retained['enabled'] is False, 'Reinstall re-enabled disabled reviews'
+        retained['enabled'] = True
+        (state/'machine-review.json').write_text(json.dumps(retained))
+        prompt = root/'prompt.txt'; prompt.write_text('Only capture invocation arguments. No real model is invoked.')
+        executed = subprocess.run([str(repo/'.build/debug/BurnProof'), '--review-model', str(state), harness, str(prompt)], env=env, capture_output=True, text=True)
+        assert executed.returncode == 0, executed.stdout + executed.stderr
+        argv = json.loads((state/'last-review.log').read_text())['argv']
+        assert argv[argv.index('--model')+1] == 'example-model'
+        if harness == 'codex': assert 'model_reasoning_effort="high"' in argv
+        if harness == 'claude': assert argv[argv.index('--effort')+1] == 'high'
+        if harness == 'copilot': assert argv[argv.index('--reasoning-effort')+1] == 'high'
+        before = (state/'machine-review.json').read_bytes()
+        rejected = subprocess.run(command+['--thinking','invalid'],env=env,capture_output=True)
+        assert rejected.returncode != 0 and (state/'machine-review.json').read_bytes() == before
+        subprocess.run(command+['--model','default','--thinking','default'],env=env,check=True,capture_output=True)
+        reset = json.loads((state/'machine-review.json').read_text())
+        assert reset.get('model') is None and reset.get('reasoningEffort') is None
     # One reviewer group is cancelled without touching a sibling active job.
     script = root/'worker'; pidfile = root/'pids'
     script.write_text('#!/bin/sh\ntrap "" TERM\nsleep 60 &\necho "$$ $!" > "$1"\nwait\n')
@@ -42,4 +68,4 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
     finally:
         if review.poll() is None: review.terminate(); review.wait(timeout=6)
         active.terminate(); active.wait(timeout=5)
-print('PASS private setup for five providers, provider pinning, no chat config/hooks, and owned process-group cancellation')
+print('PASS five-provider setup, model/effort subprocess arguments, reinstall persistence, defaults, private config and owned cancellation')

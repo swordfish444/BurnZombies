@@ -22,6 +22,8 @@ Apple Silicon or Intel, macOS 14+. The installer selects an available **Codex, C
 
 That's it. BurnZombies watches your Mac independently of your chats. It runs bounded background reviews using the selected harness and keeps tracking cleanup after the review exits. [Setup details →](docs/INSTALL.md)
 
+Want to choose the brain? **Settings → Review intelligence** lets you set the model and thinking level for background reviews.
+
 Installing through an agent? Tell it:
 
 > **Install BurnZombies to watch this Mac and clean up abandoned agent helpers in the background.**
