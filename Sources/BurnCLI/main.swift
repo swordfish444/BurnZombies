@@ -54,7 +54,7 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.5.0
+      BurnZombies 0.5.1
       setup [--harness auto|codex|claude|cursor|copilot|gemini|none] [--model ID|default] [--thinking LEVEL|default]
         Enable computer-wide background reviews. No chat hooks or live config edits.
       install [--harness auto|all|codex|claude|cursor|copilot|gemini]

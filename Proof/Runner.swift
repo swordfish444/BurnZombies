@@ -47,6 +47,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     let s = StorageNativeTests()
     let pressure = PressureTests()
     let tests: [(String, () throws -> Void)] = [
+      ("impact periods, completion dates, DST, empty history and preview accounting", impactPeriodProof),
       ("review model/effort migration, persistence, provider arguments and defaults", reviewSelectionProof),
       ("agent execution safety boundaries", d.testExecutionBoundaries),
       ("owner-scoped recurrence", d.testRecurrenceScope),

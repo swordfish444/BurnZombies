@@ -4,7 +4,8 @@ Validated on macOS 15.8.1 / Apple Silicon. Version 0.4 removes the dependency on
 
 ## Verified
 
-- 20 native checks include model/effort migration and persistence, first-review dispatch without chat events, changed-state coalescing, stale-signal refusal, persistent failure pause, no provider fallback, inert legacy hooks and cross-project process visibility.
+- 21 native checks include impact-period accounting, model/effort migration and persistence, first-review dispatch without chat events, changed-state coalescing, stale-signal refusal, persistent failure pause, no provider fallback, inert legacy hooks and cross-project process visibility.
+- Impact filters use local completion dates: Today starts at midnight, 7 days includes today and the previous six dates, and All time uses retained lifetime totals. Regression cases cover both daylight-saving transitions, time zones, midnight rollover, out-of-order receipts, legacy receipts, empty history and period-aware previews. Offscreen SwiftUI rendering verifies that changing periods actually changes the displayed counters immediately; new burns within a period retain their animation.
 - Existing execution safeguards cover 32 real OS zombies with eight live controls, 4,096 mixed mechanical safety scenarios, exact identities, unknown IPC-peer refusal, corrupt storage and active-work preservation.
 - Real Codex and Claude CLI tests use the production `MachineReviewer.execute` path, not interactive chats. Three real Node workers are created in separate project directories before the background review. Each model selects the two completed/cancelled disposable jobs from controller-provided lifecycle evidence, preserves the active job, and produces two verified exit receipts after the native watch. No test targets unrelated user work.
 - Native setup tests cover five providers, private configuration only, idempotent setup, provider pinning and cancellation of a TERM-resistant reviewer group while an unrelated active process survives.
@@ -28,6 +29,7 @@ scripts/test.sh --integration
 python3 scripts/test-machine-setup.py
 python3 scripts/test-mcp.py
 python3 scripts/test-harness-install.py
+.build/debug/BurnZombiesApp --impact-proof /tmp/bz-impact-proof
 scripts/build-app.sh --universal
 COPYFILE_DISABLE=1 tar -czf /tmp/BurnZombies-test.tar.gz -C dist BurnZombies.app
 python3 scripts/test-install.py /tmp/BurnZombies-test.tar.gz
