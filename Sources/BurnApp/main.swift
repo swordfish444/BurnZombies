@@ -629,7 +629,7 @@ struct Dashboard: View {
     item.button?.action = #selector(toggle)
     popover = NSPopover()
     popover.behavior = .transient
-    popover.contentSize = NSSize(width: 428, height: 795)
+    popover.contentSize = MiniImpactView.size
     popover.contentViewController = NSHostingController(rootView: MiniImpactView(model: model))
     NSWorkspace.shared.notificationCenter.addObserver(
       self, selector: #selector(sleeping), name: NSWorkspace.willSleepNotification, object: nil)
@@ -639,7 +639,7 @@ struct Dashboard: View {
     if CommandLine.arguments.contains("--show-popover") { toggle() }
     if CommandLine.arguments.contains("--show-mini-window") {
       let panel = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 428, height: 795),
+        contentRect: NSRect(origin: .zero, size: MiniImpactView.size),
         styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
       panel.title = "BurnZombies — Menu Preview"
       panel.titlebarAppearsTransparent = true
@@ -650,7 +650,7 @@ struct Dashboard: View {
       let hosting = NSHostingView(rootView: MiniImpactView(model: model))
       hosting.sizingOptions = []
       panel.contentView = hosting
-      panel.setFrame(NSRect(x: 0, y: 0, width: 428, height: 795), display: false)
+      panel.setFrame(NSRect(origin: .zero, size: MiniImpactView.size), display: false)
       panel.center()
       panel.makeKeyAndOrderFront(nil)
       menuPreviewWindow = panel
@@ -721,6 +721,10 @@ MainActor.assumeIsolated {
   }
   if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--impact-proof" {
     do { try impactProof(output: CommandLine.arguments[2]); exit(0) }
+    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
+  }
+  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--mini-proof" {
+    do { try miniProof(output: CommandLine.arguments[2]); exit(0) }
     catch { print("FAIL \(error.localizedDescription)"); exit(1) }
   }
   #endif
