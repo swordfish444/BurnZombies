@@ -11,7 +11,7 @@ import Vision
   BurnTheme.registerFonts()
   let directory = URL(fileURLWithPath: output, isDirectory: true)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  let cases = catalog == nil ? ["empty", "populated", "paused", "quiet-day", "unmeasured", "legacy-negative", "slower", "noisy"] : ["receipt-replay"]
+  let cases = catalog == nil ? ["empty", "populated", "paused", "quiet-day", "pruned", "unmeasured", "zero-memory", "legacy-negative", "slower", "noisy"] : ["receipt-replay"]
   for name in cases {
     let model = AppModel(demo: true)
     if let catalog { model.state.catalog = catalog }
@@ -21,12 +21,14 @@ import Vision
       let today = Calendar.current.startOfDay(for: Date())
       model.state.catalog.events.removeAll { ($0.verificationDate ?? $0.date) >= today }
     }
-    if name == "unmeasured" {
+    if name == "pruned" { model.state.catalog.events = [] }
+    if name == "unmeasured" || name == "zero-memory" {
       for index in model.state.catalog.events.indices {
         model.state.catalog.events[index].responseBeforeMS = nil
         model.state.catalog.events[index].responseAfterMS = nil
         model.state.catalog.events[index].responseBeforeSamples = nil
         model.state.catalog.events[index].responseAfterSamples = nil
+        if name == "zero-memory" { model.state.catalog.events[index].residentBefore = 0 }
       }
     }
     if ["legacy-negative", "slower", "noisy"].contains(name) {
@@ -80,20 +82,34 @@ import Vision
       guard visible.contains("24%"), !visible.contains("Still warming up") else {
         throw StoreError.message("Measured boost not displayed")
       }
-    } else if ["legacy-negative", "slower", "noisy"].contains(name) {
-      guard visible.contains("No clear boost yet"), !visible.contains("23%"), view.numbers.boost == "—" else {
-        throw StoreError.message("Noisy/negative speed shown as a boost: \(visible)")
+    } else if ["legacy-negative", "slower", "noisy", "unmeasured"].contains(name) {
+      guard visible.contains("AGENT BOOST"), visible.contains("Memory reclaimed"),
+        visible.contains("128 helpers cleared"), !visible.contains("23%"), view.numbers.boost == "—" else {
+        throw StoreError.message("Verified resource benefit missing: \(visible)")
+      }
+    } else if name == "zero-memory" {
+      guard visible.contains("Helpers cleared"), visible.contains("Dead weight. Gone.") else {
+        throw StoreError.message("Zero-memory cleanup benefit missing: \(visible)")
+      }
+    } else if name == "quiet-day" || name == "pruned" {
+      guard visible.contains("Ready for the next burn"), visible.contains("880 helpers cleared all time") else {
+        throw StoreError.message("Lifetime benefit missing on a quiet day: \(visible)")
       }
     } else {
-      guard visible.contains("Still warming up"), visible.contains("More cleanups will reveal your boost") else {
+      guard visible.contains("Still warming up"), visible.contains("Your first cleanup starts here") else {
         throw StoreError.message("Missing compact warmup state: \(visible)")
+      }
+    }
+    if view.numbers.lifetimeCount > 0 {
+      guard !visible.contains("Still warming up"), !visible.contains("No clear boost") else {
+        throw StoreError.message("Verified cleanup presented as no benefit: \(visible)")
       }
     }
     if name == "empty" || name == "paused" {
       guard view.numbers.count == 0, visible.contains("Ready for your first burn") else {
         throw StoreError.message("First-burn empty state not displayed")
       }
-    } else {
+    } else if name != "pruned" {
       guard visible.contains("Last burn"), !visible.contains("Ready for your first burn") else {
         throw StoreError.message("Existing cleanup history presented as first use")
       }

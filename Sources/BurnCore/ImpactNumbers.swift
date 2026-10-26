@@ -35,14 +35,18 @@ public struct ImpactNumbers: Sendable {
   public var latestMemory: UInt64 = 0
   public var latestLabel: String?
   public var speedBoostPercent: Double?
+  public var lifetimeCount: Int = 0
+
+  public enum Benefit: Equatable, Sendable { case firstBurn, ready, speed, memory, helpers }
+  public var benefit: Benefit {
+    guard count > 0 else { return lifetimeCount > 0 ? .ready : .firstBurn }
+    if boost != "—" { return .speed }
+    return memory > 0 ? .memory : .helpers
+  }
 
   public var boost: String {
     guard let percent = speedBoostPercent, percent.isFinite, percent >= 5 else { return "—" }
     return String(format: "~%.0f%%", percent)
-  }
-  public var speedHeadline: String { before == nil ? "Still warming up." : "No clear boost yet." }
-  public var speedDetail: String {
-    before == nil ? "More cleanups will reveal your boost." : "Waiting for a stable speed signal."
   }
 
   public static func make(
@@ -72,6 +76,9 @@ public struct ImpactNumbers: Sendable {
       latestMemory: latest?.residentBefore ?? 0,
       latestLabel: latest.map {
         "\($0.verifiedCount) \($0.verifiedCount == 1 ? "helper" : "helpers") burned"
-      }, speedBoostPercent: comparison?.boostPercent)
+      }, speedBoostPercent: comparison?.boostPercent,
+      lifetimeCount: max(catalog.lifetimeVerified, catalog.events.filter {
+        $0.outcome == "verified" && ($0.verificationDate ?? $0.date) <= now
+      }.reduce(0) { $0 + $1.verifiedCount }))
   }
 }

@@ -12,7 +12,28 @@ func impactMetricsProof() throws {
   }
   var c = Catalog(); c.events = [event()]
   equal(ImpactNumbers.make(catalog: c, period: .all).boost, "—", "Legacy -23% must not be called a boost")
-  equal(ImpactNumbers.make(catalog: c, period: .all).speedHeadline, "No clear boost yet.")
+  c.lifetimeVerified = 1
+  equal(ImpactNumbers.make(catalog: c, period: .today).benefit, .memory,
+    "Verified cleanup remains a benefit even when the timing got slower")
+  c.events[0].responseBeforeMS = nil; c.events[0].responseAfterMS = nil
+  equal(ImpactNumbers.make(catalog: c, period: .today).benefit, .memory,
+    "No timing samples must not hide reclaimed memory")
+  c.events[0].residentBefore = 0
+  equal(ImpactNumbers.make(catalog: c, period: .today).benefit, .helpers,
+    "Even a zero-memory cleanup shows verified helpers cleared")
+  c.events[0].date = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+  equal(ImpactNumbers.make(catalog: c, period: .today).benefit, .ready)
+  equal(ImpactNumbers.make(catalog: c, period: .week).benefit, .helpers)
+  equal(ImpactNumbers.make(catalog: c, period: .today).lifetimeCount, 1)
+  c.events = []
+  equal(ImpactNumbers.make(catalog: c, period: .today).benefit, .ready,
+    "Durable lifetime totals preserve prior benefit after receipts are pruned")
+  equal(ImpactNumbers.make(catalog: c, period: .all).benefit, .helpers)
+  equal(ImpactNumbers.make(catalog: Catalog(), period: .today).benefit, .firstBurn)
+  var unfinished = Catalog(); var attempt = event(); attempt.outcome = "verifying"
+  unfinished.events = [attempt]
+  equal(ImpactNumbers.make(catalog: unfinished, period: .today).benefit, .firstBurn,
+    "An unverified attempt must not claim a benefit")
   func measured(_ before: Double, _ after: Double) -> CleanupEvent {
     var e = event(before: before, after: after)
     e.responseBeforeSamples = Array(repeating: before, count: 7)
@@ -22,6 +43,8 @@ func impactMetricsProof() throws {
   isNil(Responsiveness.comparison([measured(2.22125, 2.88971)])?.boostPercent)
   isNil(Responsiveness.comparison([measured(2.89, 2.22)])?.boostPercent)
   equal(Responsiveness.comparison([measured(20, 10)])?.boostPercent, 100)
+  c = Catalog(); c.events = [measured(20, 10)]; c.lifetimeVerified = 1
+  equal(ImpactNumbers.make(catalog: c, period: .today).benefit, .speed)
   isNil(Responsiveness.comparison([measured(10, 20), measured(10, 10), measured(20, 10)])?.boostPercent)
   var noisy = measured(20, 10)
   noisy.responseBeforeSamples = [1, 2, 3, 20, 30, 40, 50]
