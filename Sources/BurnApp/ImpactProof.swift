@@ -12,9 +12,14 @@ import Vision
   let model = AppModel(demo: true)
   let host = NSHostingView(rootView: ImpactWindowView(model: model))
   host.frame = NSRect(x: 0, y: 0, width: 1008, height: 930)
+  // AppKit-backed glyph views need a backing surface, but it is never shown.
+  let surface = NSWindow(contentRect: host.frame, styleMask: .borderless,
+    backing: .buffered, defer: false)
+  surface.contentView = host
   func settle() {
     RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     host.layoutSubtreeIfNeeded()
+    host.displayIfNeeded()
   }
   let directory = URL(fileURLWithPath: output, isDirectory: true)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -29,6 +34,9 @@ import Vision
       throw StoreError.message("Impact render unavailable")
     }
     host.cacheDisplay(in: host.bounds, to: bitmap)
+    guard !surface.isVisible, !surface.isKeyWindow else {
+      throw StoreError.message("Proof surface must stay offscreen")
+    }
     // Read the rendered counter, not just the model: transitions can retain an old value.
     let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
     guard let counters = bitmap.cgImage?.cropping(to: CGRect(
@@ -43,6 +51,16 @@ import Vision
     let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
     guard visible.contains(String(count)) else {
       throw StoreError.message("Rendered counter did not update to \(count): \(visible)")
+    }
+    guard let heading = bitmap.cgImage?.cropping(to: CGRect(
+      x: 80 * scale, y: 120 * scale, width: 540 * scale, height: 230 * scale)) else {
+      throw StoreError.message("Rendered headline unavailable")
+    }
+    try VNImageRequestHandler(cgImage: heading, options: [:]).perform([recognition])
+    let headline = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+      .joined(separator: " ")
+    guard headline.contains("TAME THE"), headline.contains("HORDE") else {
+      throw StoreError.message("Rendered headline incomplete: \(headline)")
     }
     guard let png = bitmap.representation(using: .png, properties: [:]) else {
       throw StoreError.message("Impact PNG unavailable")

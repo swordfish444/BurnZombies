@@ -30,7 +30,23 @@ Installing through an agent? Tell it:
 
 ## Dead weight. Gone.
 
-![BurnZombies verifies a real helper cleanup and updates Impact](docs/media/live-cleanup.gif)
+Everything that matters in one small panel: **zombies burned, memory released, CPU time saved and agent speed.** Before your first cleanup, the counters stay at zero and the speed card shows **Still warming up.**
+
+<p align="center">
+  <img src="docs/media/menu-bar-empty.png" width="360" alt="BurnZombies before the first cleanup: compact menu, zero counters, Still warming up, and Ready for your first burn.">
+  <img src="docs/media/menu-bar.png" width="360" alt="BurnZombies compact menu after cleanups: three counters in one row, smaller units, agent speed, memory pressure and links to Impact and Burn Log.">
+</p>
+
+**Small by default. More when you need it.** Open Impact for Today, 7 days or All time. Burn Log keeps the cleanup receipts one click away.
+
+<details>
+<summary><strong>See the full Impact view</strong></summary>
+
+<p align="center">
+  <img src="docs/media/impact.png" width="1008" alt="BurnZombies Impact view with TAME THE HORDE, the ember mascot, memory and CPU-time counters, a compact speed card and period filters.">
+</p>
+
+</details>
 
 - **Your whole Mac.** All visible processes owned by your macOS user, across projects and sessions—not just the current agent's children.
 - **Works with no chat open.** The resident observer schedules reviews. No tool-use hooks or conversation reminders.
