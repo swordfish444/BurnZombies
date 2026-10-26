@@ -29,6 +29,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 
 @main struct ProofRunner {
   static func main() async {
+    if CommandLine.arguments.contains("--impact-metrics") {
+      do { try impactMetricsProof(); try impactPeriodProof() } catch { failTest("Impact metrics: \(error)") }
+      print("Impact metrics and period checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.count == 5 && CommandLine.arguments[1] == "--review-model" {
       do {
         let root = URL(fileURLWithPath: CommandLine.arguments[2])
@@ -48,6 +53,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     let s = StorageNativeTests()
     let pressure = PressureTests()
     let tests: [(String, () throws -> Void)] = [
+      ("cumulative awake CPU savings and stable nonnegative speed impact", impactMetricsProof),
       ("impact periods, completion dates, DST, empty history and preview accounting", impactPeriodProof),
       ("review model/effort migration, persistence, provider arguments and defaults", reviewSelectionProof),
       ("agent execution safety boundaries", d.testExecutionBoundaries),

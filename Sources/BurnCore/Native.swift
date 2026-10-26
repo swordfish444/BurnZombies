@@ -13,6 +13,8 @@ public enum Probe {
 }
 public struct Native {
   public init() {}
+  public var awakeSeconds: Double { Double(bz_awake_ns()) / 1e9 }
+  public var boot: UInt64 { bz_boot() }
   public func memoryPressure() -> String {
     switch bz_memory_pressure() {
     case 1: return "Low"

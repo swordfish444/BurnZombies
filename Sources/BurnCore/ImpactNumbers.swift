@@ -34,10 +34,15 @@ public struct ImpactNumbers: Sendable {
   public var latestCount: Int = 0
   public var latestMemory: UInt64 = 0
   public var latestLabel: String?
+  public var speedBoostPercent: Double?
 
   public var boost: String {
-    guard let before, let after, before > 0, after > 0 else { return "—" }
-    return String(format: "~%.0f%%", (before / after - 1) * 100)
+    guard let percent = speedBoostPercent, percent.isFinite, percent >= 5 else { return "—" }
+    return String(format: "~%.0f%%", percent)
+  }
+  public var speedHeadline: String { before == nil ? "Still warming up." : "No clear boost yet." }
+  public var speedDetail: String {
+    before == nil ? "More cleanups will reveal your boost." : "Waiting for a stable speed signal."
   }
 
   public static func make(
@@ -51,6 +56,7 @@ public struct ImpactNumbers: Sendable {
     let cpu = verified.compactMap(\.cpuSecondsSavedEstimate)
     let latest = verified.last
     let measured = verified.last { $0.responseBeforeMS != nil && $0.responseAfterMS != nil }
+    let comparison = Responsiveness.comparison(verified)
     return Self(
       count: period == .all
         ? catalog.lifetimeVerified : verified.reduce(0) { $0 + $1.verifiedCount },
@@ -60,11 +66,12 @@ public struct ImpactNumbers: Sendable {
       cpuSeconds: period == .all
         ? (catalog.lifetimeCPUSecondsSaved ?? (catalog.lifetimeVerified == 0 ? 0 : nil))
         : (cpu.isEmpty && !verified.isEmpty ? nil : cpu.reduce(0, +)),
-      before: measured?.responseBeforeMS, after: measured?.responseAfterMS,
+      before: comparison?.before ?? measured?.responseBeforeMS,
+      after: comparison?.after ?? measured?.responseAfterMS,
       last: latest?.verificationDate ?? latest?.date, latestCount: latest?.verifiedCount ?? 0,
       latestMemory: latest?.residentBefore ?? 0,
       latestLabel: latest.map {
         "\($0.verifiedCount) \($0.verifiedCount == 1 ? "helper" : "helpers") burned"
-      })
+      }, speedBoostPercent: comparison?.boostPercent)
   }
 }

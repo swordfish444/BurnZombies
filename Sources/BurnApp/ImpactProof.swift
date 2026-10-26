@@ -21,10 +21,28 @@ import Vision
     host.layoutSubtreeIfNeeded()
     host.displayIfNeeded()
   }
+  func clickPeriod(_ option: ImpactPeriod) throws {
+    settle()
+    let index = ImpactPeriod.allCases.firstIndex(of: option)!
+    // Bottom of the actual button: the decorative halo previously extended into
+    // this row. Deliver local events only; never post desktop input or show a window.
+    let point = NSPoint(x: 697 + index * 104, y: host.isFlipped ? 108 : 930 - 108)
+    guard let target = host.hitTest(point) else { throw StoreError.message("No period hit target") }
+    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+      guard let event = NSEvent.mouseEvent(with: type, location: host.convert(point, to: nil),
+        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: surface.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else {
+        throw StoreError.message("Period event unavailable")
+      }
+      if type == .leftMouseDown { target.mouseDown(with: event) } else { target.mouseUp(with: event) }
+    }
+    settle()
+    guard model.impactPeriod == option else { throw StoreError.message("Actual period click did not select \(option.rawValue)") }
+  }
   let directory = URL(fileURLWithPath: output, isDirectory: true)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   for (period, count) in [(ImpactPeriod.week, 368), (.all, 880), (.today, 128)] {
-    model.impactPeriod = period
+    try clickPeriod(period)
     settle()
     let numbers = ImpactNumbers.make(model, period: model.impactPeriod)
     guard model.impactPeriod == period, numbers.count == count else {
@@ -72,10 +90,10 @@ import Vision
   settle()
   guard ImpactNumbers.make(model, period: model.impactPeriod).count == 146,
     model.burnPulse == 1 else { throw StoreError.message("Preview burn did not update the selected period once") }
-  model.impactPeriod = .week
+  for period in [ImpactPeriod.week, .today, .all, .week] { try clickPeriod(period) }
   model.impactTab = "Burn Log"; settle()
   model.impactTab = "Impact"; settle()
   guard model.impactPeriod == .week else { throw StoreError.message("Navigation reset the filter") }
-  print("PASS offscreen period rendering, receipt updates and tab navigation without a window")
+  print("PASS real period hit targets in both directions, offscreen rendering, receipt updates and tab navigation")
 }
 #endif
