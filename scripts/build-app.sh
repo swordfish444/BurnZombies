@@ -34,7 +34,7 @@ for dependency in swift-sdk swift-system swift-log eventsource TOMLKit; do
     cp -f "$license" "$bundle/Contents/Resources/ThirdPartyNotices/$dependency-$(basename "$license")"
   done
 done
-cp .build/checkouts/TOMLKit/tomlplusplus/LICENSE "$bundle/Contents/Resources/ThirdPartyNotices/tomlplusplus-LICENSE"
+cp -f .build/checkouts/TOMLKit/tomlplusplus/LICENSE "$bundle/Contents/Resources/ThirdPartyNotices/tomlplusplus-LICENSE"
 cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
