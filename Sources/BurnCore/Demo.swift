@@ -1,10 +1,17 @@
 import Foundation
 
 public enum Demo {
-  public static func state() -> ViewState {
+  public static func state(now: Date = Date(), calendar: Calendar = .current) -> ViewState {
     var state = ViewState()
     state.processCount = 128
-    let now = Date()
+    let today = calendar.startOfDay(for: now)
+    addBurn(in: &state.catalog, count: 512, memory: 24_000_000_000, cpu: 15 * 3600,
+      date: calendar.date(byAdding: .day, value: -12, to: today)!)
+    addBurn(in: &state.catalog, count: 240, memory: 12_000_000_000, cpu: 7.5 * 3600,
+      date: calendar.date(byAdding: .day, value: -3, to: today)!)
+    addBurn(in: &state.catalog, count: 110, memory: 5_200_000_000, cpu: 3.8 * 3600 - 60,
+      date: today)
+    recordBurn(in: &state.catalog, now: max(today, now.addingTimeInterval(-120)))
     let owner = ProcessIdentity(pid: 90000, seconds: 1)
     let o = Observation(
       identity: ProcessIdentity(pid: 90001, seconds: 2), executable: "/example/disposable-helper",
@@ -38,5 +45,25 @@ public enum Demo {
         leaseID: nil, rss: 128 * 1024 * 1024),
     ]
     return state
+  }
+
+  /// Preview receipts stay in memory and use the same period accounting as real receipts.
+  public static func recordBurn(in catalog: inout Catalog, now: Date = Date()) {
+    addBurn(in: &catalog, count: 18, memory: 1_200_000_000, cpu: 60, date: now)
+  }
+
+  private static func addBurn(in catalog: inout Catalog, count: Int, memory: UInt64, cpu: Double, date: Date) {
+    var event = CleanupEvent(leaseID: UUID(), label: "Disposable helpers", date: date,
+      targets: [], residentBefore: memory, outcome: "verified", detail: "In-memory preview receipt.")
+    event.verifiedCount = count
+    event.verificationDate = date
+    event.cpuSecondsSavedEstimate = cpu
+    event.responseBeforeMS = 2100
+    event.responseAfterMS = 1700
+    catalog.events.append(event)
+    catalog.lifetimeActions += 1
+    catalog.lifetimeVerified += count
+    catalog.lifetimeResidentReleased = (catalog.lifetimeResidentReleased ?? 0) + memory
+    catalog.lifetimeCPUSecondsSaved = (catalog.lifetimeCPUSecondsSaved ?? 0) + cpu
   }
 }

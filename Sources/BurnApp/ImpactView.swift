@@ -104,61 +104,9 @@ struct Flame: View {
       .accessibilityHidden(true)
   }
 }
-enum ImpactPeriod: String, CaseIterable {
-  case today = "Today"
-  case week = "7 days"
-  case all = "All time"
-}
-struct ImpactNumbers {
-  var count: Int = 0
-  var memory: UInt64 = 0
-  var cpuSeconds: Double? = 0
-  var before: Double?
-  var after: Double?
-  var last: Date?
-  var latestCount: Int = 0
-  var latestMemory: UInt64 = 0
-  var latestLabel: String?
-  var boost: String {
-    guard let before, let after, before > 0, after > 0 else { return "—" }
-    let gain = (before / after - 1) * 100
-    return String(format: "~%.0f%%", gain)
-  }
+extension ImpactNumbers {
   @MainActor static func make(_ model: AppModel, period: ImpactPeriod) -> Self {
-    if model.demo {
-      return Self(
-        count: 128 + model.demoBurnCount,
-        memory: 6_400_000_000 + UInt64(model.demoBurnCount / 18) * 1_200_000_000,
-        cpuSeconds: 3.8 * 3600 + Double(model.demoBurnCount / 18) * 60,
-        before: 2100, after: 1700, last: Date().addingTimeInterval(-120), latestCount: 18,
-        latestMemory: 1_200_000_000, latestLabel: "18 abandoned helpers burned")
-    }
-    let catalog = model.state.catalog
-    let start: Date =
-      period == .today
-      ? Calendar.current.startOfDay(for: Date())
-      : period == .week ? Date().addingTimeInterval(-7 * 86400) : .distantPast
-    let verified = catalog.events.filter {
-      $0.outcome == "verified" && ($0.verificationDate ?? $0.date) >= start
-    }
-    let cpu = verified.compactMap(\.cpuSecondsSavedEstimate)
-    let latest = verified.last
-    let measured = verified.last { $0.responseBeforeMS != nil && $0.responseAfterMS != nil }
-    return Self(
-      count: period == .all
-        ? catalog.lifetimeVerified : verified.reduce(0) { $0 + $1.verifiedCount },
-      memory: period == .all
-        ? (catalog.lifetimeResidentReleased ?? verified.reduce(0) { $0 + $1.residentBefore })
-        : verified.reduce(0) { $0 + $1.residentBefore },
-      cpuSeconds: period == .all
-        ? catalog.lifetimeCPUSecondsSaved
-        : (cpu.isEmpty && !verified.isEmpty ? nil : cpu.reduce(0, +)),
-      before: measured?.responseBeforeMS, after: measured?.responseAfterMS,
-      last: latest?.verificationDate ?? latest?.date, latestCount: latest?.verifiedCount ?? 0,
-      latestMemory: latest?.residentBefore ?? 0,
-      latestLabel: latest.map {
-        "\($0.verifiedCount) \($0.verifiedCount == 1 ? "helper" : "helpers") burned"
-      })
+    make(catalog: model.state.catalog, period: period)
   }
   static func bytes(_ n: UInt64) -> String {
     if n == 0 { return "0 GB" }
@@ -314,7 +262,7 @@ struct MiniImpactView: View {
 }
 struct ImpactWindowView: View {
   @ObservedObject var model: AppModel
-  @State private var period = ImpactPeriod.today
+  var period: ImpactPeriod { model.impactPeriod }
   @State private var showCalculation = false
   var numbers: ImpactNumbers { .make(model, period: period) }
   var body: some View {
@@ -361,17 +309,20 @@ struct ImpactWindowView: View {
         Spacer()
         ForEach(ImpactPeriod.allCases, id: \.self) { option in
           Button {
-            period = option
+            model.impactPeriod = option
           } label: {
             Text(option.rawValue).font(
               .system(size: 17, weight: period == option ? .semibold : .regular)
             )
             .foregroundStyle(period == option ? BurnTheme.cream : BurnTheme.muted)
             .frame(width: 96, height: 36)
+            .contentShape(Rectangle())
             .background(
               period == option ? Color.white.opacity(0.08) : .clear,
               in: RoundedRectangle(cornerRadius: 11))
           }
+          .accessibilityIdentifier("impact-period-" + option.rawValue)
+          .accessibilityValue(period == option ? "Selected" : "Not selected")
         }
       }.padding(.horizontal, 18).padding(.top, 22)
       HStack(alignment: .center, spacing: 28) {
@@ -391,13 +342,9 @@ struct ImpactWindowView: View {
         metric(ImpactNumbers.bytes(numbers.memory), "Memory released")
         Rectangle().fill(BurnTheme.line).frame(width: 1, height: 92)
         metric(ImpactNumbers.cpuTime(numbers.cpuSeconds), "CPU time saved")
-      }.frame(height: 112).padding(.top, 5)
-      Text(
-        period == .today
-          ? "Totals from completed cleanups today"
-          : period == .week
-            ? "Totals from completed cleanups this week" : "Totals from completed cleanups"
-      )
+      // A period switch replaces the totals immediately; new burns within a period still tick up.
+      }.id(period).frame(height: 112).padding(.top, 5)
+      Text(period.caption)
       .font(.system(size: 15)).foregroundStyle(.gray).padding(.top, 3).padding(.bottom, 12)
       speedCard
       MemoryPressureRow(model: model).padding(.horizontal, 28).frame(height: 49)

@@ -32,6 +32,8 @@ jobs:
         run: python3 scripts/test-machine-setup.py
       - name: Native Settings without opening a window
         run: .build/debug/BurnZombiesApp --settings-proof "$RUNNER_TEMP/bz-settings.png"
+      - name: Native impact filters without opening a window
+        run: .build/debug/BurnZombiesApp --impact-proof "$RUNNER_TEMP/bz-impact"
       - name: Installer proof
         run: |
           COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/BurnZombies-test.tar.gz" -C dist BurnZombies.app

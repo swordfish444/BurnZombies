@@ -21,11 +21,9 @@ import UserNotifications
   }
   private var didLoadState = false
   @Published var burnPulse = 0
-  @Published var demoBurnCount = 0
   func previewBurn() {
     guard demo else { return }
-    demoBurnCount += 18
-    burnPulse += 1
+    Demo.recordBurn(in: &state.catalog)
   }
   @Published var selection: Finding?
   @Published var tab = "Overview"
@@ -47,18 +45,20 @@ import UserNotifications
   @Published var message: String?
   @Published var technical = [String]()
   @Published var impactTab = "Impact"
+  @Published var impactPeriod = ImpactPeriod.today
   @Published var pressure = "—"
   var openImpact: (() -> Void)?
   var openLog: (() -> Void)?
   var openSettings: (() -> Void)?
   var openAudit: (() -> Void)?
-  let demo = CommandLine.arguments.contains("--demo")
+  let demo: Bool
   private var monitor: Monitor?
   private var agentListener: AgentListener?
   private var reviewer: MachineReviewer?
   private var timer: Timer?
   var onUpdate: (() -> Void)?
-  init() {
+  init(demo: Bool = CommandLine.arguments.contains("--demo")) {
+    self.demo = demo
     if demo {
       state = Demo.state()
       pressure = "Low"
@@ -717,6 +717,10 @@ MainActor.assumeIsolated {
   #if DEBUG
   if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--settings-proof" {
     do { try settingsProof(output: CommandLine.arguments[2]); exit(0) }
+    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
+  }
+  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--impact-proof" {
+    do { try impactProof(output: CommandLine.arguments[2]); exit(0) }
     catch { print("FAIL \(error.localizedDescription)"); exit(1) }
   }
   #endif
