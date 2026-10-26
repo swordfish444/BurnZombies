@@ -147,11 +147,12 @@ struct BurnStatus: View {
       Circle().fill(model.state.error != nil ? .red : BurnTheme.orange)
         .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
       Text(status).font(.system(size: compact ? 13 : 18)).foregroundStyle(Color(white: 0.82))
-      Button(model.cleanupQueued ? "Queued" : "Safe cleanup") { model.requestAgentCleanup() }
-        .disabled(!model.demo && !model.machineReviewEnabled)
-        .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
-        .padding(.horizontal, 9).padding(.vertical, compact ? 4 : 6)
-        .background(BurnTheme.orange.opacity(0.08), in: Capsule())
+      Button { model.requestAgentCleanup() } label: {
+        Text(model.cleanupQueued ? "Queued" : "Safe cleanup")
+          .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
+          .padding(.horizontal, 9).padding(.vertical, compact ? 4 : 6)
+          .background(BurnTheme.orange.opacity(0.08), in: Capsule()).contentShape(Capsule())
+      }.disabled(!model.demo && !model.machineReviewEnabled)
         .help("Review buildup across this Mac now. No active chat or reboot needed.")
     }
   }
