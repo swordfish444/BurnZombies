@@ -30,11 +30,11 @@ Installing through an agent? Tell it:
 
 ## Dead weight. Gone.
 
-Everything that matters in one small panel: **zombies burned, memory released, CPU time saved and agent speed.** Before your first cleanup, the counters stay at zero and the speed card shows **Still warming up.**
+Everything that matters in one small panel: **zombies burned, memory released, CPU time saved and agent boost.** Every verified cleanup shows what you got back: reclaimed memory and helpers cleared, or a measured speed boost when available. **Still warming up.** only appears before your first burn.
 
 <p align="center">
   <img src="docs/media/menu-bar-empty.png" width="360" alt="BurnZombies before the first cleanup: compact menu, zero counters, Still warming up, and Ready for your first burn.">
-  <img src="docs/media/menu-bar.png" width="360" alt="BurnZombies compact menu after cleanups: three counters in one row, smaller units, agent speed, memory pressure and links to Impact and Burn Log.">
+  <img src="docs/media/menu-bar.png" width="360" alt="BurnZombies compact menu after cleanups: three counters in one row, smaller units, reclaimed memory and helpers cleared, memory pressure and links to Impact and Burn Log.">
 </p>
 
 **Small by default. More when you need it.** Open Impact for Today, 7 days or All time. Burn Log keeps the cleanup receipts one click away.
@@ -43,7 +43,7 @@ Everything that matters in one small panel: **zombies burned, memory released, C
 <summary><strong>See the full Impact view</strong></summary>
 
 <p align="center">
-  <img src="docs/media/impact.png" width="1008" alt="BurnZombies Impact view with TAME THE HORDE, the ember mascot, memory and CPU-time counters, a compact speed card and period filters.">
+  <img src="docs/media/impact.png" width="1008" alt="BurnZombies Impact view with TAME THE HORDE, the ember mascot, memory and CPU-time counters, a compact agent boost card and period filters.">
 </p>
 
 </details>
@@ -53,7 +53,7 @@ Everything that matters in one small panel: **zombies burned, memory released, C
 - **Remembers what finished.** Agents record helper ownership and observed completion. Active consumers keep their helpers; released work gets reviewed first.
 - **Your harness does the thinking.** Model reasoning and live ownership evidence decide what is abandoned. No fixed “old process = zombie” rule.
 - **Keep the good stuff alive.** Exact identities, protected harnesses, graceful stops and verified receipts. Uncertain work stays running.
-- **See the payoff.** Zombies burned, memory released, CPU time saved and agent speed in a quiet menu bar app.
+- **See the payoff.** Zombies burned, memory released, CPU time saved and a concrete cleanup benefit in a quiet menu bar app.
 - **Stays out of your way.** No windows opening when reviews start. One bounded reviewer, with cooldowns and a pause on failure.
 
 Native code observes, schedules and verifies. Your selected harness supplies the model and uses MCP for guarded cleanup. Reviews use its existing account and usage allowance. [How it works →](docs/MCP.md) · [Lifecycle evidence →](docs/LIFECYCLE-EVIDENCE.md)

@@ -124,6 +124,15 @@ extension ImpactNumbers {
     guard let value else { return "—" }
     return value >= 1000 ? String(format: "%.1fs", value / 1000) : String(format: "%.1fms", value)
   }
+  var benefitTitle: String {
+    benefit == .speed || benefit == .firstBurn ? "AGENT SPEED BOOST" : "AGENT BOOST"
+  }
+  var benefitValue: String { benefit == .memory ? Self.bytes(memory) : "\(count)" }
+  var benefitCaption: String { benefit == .memory ? "Memory reclaimed" : "Helpers cleared" }
+  var clearedHelpers: String {
+    let total = benefit == .ready ? lifetimeCount : count
+    return "\(total) \(total == 1 ? "helper" : "helpers") cleared" + (benefit == .ready ? " all time" : "")
+  }
   var age: String {
     guard let last else { return "No burns yet" }
     let minutes = max(0, Int(Date().timeIntervalSince(last) / 60))
@@ -242,18 +251,32 @@ struct MiniImpactView: View {
   var speedCard: some View {
     Button { model.openImpact?() } label: {
       VStack(alignment: .leading, spacing: 8) {
-        Text("AGENT SPEED BOOST").font(.system(size: 10.5, weight: .bold)).tracking(0.3)
+        Text(numbers.benefitTitle).font(.system(size: 10.5, weight: .bold)).tracking(0.3)
           .foregroundStyle(BurnTheme.orange)
-        if numbers.boost == "—" {
+        switch numbers.benefit {
+        case .firstBurn, .ready:
           HStack(spacing: 12) {
-            warmupGauge
+            if numbers.benefit == .firstBurn { warmupGauge } else { Flame(size: 28) }
             VStack(alignment: .leading, spacing: 4) {
-              Text(numbers.speedHeadline).font(.system(size: 13, weight: .semibold))
-              Text(numbers.speedDetail).font(.system(size: 11))
+              Text(numbers.benefit == .firstBurn ? "Still warming up." : "Ready for the next burn.")
+                .font(.system(size: 13, weight: .semibold))
+              Text(numbers.benefit == .firstBurn ? "Your first cleanup starts here." : numbers.clearedHelpers)
+                .font(.system(size: 11))
                 .foregroundStyle(BurnTheme.muted).lineLimit(1).minimumScaleFactor(0.85)
             }
           }
-        } else {
+        case .memory, .helpers:
+          HStack(spacing: 10) {
+            ImpactValue(value: numbers.benefitValue, size: 32).foregroundStyle(BurnTheme.orange)
+            VStack(alignment: .leading, spacing: 4) {
+              Text(numbers.benefitCaption).font(.system(size: 12, weight: .semibold))
+              Text(numbers.benefit == .memory ? numbers.clearedHelpers : "Dead weight. Gone.")
+                .font(.system(size: 10.5)).foregroundStyle(BurnTheme.muted)
+            }.lineLimit(1).minimumScaleFactor(0.8)
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.system(size: 12, weight: .medium))
+          }.frame(height: 38)
+        case .speed:
           HStack {
             Text(numbers.boost).font(BurnTheme.display(37)).foregroundStyle(BurnTheme.orange)
               .lineLimit(1).minimumScaleFactor(0.7)
@@ -438,25 +461,46 @@ struct ImpactWindowView: View {
   var speedCard: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: 0) {
-        Text("AGENT SPEED BOOST").font(.system(size: 17, weight: .semibold, design: .monospaced))
+        Text(numbers.benefitTitle).font(.system(size: 17, weight: .semibold, design: .monospaced))
           .tracking(1).foregroundStyle(BurnTheme.orange)
-        Text(numbers.boost == "—" ? numbers.speedHeadline : numbers.boost)
-          .font(BurnTheme.display(numbers.boost == "—" ? 29 : 94)).foregroundStyle(BurnTheme.orange)
-          .fixedSize().frame(
-            height: 96
-          ).minimumScaleFactor(0.6)
-
+        Group {
+          switch numbers.benefit {
+          case .speed:
+            Text(numbers.boost).font(BurnTheme.display(94)).foregroundStyle(BurnTheme.orange)
+          case .memory, .helpers:
+            VStack(alignment: .leading, spacing: 3) {
+              ImpactValue(value: numbers.benefitValue, size: 64).foregroundStyle(BurnTheme.orange)
+              Text(numbers.benefitCaption).font(.system(size: 17))
+            }
+          case .firstBurn, .ready:
+            Text(numbers.benefit == .firstBurn ? "Still warming up." : "Ready for the next burn.")
+              .font(BurnTheme.display(27)).foregroundStyle(BurnTheme.orange)
+          }
+        }.frame(height: 96, alignment: .leading)
       }.frame(width: 324, alignment: .leading)
       Rectangle().fill(BurnTheme.line).frame(width: 1, height: 122)
       VStack(alignment: .leading, spacing: 10) {
-        Text(numbers.boost == "—" ? "ROOM FOR YOUR NEXT RUN." : "LESS WAITING. MORE DOING.")
+        Text(numbers.benefit == .speed ? "LESS WAITING. MORE DOING." : "ROOM FOR YOUR NEXT RUN.")
           .font(BurnTheme.display(22)).tracking(1)
-        VStack(spacing: 14) {
-          latencyRow("Before", numbers.before, color: Color(white: 0.43), fraction: 1)
-          latencyRow(
-            "Now", numbers.after, color: BurnTheme.orange,
-            fraction: min(1, (numbers.after ?? 1) / max(0.0001, numbers.before ?? 1)))
-        }.padding(.top, 1)
+        if numbers.benefit == .speed {
+          VStack(spacing: 14) {
+            latencyRow("Before", numbers.before, color: Color(white: 0.43), fraction: 1)
+            latencyRow(
+              "Now", numbers.after, color: BurnTheme.orange,
+              fraction: min(1, (numbers.after ?? 1) / max(0.0001, numbers.before ?? 1)))
+          }.padding(.top, 1)
+        } else {
+          HStack(spacing: 14) {
+            Flame(size: 30)
+            VStack(alignment: .leading, spacing: 4) {
+              Text(numbers.benefit == .firstBurn ? "Your first cleanup starts here." : numbers.clearedHelpers)
+                .font(.system(size: 20, weight: .semibold))
+              if numbers.benefit != .firstBurn {
+                Text("Less background baggage.").font(.system(size: 16)).foregroundStyle(BurnTheme.muted)
+              }
+            }
+          }.frame(height: 57, alignment: .leading)
+        }
         Button {
           showCalculation = true
         } label: {
