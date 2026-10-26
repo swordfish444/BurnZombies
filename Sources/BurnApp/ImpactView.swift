@@ -593,6 +593,15 @@ final class HeadingInk: NSView {
   var pointSize: CGFloat = 109
   override func draw(_ dirtyRect: NSRect) {
     guard let context = NSGraphicsContext.current?.cgContext else { return }
+    // Core Text's text matrix is not restored by saveGState. A previous line can
+    // leave its ending position here, shifting this line's measured ink bounds.
+    let previousTextMatrix = context.textMatrix
+    context.saveGState()
+    defer {
+      context.restoreGState()
+      context.textMatrix = previousTextMatrix
+    }
+    context.textMatrix = .identity
     let font = NSFont(name: "Anton-Regular", size: pointSize) ?? .boldSystemFont(ofSize: pointSize)
     let line = CTLineCreateWithAttributedString(
       NSAttributedString(
@@ -603,11 +612,9 @@ final class HeadingInk: NSView {
         ]))
     let ink = CTLineGetImageBounds(line, context)
     let scale = min(1, bounds.width / max(1, ink.width), bounds.height / max(1, ink.height))
-    context.saveGState()
     context.translateBy(x: 0, y: (bounds.height - ink.height * scale) / 2)
     context.scaleBy(x: scale, y: scale)
     context.textPosition = CGPoint(x: -ink.minX, y: -ink.minY)
     CTLineDraw(line, context)
-    context.restoreGState()
   }
 }

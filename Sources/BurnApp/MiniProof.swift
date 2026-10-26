@@ -4,7 +4,7 @@ import BurnCore
 import SwiftUI
 import Vision
 
-/// Exercises compact states in memory. No observer, cleanup, window or app activation.
+/// Exercises compact states in memory. No observer, cleanup, visible window or app activation.
 @MainActor func miniProof(output: String) throws {
   NSApp.setActivationPolicy(.prohibited)
   NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -28,8 +28,16 @@ import Vision
     let view = MiniImpactView(model: model)
     let host = NSHostingView(rootView: view)
     host.frame = NSRect(origin: .zero, size: MiniImpactView.size)
+    // Supply a native backing scale without ever ordering a window onto the screen.
+    let surface = NSWindow(contentRect: host.frame, styleMask: .borderless,
+      backing: .buffered, defer: false)
+    surface.contentView = host
     RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     host.layoutSubtreeIfNeeded()
+    host.displayIfNeeded()
+    guard !surface.isVisible, !surface.isKeyWindow else {
+      throw StoreError.message("Proof surface must stay offscreen")
+    }
     guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
       throw StoreError.message("Compact render unavailable")
     }
