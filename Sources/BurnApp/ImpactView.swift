@@ -55,7 +55,7 @@ struct Skull: View {
         )
         .modifier(EmberFlight(progress: flight, index: index, size: size))
       }
-    }.frame(width: size, height: size).accessibilityHidden(true)
+    }.frame(width: size, height: size).accessibilityHidden(true).allowsHitTesting(false)
       .task(id: celebration) {
         guard celebration > 0, !reduceMotion else { return }
         flight = 0
@@ -248,8 +248,8 @@ struct MiniImpactView: View {
           HStack(spacing: 12) {
             warmupGauge
             VStack(alignment: .leading, spacing: 4) {
-              Text("Still warming up.").font(.system(size: 13, weight: .semibold))
-              Text("More cleanups will reveal your boost.").font(.system(size: 11))
+              Text(numbers.speedHeadline).font(.system(size: 13, weight: .semibold))
+              Text(numbers.speedDetail).font(.system(size: 11))
                 .foregroundStyle(BurnTheme.muted).lineLimit(1).minimumScaleFactor(0.85)
             }
           }
@@ -301,6 +301,7 @@ struct ImpactWindowView: View {
   @ObservedObject var model: AppModel
   var period: ImpactPeriod { model.impactPeriod }
   @State private var showCalculation = false
+  @State private var hoveredPeriod: ImpactPeriod?
   var numbers: ImpactNumbers { .make(model, period: period) }
   var body: some View {
     VStack(spacing: 0) {
@@ -326,6 +327,9 @@ struct ImpactWindowView: View {
     }.frame(width: 1008, height: 930).foregroundStyle(BurnTheme.cream).ignoresSafeArea()
       .buttonStyle(.plain).background(BurnBackdrop()).preferredColorScheme(.dark)
       .sheet(isPresented: $showCalculation) { calculation }
+      .onDisappear {
+        if hoveredPeriod != nil { NSCursor.pop(); hoveredPeriod = nil }
+      }
   }
   func nav(_ title: String) -> some View {
     Button {
@@ -360,6 +364,14 @@ struct ImpactWindowView: View {
           }
           .accessibilityIdentifier("impact-period-" + option.rawValue)
           .accessibilityValue(period == option ? "Selected" : "Not selected")
+          .onHover { inside in
+            if inside {
+              if hoveredPeriod == nil { NSCursor.pointingHand.push() }
+              hoveredPeriod = option
+            } else if hoveredPeriod == option {
+              NSCursor.pop(); hoveredPeriod = nil
+            }
+          }
         }
       }.padding(.horizontal, 18).padding(.top, 22)
       HStack(alignment: .center, spacing: 28) {
@@ -428,7 +440,8 @@ struct ImpactWindowView: View {
       VStack(alignment: .leading, spacing: 0) {
         Text("AGENT SPEED BOOST").font(.system(size: 17, weight: .semibold, design: .monospaced))
           .tracking(1).foregroundStyle(BurnTheme.orange)
-        Text(numbers.boost).font(BurnTheme.display(94)).foregroundStyle(BurnTheme.orange)
+        Text(numbers.boost == "—" ? numbers.speedHeadline : numbers.boost)
+          .font(BurnTheme.display(numbers.boost == "—" ? 29 : 94)).foregroundStyle(BurnTheme.orange)
           .fixedSize().frame(
             height: 96
           ).minimumScaleFactor(0.6)
@@ -436,7 +449,8 @@ struct ImpactWindowView: View {
       }.frame(width: 324, alignment: .leading)
       Rectangle().fill(BurnTheme.line).frame(width: 1, height: 122)
       VStack(alignment: .leading, spacing: 10) {
-        Text("LESS WAITING. MORE DOING.").font(BurnTheme.display(22)).tracking(1)
+        Text(numbers.boost == "—" ? "ROOM FOR YOUR NEXT RUN." : "LESS WAITING. MORE DOING.")
+          .font(BurnTheme.display(22)).tracking(1)
         VStack(spacing: 14) {
           latencyRow("Before", numbers.before, color: Color(white: 0.43), fraction: 1)
           latencyRow(
@@ -549,12 +563,12 @@ struct ImpactWindowView: View {
         Button("Done") { showCalculation = false }
       }
       Text(
-        "Every burned helper has a verified exit receipt. Memory released uses its resident footprint before the stop; shared pages can overlap. CPU time saved projects the helpers’ observed CPU rate over the next hour, counted once per verified cleanup. It does not count CPU they already used."
+        "Every burned helper has a verified exit receipt. Memory released uses its resident footprint before the stop; shared pages can overlap. CPU time saved applies the pre-stop CPU rate to observed awake time after verified exit, up to 24 hours per cleanup. Sleep, observation gaps, reboot and detected replacements add no credit. Older one-hour estimates are preserved until new observed time exceeds that credit. CPU already consumed is never counted as saved."
       )
       Text(
         model.demo
           ? "This visual preview uses synthetic numbers from the supplied design."
-          : "Agent speed compares the median of seven local command launches before and after a verified cleanup. It describes this small local responsiveness probe; model, network and workload latency can differ."
+          : "Agent speed uses the middle matched command-launch comparison across this period, including slower results. A boost needs stable samples, separated timing ranges, at least 5% improvement and a 1 ms difference. No clear improvement stays neutral. Legacy timings without sample dispersion cannot establish a boost. This measures local launches, not model or network speed."
       )
       Text(
         "Before \(ImpactNumbers.latency(numbers.before)) · Now \(ImpactNumbers.latency(numbers.after))"

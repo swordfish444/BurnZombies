@@ -5,14 +5,16 @@ import SwiftUI
 import Vision
 
 /// Exercises compact states in memory. No observer, cleanup, visible window or app activation.
-@MainActor func miniProof(output: String) throws {
+@MainActor func miniProof(output: String, catalog: Catalog? = nil) throws {
   NSApp.setActivationPolicy(.prohibited)
   NSApp.appearance = NSAppearance(named: .darkAqua)
   BurnTheme.registerFonts()
   let directory = URL(fileURLWithPath: output, isDirectory: true)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  for name in ["empty", "populated", "paused", "quiet-day", "unmeasured"] {
+  let cases = catalog == nil ? ["empty", "populated", "paused", "quiet-day", "unmeasured", "legacy-negative", "slower", "noisy"] : ["receipt-replay"]
+  for name in cases {
     let model = AppModel(demo: true)
+    if let catalog { model.state.catalog = catalog }
     if name == "empty" || name == "paused" { model.state.catalog = Catalog() }
     if name == "paused" { model.machineReview.phase = "paused" }
     if name == "quiet-day" {
@@ -23,6 +25,17 @@ import Vision
       for index in model.state.catalog.events.indices {
         model.state.catalog.events[index].responseBeforeMS = nil
         model.state.catalog.events[index].responseAfterMS = nil
+        model.state.catalog.events[index].responseBeforeSamples = nil
+        model.state.catalog.events[index].responseAfterSamples = nil
+      }
+    }
+    if ["legacy-negative", "slower", "noisy"].contains(name) {
+      for i in model.state.catalog.events.indices {
+        model.state.catalog.events[i].responseBeforeMS = 2.22125
+        model.state.catalog.events[i].responseAfterMS = 2.88971
+        model.state.catalog.events[i].responseBeforeSamples = name == "legacy-negative" ? nil :
+          (name == "noisy" ? [1, 2, 3, 20, 30, 40, 50] : Array(repeating: 2.22125, count: 7))
+        model.state.catalog.events[i].responseAfterSamples = name == "legacy-negative" ? nil : Array(repeating: 2.88971, count: 7)
       }
     }
     let view = MiniImpactView(model: model)
@@ -58,9 +71,18 @@ import Vision
       visible.contains("Memory pressure"), visible.contains("CPU time saved") else {
       throw StoreError.message("Compact labels or footer clipped: \(visible)")
     }
-    if name == "populated" {
+    if name == "receipt-replay" {
+      guard !view.numbers.boost.contains("-"), visible.contains(String(view.numbers.count)) else {
+        throw StoreError.message("Receipt replay failed: \(visible)")
+      }
+      print("Receipt replay: \(view.numbers.count) burns, \(ImpactNumbers.cpuTime(view.numbers.cpuSeconds)), speed \(view.numbers.boost)")
+    } else if name == "populated" {
       guard visible.contains("24%"), !visible.contains("Still warming up") else {
         throw StoreError.message("Measured boost not displayed")
+      }
+    } else if ["legacy-negative", "slower", "noisy"].contains(name) {
+      guard visible.contains("No clear boost yet"), !visible.contains("23%"), view.numbers.boost == "—" else {
+        throw StoreError.message("Noisy/negative speed shown as a boost: \(visible)")
       }
     } else {
       guard visible.contains("Still warming up"), visible.contains("More cleanups will reveal your boost") else {

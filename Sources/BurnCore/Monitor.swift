@@ -25,6 +25,7 @@ public actor Monitor {
   private var busy = false
   private var lastMonotonic: Double?
   private var lastWall: Date?
+  private var lastAwake: Double?
   public init(root: URL = Store.defaultRoot) throws {
     store = try Store(root: root)
     lock = try InstanceLock(url: root.appendingPathComponent("monitor.lock"))
@@ -41,6 +42,7 @@ public actor Monitor {
         loaded.lifetimeCPUSecondsSaved = measured.reduce(0, +)
       }
     }
+    ImpactAccounting.migrate(&loaded)
     loaded.resetContinuity()
     catalog = loaded
   }
@@ -50,6 +52,7 @@ public actor Monitor {
     catalog.resetContinuity()
     lastMonotonic = nil
     lastWall = nil
+    lastAwake = nil
   }
   public func checkpoint() throws {
     state.checkpointBytes = try store.save(catalog)
@@ -65,6 +68,10 @@ public actor Monitor {
     let start = ProcessInfo.processInfo.systemUptime
     let scan = native.scan()
     let now = Date()
+    let awake = native.awakeSeconds
+    let previousWall = lastWall
+    let previousAwake = lastAwake
+    lastAwake = scan.partial ? nil : awake
     state.error = nil
     state.partial = scan.partial
     state.hiddenCount = scan.hidden
@@ -101,6 +108,18 @@ public actor Monitor {
           guard let identity = catalog.records[key]?.latest.identity else { continue }
           if native.ownerState(identity) == .gone { catalog.records[key]?.missingSince = now }
         }
+      }
+      if !scan.partial, let previousWall, let previousAwake {
+        let ended = Set(catalog.events.filter { event in
+          event.outcome == "verified" && event.cpuAccrualEnded != true &&
+            Verification.recurrence(event: event, observations: scan.observations) { parent in
+              guard case .found(let live) = native.probe(parent.identity.pid) else { return false }
+              return Member(live) == parent && !live.zombie
+            }
+        }.map(\.id))
+        let added = ImpactAccounting.accrue(&catalog, awakeSeconds: awake - previousAwake,
+          wallSeconds: now.timeIntervalSince(previousWall), boot: native.boot, ended: ended)
+        receiptNeedsCheckpoint = receiptNeedsCheckpoint || added > 0
       }
       verifyPending(now: now, observations: scan.observations)
       receiptNeedsCheckpoint = receiptNeedsCheckpoint || priorOutcomes != catalog.events.map(\.outcome)
@@ -164,7 +183,9 @@ public actor Monitor {
         if let cpu = e.cpuSecondsSavedEstimate {
           catalog.lifetimeCPUSecondsSaved = (catalog.lifetimeCPUSecondsSaved ?? 0) + cpu
         }
-        catalog.events[i].responseAfterMS = Responsiveness.sample()
+        let after = Responsiveness.sample()
+        catalog.events[i].responseAfterSamples = after
+        catalog.events[i].responseAfterMS = after.flatMap(Responsiveness.median)
       }
     }
   }
@@ -365,9 +386,11 @@ public actor Monitor {
       guard target.parent > 1, case .found(let parent) = native.probe(target.parent) else { return nil }
       return RecurrenceScope(executable: target.executable, parent: Member(parent))
     }
-    event.cpuSecondsSavedEstimate = ImpactAccounting.cpuSecondsSaved(
-      targets.compactMap { catalog.records[$0.identity.key] })
-    event.responseBeforeMS = responseBefore
+    event.cpuSavingsRate = ImpactAccounting.cpuRate(targets.compactMap { catalog.records[$0.identity.key] })
+    event.cpuObservedSeconds = event.cpuSavingsRate == nil ? nil : 0
+    event.cpuSecondsSavedEstimate = event.cpuSavingsRate == nil ? nil : 0
+    event.responseBeforeSamples = responseBefore
+    event.responseBeforeMS = responseBefore.flatMap(Responsiveness.median)
     catalog.events.append(event)
     try checkpoint()
     var failures = [String]()

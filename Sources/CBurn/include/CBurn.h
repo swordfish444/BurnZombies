@@ -15,6 +15,7 @@ int bz_read(int32_t pid, bz_process *out);
 int bz_term(const bz_process *expected);
 uint64_t bz_boot(void);
 uint64_t bz_continuous_ns(void);
+uint64_t bz_awake_ns(void);
 int bz_fd_summary(int32_t pid, int *sockets, int *files);
 int bz_cwd(int32_t pid, char *path, int capacity);
 int bz_lock(const char *path);

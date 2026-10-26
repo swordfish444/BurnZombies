@@ -67,7 +67,7 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.6.0
+      BurnZombies 0.6.1
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
       install-skill [--home PATH] [--skill-file PATH]   Install portable lifecycle instructions only.

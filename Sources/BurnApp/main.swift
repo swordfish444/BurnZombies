@@ -531,7 +531,7 @@ struct Dashboard: View {
         }.padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
       }
       Text(
-        "Memory released uses the resident footprint of verified exits; shared pages can overlap. Impact shows a local command-launch comparison when available. CPU time saved projects the observed pre-stop CPU rate over one hour; it is counted once after verified exit."
+        "Memory released uses the resident footprint of verified exits; shared pages can overlap. Impact shows a local command-launch comparison when available. CPU time saved accumulates from the observed pre-stop CPU rate during observed awake time after verified exit. Agent speed is shown only when the timing samples establish a stable improvement."
       ).font(.caption).foregroundStyle(.secondary)
       Text(
         "Detailed history: 30 days, up to 500 attempts. Lifetime counts retain only verified outcomes."
@@ -726,6 +726,12 @@ MainActor.assumeIsolated {
   if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--mini-proof" {
     do { try miniProof(output: CommandLine.arguments[2]); exit(0) }
     catch { print("FAIL \(error.localizedDescription)"); exit(1) }
+  }
+  if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--receipt-proof" {
+    do {
+      let catalog = try Store(root: URL(fileURLWithPath: CommandLine.arguments[2])).load()
+      try miniProof(output: CommandLine.arguments[3], catalog: catalog); exit(0)
+    } catch { print("FAIL \(error.localizedDescription)"); exit(1) }
   }
   #endif
   let delegate = AppDelegate()

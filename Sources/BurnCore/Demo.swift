@@ -60,6 +60,8 @@ public enum Demo {
     event.cpuSecondsSavedEstimate = cpu
     event.responseBeforeMS = 2100
     event.responseAfterMS = 1700
+    event.responseBeforeSamples = Array(repeating: 2100, count: 7)
+    event.responseAfterSamples = Array(repeating: 1700, count: 7)
     catalog.events.append(event)
     catalog.lifetimeActions += 1
     catalog.lifetimeVerified += count

@@ -24,7 +24,7 @@ Use Settings to pause/resume background reviews and enable **Start at login**. L
 
 ## What the numbers mean
 
-Only verified exits add to burned helpers and released memory. CPU time saved projects observed pre-stop CPU use; agent speed reflects local responsiveness. Pending, uncertain or recurring work gets no verified-cleanup credit.
+Only verified exits add to burned helpers and released memory. CPU time saved accumulates from observed pre-stop CPU use during awake observation after verified exit, up to 24 hours per cleanup. Sleep, downtime, reboot and detected replacement helpers add no credit. Previously credited one-hour estimates remain intact until observed time catches up. Agent speed stays neutral when local timing samples are noisy, unchanged or slower. Pending, uncertain or recurring work gets no verified-cleanup credit.
 
 The Burn Log shows the lifecycle and ownership rationale. A true OS zombie is already exited and must be reaped by its parent; killing that child cannot release memory.
 

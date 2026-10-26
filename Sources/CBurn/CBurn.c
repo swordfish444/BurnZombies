@@ -74,6 +74,10 @@ uint64_t bz_continuous_ns(void) {
     mach_timebase_info_data_t i; mach_timebase_info(&i);
     return (uint64_t)((__uint128_t)mach_continuous_time()*i.numer/i.denom);
 }
+uint64_t bz_awake_ns(void) {
+    mach_timebase_info_data_t i; mach_timebase_info(&i);
+    return (uint64_t)((__uint128_t)mach_absolute_time()*i.numer/i.denom);
+}
 int bz_fd_summary(int32_t pid,int *sockets,int *files) {
     struct proc_fdinfo f[2048];
     int n=proc_pidinfo(pid,PROC_PIDLISTFDS,0,f,sizeof(f));

@@ -142,8 +142,14 @@ public struct CleanupEvent: Codable, Identifiable, Sendable {
   public var verifiedCount: Int = 0
   public var verificationDate: Date?
   public var cpuSecondsSavedEstimate: Double?
+  public var cpuSavingsRate: Double?
+  public var cpuObservedSeconds: Double?
+  public var cpuLegacyFloorSeconds: Double?
+  public var cpuAccrualEnded: Bool?
   public var responseBeforeMS: Double?
   public var responseAfterMS: Double?
+  public var responseBeforeSamples: [Double]?
+  public var responseAfterSamples: [Double]?
   public init(
     leaseID: UUID, label: String, date: Date, targets: [Member], residentBefore: UInt64,
     outcome: String, detail: String
