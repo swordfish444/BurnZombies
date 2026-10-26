@@ -11,17 +11,22 @@ public struct AgentRequest: Codable, Sendable {
   public let offset: Int?
   public let label: String?
   public let rationale: String?
+  public let action: String?
+  public let workToken: String?
+  public let completionCondition: String?
   // Populated from the authenticated Unix peer, never from request JSON.
   public var callerPID: Int32 = -1
   enum CodingKeys: String, CodingKey {
-    case operation, findingID, previewToken, processIDs, pids, offset, label, rationale
+    case operation, findingID, previewToken, processIDs, pids, offset, label, rationale, action, workToken, completionCondition
   }
   public init(_ operation: String, findingID: String? = nil, previewToken: String? = nil,
     processIDs: [String]? = nil, pids: [Int32]? = nil, offset: Int? = nil,
-    label: String? = nil, rationale: String? = nil) {
+    label: String? = nil, rationale: String? = nil, action: String? = nil,
+    workToken: String? = nil, completionCondition: String? = nil) {
     self.operation = operation; self.findingID = findingID; self.previewToken = previewToken
     self.processIDs = processIDs; self.pids = pids; self.offset = offset
     self.label = label; self.rationale = rationale
+    self.action = action; self.workToken = workToken; self.completionCondition = completionCondition
   }
 }
 
@@ -29,6 +34,8 @@ public struct AgentProcess: Codable, Sendable {
   public let id: String
   public let pid: Int32
   public let parentPID: Int32
+  public let liveChildCount: Int
+  public let liveChildren: [Member]
   public let executable: String
   public let residentBytes: UInt64
   public let cpuPercent: Double?
@@ -63,6 +70,10 @@ public struct AgentReply: Codable, Sendable {
   public var observedProcesses = 0
   public var observedAt: Date?
   public var observationScope = "all visible processes owned by the logged-in macOS user; all projects and sessions"
+  public var workToken: String?
+  public var work: [WorkSummary] = []
+  public var releasedWorkCount: Int = 0
+  public var activeWorkCount: Int = 0
   public var previewToken: String?
   public init(ok: Bool = true, message: String) { self.ok = ok; self.message = message }
   public func json() throws -> String {
@@ -92,11 +103,12 @@ public actor AgentService {
     let label: String
     let rationale: String
     let created: Date
+    let caller: ProcessIdentity
   }
   private var previews: [String: Preview] = [:]
   public init(monitor: Monitor) { self.monitor = monitor }
   public func call(_ request: AgentRequest) async -> AgentReply {
-    guard ["status", "inspect", "preview", "burn"].contains(request.operation) else {
+    guard ["status", "inspect", "preview", "burn", "lifecycle", "work"].contains(request.operation) else {
       return AgentReply(ok: false, message: "Unknown operation.")
     }
     previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
@@ -107,7 +119,18 @@ public actor AgentService {
     if let error = state.error { return AgentReply(ok: false, message: error) }
     var reply = AgentReply(message: "Computer-wide observation across all projects and sessions for this macOS user. Inspect live ownership evidence to distinguish abandoned helpers from active work. No active chat, wrapper or reboot required.")
     do {
-      if request.operation == "inspect" {
+      if request.operation == "lifecycle" {
+        let result = try await monitor.recordWork(request)
+        reply.workToken = result.0; reply.message = result.1
+        state = await monitor.snapshot()
+      } else if request.operation == "work" {
+        let offset = request.offset ?? 0
+        guard (0...256).contains(offset) else { throw StoreError.message("Work offset must be 0–256.") }
+        let work = await monitor.workSummaries()
+        reply.work = Array(work.dropFirst(offset).prefix(16))
+        if offset + 16 < work.count { reply.nextOffset = offset + 16 }
+        reply.message = "Owner statements with captured live ancestry, not disposal verdicts. Active claims block cleanup. Release tokens are private to the owning task."
+      } else if request.operation == "inspect" {
         let offset = request.offset ?? 0
         guard offset >= 0, offset <= 4096, (request.pids?.count ?? 0) <= 64,
           request.pids?.allSatisfy({ $0 > 0 }) ?? true else {
@@ -120,11 +143,15 @@ public actor AgentService {
           AgentSafety.ancestors(of: getpid()) ?? [])
         reply.processes = live.dropFirst(offset).prefix(64).map { r in
           let o = r.latest
+          let children = state.catalog.records.values.filter { $0.missingSince == nil && $0.latest.parent == o.identity.pid }.sorted { $0.latest.identity.pid < $1.latest.identity.pid }
           return AgentProcess(id: r.id, pid: o.identity.pid, parentPID: o.parent,
+            liveChildCount: children.count, liveChildren: children.prefix(16).map { Member($0.latest) },
             executable: o.executable, residentBytes: o.rss, cpuPercent: r.cpuPercent,
             cpuTimeNS: o.cpuNS, readBytes: o.readBytes, writeBytes: o.writeBytes,
             observationCount: r.samples.count, exitedChild: o.zombie,
-            protectedReason: AgentSafety.refusal(r, preferences: state.catalog.preferences, protectedPIDs: protected),
+            protectedReason: WorkEvidence.blockingTree(state.catalog.workEvidence ?? [], record: r, records: state.catalog.records)
+              ? "Active owner claim on this helper or its parent."
+              : AgentSafety.refusal(r, preferences: state.catalog.preferences, protectedPIDs: protected),
             workingDirectory: Native().workingDirectory(o), descriptorSummary: Native().enrich(o))
         }
         if offset + 64 < live.count { reply.nextOffset = offset + 64 }
@@ -137,14 +164,17 @@ public actor AgentService {
           return AgentReply(ok: false, message: "Provide exact process_ids from inspect, a short label and an evidence-based rationale (20–2000 characters).")
         }
         let targets = try await monitor.previewTargets(ids, callerPID: request.callerPID)
+        guard case .found(let peer) = Native().probe(request.callerPID) else { throw StoreError.message("Caller identity unavailable.") }
         let token = UUID().uuidString
-        previews[token] = Preview(targets: targets, label: label, rationale: rationale, created: Date())
+        previews[token] = Preview(targets: targets, label: label, rationale: rationale, created: Date(), caller: peer.identity)
         reply.previewToken = token
         reply.message = "Preview: graceful stop of \(targets.count) exact process identities. The harness owns the abandonment decision and must have cleanup authorization. Token expires in 60 seconds. No process was stopped."
       } else if request.operation == "burn" {
-        guard let token = request.previewToken, let preview = previews.removeValue(forKey: token) else {
+        guard let token = request.previewToken, let preview = previews[token],
+          case .found(let peer) = Native().probe(request.callerPID), peer.identity == preview.caller else {
           return AgentReply(ok: false, message: "A fresh, unused preview token is required.")
         }
+        previews.removeValue(forKey: token)
         reply.message = try await monitor.burnTargets(preview.targets, label: preview.label,
           rationale: preview.rationale, callerPID: request.callerPID)
         state = await monitor.snapshot()
@@ -157,7 +187,12 @@ public actor AgentService {
     reply.observedProcesses = state.processCount
     reply.observedAt = state.catalog.lastSample
     reply.partial = state.partial
+    let work = await monitor.workSummaries()
+    reply.activeWorkCount = work.filter { $0.state == "active" && !$0.livePIDs.isEmpty }.count
+    let released = work.filter { $0.state == "released" && !$0.blockedByActiveClaim && !$0.livePIDs.isEmpty }
+    reply.releasedWorkCount = released.count
     if request.operation == "status" {
+      reply.work = Array(released.prefix(8))
       let groups = Dictionary(grouping: state.catalog.records.values.filter { $0.missingSince == nil }, by: { $0.latest.name })
       reply.groups = groups.map { name, records in
         AgentGroup(executableName: name, count: records.count, residentBytes: records.reduce(0) { $0 + $1.latest.rss })
@@ -236,7 +271,9 @@ public enum AgentConnection {
   public static func call(_ request: AgentRequest, root: URL = Store.defaultRoot) throws -> String {
     _ = try Store(root: root)
     let fd = bz_agent_connect(AgentListener.socketPath(root))
-    guard fd >= 0 else { throw StoreError.message("Open BurnZombies to start monitoring, then try again.") }
+    guard fd >= 0 else {
+      throw StoreError.message("BurnZombies connection unavailable (errno \(errno): \(String(cString: strerror(errno)))). Do not open UI. If sandbox access was denied, use connected MCP or the harness normal permission flow; otherwise check observer status.")
+    }
     defer { close(fd) }
     let data = try JSONEncoder().encode(request)
     let line = String(decoding: data, as: UTF8.self) + "\n"

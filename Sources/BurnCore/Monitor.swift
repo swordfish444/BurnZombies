@@ -234,6 +234,91 @@ public actor Monitor {
     throw StoreError.message("Cleanup is agent-led. Ask your connected harness to tame the horde.")
   }
 
+  public func recordWork(_ request: AgentRequest) throws -> (String?, String) {
+    let current = refresh()
+    guard current.error == nil, !current.partial,
+      let caller = AgentSafety.ancestors(of: request.callerPID),
+      let action = request.action, ["register", "release", "retain"].contains(action),
+      let evidence = request.rationale, (20...1200).contains(evidence.count) else {
+      throw StoreError.message("Complete visibility, authenticated caller, action and 20–1200 characters of factual evidence required.")
+    }
+    var claims = catalog.workEvidence ?? []
+    // Only retired identities are pruned. An old or crashed owner never expires a live claim.
+    let atCapacity = claims.count >= 256
+    claims.removeAll { claim in
+      (atCapacity || Date().timeIntervalSince(claim.updated) > 7 * 86400)
+        && claim.members.allSatisfy { native.ownerState($0.identity) == .gone }
+    }
+    var token: String?
+    var message: String
+    if action == "register" {
+      guard request.workToken == nil, let ids = request.processIDs, !ids.isEmpty, ids.count <= 16,
+        Set(ids).count == ids.count, let label = request.label, (1...80).contains(label.count),
+        let condition = request.completionCondition, (10...500).contains(condition.count), claims.count < 256 else {
+        throw StoreError.message("Register 1–16 exact identities, label, purpose evidence and observable completion_condition. Claim budget: 256.")
+      }
+      var members = [Member](), anchors = [Member]()
+      for id in ids {
+        guard let record = catalog.records[id], record.missingSince == nil,
+          AgentSafety.refusal(record, preferences: catalog.preferences, protectedPIDs: caller) == nil,
+          case .found(let live) = native.probe(record.latest.identity.pid), Member(live) == Member(record.latest) else {
+          throw StoreError.message("Registration requires a live, unprotected helper identity from inspect.")
+        }
+        // Capture a real common owner before a helper is orphaned; never invent lost ancestry.
+        var pid = live.parent
+        var anchor: Observation?
+        var seen = Set<Int32>()
+        for _ in 0..<128 {
+          guard pid > 1, seen.insert(pid).inserted, case .found(let parent) = native.probe(pid) else { break }
+          if caller.contains(pid) { anchor = parent; break }
+          pid = parent.parent
+        }
+        guard let anchor, anchor.uid == getuid() else {
+          throw StoreError.message("No live ownership ancestry connects this caller and helper. Preserve it; do not retroactively invent ownership.")
+        }
+        members.append(Member(record.latest)); anchors.append(Member(anchor))
+      }
+      let secret = UUID().uuidString + UUID().uuidString
+      token = secret
+      claims.append(WorkEvidence(id: UUID().uuidString, tokenHash: WorkEvidence.hash(secret),
+        members: members, anchors: anchors, label: label, purpose: evidence, completionCondition: condition,
+        created: Date(), updated: Date(), state: "active", evidence: evidence))
+      message = "Active claim saved. Keep work_token in the owning task. Release only after observing completion and no remaining consumers. This did not stop anything."
+    } else {
+      guard request.processIDs == nil, request.label == nil, request.completionCondition == nil,
+        let secret = request.workToken, secret.count == 72,
+        let index = claims.firstIndex(where: { $0.tokenHash == WorkEvidence.hash(secret) }) else {
+        throw StoreError.message("The owning task's work_token is required; no claim was changed.")
+      }
+      claims[index].state = action == "release" ? "released" : "active"
+      claims[index].evidence = evidence; claims[index].updated = Date()
+      message = action == "release"
+        ? "Owner release recorded; queued for independent review. No stop requested and no benefit credited."
+        : "Active need recorded. Cleanup is blocked while this claim remains active."
+    }
+    // Commit before publishing or returning a capability. Failed writes cannot weaken protection.
+    var next = catalog; next.workEvidence = claims
+    try store.save(next)
+    catalog = next; state.catalog = next
+    if action == "release" { try HarnessHook.requestCleanup(root: store.root) }
+    return (token, message)
+  }
+
+  public func workSummaries() -> [WorkSummary] {
+    let claims = catalog.workEvidence ?? []
+    return claims.sorted { $0.updated > $1.updated }.map { claim in
+      let live = claim.members.filter { member in
+        guard let r = catalog.records[member.identity.key] else { return false }
+        return r.missingSince == nil && Member(r.latest) == member
+      }
+      return WorkSummary(id: claim.id, processIDs: claim.members.map { $0.identity.key },
+        livePIDs: live.map { $0.identity.pid }, label: claim.label, purpose: claim.purpose,
+        completionCondition: claim.completionCondition, state: claim.state, evidence: claim.evidence,
+        created: claim.created, updated: claim.updated, ownershipAnchors: claim.anchors,
+        blockedByActiveClaim: claim.members.contains { WorkEvidence.blocking(claims, identity: $0.identity.key) })
+    }
+  }
+
   public func previewTargets(_ ids: [String], callerPID: Int32) throws -> [Observation] {
     let before = refresh()
     guard before.error == nil, !before.partial,
@@ -249,6 +334,9 @@ public actor Monitor {
       }
       if let reason = AgentSafety.refusal(r, preferences: catalog.preferences, protectedPIDs: protectedPIDs) {
         throw StoreError.message("PID \(r.latest.identity.pid): \(reason)")
+      }
+      if WorkEvidence.blockingTree(catalog.workEvidence ?? [], record: r, records: catalog.records) {
+        throw StoreError.message("PID \(r.latest.identity.pid): an owning task still retains this helper. All claims must be released.")
       }
       targets.append(r.latest)
     }

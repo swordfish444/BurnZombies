@@ -18,7 +18,7 @@ The first complete scan can request a review. Subsequent pressure/buildup change
 
 Every review has a three-minute limit and one MiB output cap. A supervised process group owns its harness and MCP children, and closes them on completion, timeout or owner exit. The native observer continues separately, including the 120-second verification watch. A failure pauses reviews; there is no automatic retry or provider/model/account switch. The pause survives app restart.
 
-Default setup writes only private BurnZombies configuration. Codex/Claude use invocation-scoped MCP configuration; Cursor/Gemini use a private review directory, and Copilot uses its additional-MCP option. Harness tool permissions remain applicable. No foreground app is activated and no chat is resumed or messaged.
+Default setup writes private BurnZombies reviewer configuration, installs portable lifecycle skills, and adds the local MCP server to detected working harnesses. Codex/Claude use invocation-scoped MCP configuration; Cursor/Gemini use a private review directory, and Copilot uses its additional-MCP option. Harness tool permissions remain applicable. No foreground app is activated and no chat is resumed or messaged.
 
 ## Harness adapters
 
@@ -37,3 +37,12 @@ Executable paths, working directories and resource evidence become visible to th
 Age, idleness, name or parent PID 1 alone never establishes abandonment. Active and uncertain work remains running. Cleanup targets receive SIGTERM only; timeout escalation applies solely to BurnZombies's own review worker group. True exited OS zombies must be reaped by their parent.
 
 The optional MCPB desktop bundle exposes interactive tools. The one-command installer enables the independent background reviewer; installing an MCPB alone does not select a background harness.
+
+
+## Durable lifecycle evidence (0.6)
+
+The working agent uses `burnzombies_lifecycle` to register exact helper identities while active, records purpose and an observable completion condition, and saves the returned private `workToken`. `release` records observed completion; `retain` revokes release before reuse. The same JSON contract is available through `burnzombies lifecycle` on stdin; `burnzombies evidence PID` supplies identities without MCP configuration. These operations never stop processes.
+
+`burnzombies_status` includes up to eight released records and active/released claim counts. `burnzombies_work` pages owner statements without exposing update tokens. An active claim, including a claim on a parent, blocks preview and burn. All shared consumers must release. A process exit, expired time window or crashed owner never releases a live claim. Exact identities and observed ancestry are saved independently of chat context.
+
+The private background reviewer cannot call lifecycle mutations. It gets at most eight tool calls and two inspect calls per connection, prioritizes released records, and preserves uncertainty. Preview tokens are bound to the requesting process identity and are single-use. Read-only evidence does not grant cleanup authorization. [Research, tradeoffs and acceptance criteria](LIFECYCLE-EVIDENCE.md).

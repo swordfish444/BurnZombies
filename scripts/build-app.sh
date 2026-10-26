@@ -28,12 +28,13 @@ cp -R "$built/BurnZombies_BurnApp.bundle" "$bundle/Contents/Resources/"
 mkdir -p "$bundle/Contents/Resources/burnzombies"
 cp skills/burnzombies/SKILL.md "$bundle/Contents/Resources/burnzombies/SKILL.md"
 mkdir -p "$bundle/Contents/Resources/ThirdPartyNotices"
-for dependency in swift-sdk swift-system swift-log eventsource; do
+for dependency in swift-sdk swift-system swift-log eventsource TOMLKit; do
   for license in .build/checkouts/"$dependency"/LICENSE*; do
     [[ -f "$license" ]] || continue
     cp -f "$license" "$bundle/Contents/Resources/ThirdPartyNotices/$dependency-$(basename "$license")"
   done
 done
+cp -f .build/checkouts/TOMLKit/tomlplusplus/LICENSE "$bundle/Contents/Resources/ThirdPartyNotices/tomlplusplus-LICENSE"
 cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -42,8 +43,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>BurnZombies</string>
 <key>CFBundleExecutable</key><string>BurnZombiesApp</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.5.2</string>
-<key>CFBundleVersion</key><string>7</string>
+<key>CFBundleShortVersionString</key><string>0.6.0</string>
+<key>CFBundleVersion</key><string>8</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

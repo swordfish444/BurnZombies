@@ -14,7 +14,7 @@ Codex, Claude Code, Cursor CLI, GitHub Copilot CLI and Gemini CLI have launch ad
 
 Default selection order is Codex, Claude, Cursor, Copilot, Gemini. Reinstallation retains the previous provider; a failed or quota-limited provider is never replaced automatically. Reviews use that harness's existing account and usage allowance. Failed authentication, unsupported CLI options, permission refusals or usage errors pause reviews while native observation continues. Resolve the issue in the harness, then use **Resume reviews** in BurnZombies.
 
-Default setup writes only BurnZombies's private reviewer configuration. It does not edit `~/.codex/config.toml`, install chat hooks, inject reminders into conversations, or change persistent tool permissions. Per-run MCP configuration connects the reviewer to the local observer. Legacy BurnZombies hooks become inert when computer-wide review is configured.
+Default setup writes BurnZombies's private reviewer configuration and the portable lifecycle skill. It adds the local BurnZombies MCP server to detected harnesses while preserving other settings. It does not install chat hooks, inject reminders, or change persistent tool permissions. Per-run MCP configuration connects the reviewer to the local observer. Legacy BurnZombies hooks become inert when computer-wide review is configured.
 
 ## Options
 
@@ -45,3 +45,12 @@ No `--yolo`, blanket permission bypass, account fallback, quarantine removal or 
 ## Acceptance
 
 Check the menu bar observer and its selected harness, then verify a bounded background review and its receipts without sending a chat message. CLI configuration alone is not live model proof. Current validation and remaining harness limits are in [VALIDATION.md](VALIDATION.md).
+
+
+### Ownership memory without hooks
+
+The one-line installer also installs the BurnZombies skill into `~/.agents/skills/burnzombies` and `~/.claude/skills/burnzombies`. These standard directories cover local Codex, Claude Code, Cursor, Copilot CLI and Gemini CLI. Existing managed legacy copies are refreshed; customized skills are preserved and reported. The installer also connects the standard MCP server to detected local harnesses. It preserves hooks, shell profiles, model selection and permission policies. Codex configuration is parsed and checked before a conditional atomic write; custom conflicting entries are preserved.
+
+New tasks can discover the lifecycle instructions normally. Existing chats follow their harness's skill refresh behavior; skill activation is model-directed, and a harness may request normal tool/skill permission (including Gemini's consent prompt). There is no computer restart requirement. MCP is the normal lifecycle transport. The skill also provides the exact installed native command when MCP is not connected. Sandboxed shells may require normal permission to connect to the observer; a refusal remains a coverage gap rather than being bypassed.
+
+The app continues computer-wide observation regardless of whether a task records ownership. Missing records cannot prove old work finished. For the strongest early cleanup evidence, the working agent must register helpers while using them and release them after actual completion. The reviewer never fabricates a release or silently expires an active claim.
