@@ -9,6 +9,7 @@ Validated on macOS 15.8.1 / Apple Silicon. Version 0.4 removes the dependency on
 - Existing execution safeguards cover 32 real OS zombies with eight live controls, 4,096 mixed mechanical safety scenarios, exact identities, unknown IPC-peer refusal, corrupt storage and active-work preservation.
 - Real Codex and Claude CLI tests use the production `MachineReviewer.execute` path, not interactive chats. Three real Node workers are created in separate project directories before the background review. Each model selects the two completed/cancelled disposable jobs from controller-provided lifecycle evidence, preserves the active job, and produces two verified exit receipts after the native watch. No test targets unrelated user work.
 - Native setup tests cover five providers, private configuration only, idempotent setup, provider pinning and cancellation of a TERM-resistant reviewer group while an unrelated active process survives.
+- The compact menu renders at 360 × 488 points. Offscreen OCR checks verify readable labels, the footer, an empty first-use state, populated impact, paused reviews, a quiet day with earlier history, and cleanups without a speed measurement. These fixtures never start an observer or write live history.
 - Settings tests cover draft/save/reopen, default reset, invalid-input refusal, preservation of disabled reviews, and offscreen rendering of the native SwiftUI controls. Five-provider subprocess captures verify that saved model/effort selections reach the actual review worker; no model is invoked by those tests.
 - MCP protocol and compatibility tests cover live status/inspection, strict arguments, protected identities, invalid preview refusal, quiet legacy callbacks and EOF shutdown.
 
@@ -30,6 +31,7 @@ python3 scripts/test-machine-setup.py
 python3 scripts/test-mcp.py
 python3 scripts/test-harness-install.py
 .build/debug/BurnZombiesApp --impact-proof /tmp/bz-impact-proof
+.build/debug/BurnZombiesApp --mini-proof /tmp/bz-mini-proof
 scripts/build-app.sh --universal
 COPYFILE_DISABLE=1 tar -czf /tmp/BurnZombies-test.tar.gz -C dist BurnZombies.app
 python3 scripts/test-install.py /tmp/BurnZombies-test.tar.gz

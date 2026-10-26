@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.5.1"
+version="0.5.2"
 client="auto"
 launch=true
 while [[ $# -gt 0 ]]; do

@@ -132,19 +132,25 @@ extension ImpactNumbers {
 }
 struct BurnStatus: View {
   @ObservedObject var model: AppModel
+  var compact = false
+  var status: String {
+    if model.state.error != nil { return "Needs attention" }
+    if model.machineReview.phase == "paused" { return "Review paused" }
+    if compact {
+      if !model.demo && !model.machineReviewEnabled { return "Reviews off" }
+      return model.machineReview.phase == "reviewing" ? "Reviewing this Mac" : "Agent-led cleanup"
+    }
+    return "Watching this Mac"
+  }
   var body: some View {
-    HStack(spacing: 12) {
-      Circle().fill(model.state.error != nil ? .red : BurnTheme.orange).frame(width: 16, height: 16)
-      Text(
-        model.state.error != nil
-          ? "Needs attention"
-          : model.machineReview.phase == "paused" ? "Review paused" : "Watching this Mac"
-      )
-      .font(.system(size: 18)).foregroundStyle(Color(white: 0.82))
+    HStack(spacing: compact ? 9 : 12) {
+      Circle().fill(model.state.error != nil ? .red : BurnTheme.orange)
+        .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
+      Text(status).font(.system(size: compact ? 13 : 18)).foregroundStyle(Color(white: 0.82))
       Button(model.cleanupQueued ? "Queued" : "Safe cleanup") { model.requestAgentCleanup() }
         .disabled(!model.demo && !model.machineReviewEnabled)
-        .font(.system(size: 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
-        .padding(.horizontal, 9).padding(.vertical, 6)
+        .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
+        .padding(.horizontal, 9).padding(.vertical, compact ? 4 : 6)
         .background(BurnTheme.orange.opacity(0.08), in: Capsule())
         .help("Review buildup across this Mac now. No active chat or reboot needed.")
     }
@@ -154,110 +160,140 @@ struct MemoryPressureRow: View {
   @ObservedObject var model: AppModel
   var compact = false
   var body: some View {
-    HStack(spacing: 18) {
+    HStack(spacing: compact ? 9 : 18) {
       Circle().fill(
         model.pressure == "Low"
           ? Color(red: 0.48, green: 0.76, blue: 0.39) : model.pressure == "High" ? .red : .orange
-      ).frame(width: 17, height: 17)
-      Text("Memory pressure").font(.system(size: 17))
+      ).frame(width: compact ? 13 : 17, height: compact ? 13 : 17)
+      Text("Memory pressure").font(.system(size: compact ? 13 : 17))
       if !compact {
         Rectangle().fill(BurnTheme.line).frame(width: 1, height: 23).padding(.horizontal, 24)
         Text(model.pressure == "Low" ? "Room for your next run." : "A little breathing room helps.")
           .foregroundStyle(BurnTheme.muted).font(.system(size: 16))
       }
       Spacer()
-      Text(model.pressure).font(.system(size: 17))
+      Text(model.pressure).font(.system(size: compact ? 12 : 17, weight: compact ? .medium : .regular))
     }
   }
 }
 struct MiniImpactView: View {
+  static let size = NSSize(width: 360, height: 488)
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject var model: AppModel
   var numbers: ImpactNumbers { .make(model, period: .today) }
+  var lastBurn: String {
+    let history = ImpactNumbers.make(model, period: .all)
+    if history.last != nil { return "Last burn \(history.age)" }
+    return history.count == 0 ? "Ready for your first burn" : "No burns yet today"
+  }
   var body: some View {
-    VStack(spacing: 0) {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(spacing: 9) {
+        Skull(size: 34, celebration: model.burnPulse)
+        Text("BURNZOMBIES").font(BurnTheme.display(22)).tracking(0.25)
+        Spacer(minLength: 8)
+        Button { model.openSettings?() } label: {
+          Image(systemName: "gearshape.fill").font(.system(size: 20)).foregroundStyle(.gray)
+            .frame(width: 28, height: 32).contentShape(Rectangle())
+        }.help("Settings").accessibilityLabel("Settings")
+      }.frame(height: 36)
+      BurnStatus(model: model, compact: true).frame(height: 22).padding(.top, 9)
+      Text("Dead weight. Gone.").font(BurnTheme.display(28))
+        .frame(height: 40, alignment: .leading).padding(.top, 16)
+      Text("TODAY").font(.system(size: 11, weight: .semibold)).tracking(0.5)
+        .foregroundStyle(BurnTheme.muted).frame(height: 14).padding(.top, 12)
       HStack(spacing: 10) {
-        Skull(size: 49, celebration: model.burnPulse)
-        Text("BURNZOMBIES").font(BurnTheme.display(29)).tracking(0.8)
-        Spacer()
-        Button {
-          model.openSettings?()
-        } label: {
-          Image(systemName: "gearshape.fill").font(.system(size: 25)).foregroundStyle(.gray)
-        }.help("Settings")
-      }.padding(.horizontal, 23).frame(height: 76)
-      line
-      VStack(alignment: .leading, spacing: 0) {
-        BurnStatus(model: model).padding(.top, 19)
-        Text("Dead weight. Gone.").font(BurnTheme.display(43)).padding(.top, 9)
-        Text("TODAY").font(.system(size: 17, weight: .medium, design: .monospaced)).tracking(1)
-          .foregroundStyle(.gray).padding(.top, 16)
-        Text("\(numbers.count)").font(BurnTheme.display(91)).frame(height: 100, alignment: .leading)
-          .contentTransition(.numericText()).animation(
-            reduceMotion ? nil : .easeOut(duration: 0.65), value: numbers.count)
-        HStack(spacing: 12) {
-          Flame()
-          Text("Zombies burned").font(.system(size: 22))
-        }.padding(.bottom, 21)
-        line
-        HStack(alignment: .top, spacing: 26) {
-          miniMetric(ImpactNumbers.bytes(numbers.memory), "Memory released")
-          Rectangle().fill(BurnTheme.line).frame(width: 1, height: 73)
-          miniMetric(ImpactNumbers.cpuTime(numbers.cpuSeconds), "CPU time saved")
-        }.padding(.top, 20).padding(.bottom, 27)
-        Button {
-          model.openImpact?()
-        } label: {
-          HStack(spacing: 16) {
-            Text(numbers.boost).font(BurnTheme.display(51)).foregroundStyle(BurnTheme.orange)
-              .minimumScaleFactor(0.6)
-            VStack(alignment: .leading, spacing: 7) {
-              Text("Agent speed boost").font(.system(size: 18, weight: .semibold))
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right").font(.system(size: 16, weight: .light))
-          }.padding(.horizontal, 16).frame(height: 84)
-            .background(BurnTheme.orange.opacity(0.095), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(BurnTheme.orange.opacity(0.65)))
-        }.padding(.horizontal, -10)
-        MemoryPressureRow(model: model, compact: true).padding(.top, 30).padding(.bottom, 22)
-        line
-        Text(numbers.last == nil ? "Ready for your first burn" : "Last burn \(numbers.age)")
-          .font(.system(size: 16, design: .monospaced)).foregroundStyle(BurnTheme.muted).padding(
-            .top, 14)
-      }.padding(.horizontal, 26)
-      Spacer(minLength: 16)
-      line
-      HStack {
-        Button {
-          model.openImpact?()
-        } label: {
-          HStack(spacing: 16) {
+        miniMetric("\(numbers.count)", "Zombies burned", flame: true)
+        Rectangle().fill(BurnTheme.line).frame(width: 1, height: 52)
+        miniMetric(ImpactNumbers.bytes(numbers.memory), "Memory released")
+        Rectangle().fill(BurnTheme.line).frame(width: 1, height: 52)
+        miniMetric(ImpactNumbers.cpuTime(numbers.cpuSeconds), "CPU time saved")
+      }.frame(height: 58).padding(.top, 6)
+      speedCard.padding(.top, 25)
+      line.padding(.top, 16)
+      MemoryPressureRow(model: model, compact: true).frame(height: 18).padding(.top, 12)
+      Text(lastBurn).font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
+        .frame(height: 14).padding(.top, 5)
+      line.padding(.top, 18)
+      HStack(spacing: 0) {
+        Button { model.openImpact?() } label: {
+          HStack(spacing: 10) {
             Text("View impact").fontWeight(.semibold)
-            Image(systemName: "chevron.right").font(.system(size: 16, weight: .light))
-          }
+            Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
+            Spacer(minLength: 0)
+          }.frame(maxWidth: .infinity).frame(height: 44).contentShape(Rectangle())
         }
-        Spacer()
-        Rectangle().fill(BurnTheme.line).frame(width: 1, height: 24)
-        Button {
-          model.openLog?()
-        } label: {
-          HStack(spacing: 12) {
-            Text("Burn Log")
-            Image(systemName: "chevron.right").font(.system(size: 16, weight: .light))
-          }
-        }.padding(.leading, 14)
-      }.font(.system(size: 19)).padding(.horizontal, 26).frame(height: 66)
-    }.frame(width: 428, height: 795).foregroundStyle(BurnTheme.cream).buttonStyle(.plain)
-      .ignoresSafeArea()
+        Rectangle().fill(BurnTheme.line).frame(width: 1, height: 22)
+        Button { model.openLog?() } label: {
+          HStack(spacing: 10) {
+            Spacer(minLength: 0)
+            Text("Burn Log").fontWeight(.medium)
+            Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
+          }.frame(maxWidth: .infinity).frame(height: 44).contentShape(Rectangle())
+        }
+      }.font(.system(size: 13)).frame(height: 48)
+      Spacer(minLength: 0)
+    }.padding(.horizontal, 30).padding(.top, 20).padding(.bottom, 6)
+      .frame(width: Self.size.width, height: Self.size.height)
+      .foregroundStyle(BurnTheme.cream).buttonStyle(.plain).ignoresSafeArea()
       .background(BurnBackdrop()).preferredColorScheme(.dark)
   }
+  var speedCard: some View {
+    Button { model.openImpact?() } label: {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("AGENT SPEED BOOST").font(.system(size: 10.5, weight: .bold)).tracking(0.3)
+          .foregroundStyle(BurnTheme.orange)
+        if numbers.boost == "—" {
+          HStack(spacing: 12) {
+            warmupGauge
+            VStack(alignment: .leading, spacing: 4) {
+              Text("Still warming up.").font(.system(size: 13, weight: .semibold))
+              Text("More cleanups will reveal your boost.").font(.system(size: 11))
+                .foregroundStyle(BurnTheme.muted).lineLimit(1).minimumScaleFactor(0.85)
+            }
+          }
+        } else {
+          HStack {
+            Text(numbers.boost).font(BurnTheme.display(37)).foregroundStyle(BurnTheme.orange)
+              .lineLimit(1).minimumScaleFactor(0.7)
+            Spacer()
+            Image(systemName: "chevron.right").font(.system(size: 12, weight: .medium))
+          }.frame(height: 38)
+        }
+      }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14)
+        .frame(height: 84).contentShape(RoundedRectangle(cornerRadius: 7))
+        .background(BurnTheme.orange.opacity(0.085), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.75)))
+    }.help("View impact")
+  }
+  var warmupGauge: some View {
+    ZStack {
+      Path { path in
+        path.addArc(center: CGPoint(x: 17, y: 23), radius: 15,
+          startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
+      }.stroke(style: StrokeStyle(lineWidth: 4, lineCap: .round))
+      Path { path in
+        path.move(to: CGPoint(x: 17, y: 23))
+        path.addLine(to: CGPoint(x: 25, y: 15))
+      }.stroke(style: StrokeStyle(lineWidth: 3, lineCap: .round))
+    }.foregroundStyle(BurnTheme.orange).frame(width: 34, height: 28).accessibilityHidden(true)
+  }
   var line: some View { Rectangle().fill(BurnTheme.line).frame(height: 1) }
-  func miniMetric(_ value: String, _ title: String) -> some View {
-    VStack(alignment: .leading, spacing: 2) {
-      ImpactValue(value: value, size: 44)
-      Text(title).font(.system(size: 18)).foregroundStyle(Color(white: 0.82))
+  func miniMetric(_ value: String, _ title: String, flame: Bool = false) -> some View {
+    let parts = value.split(separator: " ", maxSplits: 1).map(String.init)
+    return VStack(alignment: .leading, spacing: 2) {
+      (Text(parts.first ?? "—").font(BurnTheme.display(34))
+        + Text(parts.count > 1 ? " " + parts[1] : "").font(BurnTheme.display(21)))
+        .lineLimit(1).minimumScaleFactor(0.65).frame(height: 40, alignment: .leading)
+        .contentTransition(.numericText())
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.65), value: value)
+      HStack(spacing: 3) {
+        if flame { Flame(size: 12) }
+        Text(title).font(.system(size: 9.5)).foregroundStyle(Color(white: 0.82))
+          .lineLimit(1).minimumScaleFactor(0.9)
+      }.frame(height: 12)
     }.frame(maxWidth: .infinity, alignment: .leading)
+      .accessibilityElement(children: .ignore).accessibilityLabel("\(title): \(value)")
   }
 }
 struct ImpactWindowView: View {
