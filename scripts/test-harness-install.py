@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix='bz-harness-install-') as temp:
     config = tomllib.loads((home/'.codex/config.toml').read_text())
     assert config['model'] == 'keep-user-model' and config['mcp_servers']['other']['command'] == '/keep/other'
     assert config['mcp_servers']['burnzombies']['command'] == str(cli.parent/'burnzombies-mcp')
-    assert (home/'.codex/config.toml').read_text().startswith(original)
+    assert config['mcp_servers']['other']['command'] == '/keep/other'
     for relative in ['.claude.json', '.cursor/mcp.json', '.copilot/mcp-config.json', '.gemini/settings.json']:
         assert json.loads((home/relative).read_text())['mcpServers']['burnzombies']['command'] == str(cli.parent/'burnzombies-mcp')
     for name in ['.agents', '.claude', '.cursor', '.copilot', '.gemini']:
@@ -59,4 +59,13 @@ with tempfile.TemporaryDirectory(prefix='bz-harness-install-') as temp:
     subprocess.run([arg if i == 0 or command[i-1] != '--checkpoints' else 'off' for i, arg in enumerate(command)], check=True, capture_output=True)
     assert json.loads((home/'.codex/hooks.json').read_text())['hooks'] == {}
     assert json.loads((home/'.claude/settings.json').read_text())['hooks'] == settings['hooks']
+    # Default MCP-only setup must preserve hook bytes and refuse malformed TOML before any edit.
+    mcp_only=[str(cli),'install','--harness','all','--mcp-only','--home',str(home)]
+    hook_before={p:p.read_bytes() for p in home.rglob('*') if p.is_file() and ('hooks' in p.name or p.name=='settings.json')}
+    subprocess.run(mcp_only,check=True,capture_output=True)
+    assert all(p.read_bytes()==b for p,b in hook_before.items())
+    bad=home/'.codex/config.toml';bad.write_text('[features] # comment\nkeep=true\n[features]\nkeep=false\n')
+    before={p:p.read_bytes() for p in home.rglob('*') if p.is_file()}
+    assert subprocess.run(mcp_only,capture_output=True).returncode!=0
+    assert before=={p:p.read_bytes() for p in home.rglob('*') if p.is_file()}
 print('PASS five harness configurations, preserved preferences/tools/hooks, idempotence, atomic conflict refusal, bounded lifecycle formats')

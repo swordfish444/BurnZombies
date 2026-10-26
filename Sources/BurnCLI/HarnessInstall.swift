@@ -1,4 +1,7 @@
 import Foundation
+import BurnCore
+import CryptoKit
+import TOMLKit
 
 enum HarnessInstall {
   static let clients = ["codex", "claude", "cursor", "copilot", "gemini"]
@@ -9,11 +12,12 @@ enum HarnessInstall {
       guard i + 1 < args.count else { throw NSError(domain: "Missing \(name)", code: 1) }
       return args[i + 1]
     }
-    let home = URL(fileURLWithPath: try option("--home", fallback: NSHomeDirectory()), isDirectory: true)
+    let home = URL(fileURLWithPath: try option("--home", fallback: ProcessInfo.processInfo.environment["BURNZOMBIES_SKILL_HOME"] ?? NSHomeDirectory()), isDirectory: true)
+    let mcpOnly = args.contains("--mcp-only")
     let selected = try option("--harness", fallback: "auto")
     let checkpoints = try option("--checkpoints", fallback: "off")
     guard ["on", "off"].contains(checkpoints) else { throw NSError(domain: "Use --checkpoints on or off", code: 1) }
-    if !args.contains("--home") {
+    if !args.contains("--home") && ProcessInfo.processInfo.environment["BURNZOMBIES_SKILL_HOME"] == nil {
       for key in ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GEMINI_CLI_HOME", "COPILOT_HOME"] {
         if let value = ProcessInfo.processInfo.environment[key], !value.isEmpty {
           throw NSError(domain: "Custom harness root \(key) is set. Configuration preserved; install into that root explicitly.", code: 1)
@@ -27,7 +31,7 @@ enum HarnessInstall {
     let server = executable.deletingLastPathComponent().appendingPathComponent("burnzombies-mcp").path
     let bundledSkill = executable.deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent("Resources/burnzombies/SKILL.md").path
-    let skill = try String(contentsOfFile: option("--skill-file", fallback: bundledSkill), encoding: .utf8)
+    let skill = mcpOnly ? "" : try String(contentsOfFile: option("--skill-file", fallback: bundledSkill), encoding: .utf8)
     let fm = FileManager.default
     let directories = ["codex": ".codex", "claude": ".claude", "cursor": ".cursor", "copilot": ".copilot", "gemini": ".gemini"]
     let applications = ["codex": "Codex.app", "claude": "Claude.app", "cursor": "Cursor.app"]
@@ -43,13 +47,16 @@ enum HarnessInstall {
 
     // Prepare every edit first. Invalid/conflicting input leaves all configurations unchanged.
     var writes: [URL: Data] = [:]
+    var snapshots: [URL: Data] = [:]
     func read(_ relative: String) throws -> Data? {
       let url = home.appendingPathComponent(relative)
       let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .fileSizeKey])
       guard values?.isSymbolicLink != true else { throw NSError(domain: "Refusing config symlink: \(relative)", code: 1) }
       if !fm.fileExists(atPath: url.path) { return nil }
       guard (values?.fileSize ?? Int.max) <= 4 * 1024 * 1024 else { throw NSError(domain: "Oversized config: \(relative)", code: 1) }
-      return try Data(contentsOf: url)
+      let data = try Data(contentsOf: url)
+      snapshots[url] = data
+      return data
     }
     func editJSON(_ relative: String, _ transform: (inout [String: Any]) throws -> Void) throws {
       let url = home.appendingPathComponent(relative)
@@ -79,6 +86,7 @@ enum HarnessInstall {
       }
     }
     func addHooks(_ relative: String, client: String, event: String, flat: Bool = false) throws {
+      if mcpOnly { return }
       try editJSON(relative) { object in
         if client == "cursor" || client == "copilot" { object["version"] = object["version"] ?? 1 }
         if object["hooks"] != nil && !(object["hooks"] is [String: Any]) { throw NSError(domain: "Invalid hooks in \(relative)", code: 1) }
@@ -122,25 +130,41 @@ enum HarnessInstall {
     for client in chosen {
       let skillRoot = client == "codex" ? ".agents" : directories[client]!
       let skillPath = skillRoot + "/skills/burnzombies/SKILL.md"
-      if let old = try read(skillPath), !String(decoding: old, as: UTF8.self).contains("name: burnzombies") {
+      if !mcpOnly, let old = try read(skillPath), !String(decoding: old, as: UTF8.self).contains("name: burnzombies") {
         throw NSError(domain: "Unrelated skill already occupies \(skillPath)", code: 1)
       }
-      writes[home.appendingPathComponent(skillPath)] = Data(skill.utf8)
+      if !mcpOnly { writes[home.appendingPathComponent(skillPath)] = Data(skill.utf8) }
       switch client {
       case "codex":
         let relative = ".codex/config.toml"
         let previous = String(decoding: try read(relative) ?? Data(), as: UTF8.self)
-        if previous.range(of: #"(?m)^\s*\[mcp_servers\.(?:burnzombies|"burnzombies"|'burnzombies')\]"#, options: .regularExpression) != nil {
-          // Never rewrite a user's TOML. The existing installed command is stable across upgrades.
-          let section = previous.components(separatedBy: .newlines).drop(while: { !$0.contains("[mcp_servers.") || !$0.contains("burnzombies") }).dropFirst().prefix(while: { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("[") }).joined(separator: "\n")
-          let encodedCommand = String(decoding: try JSONSerialization.data(withJSONObject: [server], options: .withoutEscapingSlashes), as: UTF8.self).dropFirst().dropLast()
-          let expectedCommand = "command = " + encodedCommand
-          guard section.components(separatedBy: .newlines).contains(where: { $0.trimmingCharacters(in: .whitespaces) == expectedCommand }) else { throw NSError(domain: "Existing Codex BurnZombies config uses a different path; preserved", code: 1) }
-        } else {
-          guard !previous.contains("mcp_servers.burnzombies") else { throw NSError(domain: "Nonstandard Codex BurnZombies config; preserved", code: 1) }
-          let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [server], options: .withoutEscapingSlashes), as: UTF8.self).dropFirst().dropLast()
-          writes[home.appendingPathComponent(relative)] = Data((previous + "\n[mcp_servers.burnzombies]\ncommand = \(encoded)\nargs = []\n").utf8)
-        }
+        do {
+          let document = try TOMLTable(string: previous)
+          let canonical = document.convert(to: .toml)
+          guard document["mcp_servers"] == nil || document["mcp_servers"]?.table != nil else {
+            throw StoreError.message("Invalid Codex mcp_servers; configuration preserved.")
+          }
+          let hadServers = document["mcp_servers"] != nil
+          let servers = document["mcp_servers"]?.table ?? TOMLTable()
+          if let existing = servers["burnzombies"] {
+            guard existing.table?["command"]?.string == server else {
+              throw StoreError.message("Existing Codex BurnZombies entry uses a different command; preserved.")
+            }
+          } else {
+            servers["burnzombies"] = TOMLTable(["command": server, "args": TOMLArray([])])
+            document["mcp_servers"] = servers
+            let candidate = document.convert(to: .toml) + "\n"
+            let checked = try TOMLTable(string: candidate)
+            let restored = checked["mcp_servers"]!.table!
+            restored.remove(at: "burnzombies")
+            if hadServers { checked["mcp_servers"] = restored } else { checked.remove(at: "mcp_servers") }
+            guard checked.convert(to: .toml) == canonical else {
+              throw StoreError.message("Codex configuration round-trip changed unrelated settings; preserved.")
+            }
+            writes[home.appendingPathComponent(relative)] = Data(candidate.utf8)
+          }
+        } catch let error as StoreError { throw error }
+        catch { throw StoreError.message("Invalid Codex TOML; configuration preserved. Repair it with your harness first.") }
         try addHooks(".codex/hooks.json", client: client, event: "PostToolUse")
       case "claude":
         try addServer(".claude.json", extra: ["type": "stdio"])
@@ -157,9 +181,35 @@ enum HarnessInstall {
       default: break
       }
     }
+    if args.contains("--check") { print("Harness MCP configuration preflight passed."); return }
+    func replace(_ url: URL, data: Data, expected: Data?) throws {
+      let current = fm.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+      guard current == expected else { throw StoreError.message("Configuration changed during installation; preserved.") }
+      let safety = home.appendingPathComponent(".codex/bin/codex_config_safety.py")
+      if url == home.appendingPathComponent(".codex/config.toml"), let expected,
+        fm.isExecutableFile(atPath: safety.path) {
+        let candidate = fm.temporaryDirectory.appendingPathComponent("bz-config-" + UUID().uuidString + ".toml")
+        defer { try? fm.removeItem(at: candidate) }
+        try data.write(to: candidate, options: .atomic)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: candidate.path)
+        let process = Process(); process.executableURL = safety
+        let digest = SHA256.hash(data: expected).map { String(format: "%02x", $0) }.joined()
+        process.arguments = ["--config", url.path, "install", candidate.path, "--expected-sha256", digest]
+        process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+        try process.run(); process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw StoreError.message("Validated Codex configuration transaction was refused; preserved.") }
+      } else {
+        try data.write(to: url, options: .atomic)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+      }
+    }
     var originals: [URL: Data] = [:]
     var created = [URL]()
     do {
+      for (url, _) in writes {
+        let now = fm.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        guard now == snapshots[url] else { throw StoreError.message("Configuration changed during installation; preserved.") }
+      }
       for (url, data) in writes.sorted(by: { $0.key.path < $1.key.path }) {
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if fm.fileExists(atPath: url.path) {
@@ -170,15 +220,15 @@ enum HarnessInstall {
           try old.write(to: backup, options: .atomic)
           try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
         } else { created.append(url) }
-        try data.write(to: url, options: .atomic)
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try replace(url, data: data, expected: snapshots[url])
       }
     } catch {
-      for (url, data) in originals { try? data.write(to: url, options: .atomic) }
-      for url in created { try? fm.removeItem(at: url) }
+      for (url, data) in originals { try? replace(url, data: data, expected: writes[url]) }
+      for url in created where (try? Data(contentsOf: url)) == writes[url] { try? fm.removeItem(at: url) }
       throw error
     }
-    print("Installed MCP and skill for: " + chosen.joined(separator: ", "))
+    print("Installed " + (mcpOnly ? "MCP" : "MCP and skill") + " for: " + chosen.joined(separator: ", "))
+    if mcpOnly { print("No hooks or permission changes. Existing sessions use their normal MCP reload."); return }
     print("No computer restart. Existing sessions may need their harness's MCP/skill reload. New sessions discover the integration.")
     if checkpoints == "on" { print("One quiet checkpoint per harness. Codex/Claude reuse MCP; no startup hooks or Stop hooks. First-use hook trust remains with the harness.") }
     else { print("Checkpoints disabled. Your agent can use the skill and MCP tools on demand.") }

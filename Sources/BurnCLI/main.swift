@@ -43,6 +43,19 @@ do {
     defer { words.forEach { free($0) } }
     var pointers = words + [nil]
     exit(bz_review_worker(&pointers, 180))
+  case "lifecycle":
+    guard args.count == 1, let data = try FileHandle.standardInput.read(upToCount: 16385) else {
+      fail("Pass one lifecycle JSON object on stdin.")
+    }
+    let raw = try AgentConnection.call(LifecycleInput.request(data))
+    print(raw, terminator: "")
+    if let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], result["ok"] as? Bool != true { exit(1) }
+  case "evidence":
+    guard args.count >= 2, args.count <= 17,
+      args.dropFirst().allSatisfy({ Int32($0).map { $0 > 0 } ?? false }) else { fail("Use evidence PID [PID ...], up to 16 exact helper PIDs.") }
+    print(try AgentConnection.call(AgentRequest("inspect", pids: args.dropFirst().compactMap(Int32.init))), terminator: "")
+  case "install-skill":
+    try LifecycleSkillInstall.run(Array(args.dropFirst()))
   case "setup":
     try MachineSetup.run(Array(args.dropFirst()))
   case "review-once":
@@ -54,11 +67,14 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.5.2
+      BurnZombies 0.6.0
+      evidence PID [PID ...]   Read exact helper identities; no process is stopped.
+      lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
+      install-skill [--home PATH] [--skill-file PATH]   Install portable lifecycle instructions only.
       setup [--harness auto|codex|claude|cursor|copilot|gemini|none] [--model ID|default] [--thinking LEVEL|default]
         Enable computer-wide background reviews. No chat hooks or live config edits.
-      install [--harness auto|all|codex|claude|cursor|copilot|gemini]
-        Connect installed harnesses: MCP, skill and lifecycle checkpoints. No reboot.
+      install [--harness auto|all|codex|claude|cursor|copilot|gemini] [--mcp-only]
+        Connect installed harnesses. MCP-only mode preserves hooks and permissions.
       hook --client NAME --event EVENT
         Native lifecycle adapter. Emits context only; never stops processes.
       run --label NAME [--allow-cleanup] -- /absolute/command [arguments]

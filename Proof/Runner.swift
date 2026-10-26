@@ -33,7 +33,8 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do {
         let root = URL(fileURLWithPath: CommandLine.arguments[2])
         guard let config = try MachineReviewConfiguration.load(root: root) else { throw StoreError.message("Missing proof config") }
-        let prompt = try String(contentsOfFile: CommandLine.arguments[4], encoding: .utf8)
+        let prompt = CommandLine.arguments[4] == "--production" ? MachineReviewer.prompt
+          : try String(contentsOfFile: CommandLine.arguments[4], encoding: .utf8)
         try MachineReviewer.execute(config, root: root, prompt: prompt)
       } catch { print("FAIL: \(error)"); exit(1) }
       return
@@ -71,6 +72,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try test() } catch { failTest("\(name): \(error)") }
       if failures == before { print("PASS \(name)") }
     }
+    let beforeLifecycle = failures
+    do { try await lifecycleProof() } catch { failTest("Lifecycle evidence: \(error)") }
+    if failures == beforeLifecycle { print("PASS durable lifecycle evidence, shared consumers, token privacy, identity and release/retain races") }
     let beforeAgent = failures
     do { try await agentBridgeProof() } catch { failTest("Agent bridge: \(error)") }
     if failures == beforeAgent { print("PASS private agent bridge, refusal and socket protection") }
@@ -80,7 +84,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     if CommandLine.arguments.contains("--integration") {
       do { try await integration() } catch { failTest("Integration: \(error)") }
     }
-    print("\(tests.count + 2) checks; \(failures) failures")
+    print("\(tests.count + 3) checks; \(failures) failures")
     exit(failures == 0 ? 0 : 1)
   }
   static func integration() async throws {

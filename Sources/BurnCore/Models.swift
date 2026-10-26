@@ -173,6 +173,7 @@ public struct Preferences: Codable, Sendable {
 
 public struct Catalog: Codable, Sendable {
   public var version = 1
+  public var workEvidence: [WorkEvidence]?
   public var records: [String: Record] = [:]
   public var events: [CleanupEvent] = []
   public var preferences = Preferences()

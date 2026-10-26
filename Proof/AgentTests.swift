@@ -43,8 +43,12 @@ func agentBridgeProof() async throws {
       process.waitUntilExit()
     }
   }
+  let tree = try await call(AgentRequest("inspect", pids: [getpid()]))
+  check(tree.processes[0].liveChildCount >= 2)
+  check(tree.processes[0].liveChildren.contains { $0.identity.pid == disposable.processIdentifier })
   let targets = try await call(AgentRequest("inspect", pids: [disposable.processIdentifier]))
   equal(targets.processes.count, 1)
+  equal(targets.processes[0].liveChildCount, 0)
   let noPeer = await service.call(AgentRequest("preview", processIDs: targets.processes.map(\.id),
     label: "Unknown peer", rationale: "An unauthenticated peer must not receive a cleanup preview."))
   checkFalse(noPeer.ok, "missing peer PID did not fail closed")
@@ -111,7 +115,18 @@ func agentBridgeProof() async throws {
 func runAgentFixture(root: URL) async throws {
   let monitor = try Monitor(root: root)
   let service = AgentService(monitor: monitor)
-  let listener = try AgentListener(root: root) { await service.call($0) }
+  let listener = try AgentListener(root: root) { request in
+    let allowlist = root.appendingPathComponent("allowed-processes.json")
+    if ["preview", "lifecycle"].contains(request.operation), let ids = request.processIDs,
+      FileManager.default.fileExists(atPath: allowlist.path) {
+      guard let data = try? Data(contentsOf: allowlist), data.count < 4096,
+        let pids = try? JSONDecoder().decode([Int32].self, from: data),
+        ids.allSatisfy({ id in pids.contains { pid in
+          if case .found(let o) = Native().probe(pid) { return o.identity.key == id }; return false
+        } }) else { return AgentReply(ok: false, message: "Acceptance fixture refuses targets outside its test-owned allowlist.") }
+    }
+    return await service.call(request)
+  }
   print("READY"); fflush(stdout)
   _ = FileHandle.standardInput.readDataToEndOfFile()
   await listener.stop()

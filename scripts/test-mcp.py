@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         assert initialized["result"]["serverInfo"]["name"] == "BurnZombies"
         send("notifications/initialized", notification=True)
         tools = send("tools/list")["result"]["tools"]
-        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint"}
+        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint", "burnzombies_work", "burnzombies_lifecycle"}
         burn = next(t for t in tools if t["name"] == "burnzombies_burn")
         assert burn["annotations"]["destructiveHint"] is True
         def call(name, args): return send("tools/call", {"name": name, "arguments": args})
@@ -81,12 +81,43 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         assert "error" in call("burnzombies_burn", {"preview_token": "fake"})
         denied = call("burnzombies_burn", {"preview_token": "11111111-1111-1111-1111-111111111111"})["result"]
         assert denied["isError"] is True
+        worker = subprocess.Popen(["/bin/sleep", "120"])
+        try:
+            target = json.loads(call("burnzombies_inspect", {"pids": [worker.pid]})["result"]["content"][0]["text"])["processes"][0]
+            registration = {"action": "register", "process_ids": [target["id"]], "label": "Protocol helper",
+                "evidence": "This protocol proof owns and still needs the exact disposable worker.",
+                "completion_condition": "Protocol assertions finish and no remaining consumer needs this worker."}
+            registered = json.loads(call("burnzombies_lifecycle", registration)["result"]["content"][0]["text"])
+            assert registered["ok"], registered
+            token = registered["workToken"]
+            claims = call("burnzombies_work", {})["result"]["content"][0]["text"]
+            assert token not in claims and "tokenHash" not in claims
+            assert "error" in call("burnzombies_lifecycle", dict(registration, action="release"))
+            blocked = call("burnzombies_preview", {"process_ids": [target["id"]], "label": "still active",
+                "rationale": "Even a plausible statement cannot override an active ownership claim."})["result"]
+            assert blocked["isError"]
+            released = call("burnzombies_lifecycle", {"action": "release", "work_token": token,
+                "evidence": "Protocol assertions completed; this fixture has no remaining consumer."})["result"]
+            assert not released.get("isError") and worker.poll() is None
+            assert json.loads(call("burnzombies_status", {})["result"]["content"][0]["text"])["releasedWorkCount"] == 1
+        finally:
+            worker.terminate(); worker.wait(timeout=5)
         assert send("prompts/list")["result"]["prompts"][0]["name"] == "tame_the_horde"
         assert send("prompts/get", {"name": "tame_the_horde"})["result"]["messages"]
         assert "error" in send("not/a/method")
         server.stdin.close()
         assert server.wait(timeout=10) == 0
-        print("PASS MCP initialize, discovery, live status, strict arguments, denied cleanup, prompt and EOF shutdown")
+        env['BURNZOMBIES_REVIEW_MODE'] = '1'
+        server = subprocess.Popen([str(server_binary)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        send("initialize", {"protocolVersion":"2025-11-25", "capabilities":{}, "clientInfo":{"name":"Bounded review proof","version":"1"}})
+        send("notifications/initialized", notification=True)
+        review_tools = {t['name'] for t in send('tools/list')['result']['tools']}
+        assert 'burnzombies_lifecycle' not in review_tools and 'burnzombies_checkpoint' not in review_tools
+        assert 'error' in call('burnzombies_lifecycle', registration)
+        for _ in range(8): assert not call('burnzombies_status', {})['result'].get('isError')
+        assert call('burnzombies_status', {})['result']['isError']
+        server.stdin.close(); assert server.wait(timeout=10)==0
+        print("PASS MCP lifecycle, protected working claims, redacted readback, strict arguments, reviewer capability restrictions and call budget")
     finally:
         if server and server.poll() is None:
             server.terminate(); server.wait(timeout=10)
