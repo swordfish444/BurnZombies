@@ -305,6 +305,7 @@ private func status(_ d: Disposition) -> String {
 }
 
 struct Dashboard: View {
+  @StateObject private var reviewerSettings = ReviewSettingsModel()
   @ObservedObject var model: AppModel
   var eligible: Int { model.state.findings.filter { $0.disposition == .eligible }.count }
   var attention: Int {
@@ -548,6 +549,7 @@ struct Dashboard: View {
       if model.machineReview.phase == "paused" {
         Button("Resume reviews") { model.setAutomatic(true) }
       }
+      ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
       Toggle(
         "Grouped notifications",
         isOn: Binding(
@@ -712,6 +714,12 @@ struct Dashboard: View {
 }
 MainActor.assumeIsolated {
   let app = NSApplication.shared
+  #if DEBUG
+  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--settings-proof" {
+    do { try settingsProof(output: CommandLine.arguments[2]); exit(0) }
+    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
+  }
+  #endif
   let delegate = AppDelegate()
   app.delegate = delegate
   app.run()

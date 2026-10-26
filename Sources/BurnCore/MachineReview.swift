@@ -7,6 +7,8 @@ public struct MachineReviewConfiguration: Codable, Sendable {
   public var launcher: String
   public var server: String
   public var enabled = true
+  public var model: String?
+  public var reasoningEffort: String?
   public static let harnesses = ["codex", "claude", "cursor", "copilot", "gemini"]
   public init(harness: String, executable: String, launcher: String, server: String) {
     self.harness = harness; self.executable = executable; self.launcher = launcher; self.server = server
@@ -17,6 +19,7 @@ public struct MachineReviewConfiguration: Codable, Sendable {
     return try JSONDecoder().decode(Self.self, from: Store(root: root).read(url, limit: 8192))
   }
   public func save(root: URL) throws {
+    try validateSelection()
     guard Self.harnesses.contains(harness), [executable, launcher, server].allSatisfy({ $0.hasPrefix("/") }) else {
       throw StoreError.message("Choose an installed harness and absolute executable paths.")
     }
@@ -132,6 +135,8 @@ public actor MachineReviewer {
     """
 
   public static func arguments(_ c: MachineReviewConfiguration, directory: URL, root: URL, prompt: String) throws -> [String] {
+    try c.validateSelection()
+    let selection = c.selectionArguments
     let server: [String: Any] = ["command": c.server, "args": [String](), "env": ["BURNZOMBIES_HOME": root.path]]
     let config = ["mcpServers": ["burnzombies": server]]
     let data = try JSONSerialization.data(withJSONObject: config, options: [.sortedKeys, .withoutEscapingSlashes])
@@ -141,20 +146,20 @@ public actor MachineReviewer {
     }
     switch c.harness {
     case "codex":
-      return ["exec", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--approve-for-me", "--json",
+      return ["exec"] + selection + ["--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--approve-for-me", "--json",
         "-C", directory.path, "-c", "features.hooks=false", "-c", "mcp_servers.burnzombies.command=" + quoted(c.server),
         "-c", "mcp_servers.burnzombies.env.BURNZOMBIES_HOME=" + quoted(root.path), prompt]
     case "claude":
-      return ["-p", prompt, "--output-format", "json", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", json,
+      return selection + ["-p", prompt, "--output-format", "json", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", json,
         "--settings", "{\"disableAllHooks\":true}", "--permission-prompts", "none",
         "--allowedTools", "mcp__burnzombies__*", "--tools", "Read,Glob,Grep"]
     case "copilot":
-      return ["-p", prompt, "--no-ask-user", "--additional-mcp-config", json, "--allow-tool", "burnzombies", "--disable-builtin-mcps"]
+      return selection + ["-p", prompt, "--no-ask-user", "--additional-mcp-config", json, "--allow-tool", "burnzombies", "--disable-builtin-mcps"]
     case "cursor", "gemini":
       let folder = directory.appendingPathComponent(c.harness == "cursor" ? ".cursor" : ".gemini")
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
       try Store(root: root).write(data, to: folder.appendingPathComponent(c.harness == "cursor" ? "mcp.json" : "settings.json"), limit: 8192)
-      return ["-p", prompt, "--output-format", "json"]
+      return selection + ["-p", prompt, "--output-format", "json"]
     default: throw StoreError.message("Unsupported review harness.")
     }
   }
