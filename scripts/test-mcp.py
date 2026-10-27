@@ -139,14 +139,20 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         server.stdin.close()
         assert server.wait(timeout=10) == 0
         env['BURNZOMBIES_REVIEW_MODE'] = '1'
+        env['BURNZOMBIES_REVIEW_IDS'] = '[]'
         server = subprocess.Popen([str(server_binary)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         send("initialize", {"protocolVersion":"2025-11-25", "capabilities":{}, "clientInfo":{"name":"Bounded review proof","version":"1"}})
         send("notifications/initialized", notification=True)
         review_tools = {t['name'] for t in send('tools/list')['result']['tools']}
-        assert 'burnzombies_lifecycle' not in review_tools and 'burnzombies_checkpoint' not in review_tools and 'burnzombies_workspace' not in review_tools
+        assert 'burnzombies_lifecycle' not in review_tools and 'burnzombies_checkpoint' not in review_tools and 'burnzombies_workspace' not in review_tools and 'burnzombies_work' not in review_tools
         assert 'error' in call('burnzombies_lifecycle', registration)
         assert 'error' in call('burnzombies_workspace', {'action':'create'})
-        for _ in range(8): assert not call('burnzombies_status', {})['result'].get('isError')
+        for _ in range(8):
+            response = call('burnzombies_status', {})['result']
+            assert not response.get('isError')
+            compact = json.loads(response['content'][0]['text'])
+            assert compact['work'] == [] and compact['workspaces'] == [], 'Reviewer saw evidence outside selected batch'
+            assert 'groups' not in compact and 'receipts' not in compact and 'worktreeReceipts' not in compact
         assert call('burnzombies_status', {})['result']['isError']
         server.stdin.close(); assert server.wait(timeout=10)==0
         print("PASS MCP lifecycle, protected working claims, redacted readback, strict arguments, reviewer capability restrictions and call budget")

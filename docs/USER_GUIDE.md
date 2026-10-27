@@ -18,7 +18,11 @@ The flame opens today's impact. **View impact** opens the larger display; **Burn
 
 ## Background reviews
 
-The first complete scan can request a review. Changes in resource buildup are coalesced with a ten-minute cooldown; an hourly review also covers ownership changes without aggregate growth. One review runs at a time, for at most three minutes. The observer continues sampling and verifying receipts throughout.
+The observer watches the whole Mac without model calls. A review starts only for new owner-released evidence, after a two-minute batching window and at least 30 minutes since the last review. Ordinary CPU, memory or process churn and the passage of an hour never start reviews. Unchanged evidence is remembered across restarts; a new release or changed child relationship can be reconsidered. Active claims and exited helpers do not enter the queue.
+
+At most eight reviews can start in a rolling 24 hours. Recorded input usage of 200,000 tokens (including cached input) stops further launches in that window. This is a dispatch threshold, not a provider-enforced token ceiling: the last review can cross it. Missing usage stays unknown and still consumes an attempt. Restarting, requesting cleanup or changing model does not reset the limits. Review failures remain paused until explicitly resumed. One review runs at a time for at most three minutes; native observation and receipt verification continue while waiting.
+
+Codex reviews load a focused cleanup policy and only BurnZombies MCP tools, without optional apps, plugins, memories or host skill discovery. The existing account, selected model/thinking and managed security controls remain in place. Review mode returns only task-relevant evidence and preserves every native cleanup guard. Settings shows recent attempts and available input/cached token totals. The private `review-usage.json` retains seven days of bounded usage receipts rather than losing usage whenever the last-review log rotates.
 
 Use Settings to pause/resume background reviews and enable **Start at login**. Login, permission, unsupported-client or usage errors pause reviews; observation continues. Resolve the issue in the selected harness, then resume. BurnZombies does not retry repeatedly or switch accounts/providers. Review details are available in Settings.
 

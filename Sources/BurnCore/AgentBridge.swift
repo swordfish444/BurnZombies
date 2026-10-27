@@ -16,20 +16,22 @@ public struct AgentRequest: Codable, Sendable {
   public let completionCondition: String?
   public let workspacePath: String?
   public let workspaceID: String?
+  public let reviewIDs: [String]?
   // Populated from the authenticated Unix peer, never from request JSON.
   public var callerPID: Int32 = -1
   enum CodingKeys: String, CodingKey {
-    case operation, findingID, previewToken, processIDs, pids, offset, label, rationale, action, workToken, completionCondition, workspacePath, workspaceID
+    case operation, findingID, previewToken, processIDs, pids, offset, label, rationale, action, workToken, completionCondition, workspacePath, workspaceID, reviewIDs
   }
   public init(_ operation: String, findingID: String? = nil, previewToken: String? = nil,
     processIDs: [String]? = nil, pids: [Int32]? = nil, offset: Int? = nil,
-    label: String? = nil, rationale: String? = nil, action: String? = nil,
+    label: String? = nil, rationale: String? = nil, action: String? = nil, reviewIDs: [String]? = nil,
     workToken: String? = nil, completionCondition: String? = nil, workspacePath: String? = nil, workspaceID: String? = nil) {
     self.operation = operation; self.findingID = findingID; self.previewToken = previewToken
     self.processIDs = processIDs; self.pids = pids; self.offset = offset
     self.label = label; self.rationale = rationale
     self.action = action; self.workToken = workToken; self.completionCondition = completionCondition
     self.workspacePath = workspacePath; self.workspaceID = workspaceID
+    self.reviewIDs = reviewIDs
   }
 }
 
@@ -221,7 +223,7 @@ public actor AgentService {
     reply.diskReclaimedBytes = state.catalog.lifetimeDiskReclaimedBytes ?? 0
     reply.worktreeReceipts = Array((state.catalog.workspaceReceipts ?? []).suffix(8))
     if request.operation == "status" {
-      reply.workspaces = (state.catalog.workspaces ?? []).filter { $0.state == "released" }.prefix(8).map(WorkspaceSummary.init)
+      reply.workspaces = (state.catalog.workspaces ?? []).filter { $0.state == "released" && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id)) }.prefix(8).map(WorkspaceSummary.init)
     }
     reply.verifiedHelpers = state.catalog.lifetimeVerified
     reply.memoryReleasedBytes = state.catalog.lifetimeResidentReleased ?? 0
@@ -232,7 +234,8 @@ public actor AgentService {
     reply.partial = state.partial
     let work = await monitor.workSummaries()
     reply.activeWorkCount = work.filter { $0.state == "active" && !$0.livePIDs.isEmpty }.count
-    let released = work.filter { $0.state == "released" && !$0.blockedByActiveClaim && !$0.livePIDs.isEmpty }
+    let released = work.filter { $0.state == "released" && !$0.blockedByActiveClaim && !$0.livePIDs.isEmpty
+      && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id)) }
     reply.releasedWorkCount = released.count
     if request.operation == "status" {
       reply.work = Array(released.prefix(8))

@@ -7,16 +7,18 @@ public enum HarnessHook {
     public var processCount: Int
     public var residentBytes: UInt64
     public var pressure: String
-    public init(observedAt: Date, processCount: Int, residentBytes: UInt64, pressure: String) {
+    public var reviewEvidence: [ReviewEvidence]?
+    public init(observedAt: Date, processCount: Int, residentBytes: UInt64, pressure: String, reviewEvidence: [ReviewEvidence]? = nil) {
       self.observedAt = observedAt; self.processCount = processCount
       self.residentBytes = residentBytes; self.pressure = pressure
+      self.reviewEvidence = reviewEvidence
     }
   }
   private struct Delivery: Codable { var signal: Signal; var deliveredAt: Date }
   /// Publish facts already gathered by the monitor. This is a notification gate,
   /// never a process classifier or permission to stop anything.
   public static func publish(_ signal: Signal, store: Store) throws {
-    try store.write(JSONEncoder().encode(signal), to: store.root.appendingPathComponent("review-signal"), limit: 1024)
+    try store.write(JSONEncoder().encode(signal), to: store.root.appendingPathComponent("review-signal"), limit: 65536)
   }
   public static let context = """
     BurnZombies has a pending cleanup request or changed resource pressure/buildup.
@@ -41,7 +43,7 @@ public enum HarnessHook {
     let tool = (input["tool_name"] as? String ?? input["toolName"] as? String ?? "").lowercased()
     if tool.contains("burnzombies") { return [:] }
     let store = try Store(root: root)
-    guard let data = try? store.read(root.appendingPathComponent("review-signal"), limit: 1024),
+    guard let data = try? store.read(root.appendingPathComponent("review-signal"), limit: 65536),
       let signal = try? JSONDecoder().decode(Signal.self, from: data),
       (0...180).contains(now.timeIntervalSince(signal.observedAt)) else { return [:] }
     let lock = try InstanceLock(url: root.appendingPathComponent("hook.lock"))
