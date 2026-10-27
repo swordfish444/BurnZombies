@@ -62,9 +62,15 @@ import Vision
     guard !surface.isVisible, !surface.isKeyWindow else {
       throw StoreError.message("Proof surface must stay offscreen")
     }
-    guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+    // CI can have a 1x virtual display. Render the same native view at a fixed
+    // 2x backing resolution so OCR is not dependent on the attached monitor.
+    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+      pixelsWide: Int(host.bounds.width * 2), pixelsHigh: Int(host.bounds.height * 2),
+      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
       throw StoreError.message("Compact render unavailable")
     }
+    bitmap.size = host.bounds.size
     host.cacheDisplay(in: host.bounds, to: bitmap)
     guard let cgImage = bitmap.cgImage,
       let png = bitmap.representation(using: .png, properties: [:]) else {
