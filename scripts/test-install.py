@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="bz-install-") as temp:
 from pathlib import Path
 args=sys.argv[1:]
 url=next(a for a in args if a.startswith('https://'))
-assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.7.1/')
+assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.8.0/')
 name=url.rsplit('/',1)[1]
 assert name in ('SHA256SUMS','BurnZombies-macOS-universal.tar.gz')
 shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1])
@@ -56,7 +56,7 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     assert configured['server'] == str(app / 'Contents/MacOS/burnzombies-mcp')
     assert not (root/'skill-home/.codex/config.toml').exists(), 'Default installer added global MCP overhead'
     assert not (root/'skill-home/.claude.json').exists(), 'Default installer changed harness configuration'
-    assert (root/'skill-home/.agents/skills/burnzombies/SKILL.md').exists()
+    assert not (root/'skill-home/.agents/skills/burnzombies/SKILL.md').exists(), 'Default installation must not add per-chat instructions'
     install("auto")
     assert json.loads((root / "observer-state/machine-review.json").read_text()) == configured
     with (remote / asset).open("ab") as file: file.write(b"bad download")

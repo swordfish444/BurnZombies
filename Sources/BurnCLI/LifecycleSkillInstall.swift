@@ -4,6 +4,39 @@ import Foundation
 
 /// Instruction-only installation: never changes hooks, MCP settings, permissions or account configuration.
 enum LifecycleSkillInstall {
+  /// Retire only byte-verified installer-owned instructions. Customized files and
+  /// symlinks are preserved. New installations never add a globally triggered skill.
+  static func retire(_ args: [String]) throws {
+    let home: URL
+    if let i = args.firstIndex(of: "--home"), i + 1 < args.count { home = URL(fileURLWithPath: args[i + 1]) }
+    else { home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["BURNZOMBIES_SKILL_HOME"] ?? NSHomeDirectory()) }
+    let fm = FileManager.default
+    var removals: [(URL, URL, Data)] = []
+    for base in [".agents", ".claude", ".cursor", ".copilot", ".gemini"] {
+      let directory = home.appendingPathComponent(base + "/skills/burnzombies")
+      let file = directory.appendingPathComponent("SKILL.md"), marker = directory.appendingPathComponent(".burnzombies-sha256")
+      guard fm.fileExists(atPath: file.path) else { continue }
+      for path in [home.appendingPathComponent(base), home.appendingPathComponent(base + "/skills"), directory, file, marker] {
+        guard (try? path.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true else {
+          throw StoreError.message("Customized skill symlink preserved: \(path.path)")
+        }
+      }
+      let data = try Data(contentsOf: file)
+      let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+      guard data.count <= 65536, (try? String(contentsOf: marker, encoding: .utf8)) == hash else {
+        throw StoreError.message("Customized skill preserved: \(file.path). Remove its automatic trigger manually to eliminate per-chat overhead.")
+      }
+      removals.append((file, marker, data))
+    }
+    if args.contains("--check") { return }
+    for (file, marker, data) in removals {
+      guard try Data(contentsOf: file) == data else { throw StoreError.message("Skill changed during retirement; preserved.") }
+      // Keep an inert recovery copy outside skill discovery. Never delete extra user files.
+      try data.write(to: file.deletingLastPathComponent().appendingPathComponent("retired-instructions.txt"), options: .atomic)
+      try fm.removeItem(at: file); try fm.removeItem(at: marker)
+    }
+    print("Passive observation configured. No automatic BurnZombies instructions in working chats.")
+  }
   static func run(_ args: [String]) throws {
     func option(_ flag: String) throws -> String? {
       guard let i = args.firstIndex(of: flag) else { return nil }

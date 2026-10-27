@@ -19,9 +19,16 @@ with tempfile.TemporaryDirectory(prefix='bz-skill-') as tmp:
     assert str(cli.resolve()) in shared.read_text()
     for name,content in configs.items(): assert (home/name).read_bytes()==content
     assert not list(home.rglob('hooks.json'))
+    retire=[str(cli),'retire-skill','--home',str(home)]
+    subprocess.run(retire,check=True,capture_output=True)
+    assert not shared.exists() and not claude.exists()
+    assert shared.with_name('retired-instructions.txt').exists()
+    install()
     original=shared.read_bytes()
     claude.write_bytes(claude.read_bytes()+b'\nUser custom instruction\n')
     custom=claude.read_bytes(); install(False)
+    result=subprocess.run(retire,capture_output=True)
+    assert result.returncode != 0 and shared.read_bytes()==original and claude.read_bytes()==custom
     assert shared.read_bytes()==original and claude.read_bytes()==custom
     claude.unlink(); claude.symlink_to(shared); install(False)
     assert shared.read_bytes()==original

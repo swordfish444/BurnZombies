@@ -36,6 +36,53 @@ import SwiftUI
   restored.model = ""; restored.thinking = ""; restored.save()
   guard try MachineReviewConfiguration.load(root: root)?.model == nil,
     try MachineReviewConfiguration.load(root: root)?.reasoningEffort == nil else { throw StoreError.message("Reset failed") }
+  let usage = UsageHistoryModel(root: root)
+  guard !usage.expanded else { throw StoreError.message("Usage must be collapsed by default") }
+  var ledger = ReviewLedger()
+  let now = Date()
+  for hour in [0, 2, 5, 20, 28, 50, 96, 192, 500] {
+    _ = ledger.reserve(harness: hour % 2 == 0 ? "codex" : "claude", evidenceCount: 1, now: now.addingTimeInterval(-Double(hour)*3600))
+    let model = hour % 2 == 0 ? "gpt-6.1-sol" : "claude-opus-5-5"
+    ledger.entries[ledger.entries.count - 1].usage = ReviewUsage.parse(Data("{\"type\":\"bz.usage\",\"model\":\"\(model)\",\"usage\":{\"input_tokens\":\(12000 + hour * 10),\"cached_input_tokens\":8000,\"output_tokens\":400}}".utf8))
+  }
+  try ledger.save(store: Store(root: root)); usage.reload()
+  func renderUsage(_ suffix: String, height: CGFloat) throws {
+    let view = NSHostingView(rootView: UsageHistoryView(model: usage).padding(20).frame(width: 440)
+      .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
+    view.frame = NSRect(x: 0, y: 0, width: 440, height: height)
+    view.layoutSubtreeIfNeeded()
+    guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw StoreError.message("Usage render unavailable") }
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    guard let png = bitmap.representation(using: .png, properties: [:]) else { throw StoreError.message("Usage PNG unavailable") }
+    try png.write(to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension(suffix + ".png"))
+  }
+  try renderUsage("usage-collapsed", height: 90)
+  usage.expanded = true; usage.days = 1; usage.hourly = true
+  let daily = usage.report.total.input
+  try renderUsage("usage-hourly", height: 900)
+  usage.days = 30; usage.hourly = false; usage.costChart = true
+  guard usage.report.total.input > daily else { throw StoreError.message("Usage range did not change totals") }
+  try renderUsage("usage-daily", height: 900)
+  usage.selectedModel = "gpt-6.1-sol"
+  let selected = usage.report.total.input
+  usage.selectedModel = ""
+  guard usage.report.total.input > selected else { throw StoreError.message("Usage model filter did not narrow totals") }
+  usage.selectedModel = "gpt-6.1-sol"; try renderUsage("usage-model", height: 800)
+  print("PASS collapsed usage, hourly/daily 1–30 day ranges, model rollups, persisted pricing and native chart renders")
+  let disk = DiskSettingsModel(root: root)
+  guard !disk.expanded, disk.policy.mode == "recommend" else { throw StoreError.message("Disk settings must begin collapsed and recommend-only") }
+  disk.policy.preset("proactive"); disk.policy.instructions = "Keep release evidence for 30 days."; disk.save()
+  let diskRestored = DiskSettingsModel(root: root)
+  guard diskRestored.policy.minimumAgeDays == 2, diskRestored.policy.instructions == disk.policy.instructions else { throw StoreError.message("Disk tuning persistence failed") }
+  disk.expanded = true
+  let diskHost = NSHostingView(rootView: DiskSettingsView(model: disk).padding(20).frame(width: 440)
+    .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
+  diskHost.frame = NSRect(x: 0, y: 0, width: 440, height: 1040); diskHost.layoutSubtreeIfNeeded()
+  if let bitmap = diskHost.bitmapImageRepForCachingDisplay(in: diskHost.bounds) {
+    diskHost.cacheDisplay(in: diskHost.bounds, to: bitmap)
+    try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension("disk.png"))
+  }
+  print("PASS collapsed disk controls, presets, exact scope and durable user preferences without review dispatch")
   print("PASS offscreen native Settings render, draft/save/reopen, disabled-state preservation, invalid-input refusal and default reset")
 }
 #endif

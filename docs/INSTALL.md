@@ -6,7 +6,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 macOS 14+, Apple Silicon or Intel. The installer checks the release checksum and signature, installs `~/Applications/BurnZombies.app`, selects an available harness CLI, and starts the menu bar observer in the background. No active chat, special job wrapper or computer reboot is required.
 
-The observer scans visible processes owned by your macOS user across every project and session. New released-work evidence queues batched, usage-limited reviews from the selected harness. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
+The observer scans visible processes owned by your macOS user across every project and session. New supported lifecycle evidence queues batched, usage-limited reviews from the selected harness. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
 
 ## Existing harness, existing login
 
@@ -14,7 +14,7 @@ Codex, Claude Code, Cursor CLI, GitHub Copilot CLI and Gemini CLI have launch ad
 
 Default selection order is Codex, Claude, Cursor, Copilot, Gemini. Reinstallation retains the previous provider; a failed or quota-limited provider is never replaced automatically. Reviews use that harness's existing account and usage allowance. Failed authentication, unsupported CLI options, permission refusals or usage errors pause reviews while native observation continues. Resolve the issue in the harness, then use **Resume reviews** in BurnZombies.
 
-Default setup writes BurnZombies's private reviewer configuration and the portable lifecycle skill. It does not add an always-loaded MCP server to working chats; the skill uses the installed native CLI to record lifecycle evidence. It does not install chat hooks, inject reminders, or change persistent tool permissions. Per-run MCP configuration connects the reviewer to the local observer. Legacy BurnZombies hooks become inert when computer-wide review is configured.
+Default setup writes only BurnZombies's private reviewer configuration. It retires byte-verified installer-owned lifecycle skills so working chats no longer perform cleanup bookkeeping. Customized copies are preserved and reported. It does not add an always-loaded MCP server to working chats. It does not install chat hooks, inject reminders, or change persistent tool permissions. Per-run MCP configuration connects the reviewer to the local observer. Legacy BurnZombies hooks become inert when computer-wide review is configured.
 
 ## Options
 
@@ -47,10 +47,10 @@ No `--yolo`, blanket permission bypass, account fallback, quarantine removal or 
 Check the menu bar observer and its selected harness, then verify a bounded background review once actual completion evidence is released. An idle Mac should not invoke the model. CLI configuration alone is not live model proof. Current validation and remaining harness limits are in [VALIDATION.md](VALIDATION.md).
 
 
-### Ownership memory without hooks
+### Passive evidence without working-chat overhead
 
-The one-line installer also installs the BurnZombies skill into `~/.agents/skills/burnzombies` and `~/.claude/skills/burnzombies`. These standard directories cover local Codex, Claude Code, Cursor, Copilot CLI and Gemini CLI. Existing managed legacy copies are refreshed; customized skills are preserved and reported. Default installation leaves harness configuration, hooks, shell profiles and permissions unchanged. The standard MCP server remains an explicit optional integration; Codex config writes for that opt-in use a validated conditional transaction.
+Codex children are associated with an owning turn through native process ancestry and a UUID session marker. Claude uses its local session-to-process registry and turn completion events. The collector reads bounded deltas, keeps no prompts, reasoning, raw commands or tool output, and retains only a short redacted completion statement for candidate review. No model runs during observation.
 
-New tasks can discover the lifecycle instructions normally. Existing chats follow their harness's skill refresh behavior; skill activation is model-directed, and a harness may request normal tool/skill permission (including Gemini's consent prompt). There is no computer restart requirement. The skill provides the exact installed native command. If you explicitly connect MCP, it can use that transport instead. Sandboxed shells may require normal permission to connect to the observer; a refusal remains a coverage gap rather than being bypassed.
+This first passive adapter covers local Codex and Claude Code sessions. The other three reviewer adapters remain available, but missing ownership metadata is preserved as a coverage gap. Explicit lifecycle claims remain supported for integrations; they are no longer injected into every working chat. Existing active claims never expire into disposable work.
 
-The app continues computer-wide observation regardless of whether a task records ownership. Missing records cannot prove old work finished. For the strongest early cleanup evidence, the working agent must register helpers while using them and release them after actual completion. The reviewer never fabricates a release or silently expires an active claim.
+Reviews are separated by at least one hour and run only for changed supported evidence. Settings → Usage & estimated cost is collapsed initially. Expand it for 1–30 days of hourly/daily token and API-equivalent cost charts, with full and per-model rollups. Unknown model prices or missing usage are marked unavailable, not fabricated.

@@ -1,3 +1,11 @@
+# Passive lifecycle evidence (0.8)
+
+Current implementation: [MCP architecture](MCP.md#passive-lifecycle-evidence-and-usage-08). Local Codex and Claude metadata now supplies bounded ownership/completion facts without per-chat skill calls. Session completion is only a candidate signal, not permission to kill. Missing visibility, a resumed owner, active consumers or insufficient purpose-specific evidence blocks cleanup. Optional explicit lifecycle claims remain supported, and existing active claims never silently expire.
+
+The design below records the earlier 0.6 research and the tradeoffs that led to explicit claims. **Its global skill installation is no longer the default.**
+
+---
+
 # Remember the work, then reclaim its leftovers
 
 Research and implementation plan, 2026-10-26.

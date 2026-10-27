@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.7.1"
+version="0.8.0"
 client="auto"
 launch=true
 while [[ $# -gt 0 ]]; do
@@ -58,9 +58,9 @@ if ! ditto "$work/BurnZombies.app" "$app"; then
 fi
 
 if [[ "$client" != none ]]; then
-  if ! "$app/Contents/MacOS/burnzombies" install-skill --check ||
+  if ! "$app/Contents/MacOS/burnzombies" retire-skill --check ||
      ! "$app/Contents/MacOS/burnzombies" setup --harness "$client" ||
-     ! "$app/Contents/MacOS/burnzombies" install-skill; then
+     ! "$app/Contents/MacOS/burnzombies" retire-skill; then
     rm -rf "$app"
     [[ ! -d "$work/previous.app" ]] || mv "$work/previous.app" "$app"
     echo 'Harness configuration failed; previous app restored. Configurations were preserved.' >&2

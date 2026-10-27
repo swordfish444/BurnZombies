@@ -550,6 +550,8 @@ struct Dashboard: View {
         Button("Resume reviews") { model.setAutomatic(true) }
       }
       ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
+      UsageHistoryView().disabled(model.demo)
+      DiskSettingsView().disabled(model.demo)
       Toggle(
         "Grouped notifications",
         isOn: Binding(

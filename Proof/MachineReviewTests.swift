@@ -15,8 +15,8 @@ func machineReviewProof() async throws {
   checkFalse(state.due(signal, requested: false, now: signal.observedAt), "Process churn alone is not review evidence")
   signal.reviewEvidence = [.init(id: "work", revision: "released")]
   state.pendingSince = now
-  checkFalse(state.due(signal, requested: true, now: signal.observedAt), "Release cannot bypass the 30-minute batch interval")
-  signal.observedAt = now.addingTimeInterval(1800)
+  checkFalse(state.due(signal, requested: true, now: signal.observedAt), "Release cannot bypass the hourly batch interval")
+  signal.observedAt = now.addingTimeInterval(3600)
   check(state.due(signal, requested: false, now: signal.observedAt))
   state.reviewedEvidence = ["work": "released"]
   checkFalse(state.due(signal, requested: true, now: signal.observedAt), "Unchanged evidence is not rereviewed, even on manual request")
@@ -30,7 +30,7 @@ func machineReviewProof() async throws {
   defer { try? FileManager.default.removeItem(at: root) }
   let cli = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("burnzombies").path
   let server = URL(fileURLWithPath: cli).deletingLastPathComponent().appendingPathComponent("burnzombies-mcp").path
-  var config = MachineReviewConfiguration(harness: "codex", executable: "/usr/bin/true", launcher: cli, server: server)
+  var config = MachineReviewConfiguration(harness: "claude", executable: "/usr/bin/true", launcher: cli, server: server)
   try config.save(root: root)
   try HarnessHook.publish(.init(observedAt: now, processCount: 10, residentBytes: 100, pressure: "Low",
     reviewEvidence: [.init(id: "first", revision: "one")]), store: store)

@@ -19,6 +19,9 @@ public actor Monitor {
   private let store: Store
   private let lock: InstanceLock
   private let native = Native()
+  private let passive: PassiveCollector?
+  private var diskSnapshot = DiskSnapshot()
+  private var diskScanLoaded = false
   private let workspaceVisibility: @Sendable (String) -> Int32
   private var catalog: Catalog
   private var state = ViewState()
@@ -28,9 +31,11 @@ public actor Monitor {
   private var lastMonotonic: Double?
   private var lastWall: Date?
   private var lastAwake: Double?
-  public init(root: URL = Store.defaultRoot, workspaceVisibility: @escaping @Sendable (String) -> Int32 = { bz_path_in_use($0) }) throws {
+  public init(root: URL = Store.defaultRoot, passiveHome: URL? = nil, workspaceVisibility: @escaping @Sendable (String) -> Int32 = { bz_path_in_use($0) }) throws {
     self.workspaceVisibility = workspaceVisibility
     store = try Store(root: root)
+    passive = root.standardizedFileURL == Store.defaultRoot.standardizedFileURL || passiveHome != nil
+      ? try PassiveCollector(store: store, home: passiveHome ?? FileManager.default.homeDirectoryForCurrentUser) : nil
     lock = try InstanceLock(url: root.appendingPathComponent("monitor.lock"))
     var loaded = try store.load()
     if loaded.lifetimeResidentReleased == nil {
@@ -135,6 +140,18 @@ public actor Monitor {
       receiptNeedsCheckpoint = receiptNeedsCheckpoint || priorOutcomes != catalog.events.map(\.outcome)
       catalog.lastSample = now
       catalog.prune(now: now)
+      if let passive {
+        catalog.passiveEvidence = try passive.poll(records: catalog.records, claims: catalog.workEvidence ?? [], now: now, partial: scan.partial)
+      }
+      if store.root.standardizedFileURL == Store.defaultRoot.standardizedFileURL || FileManager.default.fileExists(atPath: store.root.appendingPathComponent("disk-policy.json").path) {
+        let policy = try DiskPolicy.load(store)
+        if !diskScanLoaded { diskSnapshot = try DiskSnapshot.load(store); diskScanLoaded = true }
+        if now.timeIntervalSince(diskSnapshot.date) >= Double(policy.scanHours * 3600) || diskSnapshot.policyRevision != policy.revision {
+          diskSnapshot = DiskInventory.scan(policy: policy, previous: diskSnapshot, visibility: workspaceVisibility)
+          try diskSnapshot.save(store)
+        }
+        catalog.diskCandidates = diskSnapshot.candidates.filter { $0.reviewable && $0.decision == nil && diskSnapshot.freeBytes < UInt64(policy.targetFreeGB) * 1_000_000_000 }
+      }
       // Observation is factual. The connected harness owns diagnosis and target selection.
       state.findings = []
       state.interval = catalog.events.contains { $0.outcome == "verifying" } ? 15 : 60
@@ -371,6 +388,65 @@ public actor Monitor {
     }
   }
 
+  public func diskPolicy() throws -> DiskPolicy { try DiskPolicy.load(store) }
+  public func diskDecision(_ id: String, decision: String, rationale: String) throws -> String {
+    guard ["keep", "recommend"].contains(decision), (20...1200).contains(rationale.count),
+      let i = diskSnapshot.candidates.firstIndex(where: { $0.id == id && $0.reviewable }) else { throw StoreError.message("Unknown disk candidate or invalid decision.") }
+    diskSnapshot.candidates[i].decision = decision; diskSnapshot.candidates[i].rationale = rationale
+    try diskSnapshot.save(store)
+    catalog.diskCandidates?.removeAll { $0.id == id }
+    return "Disk review saved. Nothing removed. Tune exact folder rules in Settings."
+  }
+  public func previewDisk(_ id: String) throws -> DiskCandidate {
+    let policy = try DiskPolicy.load(store)
+    guard policy.mode == "automatic", let c = diskSnapshot.candidates.first(where: { $0.id == id && $0.reviewable }),
+      policy.revision == diskSnapshot.policyRevision else { throw StoreError.message("Automatic mode, unchanged policy and a current candidate are required.") }
+    guard try WorkspaceSafety.freeBytes(c.path) < UInt64(policy.targetFreeGB) * 1_000_000_000 else { throw StoreError.message("Free-space target is already satisfied; no removal.") }
+    let today = (catalog.diskReceipts ?? []).filter { Date().timeIntervalSince($0.date) < 86400 }
+    let used = today.reduce(UInt64(0)) { $0 + $1.allocatedRemoved }
+    guard used + c.bytes <= UInt64(policy.maximumGBPerDay) * 1_000_000_000 else { throw StoreError.message("Daily disk cleanup cap reached; no removal.") }
+    _ = try DiskInventory.check(c, policy: policy, visibility: workspaceVisibility)
+    return c
+  }
+  public func cleanDisk(_ preview: DiskCandidate, rationale: String) throws -> String {
+    let c = try previewDisk(preview.id)
+    guard c.revision == preview.revision else { throw StoreError.message("Disk evidence changed after preview.") }
+    let id = UUID(), quarantine = store.root.appendingPathComponent("disk-pending-" + id.uuidString)
+    let source = try WorkspaceSafety.statAt(c.path), destination = try WorkspaceSafety.statAt(store.root.path)
+    guard source.st_dev == destination.st_dev else { throw StoreError.message("Cross-volume cleanup is unsupported; preserved.") }
+    // Persist intent first. Interrupted moves are retained here for recovery, never
+    // treated as free space or silently purged on restart.
+    var receipt = DiskReceipt(id: id, candidateID: c.id, path: c.path, date: Date(), outcome: "prepared",
+      allocatedRemoved: c.bytes, diskReclaimedBytes: 0, rationale: rationale + " Recovery location if interrupted: " + quarantine.path)
+    catalog.diskReceipts = (catalog.diskReceipts ?? []) + [receipt]; try checkpoint()
+    do {
+      let currentPolicy = try DiskPolicy.load(store)
+      guard currentPolicy.mode == "automatic", currentPolicy.revision == diskSnapshot.policyRevision else { throw StoreError.message("Disk policy changed.") }
+      _ = try DiskInventory.check(c, policy: currentPolicy, visibility: workspaceVisibility)
+      let before = try WorkspaceSafety.freeBytes(store.root.path)
+      guard rename(c.path, quarantine.path) == 0 else { throw StoreError.message("Could not atomically isolate the exact folder.") }
+      let moved = try DiskInventory.manifest(quarantine.path)
+      guard moved.complete, !moved.unsafe, moved.fingerprint == c.fingerprint else { throw StoreError.message("Folder changed during isolation. Preserved in recovery location.") }
+      try FileManager.default.removeItem(at: quarantine)
+      guard !FileManager.default.fileExists(atPath: quarantine.path), !FileManager.default.fileExists(atPath: c.path) else { throw StoreError.message("Removal was not verified.") }
+      let after = try WorkspaceSafety.freeBytes(store.root.path)
+      receipt.outcome = "verified"; receipt.date = Date(); receipt.diskReclaimedBytes = min(c.bytes, after > before ? after - before : 0)
+      var next = catalog
+      let receiptIndex = (next.diskReceipts?.count ?? 1) - 1
+      next.diskReceipts?[receiptIndex] = receipt
+      next.lifetimeDiskReclaimedBytes = (next.lifetimeDiskReclaimedBytes ?? 0) + receipt.diskReclaimedBytes
+      diskSnapshot.candidates.removeAll { $0.id == c.id }; try diskSnapshot.save(store)
+      next.diskCandidates?.removeAll { $0.id == c.id }
+      try store.save(next); catalog = next; state.catalog = next
+      return "Exact regenerable output removed and verified. \(receipt.diskReclaimedBytes) disk bytes credited; no worktree deleted."
+    } catch {
+      if FileManager.default.fileExists(atPath: quarantine.path), !FileManager.default.fileExists(atPath: c.path) { _ = rename(quarantine.path, c.path) }
+      let failedIndex = (catalog.diskReceipts?.count ?? 1) - 1
+      catalog.diskReceipts?[failedIndex].outcome = "unverified"
+      try? checkpoint(); throw error
+    }
+  }
+
   public func recordWork(_ request: AgentRequest) throws -> (String?, String) {
     let current = refresh()
     guard current.error == nil, !current.partial,
@@ -443,7 +519,7 @@ public actor Monitor {
 
   public func workSummaries() -> [WorkSummary] {
     let claims = catalog.workEvidence ?? []
-    return claims.sorted { $0.updated > $1.updated }.map { claim in
+    let owned = claims.sorted { $0.updated > $1.updated }.map { claim in
       let live = claim.members.filter { member in
         guard let r = catalog.records[member.identity.key] else { return false }
         return r.missingSince == nil && Member(r.latest) == member
@@ -454,6 +530,7 @@ public actor Monitor {
         created: claim.created, updated: claim.updated, ownershipAnchors: claim.anchors,
         blockedByActiveClaim: claim.members.contains { WorkEvidence.blocking(claims, identity: $0.identity.key) })
     }
+    return owned + (catalog.passiveEvidence ?? []).map(\.workSummary)
   }
 
   public func previewTargets(_ ids: [String], callerPID: Int32) throws -> [Observation] {
@@ -474,6 +551,9 @@ public actor Monitor {
       }
       if WorkEvidence.blockingTree(catalog.workEvidence ?? [], record: r, records: catalog.records) {
         throw StoreError.message("PID \(r.latest.identity.pid): an owning task still retains this helper. All claims must be released.")
+      }
+      if let evidence = catalog.passiveEvidence?.first(where: { $0.member.identity.key == id }), !evidence.canReview() {
+        throw StoreError.message("PID \(r.latest.identity.pid): passive owner evidence changed or is incomplete. Preserve this helper.")
       }
       targets.append(r.latest)
     }

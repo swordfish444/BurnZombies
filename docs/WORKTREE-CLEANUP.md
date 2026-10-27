@@ -1,6 +1,6 @@
 # Finished work. Room for the next run.
 
-BurnZombies shows **disk reclaimed** and **worktrees cleaned** beside helpers burned and memory released. These counters come from verified native worktree receipts, not an agent's reported estimate. Old installations start these two counters at zero; previous process exits are not converted into disk savings.
+BurnZombies shows **disk reclaimed** and **worktrees cleaned** beside helpers burned and memory released. These counters come from verified native cleanup receipts, not an agent's reported estimate. Old installations start these two counters at zero; previous process exits are not converted into disk savings.
 
 ## How a workspace becomes disposable
 
@@ -9,7 +9,7 @@ BurnZombies shows **disk reclaimed** and **worktrees cleaned** beside helpers bu
 3. The independent background reviewer compares that evidence with the completion condition and contradictions. It can preview one released workspace and use the resulting short-lived token to request native removal.
 4. Native checks run again immediately before removal. `git worktree remove` runs without force. The exact HEAD is retained in `refs/burnzombies/worktrees/<receipt-id>`; branches are never deleted. Counters update only after removal and the durable receipt are verified.
 
-**An archived chat is a useful clue, not deletion authority.** Codex already manages its own worktree archive, snapshots and restoration. BurnZombies does not adopt existing worktrees, inspect private chats, infer completion from age, or remove Codex-managed worktrees at default or custom locations. This first release applies automatic worktree cleanup only to disposable workspaces created through its MCP/CLI interface. Generic cache, downloaded file and old repository cleanup are outside scope.
+**An archived chat is a useful clue, not deletion authority.** Codex already manages its own worktree archive, snapshots and restoration. BurnZombies does not adopt existing worktrees, infer completion from age, or remove Codex-managed worktrees at default or custom locations. Automatic whole-worktree removal applies only to disposable workspaces created through its optional MCP/CLI interface. Version 0.8 also discovers generated output inside configured repositories; its separate [disk tuning controls](DISK-CLEANUP.md) require exact folder permission, independent review and fresh guards. Downloads, browser profiles, databases, arbitrary repositories and global caches remain outside automatic removal.
 
 ## What blocks removal
 

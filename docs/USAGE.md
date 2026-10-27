@@ -1,0 +1,11 @@
+# See what the cleanup costs
+
+Open **Settings → Usage & estimated cost**. The section starts collapsed. Choose any range from **1 to 30 days**, **Hourly** or **Daily**, and **All models** or an individual model. Switch the chart between tokens and estimated USD. Select a time bucket for its totals. Per-model rows show uncached input, cache reads, cache writes and output.
+
+Only BurnZombies-owned background reviews are counted. Ordinary chats are not monitored for billing. Passive observation makes no model calls; an empty or previously reviewed queue starts no review. Starts are serialized, at least an hour apart, capped at eight per rolling 24 hours and stopped after 200,000 recorded input tokens in that window. The final review can exceed the input threshold. Missing usage still consumes an attempt. Failure pauses future reviews instead of retrying or switching accounts/models.
+
+The local private `review-usage.json` keeps 32 days of receipts, including failed reviews and reported partial usage. Model attribution and price snapshots are saved per model per review; changing the selected model does not reprice earlier reviews. Legacy totals without a model remain readable and unpriced. Unknown models, unsupported pricing tiers and missing counters are not presented as zero-cost usage.
+
+Prices are approximate **standard global API equivalents**, not a conversion to Codex/Claude subscription credits. The rate card is dated **2026-10-27**, from [OpenAI](https://developers.openai.com/api/docs/pricing) and [Anthropic](https://platform.claude.com/docs/en/about-claude/pricing). Known context thresholds, reported service tiers and cache writes are included. Cache writes use the shorter TTL rate unless a longer TTL is reported; regional premiums, negotiated pricing and hidden approval/model overhead are not inferred. Output includes reasoning when the harness includes it in output counters.
+
+Codex's ephemeral app-server reports its resolved model and cumulative counters. BurnZombies stores positive deltas, not repeated cumulative totals, and pauses on a reroute rather than silently switching models. Claude's final `modelUsage` provides model-separated input, cache and output counts. Other adapters keep unavailable usage unknown until they expose a compatible report.
