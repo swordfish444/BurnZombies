@@ -595,12 +595,24 @@ struct ImpactWindowView: View {
         }
         Text("RECENT BURNS").font(.system(size: 14, weight: .semibold, design: .monospaced))
           .foregroundStyle(.gray)
-        if model.state.catalog.events.isEmpty && (model.state.catalog.workspaceReceipts ?? []).isEmpty {
+        if model.state.catalog.events.isEmpty && (model.state.catalog.workspaceReceipts ?? []).isEmpty && (model.state.catalog.diskReceipts ?? []).isEmpty {
           Text(
             model.demo
               ? "18 disposable helpers · 1.2 GB released · 2m ago"
               : "No burns yet. Your work comes first."
           ).foregroundStyle(BurnTheme.muted).padding(.vertical, 24)
+        }
+        ForEach((model.state.catalog.diskReceipts ?? []).reversed(), id: \.id) { receipt in
+          DisclosureGroup {
+            Text(receipt.path + "\n" + receipt.rationale).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(.top, 8)
+          } label: {
+            HStack {
+              Image(systemName: "externaldrive").foregroundStyle(BurnTheme.orange)
+              Text("Regenerable output").fontWeight(.semibold)
+              Spacer()
+              Text(receipt.outcome == "verified" ? ImpactNumbers.bytes(receipt.diskReclaimedBytes) : receipt.outcome.capitalized).foregroundStyle(BurnTheme.muted)
+            }
+          }.padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
         }
         ForEach((model.state.catalog.workspaceReceipts ?? []).reversed(), id: \.id) { receipt in
           DisclosureGroup {

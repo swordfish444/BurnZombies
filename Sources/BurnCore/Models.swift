@@ -180,6 +180,9 @@ public struct Preferences: Codable, Sendable {
 public struct Catalog: Codable, Sendable {
   public var version = 1
   public var workEvidence: [WorkEvidence]?
+  public var passiveEvidence: [PassiveEvidence]?
+  public var diskCandidates: [DiskCandidate]?
+  public var diskReceipts: [DiskReceipt]?
   public var workspaces: [WorkspaceClaim]?
   public var workspaceReceipts: [WorkspaceReceipt]?
   public var lifetimeWorktreesCleaned: Int?
@@ -212,6 +215,7 @@ public struct Catalog: Codable, Sendable {
       let keep = records.values.sorted { $0.latest.time > $1.latest.time }.prefix(4096)
       records = Dictionary(uniqueKeysWithValues: keep.map { ($0.id, $0) })
     }
+    if let receipts = diskReceipts { diskReceipts = Array(receipts.suffix(500)) }
     if let receipts = workspaceReceipts {
       workspaceReceipts = receipts.filter { $0.outcome == "prepared" } + Array(receipts.filter { $0.outcome != "prepared" && now.timeIntervalSince($0.verifiedAt ?? $0.date) < 30 * 86400 }.suffix(500))
     }

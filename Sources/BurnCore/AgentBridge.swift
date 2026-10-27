@@ -78,6 +78,8 @@ public struct AgentReply: Codable, Sendable {
   public var workToken: String?
   public var work: [WorkSummary] = []
   public var releasedWorkCount: Int = 0
+  public var disk: [DiskCandidate] = []
+  public var diskPolicy: DiskReviewPolicy?
   public var activeWorkCount: Int = 0
   public var previewToken: String?
   public var workspaces: [WorkspaceSummary] = []
@@ -119,11 +121,12 @@ public actor AgentService {
     let created: Date
     let caller: ProcessIdentity
   }
+  private var diskPreviews: [String: (DiskCandidate, String, Date, ProcessIdentity)] = [:]
   private var workspacePreviews: [String: WorkspacePreview] = [:]
   private var previews: [String: Preview] = [:]
   public init(monitor: Monitor) { self.monitor = monitor }
   public func call(_ request: AgentRequest) async -> AgentReply {
-    guard ["status", "inspect", "preview", "burn", "lifecycle", "work", "workspace", "workspace_preview", "workspace_clean"].contains(request.operation) else {
+    guard ["status", "inspect", "preview", "burn", "lifecycle", "work", "workspace", "workspace_preview", "workspace_clean", "disk_decide", "disk_preview", "disk_clean"].contains(request.operation) else {
       return AgentReply(ok: false, message: "Unknown operation.")
     }
     previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
@@ -139,6 +142,20 @@ public actor AgentService {
         let result = try await monitor.recordWorkspace(request)
         reply.workToken = result.0; reply.message = result.1
         if let claim = result.2 { reply.workspaces = [WorkspaceSummary(claim)] }
+        state = await monitor.snapshot()
+      } else if request.operation == "disk_decide" {
+        reply.message = try await monitor.diskDecision(request.findingID ?? "", decision: request.action ?? "", rationale: request.rationale ?? "")
+      } else if request.operation == "disk_preview" {
+        diskPreviews = diskPreviews.filter { Date().timeIntervalSince($0.value.2) < 60 }
+        guard let id = request.findingID, let rationale = request.rationale, (20...1200).contains(rationale.count),
+          diskPreviews.count < 8, case .found(let peer) = Native().probe(request.callerPID) else { throw StoreError.message("Fresh candidate, rationale and caller required.") }
+        let c = try await monitor.previewDisk(id), token = UUID().uuidString
+        diskPreviews[token] = (c, rationale, Date(), peer.identity); reply.previewToken = token
+        reply.message = "Exact regenerable folder passed guards. Token expires in 60 seconds; no files removed."
+      } else if request.operation == "disk_clean" {
+        guard let token = request.previewToken, let p = diskPreviews.removeValue(forKey: token), Date().timeIntervalSince(p.2) < 60,
+          case .found(let peer) = Native().probe(request.callerPID), peer.identity == p.3 else { throw StoreError.message("Fresh caller-bound disk preview required.") }
+        reply.message = try await monitor.cleanDisk(p.0, rationale: p.1)
         state = await monitor.snapshot()
       } else if request.operation == "workspace_preview" {
         guard let id = request.workspaceID, let rationale = request.rationale, (20...2000).contains(rationale.count),
@@ -232,9 +249,11 @@ public actor AgentService {
     reply.observedProcesses = state.processCount
     reply.observedAt = state.catalog.lastSample
     reply.partial = state.partial
+    reply.disk = Array((state.catalog.diskCandidates ?? []).filter { request.reviewIDs == nil || request.reviewIDs!.contains($0.id) }.prefix(1))
+    if !reply.disk.isEmpty { reply.diskPolicy = (try? await monitor.diskPolicy()).map(DiskReviewPolicy.init) }
     let work = await monitor.workSummaries()
     reply.activeWorkCount = work.filter { $0.state == "active" && !$0.livePIDs.isEmpty }.count
-    let released = work.filter { $0.state == "released" && !$0.blockedByActiveClaim && !$0.livePIDs.isEmpty
+    let released = work.filter { ["released", "candidate"].contains($0.state) && !$0.blockedByActiveClaim && !$0.livePIDs.isEmpty
       && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id)) }
     reply.releasedWorkCount = released.count
     if request.operation == "status" {

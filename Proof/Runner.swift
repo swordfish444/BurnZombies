@@ -29,6 +29,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 
 @main struct ProofRunner {
   static func main() async {
+    setbuf(stdout, nil)
+    if CommandLine.arguments.contains("--passive-child") { Thread.sleep(forTimeInterval: 120); return }
+    if CommandLine.arguments.contains("--passive-usage") {
+      do { try usageProof(); try await passiveProof(); try await diskProof() } catch { failTest("Passive/usage: \(error)") }
+      print("Passive/usage checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--review-economy") {
       do { try await machineReviewProof() } catch { failTest("Review economy: \(error)") }
       print("Review economy checks: \(failures) failures")
@@ -89,6 +96,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       if failures == before { print("PASS \(name)") }
     }
     do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
+    do { try usageProof(); try await passiveProof(); try await diskProof() } catch { failTest("Passive/usage: \(error)") }
     let beforeLifecycle = failures
     do { try await lifecycleProof() } catch { failTest("Lifecycle evidence: \(error)") }
     if failures == beforeLifecycle { print("PASS durable lifecycle evidence, shared consumers, token privacy, identity and release/retain races") }

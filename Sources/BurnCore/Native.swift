@@ -13,6 +13,14 @@ public enum Probe {
 }
 public struct Native {
   public init() {}
+  public func codexSessionID(_ expected: Observation) -> String? {
+    guard case .found(let before) = probe(expected.identity.pid), Member(before) == Member(expected) else { return nil }
+    var value = [CChar](repeating: 0, count: 37)
+    guard bz_codex_session(expected.identity.pid, &value, 37) == 1,
+      case .found(let after) = probe(expected.identity.pid), Member(after) == Member(expected),
+      let id = UUID(uuidString: String(cString: value)) else { return nil }
+    return id.uuidString.lowercased()
+  }
   public var awakeSeconds: Double { Double(bz_awake_ns()) / 1e9 }
   public var boot: UInt64 { bz_boot() }
   public func memoryPressure() -> String {

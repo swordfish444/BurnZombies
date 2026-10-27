@@ -50,3 +50,13 @@ python3 scripts/test-install.py /tmp/BurnZombies-test.tar.gz
 ```
 
 Real-client tests are opt-in and use existing login state, private storage and disposable workers in separate directories. Run `scripts/test-lifecycle-e2e.py --help` for ownership-to-cleanup proof; keep account outputs, process inventories and logs private. A policy refusal or no-op is not successful cleanup.
+
+## Passive observation, usage and disk tuning (0.8)
+
+The native regression suite and integration watch pass on Apple Silicon: real kernel zombies, live controls, 4,096 safety scenarios and three disposable process cleanups remain covered. New fixtures cover passive Codex/Claude turn completion, exact session/process binding, resumed/missing/truncated-session refusal, cache-aware per-model accounting, cumulative-event deduplication, unknown usage, DST, 1–30 day filters and persistence.
+
+An actual Codex app-server review at the existing default model with Low thinking completed one status call against an empty private fixture. It reported 21,063 input tokens (15,232 cached) and 83 output tokens. This is a bounded live usage/protocol check, not proof of real-workload cleanup or a promised per-review cost. The optional protocols for all five providers pass mocked configuration/selection/cancellation tests; no new live Cursor, Copilot or Gemini proof is claimed.
+
+Disk fixtures exercise exact regenerable permission, ignored versus tracked scope, protected descendants, Git locks, newest-run retention, sensitive/special-file refusal, active/unknown visibility, policy changes between preview and removal, single-use tokens, untouched source, verified bytes and separate worktree counts. Successful generated-output deletion uses an isolated complete-visibility fixture. Production native visibility still refuses disk removal on the development Mac; real folders were not deleted to obtain a passing test.
+
+Offscreen native Settings rendering verifies collapsed defaults, range/model selection, hourly/daily charts, durable cost snapshots, disk presets and policy persistence. It neither activates the app nor invokes a model. Foreground pointer interaction is not claimed. The shared reviewer admits only new evidence, has a one-hour minimum interval and preserves its existing daily bounds. Installer-owned global lifecycle instructions are retired by verified hash; customized files are preserved.

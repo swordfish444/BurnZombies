@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Private machine setup and owned reviewer cancellation; never launches the app."""
-import json, os, pathlib, signal, subprocess, tempfile, time
+import json, os, pathlib, signal, subprocess, tempfile, time, shutil
 repo = pathlib.Path(__file__).resolve().parents[1]
 cli = repo / '.build/debug/burnzombies'
 with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
@@ -8,6 +8,7 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
     fake = root/'bin'; fake.mkdir()
     for name in ['codex', 'claude', 'agent', 'copilot', 'gemini']:
         path = fake/name; path.write_text('#!/usr/bin/python3\nimport json,sys\nprint(json.dumps({"argv":sys.argv[1:]}))\n'); path.chmod(0o700)
+    shutil.copyfile(repo/'scripts/fixtures/mock-codex.py', fake/'codex'); (fake/'codex').chmod(0o700)
     env = dict(os.environ, PATH=str(fake)+':/usr/bin:/bin')
     for harness in ['codex', 'claude', 'cursor', 'copilot', 'gemini']:
         state = root/harness
@@ -38,9 +39,15 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
         prompt = root/'prompt.txt'; prompt.write_text('Only capture invocation arguments. No real model is invoked.')
         executed = subprocess.run([str(repo/'.build/debug/BurnProof'), '--review-model', str(state), harness, str(prompt)], env=env, capture_output=True, text=True)
         assert executed.returncode == 0, executed.stdout + executed.stderr
-        argv = json.loads((state/'last-review.log').read_text())['argv']
-        assert argv[argv.index('--model')+1] == 'example-model'
-        if harness == 'codex': assert 'model_reasoning_effort="high"' in argv
+        events=[json.loads(line) for line in (state/'last-review.log').read_text().splitlines()]
+        if harness == 'codex':
+            assert events[0]['model']=='example-model' and events[0]['reasoning']=='high'
+            usage=[e for e in events if e['type']=='bz.usage']
+            assert len(usage)==1 and usage[0]['usage']['input_tokens']==100, 'Cumulative usage duplicated'
+            argv=[]
+        else:
+            argv=events[0]['argv']
+            assert argv[argv.index('--model')+1] == 'example-model'
         if harness == 'claude': assert argv[argv.index('--effort')+1] == 'high'
         if harness == 'copilot': assert argv[argv.index('--reasoning-effort')+1] == 'high'
         before = (state/'machine-review.json').read_bytes()

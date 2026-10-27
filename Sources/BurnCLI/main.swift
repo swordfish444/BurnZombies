@@ -37,6 +37,9 @@ do {
         else { continuation.resume(throwing: error ?? StoreError.message("Could not start the background observer.")) }
       }
     }
+  case "review-codex":
+    guard args.count == 2 || (args.count == 3 && args[2] == "--probe") else { fail("Internal Codex review requires a private plan.") }
+    try CodexReview.run(URL(fileURLWithPath: args[1]), probeOnly: args.count == 3)
   case "review-worker":
     guard args.count >= 3, args[1] == "--", args[2].hasPrefix("/") else { fail("Internal worker requires an absolute harness executable.") }
     let words = args.dropFirst(2).map { strdup($0) }
@@ -54,6 +57,8 @@ do {
     guard args.count >= 2, args.count <= 17,
       args.dropFirst().allSatisfy({ Int32($0).map { $0 > 0 } ?? false }) else { fail("Use evidence PID [PID ...], up to 16 exact helper PIDs.") }
     print(try AgentConnection.call(AgentRequest("inspect", pids: args.dropFirst().compactMap(Int32.init))), terminator: "")
+  case "retire-skill":
+    try LifecycleSkillInstall.retire(Array(args.dropFirst()))
   case "install-skill":
     try LifecycleSkillInstall.run(Array(args.dropFirst()))
   case "setup":
@@ -67,11 +72,11 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.7.1
+      BurnZombies 0.8.0
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
-      install-skill [--home PATH] [--skill-file PATH]   Install portable lifecycle instructions only.
+      install-skill [--home PATH] [--skill-file PATH]   Optional legacy lifecycle instructions (adds working-chat overhead).
       setup [--harness auto|codex|claude|cursor|copilot|gemini|none] [--model ID|default] [--thinking LEVEL|default]
         Enable computer-wide background reviews. No chat hooks or live config edits.
       install [--harness auto|all|codex|claude|cursor|copilot|gemini] [--mcp-only]

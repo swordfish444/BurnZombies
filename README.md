@@ -18,11 +18,11 @@ BurnZombies watches your whole Mac—across projects, terminals, agents and old 
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-Apple Silicon or Intel, macOS 14+. The installer selects an available **Codex, Claude Code, Cursor CLI, GitHub Copilot CLI or Gemini CLI**, starts the menu bar observer, and installs the portable lifecycle skill. The reviewer connects privately when needed; everyday chats get no hooks or always-loaded MCP connection. Use your existing harness login. No BurnZombies account, API key or package manager.
+Apple Silicon or Intel, macOS 14+. The installer selects an available **Codex, Claude Code, Cursor CLI, GitHub Copilot CLI or Gemini CLI**, starts the menu bar observer, and configures one background reviewer. The reviewer connects privately when needed; everyday chats get no hooks or always-loaded MCP connection. Use your existing harness login. No BurnZombies account, API key or package manager.
 
-Your working agent remembers which helpers it still needs and releases them when the job is done. BurnZombies keeps that evidence between chats and uses it in bounded background reviews. The observer continues across projects, even with no chat open. [Setup details →](docs/INSTALL.md)
+Codex and Claude Code ownership and completion evidence is collected passively from local session metadata. Your working chats do no BurnZombies bookkeeping. Only a new, supported candidate can wake the reviewer; incomplete or ambiguous evidence stays protected. The observer continues across projects, even with no chat open. [Setup details →](docs/INSTALL.md)
 
-Want to choose the brain? **Settings → Review intelligence** lets you set the model and thinking level and see recent token usage. Idle observation uses no model tokens; new completion evidence triggers batched, limited reviews.
+Want to choose the brain? **Settings → Review intelligence** lets you set the model and thinking level. Expand **Usage & estimated cost** for hourly or daily charts, any range from 1–30 days, cached/uncached input and output, and per-model cost estimates. Idle observation uses no model tokens; new completion evidence triggers batched, limited reviews.
 
 Installing through an agent? Tell it:
 
@@ -50,12 +50,13 @@ Everything that matters in one small panel: **zombies burned, memory released, d
 
 - **Your whole Mac.** All visible processes owned by your macOS user, across projects and sessions—not just the current agent's children.
 - **Works with no chat open.** The resident observer schedules reviews. No tool-use hooks or conversation reminders.
-- **Remembers what finished.** Agents record helper ownership and observed completion. Active consumers keep their helpers; released work gets reviewed first.
+- **Remembers what finished.** Native ownership and bounded completion evidence feed a shared queue. A finished turn alone never authorizes a kill; active consumers keep their helpers.
 - **Your harness does the thinking.** Model reasoning and live ownership evidence decide what is abandoned. No fixed “old process = zombie” rule.
 - **Lose finished workspaces.** Your agent can create disposable worktrees through BurnZombies and release them after preserving the work. A second review checks completion; native guards keep active, dirty, ignored and unpushed work safe. Existing and Codex-managed checkouts remain with their owning tools. [Worktree cleanup →](docs/WORKTREE-CLEANUP.md)
+- **Tune the leftovers.** Expand **Settings → Disk cleanup tuning** for retention, newest-run protection, free-space targets, daily caps and saved folder preferences. Discovery uses no model tokens. Exact regenerable folders can enter guarded review; uncertain work stays protected. [Disk cleanup →](docs/DISK-CLEANUP.md)
 - **Keep the good stuff alive.** Exact identities, protected harnesses, graceful stops and verified receipts. Uncertain work stays running.
 - **See the payoff.** Zombies burned, memory released, disk reclaimed, worktrees cleaned and a concrete cleanup benefit in a quiet menu bar app.
-- **Stays out of your way.** No windows opening when reviews start. Only new released work triggers a review: a 30-minute batch interval, at most eight reviews per rolling day, and a pause on failure.
+- **Stays out of your way.** No windows opening when reviews start. Only new supported evidence triggers a review: at least one hour between reviews, at most eight reviews per rolling day, and a pause on failure.
 
 Native code observes, schedules and verifies. Your selected harness supplies the model and uses MCP for guarded cleanup. Reviews use its existing account and usage allowance. [How it works →](docs/MCP.md) · [Lifecycle evidence →](docs/LIFECYCLE-EVIDENCE.md)
 

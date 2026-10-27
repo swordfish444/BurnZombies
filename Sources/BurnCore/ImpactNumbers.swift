@@ -71,6 +71,7 @@ public struct ImpactNumbers: Sendable {
     let workspaces = (catalog.workspaceReceipts ?? []).filter {
       $0.outcome == "verified" && $0.verifiedAt != nil && $0.verifiedAt! >= start && $0.verifiedAt! <= now
     }.sorted { $0.verifiedAt! < $1.verifiedAt! }
+    let diskOutputs = (catalog.diskReceipts ?? []).filter { $0.outcome == "verified" && $0.date >= start && $0.date <= now }
     let workspace = workspaces.last
     let latestIsWorkspace = (workspace?.verifiedAt ?? .distantPast) > (latest?.verificationDate ?? latest?.date ?? .distantPast)
     return Self(
@@ -79,7 +80,7 @@ public struct ImpactNumbers: Sendable {
       memory: period == .all
         ? (catalog.lifetimeResidentReleased ?? verified.reduce(0) { $0 + $1.residentBefore })
         : verified.reduce(0) { $0 + $1.residentBefore },
-      disk: period == .all ? (catalog.lifetimeDiskReclaimedBytes ?? 0) : workspaces.reduce(0) { $0 + $1.diskReclaimedBytes },
+      disk: period == .all ? (catalog.lifetimeDiskReclaimedBytes ?? 0) : workspaces.reduce(0) { $0 + $1.diskReclaimedBytes } + diskOutputs.reduce(0) { $0 + $1.diskReclaimedBytes },
       worktrees: period == .all ? (catalog.lifetimeWorktreesCleaned ?? 0) : workspaces.count,
       lifetimeWorktrees: catalog.lifetimeWorktreesCleaned ?? 0,
       latestIsWorkspace: latestIsWorkspace, latestDisk: latestIsWorkspace ? (workspace?.diskReclaimedBytes ?? 0) : 0,

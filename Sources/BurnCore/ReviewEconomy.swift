@@ -26,6 +26,15 @@ public struct ReviewEvidence: Codable, Equatable, Sendable {
         + "|" + live.map(\.id).sorted().joined(separator: ",") + "|" + children.joined(separator: ",")
       result.append(.init(id: claim.id, revision: digest(revision), processCount: live.count))
     }
+    let releasedIDs = Set(claims.filter { $0.state == "released" }.flatMap { $0.members.map { $0.identity.key } })
+    for evidence in catalog.passiveEvidence ?? [] where evidence.canReview() && !releasedIDs.contains(evidence.member.identity.key) {
+      guard let record = catalog.records[evidence.member.identity.key], record.missingSince == nil,
+        Member(record.latest) == evidence.member, !WorkEvidence.blockingTree(claims, record: record, records: catalog.records) else { continue }
+      result.append(.init(id: evidence.id, revision: evidence.revision))
+    }
+    for candidate in catalog.diskCandidates ?? [] where candidate.reviewable && candidate.decision == nil {
+      result.append(.init(id: candidate.id, revision: candidate.revision, processCount: 0))
+    }
     for workspace in catalog.workspaces ?? [] where workspace.state == "released" {
       result.append(.init(id: workspace.id, revision: digest(workspace.id + "|" + String(workspace.updated.timeIntervalSinceReferenceDate)), processCount: 0))
     }
@@ -40,26 +49,50 @@ public struct ReviewUsage: Codable, Sendable {
   public var inputTokens: Int
   public var cachedInputTokens: Int
   public var outputTokens: Int
+  public var byModel: [ModelUsage]?
   public init(inputTokens: Int, cachedInputTokens: Int, outputTokens: Int) {
     self.inputTokens = inputTokens; self.cachedInputTokens = cachedInputTokens; self.outputTokens = outputTokens
   }
-  public static func parse(_ data: Data) -> Self? {
-    var total = Self(inputTokens: 0, cachedInputTokens: 0, outputTokens: 0)
-    var found = false
+  public static func parse(_ data: Data, requestedModel: String? = nil) -> Self? {
+    var models = [String: ModelUsage](), seen = Set<String>()
+    var fallback = requestedModel ?? "Unreported model"
     for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
-      guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-        let usage = object["usage"] as? [String: Any],
-        let input = usage["input_tokens"] as? Int, let output = usage["output_tokens"] as? Int,
-        input >= 0, output >= 0 else { continue }
-      found = true
-      let cacheRead = (usage["cached_input_tokens"] as? Int) ?? (usage["cache_read_input_tokens"] as? Int) ?? 0
-      let cacheWrite = (usage["cache_creation_input_tokens"] as? Int) ?? 0
-      // Codex input includes cached input; Claude reports cache input separately.
-      total.inputTokens += input + (object["type"] as? String == "result" ? cacheRead + cacheWrite : 0)
-      total.cachedInputTokens += max(0, cacheRead)
-      total.outputTokens += output
+      guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], let type = object["type"] as? String else { continue }
+      if type == "bz.model", let model = object["model"] as? String { fallback = model }
+      if let key = object["event_id"] as? String, !seen.insert(key).inserted { continue }
+      func number(_ u: [String: Any], _ names: [String]) -> Int { names.compactMap { u[$0] as? Int }.first ?? 0 }
+      func add(_ u: [String: Any], model: String, claude: Bool) {
+        guard (u["input_tokens"] as? Int ?? u["inputTokens"] as? Int) != nil,
+          (u["output_tokens"] as? Int ?? u["outputTokens"] as? Int) != nil else { return }
+        let input = number(u, ["input_tokens", "inputTokens"]), output = number(u, ["output_tokens", "outputTokens"])
+        let cache = number(u, ["cached_input_tokens", "cache_read_input_tokens", "cacheReadInputTokens"])
+        let write = number(u, ["cache_creation_input_tokens", "cacheCreationInputTokens"])
+        let long = (u["cache_creation"] as? [String: Any])?["ephemeral_1h_input_tokens"] as? Int ?? 0
+        guard [input, output, cache, write, long].allSatisfy({ (0...100_000_000).contains($0) }) else { return }
+        let total = input + (claude ? cache + write : 0)
+        guard [input, output, cache, write, long].allSatisfy({ (0...100_000_000).contains($0) }), cache + write <= total, long <= write else { return }
+        var value = ModelUsage(model: model, input: total, cached: cache, output: output, cacheWrite: write,
+          cacheWriteLong: long, maximumContext: u["context_tokens"] as? Int, tier: u["service_tier"] as? String)
+        value.price()
+        if var prior = models[model] {
+          prior.input += value.input; prior.cached += value.cached; prior.output += value.output
+          prior.cacheWrite += value.cacheWrite; prior.cacheWriteLong += value.cacheWriteLong
+          prior.estimatedUSD = prior.estimatedUSD.flatMap { a in value.estimatedUSD.map { a + $0 } }
+          models[model] = prior
+        } else { models[model] = value }
+      }
+      if type == "result", let perModel = object["modelUsage"] as? [String: [String: Any]], !perModel.isEmpty {
+        for (model, usage) in perModel { add(usage, model: model, claude: true) }
+      } else if ["turn.completed", "result", "bz.usage"].contains(type), let usage = object["usage"] as? [String: Any],
+        usage["input_tokens"] != nil && usage["output_tokens"] != nil {
+        add(usage, model: object["model"] as? String ?? fallback, claude: type == "result")
+      }
     }
-    return found ? total : nil
+    guard !models.isEmpty else { return nil }
+    let values = models.values.sorted { $0.model < $1.model }
+    var result = Self(inputTokens: values.reduce(0) { $0 + $1.input }, cachedInputTokens: values.reduce(0) { $0 + $1.cached }, outputTokens: values.reduce(0) { $0 + $1.output })
+    result.byModel = values
+    return result
   }
 }
 
@@ -71,6 +104,7 @@ public struct ReviewLedger: Codable, Sendable {
     public var harness: String
     public var outcome: String
     public var usage: ReviewUsage?
+    public var requestedModel: String?
     public var evidenceCount: Int
   }
   public var entries: [Entry] = []
@@ -85,18 +119,18 @@ public struct ReviewLedger: Codable, Sendable {
     }
     return nil
   }
-  public mutating func reserve(harness: String, evidenceCount: Int, now: Date) -> UUID {
-    entries.removeAll { now.timeIntervalSince($0.started) > 7 * 86400 }
+  public mutating func reserve(harness: String, evidenceCount: Int, now: Date, model: String? = nil) -> UUID {
+    entries.removeAll { now.timeIntervalSince($0.started) > 32 * 86400 }
     let id = UUID()
-    entries.append(.init(id: id, started: now, harness: harness, outcome: "started", evidenceCount: evidenceCount))
+    entries.append(.init(id: id, started: now, harness: harness, outcome: "started", requestedModel: model, evidenceCount: evidenceCount))
     return id
   }
   public static func load(store: Store) throws -> Self {
     let path = store.root.appendingPathComponent("review-usage.json")
     guard FileManager.default.fileExists(atPath: path.path) else { return Self() }
-    return try JSONDecoder().decode(Self.self, from: store.read(path, limit: 131072))
+    return try JSONDecoder().decode(Self.self, from: store.read(path, limit: 1_048_576))
   }
   public func save(store: Store) throws {
-    try store.write(JSONEncoder().encode(self), to: store.root.appendingPathComponent("review-usage.json"), limit: 131072)
+    try store.write(JSONEncoder().encode(self), to: store.root.appendingPathComponent("review-usage.json"), limit: 1_048_576)
   }
 }
