@@ -140,7 +140,7 @@ public enum WorkspaceSafety {
     let i = try identity(claim.identity.path, root: root)
     guard i == claim.identity else { throw fail("Workspace identity changed. Preserve it.") }
     try administration(i)
-    let configuration = try git(i.path, ["config", "--null", "--list"])
+    let configuration = try git(i.path, ["config", "--null", "--name-only", "--list"])
     guard !configuration.split(separator: "\0").contains(where: { $0.hasPrefix("filter.") }) else {
       throw fail("Checkout filters require the owning harness; preserve this workspace.")
     }

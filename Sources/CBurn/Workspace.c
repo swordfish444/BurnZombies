@@ -38,8 +38,9 @@ int bz_path_in_use(const char *root) {
             if(within(root,cwd.pvi_cdir.vip_path) || within(root,cwd.pvi_rdir.vip_path)) return 1;
         } else if(!gone(pid)) unknown=1;
         struct proc_fdinfo fds[4096];
+        errno=0;
         int n=proc_pidinfo(pid,PROC_PIDLISTFDS,0,fds,sizeof(fds));
-        if(n<0 || n>=(int)sizeof(fds) || (n==0 && b.pbi_nfiles>0 && !gone(pid))) { unknown=1; continue; }
+        if(n<0 || n>=(int)sizeof(fds) || (n==0 && (errno!=0 || b.pbi_nfiles>0) && !gone(pid))) { unknown=1; continue; }
         for(int j=0;j<n/(int)sizeof(fds[0]);j++) if(fds[j].proc_fdtype==PROX_FDTYPE_VNODE) {
             struct vnode_fdinfowithpath v={0};
             int r=proc_pidfdinfo(pid,fds[j].proc_fd,PROC_PIDFDVNODEPATHINFO,&v,sizeof(v));

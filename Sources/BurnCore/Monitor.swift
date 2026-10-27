@@ -280,7 +280,7 @@ public actor Monitor {
       }
       let repo = WorkspaceSafety.canonical(repository)
       // Git checkout can execute repository-defined filters. Refuse them instead of running arbitrary commands.
-      let configuration = try WorkspaceSafety.git(repo, ["config", "--null", "--list"])
+      let configuration = try WorkspaceSafety.git(repo, ["config", "--null", "--name-only", "--list"])
       guard !configuration.split(separator: "\0").contains(where: { $0.hasPrefix("filter.") }) else {
         throw StoreError.message("Repositories with checkout filters require their owning harness; no worktree created.")
       }

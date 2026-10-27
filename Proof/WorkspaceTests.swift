@@ -47,6 +47,10 @@ func workspaceProof() async throws {
   func preview(_ id: String) async -> AgentReply {
     await call(.init("workspace_preview", rationale: "Owner evidence matches completed fixture work with preserved commits and no remaining consumer.", workspaceID: id))
   }
+  _ = try git(repo.path, ["config", "filter.fixture.smudge", "false"])
+  do { _ = try await create(); failTest("repository checkout filter accepted") }
+  catch { check(error.localizedDescription.contains("filters"), "unexpected filter refusal") }
+  _ = try git(repo.path, ["config", "--unset-all", "filter.fixture.smudge"])
   let (claim, token) = try await create(), path = claim.identity.path
   let active = await preview(claim.id); checkFalse(active.ok, "active workspace accepted")
   let missing = await preview(UUID().uuidString); checkFalse(missing.ok, "unknown workspace accepted")
