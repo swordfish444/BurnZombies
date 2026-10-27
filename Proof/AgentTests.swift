@@ -114,6 +114,9 @@ func agentBridgeProof() async throws {
 
 func runAgentFixture(root: URL) async throws {
   let monitor = try Monitor(root: root)
+  // Like the resident observer, finish the first bounded inventory before a model
+  // connects; a cold filesystem scan must not consume the MCP request timeout.
+  _ = await monitor.refresh()
   let service = AgentService(monitor: monitor)
   let listener = try AgentListener(root: root) { request in
     let allowlist = root.appendingPathComponent("allowed-processes.json")

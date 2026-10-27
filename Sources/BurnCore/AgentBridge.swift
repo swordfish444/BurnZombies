@@ -145,6 +145,7 @@ public actor AgentService {
         state = await monitor.snapshot()
       } else if request.operation == "disk_decide" {
         reply.message = try await monitor.diskDecision(request.findingID ?? "", decision: request.action ?? "", rationale: request.rationale ?? "")
+        state = await monitor.snapshot()
       } else if request.operation == "disk_preview" {
         diskPreviews = diskPreviews.filter { Date().timeIntervalSince($0.value.2) < 60 }
         guard let id = request.findingID, let rationale = request.rationale, (20...1200).contains(rationale.count),
@@ -249,7 +250,7 @@ public actor AgentService {
     reply.observedProcesses = state.processCount
     reply.observedAt = state.catalog.lastSample
     reply.partial = state.partial
-    reply.disk = Array((state.catalog.diskCandidates ?? []).filter { request.reviewIDs == nil || request.reviewIDs!.contains($0.id) }.prefix(1))
+    reply.disk = Array((state.catalog.diskCandidates ?? []).filter { $0.bytes >= DiskCandidate.minimumReviewBytes && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id)) }.prefix(3))
     if !reply.disk.isEmpty { reply.diskPolicy = (try? await monitor.diskPolicy()).map(DiskReviewPolicy.init) }
     let work = await monitor.workSummaries()
     reply.activeWorkCount = work.filter { $0.state == "active" && !$0.livePIDs.isEmpty }.count

@@ -1,6 +1,6 @@
 # See what the cleanup costs
 
-Open **Settings → Usage & estimated cost**. The section starts collapsed. Choose any range from **1 to 30 days**, **Hourly** or **Daily**, and **All models** or an individual model. Switch the chart between tokens and estimated USD. Select a time bucket for its totals. Per-model rows show uncached input, cache reads, cache writes and output.
+Open **Settings → Usage & estimated cost**. The section starts collapsed. Choose **1, 7 or 30 days**, **Hourly** or **Daily**, and **All models** or an individual model. Switch the chart between tokens and estimated USD. Select a time bucket for its totals. Per-model rows show uncached input, cache reads, cache writes and output.
 
 Only BurnZombies-owned background reviews are counted. Ordinary chats are not monitored for billing. Passive observation makes no model calls; an empty or previously reviewed queue starts no review. Starts are serialized, at least an hour apart, capped at eight per rolling 24 hours and stopped after 200,000 recorded input tokens in that window. The final review can exceed the input threshold. Missing usage still consumes an attempt. Failure pauses future reviews instead of retrying or switching accounts/models.
 

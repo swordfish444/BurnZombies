@@ -6,8 +6,9 @@ public struct ReviewEvidence: Codable, Equatable, Sendable {
   public var id: String
   public var revision: String
   public var processCount: Int
-  public init(id: String, revision: String, processCount: Int = 1) {
-    self.id = id; self.revision = revision; self.processCount = processCount
+  public var recommendationOnly: Bool?
+  public init(id: String, revision: String, processCount: Int = 1, recommendationOnly: Bool? = nil) {
+    self.id = id; self.revision = revision; self.processCount = processCount; self.recommendationOnly = recommendationOnly
   }
   public static func pending(in catalog: Catalog) -> [Self] {
     let claims = catalog.workEvidence ?? []
@@ -32,8 +33,8 @@ public struct ReviewEvidence: Codable, Equatable, Sendable {
         Member(record.latest) == evidence.member, !WorkEvidence.blockingTree(claims, record: record, records: catalog.records) else { continue }
       result.append(.init(id: evidence.id, revision: evidence.revision))
     }
-    for candidate in catalog.diskCandidates ?? [] where candidate.reviewable && candidate.decision == nil {
-      result.append(.init(id: candidate.id, revision: candidate.revision, processCount: 0))
+    for candidate in catalog.diskCandidates ?? [] where candidate.pendingReview {
+      result.append(.init(id: candidate.id, revision: candidate.queueRevision, processCount: 0, recommendationOnly: !candidate.reviewable))
     }
     for workspace in catalog.workspaces ?? [] where workspace.state == "released" {
       result.append(.init(id: workspace.id, revision: digest(workspace.id + "|" + String(workspace.updated.timeIntervalSinceReferenceDate)), processCount: 0))

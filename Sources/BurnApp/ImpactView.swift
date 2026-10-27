@@ -177,7 +177,7 @@ struct BurnStatus: View {
           .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
           .padding(.horizontal, 9).padding(.vertical, compact ? 4 : 6)
           .background(BurnTheme.orange.opacity(0.08), in: Capsule()).contentShape(Capsule())
-      }.disabled(!model.demo && !model.machineReviewEnabled)
+      }.clickPointer().disabled(!model.demo && !model.machineReviewEnabled)
         .help("Review buildup across this Mac now. No active chat or reboot needed.")
     }
   }
@@ -221,7 +221,7 @@ struct MiniImpactView: View {
         Button { model.openSettings?() } label: {
           Image(systemName: "gearshape.fill").font(.system(size: 20)).foregroundStyle(.gray)
             .frame(width: 28, height: 32).contentShape(Rectangle())
-        }.help("Settings").accessibilityLabel("Settings")
+        }.clickPointer().help("Settings").accessibilityLabel("Settings")
       }.frame(height: 36)
       BurnStatus(model: model, compact: true).frame(height: 22).padding(.top, 9)
       Text("Dead weight. Gone.").font(BurnTheme.display(28))
@@ -253,7 +253,7 @@ struct MiniImpactView: View {
             Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
             Spacer(minLength: 0)
           }.frame(maxWidth: .infinity).frame(height: 44).contentShape(Rectangle())
-        }
+        }.clickPointer()
         Rectangle().fill(BurnTheme.line).frame(width: 1, height: 22)
         Button { model.openLog?() } label: {
           HStack(spacing: 10) {
@@ -261,7 +261,7 @@ struct MiniImpactView: View {
             Text("Burn Log").fontWeight(.medium)
             Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
           }.frame(maxWidth: .infinity).frame(height: 44).contentShape(Rectangle())
-        }
+        }.clickPointer()
       }.font(.system(size: 13)).frame(height: 48)
       Spacer(minLength: 0)
     }.padding(.horizontal, 30).padding(.top, 20).padding(.bottom, 6)
@@ -309,7 +309,7 @@ struct MiniImpactView: View {
         .frame(height: 84).contentShape(RoundedRectangle(cornerRadius: 7))
         .background(BurnTheme.orange.opacity(0.085), in: RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.75)))
-    }.help("View impact")
+    }.clickPointer().help("View impact")
   }
   var warmupGauge: some View {
     ZStack {
@@ -345,7 +345,6 @@ struct ImpactWindowView: View {
   @ObservedObject var model: AppModel
   var period: ImpactPeriod { model.impactPeriod }
   @State private var showCalculation = false
-  @State private var hoveredPeriod: ImpactPeriod?
   var numbers: ImpactNumbers { .make(model, period: period) }
   var body: some View {
     VStack(spacing: 0) {
@@ -358,7 +357,7 @@ struct ImpactWindowView: View {
           model.openSettings?()
         } label: {
           Image(systemName: "gearshape.fill").font(.system(size: 21)).foregroundStyle(.gray)
-        }.help("Settings")
+        }.clickPointer().help("Settings")
       }.padding(.horizontal, 20).frame(height: 57)
         .overlay {
           HStack(spacing: 20) {
@@ -371,9 +370,6 @@ struct ImpactWindowView: View {
     }.frame(width: 1008, height: 930).foregroundStyle(BurnTheme.cream).ignoresSafeArea()
       .buttonStyle(.plain).background(BurnBackdrop()).preferredColorScheme(.dark)
       .sheet(isPresented: $showCalculation) { calculation }
-      .onDisappear {
-        if hoveredPeriod != nil { NSCursor.pop(); hoveredPeriod = nil }
-      }
   }
   func nav(_ title: String) -> some View {
     Button {
@@ -385,7 +381,7 @@ struct ImpactWindowView: View {
         .overlay(alignment: .bottom) {
           if model.impactTab == title { BurnTheme.orange.frame(height: 3) }
         }
-    }
+    }.clickPointer()
   }
   var impact: some View {
     VStack(spacing: 0) {
@@ -405,17 +401,9 @@ struct ImpactWindowView: View {
             .background(
               period == option ? Color.white.opacity(0.08) : .clear,
               in: RoundedRectangle(cornerRadius: 11))
-          }
+          }.clickPointer()
           .accessibilityIdentifier("impact-period-" + option.rawValue)
           .accessibilityValue(period == option ? "Selected" : "Not selected")
-          .onHover { inside in
-            if inside {
-              if hoveredPeriod == nil { NSCursor.pointingHand.push() }
-              hoveredPeriod = option
-            } else if hoveredPeriod == option {
-              NSCursor.pop(); hoveredPeriod = nil
-            }
-          }
         }
       }.padding(.horizontal, 18).padding(.top, 22)
       HStack(alignment: .center, spacing: 28) {
@@ -466,7 +454,7 @@ struct ImpactWindowView: View {
         }.padding(.horizontal, 24).frame(height: 67)
           .background(.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 11))
           .overlay(RoundedRectangle(cornerRadius: 11).stroke(BurnTheme.line))
-      }.padding(.top, 13)
+      }.clickPointer().padding(.top, 13)
       Spacer(minLength: 8)
       Text("You build. We burn.").font(.system(size: 14, design: .monospaced)).tracking(3)
         .foregroundStyle(.gray).padding(.bottom, 18)
@@ -532,7 +520,7 @@ struct ImpactWindowView: View {
             Text("View impact details")
             Image(systemName: "chevron.right")
           }.font(.system(size: 15))
-        }.padding(.top, 4)
+        }.clickPointer().padding(.top, 4)
       }.padding(.leading, 51)
     }.padding(.horizontal, 37).frame(height: 160)
       .background(
@@ -566,11 +554,11 @@ struct ImpactWindowView: View {
           Text("A little less dead weight.").font(.system(size: 22)).foregroundStyle(
             BurnTheme.muted)
           Spacer()
-          Button("Refresh") { model.refresh() }
+          Button("Refresh") { model.refresh() }.clickPointer()
         }
         if model.state.error != nil {
           Text("Monitoring needs attention.").foregroundStyle(.orange)
-          Button("Open details") { model.openAudit?() }
+          Button("Open details") { model.openAudit?() }.clickPointer()
         }
         if !model.state.findings.isEmpty {
           Text("WORTH A LOOK").font(.system(size: 14, weight: .semibold, design: .monospaced))
@@ -590,7 +578,7 @@ struct ImpactWindowView: View {
                 Image(systemName: "chevron.right")
               }
               .padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-            }
+            }.clickPointer()
           }
         }
         Text("RECENT BURNS").font(.system(size: 14, weight: .semibold, design: .monospaced))
@@ -612,7 +600,7 @@ struct ImpactWindowView: View {
               Spacer()
               Text(receipt.outcome == "verified" ? ImpactNumbers.bytes(receipt.diskReclaimedBytes) : receipt.outcome.capitalized).foregroundStyle(BurnTheme.muted)
             }
-          }.padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
         }
         ForEach((model.state.catalog.workspaceReceipts ?? []).reversed(), id: \.id) { receipt in
           DisclosureGroup {
@@ -625,7 +613,7 @@ struct ImpactWindowView: View {
               Text(receipt.outcome == "verified" ? "1 worktree · \(ImpactNumbers.bytes(receipt.diskReclaimedBytes))" : receipt.outcome.capitalized)
                 .foregroundStyle(BurnTheme.muted)
             }
-          }.padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
         }
         ForEach(model.state.catalog.events.reversed()) { event in
           DisclosureGroup {
@@ -642,7 +630,7 @@ struct ImpactWindowView: View {
                   : event.outcome.capitalized
               ).foregroundStyle(BurnTheme.muted)
             }
-          }.padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
         }
       }.padding(38).frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -652,7 +640,7 @@ struct ImpactWindowView: View {
       HStack {
         Text("Behind the burn.").font(BurnTheme.display(34))
         Spacer()
-        Button("Done") { showCalculation = false }
+        Button("Done") { showCalculation = false }.clickPointer()
       }
       Text("Worktrees count only after native removal and receipt verification. Disk reclaimed is the observed free-space increase capped by allocated files removed; shared APFS blocks and concurrent disk activity can reduce attribution. Commits remain recoverable in the receipt’s Git ref. Existing checkouts, unsaved/ignored files and uncertain work are preserved.")
       Text(
@@ -671,12 +659,12 @@ struct ImpactWindowView: View {
         Button("Preview success animation") {
           showCalculation = false
           model.previewBurn()
-        }
+        }.clickPointer()
       }
       Button("Open Burn Log") {
         showCalculation = false
         model.impactTab = "Burn Log"
-      }
+      }.clickPointer()
     }.padding(32).frame(width: 520).foregroundStyle(BurnTheme.cream).background(BurnBackdrop())
   }
 }

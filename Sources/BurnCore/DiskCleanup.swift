@@ -17,7 +17,7 @@ public struct DiskPolicy: Codable, Sendable {
   public var scanHours = 6
   public var targetFreeGB = 150
   public var maximumGBPerDay = 20
-  public var minimumCandidateMB = 512
+  public var minimumCandidateMB = 10_000
   public var roots: [String] = []
   public var protectedPaths: [String] = []
   public var instructions = "Preserve useful QA evidence and the newest successful run. Prefer rebuildable output over whole worktrees."
@@ -56,6 +56,7 @@ public struct DiskPolicy: Codable, Sendable {
 }
 private extension JSONEncoder { static var sorted: JSONEncoder { let e = JSONEncoder(); e.outputFormatting = [.sortedKeys]; return e } }
 public struct DiskCandidate: Codable, Sendable, Identifiable {
+  public static let minimumReviewBytes: UInt64 = 10_000_000_000
   public var id: String
   public var path: String
   public var repository: String
@@ -68,11 +69,20 @@ public struct DiskCandidate: Codable, Sendable, Identifiable {
   public var reviewable: Bool
   public var userRule: String
   public var decision: String?
+  public var decisionRevision: String?
   public var rationale: String?
   public var policyRevision: String = ""
+  public var recommendationEligible: Bool?
+  public var recommendationPolicyRevision: String?
+  public var adviceRevision: String {
+    WorkEvidence.hash(path + "|" + (recommendationPolicyRevision ?? policyRevision) + "|" + userRule + "|" + String(bytes / Self.minimumReviewBytes) + "|" + guardReason + "|\(recommendationEligible == true)")
+  }
+  public var pendingReview: Bool { bytes >= Self.minimumReviewBytes && decision == nil && (reviewable || recommendationEligible == true) }
+  public var queueRevision: String { reviewable ? "cleanup|" + revision : "advice|" + adviceRevision }
   public var revision: String { fingerprint + "|" + userRule + "|" + policyRevision }
 }
 public struct DiskSnapshot: Codable, Sendable {
+  public var recommendationVersion: Int? = 2
   public var date: Date = .distantPast
   public var freeBytes: UInt64 = 0
   public var policyRevision = ""
@@ -216,14 +226,25 @@ public enum DiskInventory {
         var c = DiskCandidate(id: "disk:" + WorkEvidence.hash(path), path: path, repository: repo, kind: kind, bytes: m.bytes, newest: m.newest,
           fingerprint: m.fingerprint, complete: m.complete, guardReason: "Needs an exact retention rule; ignored files can still be valuable.", reviewable: false, userRule: rule?.disposition ?? "review")
         c.policyRevision = policy.revision
+        c.recommendationPolicyRevision = WorkEvidence.hash(policy.instructions + "|\(policy.minimumAgeDays)|\(policy.keepNewest)|" + (rule?.note ?? ""))
         if rule?.disposition == "keep" { c.guardReason = "Kept by your rule." }
+        else if policy.protectedPaths.contains(where: { WorkspaceSafety.contains($0, path) || WorkspaceSafety.contains(path, $0) }) { c.guardReason = "Protected by your folder preferences." }
         else if !m.complete || m.unsafe { c.guardReason = "Incomplete scan or sensitive/special files; preserved." }
         else if now.timeIntervalSince(m.newest) < Double(policy.minimumAgeDays) * 86400 { c.guardReason = "Inside your minimum retention period." }
         else if rule?.disposition == "regenerable" {
           do { _ = try check(c, policy: policy, now: now, deadline: deadline, visibility: visibility); c.reviewable = true; c.guardReason = "Eligible for independent harness review; not a deletion verdict." }
           catch { c.guardReason = error.localizedDescription }
         }
-        if let old = previous.candidates.first(where: { $0.id == c.id && $0.revision == c.revision }), previous.policyRevision == policy.revision { c.decision = old.decision; c.rationale = old.rationale }
+        // Read-only advice can precede deletion permission or complete consumer
+        // visibility. It cannot mint a cleanup token or weaken check(_:policy:).
+        if c.bytes >= DiskCandidate.minimumReviewBytes, m.complete, !m.unsafe, rule?.disposition != "keep",
+          !policy.protectedPaths.contains(where: { WorkspaceSafety.contains($0, path) || WorkspaceSafety.contains(path, $0) }), Date() < deadline {
+          let relative = String(path.dropFirst(repo.count + 1))
+          if let tracked = try? WorkspaceSafety.git(repo, ["ls-files", "-z", "--", relative]), tracked.isEmpty,
+            (try? WorkspaceSafety.git(repo, ["check-ignore", "--", relative])) != nil {
+            c.recommendationEligible = true
+          }
+        }
         candidates.append(c)
       }
       // Whole worktree discovery does not recursively measure it again or authorize adoption.
@@ -237,8 +258,15 @@ public enum DiskInventory {
       let keep = Set(candidates.filter { $0.repository == repo && $0.kind == "evidence" }.sorted { $0.newest > $1.newest }.prefix(policy.keepNewest).map(\.id))
       for i in candidates.indices where keep.contains(candidates[i].id) { candidates[i].reviewable = false; candidates[i].guardReason = "One of the newest evidence runs; retained." }
     }
+    for i in candidates.indices {
+      let c = candidates[i]
+      if let old = previous.candidates.first(where: { $0.id == c.id && ($0.decisionRevision ?? $0.queueRevision) == c.queueRevision }) {
+        candidates[i].decision = old.decision; candidates[i].rationale = old.rationale
+        candidates[i].decisionRevision = old.decisionRevision
+      }
+    }
     candidates += previous.candidates.filter { old in !scanned.contains(old.repository) && policy.roots.contains(where: { WorkspaceSafety.contains($0, old.path) }) }.map { old in
-      var c = old; c.reviewable = false; c.guardReason = "Awaiting fresh bounded inspection."; return c
+      var c = old; c.reviewable = false; c.recommendationEligible = false; c.guardReason = "Awaiting fresh bounded inspection."; return c
     }
     snapshot.candidates = Array(candidates.sorted { $0.bytes > $1.bytes }.prefix(160))
     snapshot.detail = "Inspected \(scanned.count)/\(repos.count) repositories. Sizes are allocated-file candidates, not guaranteed recoverable space. Incomplete visibility blocks removal."

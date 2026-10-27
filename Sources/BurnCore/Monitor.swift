@@ -146,11 +146,11 @@ public actor Monitor {
       if store.root.standardizedFileURL == Store.defaultRoot.standardizedFileURL || FileManager.default.fileExists(atPath: store.root.appendingPathComponent("disk-policy.json").path) {
         let policy = try DiskPolicy.load(store)
         if !diskScanLoaded { diskSnapshot = try DiskSnapshot.load(store); diskScanLoaded = true }
-        if now.timeIntervalSince(diskSnapshot.date) >= Double(policy.scanHours * 3600) || diskSnapshot.policyRevision != policy.revision {
+        if diskSnapshot.recommendationVersion != 2 || now.timeIntervalSince(diskSnapshot.date) >= Double(policy.scanHours * 3600) || diskSnapshot.policyRevision != policy.revision {
           diskSnapshot = DiskInventory.scan(policy: policy, previous: diskSnapshot, visibility: workspaceVisibility)
           try diskSnapshot.save(store)
         }
-        catalog.diskCandidates = diskSnapshot.candidates.filter { $0.reviewable && $0.decision == nil && diskSnapshot.freeBytes < UInt64(policy.targetFreeGB) * 1_000_000_000 }
+        catalog.diskCandidates = diskSnapshot.candidates.filter { $0.pendingReview && diskSnapshot.freeBytes < UInt64(policy.targetFreeGB) * 1_000_000_000 }
       }
       // Observation is factual. The connected harness owns diagnosis and target selection.
       state.findings = []
@@ -391,11 +391,14 @@ public actor Monitor {
   public func diskPolicy() throws -> DiskPolicy { try DiskPolicy.load(store) }
   public func diskDecision(_ id: String, decision: String, rationale: String) throws -> String {
     guard ["keep", "recommend"].contains(decision), (20...1200).contains(rationale.count),
-      let i = diskSnapshot.candidates.firstIndex(where: { $0.id == id && $0.reviewable }) else { throw StoreError.message("Unknown disk candidate or invalid decision.") }
+      let i = diskSnapshot.candidates.firstIndex(where: { $0.id == id && $0.pendingReview }),
+      try DiskPolicy.load(store).revision == diskSnapshot.policyRevision else { throw StoreError.message("Unknown disk candidate, changed policy or invalid decision.") }
+    diskSnapshot.candidates[i].decisionRevision = diskSnapshot.candidates[i].queueRevision
     diskSnapshot.candidates[i].decision = decision; diskSnapshot.candidates[i].rationale = rationale
     try diskSnapshot.save(store)
     catalog.diskCandidates?.removeAll { $0.id == id }
-    return "Disk review saved. Nothing removed. Tune exact folder rules in Settings."
+    state.catalog = catalog
+    return "AI recommendation saved in Settings. Nothing removed; removal permission and safety checks are separate."
   }
   public func previewDisk(_ id: String) throws -> DiskCandidate {
     let policy = try DiskPolicy.load(store)

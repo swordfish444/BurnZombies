@@ -327,7 +327,7 @@ struct Dashboard: View {
           model.refresh()
         } label: {
           Image(systemName: "arrow.clockwise")
-        }.buttonStyle(.borderless).help("Refresh observations").accessibilityLabel(
+        }.clickPointer().buttonStyle(.borderless).help("Refresh observations").accessibilityLabel(
           "Refresh observations")
       }.padding(20)
       Divider()
@@ -342,7 +342,7 @@ struct Dashboard: View {
           Text("Overview").tag("Overview")
           Text("History").tag("History")
           Text("Settings").tag("Settings")
-        }.pickerStyle(.segmented).padding([.horizontal, .top], 16)
+        }.clickPointer().pickerStyle(.segmented).padding([.horizontal, .top], 16)
         ScrollView {
           VStack(alignment: .leading, spacing: 18) {
             if model.tab == "Overview" {
@@ -369,7 +369,7 @@ struct Dashboard: View {
           systemImage: "lock.shield"
         ).font(.caption).foregroundStyle(.secondary)
         Spacer()
-        Button("Quit") { model.quit() }.buttonStyle(.borderless).font(.caption)
+        Button("Quit") { model.quit() }.clickPointer().buttonStyle(.borderless).font(.caption)
       }.padding(14)
     }.frame(width: 440, height: 660).background(Color(nsColor: .windowBackgroundColor)).tint(ember)
   }
@@ -432,7 +432,7 @@ struct Dashboard: View {
             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
           }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(
             Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(.plain).accessibilityLabel("Review \(f.title)")
+        }.clickPointer().buttonStyle(.plain).accessibilityLabel("Review \(f.title)")
       }
       Text("See Impact for local responsiveness.").font(.caption).foregroundStyle(.secondary)
       if model.state.partial || model.state.hiddenCount > 0 {
@@ -456,7 +456,7 @@ struct Dashboard: View {
         model.message = nil
       } label: {
         Label("All activities", systemImage: "chevron.left")
-      }.buttonStyle(.borderless).padding(20)
+      }.clickPointer().buttonStyle(.borderless).padding(20)
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
           Text(status(f.disposition)).font(.caption.weight(.semibold)).foregroundStyle(
@@ -482,24 +482,24 @@ struct Dashboard: View {
               Text(
                 "Use the owning tool's supported shutdown first when it is available. These helpers must be disposable; idle CPU cannot prove that work is safe to discard."
               ).font(.caption).foregroundStyle(.secondary)
-              Button("Request graceful stop") { model.clean() }.buttonStyle(.borderedProminent)
+              Button("Request graceful stop") { model.clean() }.clickPointer().buttonStyle(.borderedProminent)
                 .disabled(model.working)
             }.padding(14).background(ember.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
           } else if f.disposition == .eligible {
-            Button("Preview cleanup") { model.preview = true }.buttonStyle(.borderedProminent)
+            Button("Preview cleanup") { model.preview = true }.clickPointer().buttonStyle(.borderedProminent)
           }
           HStack {
-            Button("Protect executable") { model.protect() }
-            Button("Snooze 24 hours") { model.snooze() }
+            Button("Protect executable") { model.protect() }.clickPointer()
+            Button("Snooze 24 hours") { model.snooze() }.clickPointer()
           }.disabled(f.members.isEmpty)
           DisclosureGroup("Technical details") {
             VStack(alignment: .leading, spacing: 10) {
-              Button("Inspect descriptors") { model.inspect() }
+              Button("Inspect descriptors") { model.inspect() }.clickPointer()
               ForEach(model.technical, id: \.self) {
                 Text($0).font(.caption.monospaced()).textSelection(.enabled)
               }
             }.padding(.top, 8)
-          }.font(.callout)
+          }.disclosureGroupStyle(ClickDisclosureStyle()).font(.callout)
         }.padding(.horizontal, 20).padding(.bottom, 20).frame(
           maxWidth: .infinity, alignment: .leading)
       }
@@ -544,10 +544,10 @@ struct Dashboard: View {
       Text("Your whole Mac. One observer.").font(.headline)
       Text("BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running.")
         .font(.caption).foregroundStyle(.secondary)
-      Toggle("Background reviews", isOn: Binding(get: { model.machineReviewEnabled }, set: model.setAutomatic))
+      Toggle("Background reviews", isOn: Binding(get: { model.machineReviewEnabled }, set: model.setAutomatic)).clickPointer()
       Text(model.machineReview.detail).font(.caption).foregroundStyle(.secondary)
       if model.machineReview.phase == "paused" {
-        Button("Resume reviews") { model.setAutomatic(true) }
+        Button("Resume reviews") { model.setAutomatic(true) }.clickPointer()
       }
       ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
       UsageHistoryView().disabled(model.demo)
@@ -555,14 +555,14 @@ struct Dashboard: View {
       Toggle(
         "Grouped notifications",
         isOn: Binding(
-          get: { model.state.catalog.preferences.notifications }, set: model.setNotifications))
+          get: { model.state.catalog.preferences.notifications }, set: model.setNotifications)).clickPointer()
       Text(
         "Off by default. A finding notifies once; materially worse impact can notify again after a day. Snoozed and protected activities stay quiet."
       ).font(.caption).foregroundStyle(.secondary)
       Toggle(
         "Start at login",
         isOn: Binding(get: { SMAppService.mainApp.status == .enabled }, set: model.login)
-      ).disabled(model.demo)
+      ).clickPointer().disabled(model.demo)
       Divider()
       Text("Protected executables").font(.headline)
       if model.state.catalog.preferences.protectedExecutables.isEmpty {
@@ -575,7 +575,7 @@ struct Dashboard: View {
         HStack {
           Text(URL(fileURLWithPath: p).lastPathComponent).font(.callout)
           Spacer()
-          Button("Remove") { model.unprotect(p) }
+          Button("Remove") { model.unprotect(p) }.clickPointer()
         }
       }
       Divider()
@@ -595,7 +595,7 @@ struct Dashboard: View {
       Link(
         "Build, safety, and uninstall guide",
         destination: URL(string: "https://github.com/swordfish444/BurnZombies")!
-      ).font(.callout)
+      ).clickPointer().font(.callout)
     }
   }
 }

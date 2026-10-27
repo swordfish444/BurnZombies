@@ -51,13 +51,15 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       print("Impact metrics and period checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
-    if CommandLine.arguments.count == 5 && CommandLine.arguments[1] == "--review-model" {
+    if [5, 6].contains(CommandLine.arguments.count) && CommandLine.arguments[1] == "--review-model" {
       do {
         let root = URL(fileURLWithPath: CommandLine.arguments[2])
         guard let config = try MachineReviewConfiguration.load(root: root) else { throw StoreError.message("Missing proof config") }
         let prompt = CommandLine.arguments[4] == "--production" ? MachineReviewer.prompt
           : try String(contentsOfFile: CommandLine.arguments[4], encoding: .utf8)
-        try MachineReviewer.execute(config, root: root, prompt: prompt)
+        let ids = CommandLine.arguments.count == 6
+          ? try JSONDecoder().decode([String].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[5]))) : nil
+        try MachineReviewer.execute(config, root: root, prompt: prompt, reviewIDs: ids)
       } catch { print("FAIL: \(error)"); exit(1) }
       return
     }
