@@ -29,6 +29,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 
 @main struct ProofRunner {
   static func main() async {
+    if CommandLine.arguments.contains("--review-economy") {
+      do { try await machineReviewProof() } catch { failTest("Review economy: \(error)") }
+      print("Review economy checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--worktrees") {
       do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
       print("Worktree checks: \(failures) failures")

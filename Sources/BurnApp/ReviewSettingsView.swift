@@ -7,6 +7,7 @@ import SwiftUI
   @Published var configuration: MachineReviewConfiguration?
   @Published var notice: String?
   @Published var failed = false
+  @Published var usageSummary = "No review usage recorded yet."
   let root: URL
   let catalog: [ReviewModelOption]
   init(root: URL = Store.defaultRoot, catalog: [ReviewModelOption] = ReviewModelOption.localCodexCatalog()) {
@@ -14,6 +15,13 @@ import SwiftUI
     do {
       configuration = try MachineReviewConfiguration.load(root: root)
       model = configuration?.model ?? ""; thinking = configuration?.reasoningEffort ?? ""
+      let ledger = try ReviewLedger.load(store: Store(root: root))
+      let recent = ledger.entries.filter { Date().timeIntervalSince($0.started) < 86400 }
+      let input = recent.reduce(0) { $0 + ($1.usage?.inputTokens ?? 0) }
+      let cached = recent.reduce(0) { $0 + ($1.usage?.cachedInputTokens ?? 0) }
+      let unknown = recent.filter { $0.usage == nil }.count
+      usageSummary = "Past 24h: \(recent.count)/8 reviews · \(input.formatted()) input tokens (\(cached.formatted()) cached)."
+        + (unknown > 0 ? " Usage unavailable for \(unknown) review(s)." : "")
     } catch { notice = error.localizedDescription; failed = true }
   }
   var levels: [String] {
@@ -85,6 +93,9 @@ struct ReviewSettingsView: View {
       }
       Text("Applies to future background reviews. Current work keeps running.")
         .font(.caption).foregroundStyle(.secondary)
+      Text("Reviews run only for new released work, batched at most every 30 minutes. Idle observation uses no model tokens.")
+        .font(.caption).foregroundStyle(.secondary)
+      Text(settings.usageSummary).font(.caption).foregroundStyle(.secondary)
       HStack {
         Button("Use defaults") { settings.model = ""; settings.thinking = ""; settings.notice = nil }
           .buttonStyle(.plain).foregroundStyle(.secondary)

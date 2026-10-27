@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.7.0"
+version="0.7.1"
 client="auto"
 launch=true
 while [[ $# -gt 0 ]]; do
@@ -59,9 +59,7 @@ fi
 
 if [[ "$client" != none ]]; then
   if ! "$app/Contents/MacOS/burnzombies" install-skill --check ||
-     ! "$app/Contents/MacOS/burnzombies" install --harness auto --mcp-only --check ||
      ! "$app/Contents/MacOS/burnzombies" setup --harness "$client" ||
-     ! "$app/Contents/MacOS/burnzombies" install --harness auto --mcp-only ||
      ! "$app/Contents/MacOS/burnzombies" install-skill; then
     rm -rf "$app"
     [[ ! -d "$work/previous.app" ]] || mv "$work/previous.app" "$app"

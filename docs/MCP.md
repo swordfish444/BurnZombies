@@ -17,15 +17,15 @@ A small native coordinator requests a bounded review from one selected, installe
 
 ## Scheduling and ownership
 
-The first complete scan can request a review. Subsequent pressure/buildup changes are coalesced with a ten-minute minimum interval; an hourly review also catches lifecycle changes without aggregate growth. **Safe cleanup** requests a review directly, without waiting for a chat. Reviews do not overlap. Stale/incomplete scans cannot dispatch them.
+Only new owner-released evidence can dispatch a review. Releases batch for two minutes and reviews are separated by at least 30 minutes. Memory/process churn and elapsed hours are not triggers. **Safe cleanup** joins the same queue and cannot bypass deduplication, cooldown or daily limits. Reviews do not overlap; stale/incomplete scans cannot dispatch them. The private usage ledger counts failed/interrupted starts and survives restarts. A maximum of eight starts per rolling 24 hours and a 200,000 recorded-input-token dispatch threshold bound repeat spending; the final review can cross the token threshold. Missing usage is reported as unavailable, not zero.
 
 Every review has a three-minute limit and one MiB output cap. A supervised process group owns its harness and MCP children, and closes them on completion, timeout or owner exit. The native observer continues separately, including the 120-second verification watch. A failure pauses reviews; there is no automatic retry or provider/model/account switch. The pause survives app restart.
 
-Default setup writes private BurnZombies reviewer configuration, installs portable lifecycle skills, and adds the local MCP server to detected working harnesses. Codex/Claude use invocation-scoped MCP configuration; Cursor/Gemini use a private review directory, and Copilot uses its additional-MCP option. Harness tool permissions remain applicable. No foreground app is activated and no chat is resumed or messaged.
+Default setup writes private BurnZombies reviewer configuration, installs portable lifecycle skills, and leaves global harness MCP configuration unchanged. Codex/Claude use invocation-scoped MCP configuration; Cursor/Gemini use a private review directory, and Copilot uses its additional-MCP option. Harness tool permissions remain applicable. No foreground app is activated and no chat is resumed or messaged.
 
 ## Harness adapters
 
-[Codex exec](https://learn.chatgpt.com/docs/developer-commands#codex-exec) and [Claude print mode](https://code.claude.com/docs/en/headless) support bounded noninteractive invocation. The Codex adapter uses automatic approval review with its sandbox; Claude limits built-in tools to read-only file inspection and allows only the BurnZombies MCP server for cleanup. Neither uses a blanket bypass.
+[Codex exec](https://learn.chatgpt.com/docs/developer-commands#codex-exec) and [Claude print mode](https://code.claude.com/docs/en/headless) support bounded noninteractive invocation. The Codex adapter uses automatic approval review with its sandbox; Claude disables built-in tools for the reviewer and allows only the BurnZombies MCP server for cleanup. Neither uses a blanket bypass.
 
 [Cursor](https://cursor.com/docs/cli/headless), [Copilot](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference), and [Gemini](https://geminicli.com/docs/cli/headless/) also expose noninteractive modes. Their local MCP trust and permission rules can prevent unattended cleanup; unsupported or denied operations must pause, not escalate. See current live-test coverage in [VALIDATION.md](VALIDATION.md).
 
@@ -48,7 +48,7 @@ The working agent uses `burnzombies_lifecycle` to register exact helper identiti
 
 `burnzombies_status` includes up to eight released records and active/released claim counts. `burnzombies_work` pages owner statements without exposing update tokens. An active claim, including a claim on a parent, blocks preview and burn. All shared consumers must release. A process exit, expired time window or crashed owner never releases a live claim. Exact identities and observed ancestry are saved independently of chat context.
 
-The private background reviewer cannot call lifecycle mutations. It gets at most eight tool calls and two inspect calls per connection, prioritizes released records, and preserves uncertainty. Preview tokens are bound to the requesting process identity and are single-use. Read-only evidence does not grant cleanup authorization. [Research, tradeoffs and acceptance criteria](LIFECYCLE-EVIDENCE.md).
+The private background reviewer cannot call lifecycle mutations. It gets at most eight tool calls and two inspect calls per connection and only the selected batch of new released records. Historical receipts and unrelated aggregates are omitted from review responses. It cannot page through the work registry, load skills or create ownership. Uncertainty preserves work. Dispatch is evidence-triggered, deduplicated across restarts, at most every 30 minutes and at most eight times per rolling 24 hours; a 200,000 recorded-input-token threshold also prevents further launches. Preview tokens are bound to the requesting process identity and are single-use. Read-only evidence does not grant cleanup authorization. [Research, tradeoffs and acceptance criteria](LIFECYCLE-EVIDENCE.md).
 
 ## Disposable worktrees (0.7)
 

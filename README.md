@@ -18,11 +18,11 @@ BurnZombies watches your whole Mac—across projects, terminals, agents and old 
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-Apple Silicon or Intel, macOS 14+. The installer selects an available **Codex, Claude Code, Cursor CLI, GitHub Copilot CLI or Gemini CLI** starts the menu bar observer, and connects the MCP tools and portable lifecycle skill. Use your existing harness login. No BurnZombies account, API key or package manager.
+Apple Silicon or Intel, macOS 14+. The installer selects an available **Codex, Claude Code, Cursor CLI, GitHub Copilot CLI or Gemini CLI**, starts the menu bar observer, and installs the portable lifecycle skill. The reviewer connects privately when needed; everyday chats get no hooks or always-loaded MCP connection. Use your existing harness login. No BurnZombies account, API key or package manager.
 
 Your working agent remembers which helpers it still needs and releases them when the job is done. BurnZombies keeps that evidence between chats and uses it in bounded background reviews. The observer continues across projects, even with no chat open. [Setup details →](docs/INSTALL.md)
 
-Want to choose the brain? **Settings → Review intelligence** lets you set the model and thinking level for background reviews.
+Want to choose the brain? **Settings → Review intelligence** lets you set the model and thinking level and see recent token usage. Idle observation uses no model tokens; new completion evidence triggers batched, limited reviews.
 
 Installing through an agent? Tell it:
 
@@ -55,7 +55,7 @@ Everything that matters in one small panel: **zombies burned, memory released, d
 - **Lose finished workspaces.** Your agent can create disposable worktrees through BurnZombies and release them after preserving the work. A second review checks completion; native guards keep active, dirty, ignored and unpushed work safe. Existing and Codex-managed checkouts remain with their owning tools. [Worktree cleanup →](docs/WORKTREE-CLEANUP.md)
 - **Keep the good stuff alive.** Exact identities, protected harnesses, graceful stops and verified receipts. Uncertain work stays running.
 - **See the payoff.** Zombies burned, memory released, disk reclaimed, worktrees cleaned and a concrete cleanup benefit in a quiet menu bar app.
-- **Stays out of your way.** No windows opening when reviews start. One bounded reviewer, with cooldowns and a pause on failure.
+- **Stays out of your way.** No windows opening when reviews start. Only new released work triggers a review: a 30-minute batch interval, at most eight reviews per rolling day, and a pause on failure.
 
 Native code observes, schedules and verifies. Your selected harness supplies the model and uses MCP for guarded cleanup. Reviews use its existing account and usage allowance. [How it works →](docs/MCP.md) · [Lifecycle evidence →](docs/LIFECYCLE-EVIDENCE.md)
 

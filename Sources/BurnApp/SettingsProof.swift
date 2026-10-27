@@ -22,7 +22,7 @@ import SwiftUI
   }
   let host = NSHostingView(rootView: ReviewSettingsView(settings: restored).padding(20)
     .frame(width: 440).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
-  host.frame = NSRect(x: 0, y: 0, width: 440, height: 380)
+  host.frame = NSRect(x: 0, y: 0, width: 440, height: 460)
   host.layoutSubtreeIfNeeded()
   guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { throw StoreError.message("Settings render unavailable") }
   host.cacheDisplay(in: host.bounds, to: bitmap)
