@@ -22,7 +22,7 @@ Apple Silicon or Intel, macOS 14+. The installer selects an available **Codex, C
 
 Codex and Claude Code ownership and completion evidence is collected passively from local session metadata. Your working chats do no BurnZombies bookkeeping. Only a new, supported candidate can wake the reviewer; incomplete or ambiguous evidence stays protected. The observer continues across projects, even with no chat open. [Setup details →](docs/INSTALL.md)
 
-Want to choose the brain? **Settings → Review intelligence** lets you set the model and thinking level. Expand **Usage & estimated cost** for hourly or daily charts, any range from 1–30 days, cached/uncached input and output, and per-model cost estimates. Idle observation uses no model tokens; new completion evidence triggers batched, limited reviews.
+Want to choose the brain? **Settings → Review intelligence** lets you set the model and thinking level. Expand **Usage & estimated cost** for hourly or daily charts, 1, 7 or 30 days, cached/uncached input and output, and per-model cost estimates. Idle observation uses no model tokens; new completion evidence triggers batched, limited reviews.
 
 Installing through an agent? Tell it:
 
@@ -53,7 +53,7 @@ Everything that matters in one small panel: **zombies burned, memory released, d
 - **Remembers what finished.** Native ownership and bounded completion evidence feed a shared queue. A finished turn alone never authorizes a kill; active consumers keep their helpers.
 - **Your harness does the thinking.** Model reasoning and live ownership evidence decide what is abandoned. No fixed “old process = zombie” rule.
 - **Lose finished workspaces.** Your agent can create disposable worktrees through BurnZombies and release them after preserving the work. A second review checks completion; native guards keep active, dirty, ignored and unpushed work safe. Existing and Codex-managed checkouts remain with their owning tools. [Worktree cleanup →](docs/WORKTREE-CLEANUP.md)
-- **Tune the leftovers.** Expand **Settings → Disk cleanup tuning** for retention, newest-run protection, free-space targets, daily caps and saved folder preferences. Discovery uses no model tokens. Exact regenerable folders can enter guarded review; uncertain work stays protected. [Disk cleanup →](docs/DISK-CLEANUP.md)
+- **Make room for the next run.** **Settings → Disk cleanup** shows AI recommendations for folders of 10 GB or more, with Keep or Approve cleanup. Detailed tuning stays under Advanced. Advice never grants deletion permission; active work and incomplete visibility stay protected. [Disk cleanup →](docs/DISK-CLEANUP.md)
 - **Keep the good stuff alive.** Exact identities, protected harnesses, graceful stops and verified receipts. Uncertain work stays running.
 - **See the payoff.** Zombies burned, memory released, disk reclaimed, worktrees cleaned and a concrete cleanup benefit in a quiet menu bar app.
 - **Stays out of your way.** No windows opening when reviews start. Only new supported evidence triggers a review: at least one hour between reviews, at most eight reviews per rolling day, and a pause on failure.

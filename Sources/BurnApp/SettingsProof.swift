@@ -60,29 +60,56 @@ import SwiftUI
   usage.expanded = true; usage.days = 1; usage.hourly = true
   let daily = usage.report.total.input
   try renderUsage("usage-hourly", height: 900)
+  guard UsageHistoryModel.ranges == [1, 7, 30] else { throw StoreError.message("Usage range options changed") }
+  usage.days = 7
+  let weekly = usage.report.total.input
+  guard weekly > daily else { throw StoreError.message("7 day range did not include older usage") }
   usage.days = 30; usage.hourly = false; usage.costChart = true
-  guard usage.report.total.input > daily else { throw StoreError.message("Usage range did not change totals") }
+  guard usage.report.total.input > weekly else { throw StoreError.message("30 day range did not include older usage") }
   try renderUsage("usage-daily", height: 900)
   usage.selectedModel = "gpt-6.1-sol"
   let selected = usage.report.total.input
   usage.selectedModel = ""
   guard usage.report.total.input > selected else { throw StoreError.message("Usage model filter did not narrow totals") }
   usage.selectedModel = "gpt-6.1-sol"; try renderUsage("usage-model", height: 800)
-  print("PASS collapsed usage, hourly/daily 1–30 day ranges, model rollups, persisted pricing and native chart renders")
+  print("PASS collapsed usage, exactly 1/7/30 day ranges, model rollups, persisted pricing and native chart renders")
   let disk = DiskSettingsModel(root: root)
-  guard !disk.expanded, disk.policy.mode == "recommend" else { throw StoreError.message("Disk settings must begin collapsed and recommend-only") }
+  guard !disk.expanded, !disk.advanced, disk.policy.mode == "recommend" else { throw StoreError.message("Disk settings must begin collapsed and recommend-only") }
   disk.policy.preset("proactive"); disk.policy.instructions = "Keep release evidence for 30 days."; disk.save()
   let diskRestored = DiskSettingsModel(root: root)
   guard diskRestored.policy.minimumAgeDays == 2, diskRestored.policy.instructions == disk.policy.instructions else { throw StoreError.message("Disk tuning persistence failed") }
   disk.expanded = true
+  let candidate = try JSONDecoder().decode(DiskCandidate.self, from: JSONSerialization.data(withJSONObject: [
+    "id": "disk:ui", "path": root.appendingPathComponent("demo-project/build").path,
+    "repository": root.appendingPathComponent("demo-project").path, "kind": "generated", "bytes": 18_000_000_000,
+    "newest": now.addingTimeInterval(-40*86400).timeIntervalSinceReferenceDate, "fingerprint": "ui-only",
+    "complete": true, "guardReason": "Needs an exact retention rule.", "reviewable": false, "userRule": "review",
+    "policyRevision": disk.policy.revision, "recommendationEligible": true, "decision": "recommend",
+    "rationale": "Old build output is a worthwhile cleanup candidate. Confirm this folder can be rebuilt, then approve cleanup; active work stays protected."
+  ]))
+  var small = candidate; small.id = "disk:small"; small.bytes = 9_999_999_999
+  var boundary = candidate; boundary.id = "disk:boundary"; boundary.bytes = 10_000_000_000
+  disk.inventory.candidates = [small, candidate, boundary]
+  guard disk.candidates.map(\.id) == [candidate.id, boundary.id] else { throw StoreError.message("Disk UI did not enforce 10 GB floor") }
+  disk.inventory.candidates = [candidate]; disk.inventory.freeBytes = 80_000_000_000
+  try disk.inventory.save(Store(root: root))
   let diskHost = NSHostingView(rootView: DiskSettingsView(model: disk).padding(20).frame(width: 440)
     .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
-  diskHost.frame = NSRect(x: 0, y: 0, width: 440, height: 1040); diskHost.layoutSubtreeIfNeeded()
+  diskHost.frame = NSRect(x: 0, y: 0, width: 440, height: 430); diskHost.layoutSubtreeIfNeeded()
   if let bitmap = diskHost.bitmapImageRepForCachingDisplay(in: diskHost.bounds) {
     diskHost.cacheDisplay(in: diskHost.bounds, to: bitmap)
     try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension("disk.png"))
   }
-  print("PASS collapsed disk controls, presets, exact scope and durable user preferences without review dispatch")
+  disk.rule(candidate, "keep")
+  guard try DiskPolicy.load(Store(root: root)).rules.first?.disposition == "keep",
+    disk.policy.mode == "recommend" else { throw StoreError.message("Keep must not enable removal") }
+  disk.rule(candidate, "regenerable")
+  let approved = try DiskPolicy.load(Store(root: root))
+  guard approved.mode == "automatic", approved.rules.count == 1, approved.rules[0].path == candidate.path,
+    approved.rules[0].disposition == "regenerable", !FileManager.default.fileExists(atPath: root.appendingPathComponent("review-request").path) else {
+    throw StoreError.message("Exact-folder approval changed scope or dispatched a model")
+  }
+  print("PASS simplified AI recommendations, 10 GB floor, collapsed advanced controls, exact-folder approval and durable preferences without model dispatch")
   print("PASS offscreen native Settings render, draft/save/reopen, disabled-state preservation, invalid-input refusal and default reset")
 }
 #endif

@@ -23,6 +23,8 @@ func diskProof() async throws {
   var inventory = DiskInventory.scan(policy: policy, previous: .init(), visibility: { _ in 0 })
   guard let first = inventory.candidates.first(where: { $0.path == build.path }) else { throw StoreError.message("Generated fixture not discovered") }
   checkFalse(first.reviewable, "Ignored output cannot create its own deletion permission")
+  checkFalse(first.pendingReview, "Small folders never enter AI review")
+  try await diskAdviceProof(first, root: root, policy: policy)
   policy.rules = [.init(path: build.path, disposition: "regenerable")]
   inventory = DiskInventory.scan(policy: policy, previous: inventory, visibility: { _ in -1 })
   checkFalse(inventory.candidates.first!.reviewable, "Incomplete visibility remains a hard stop")
@@ -66,7 +68,8 @@ func diskProof() async throws {
   func call(_ request: AgentRequest) async -> AgentReply { var r = request; r.callerPID = getpid(); return await service.call(r) }
   _ = await monitor.refresh()
   let listed = await call(AgentRequest("status"))
-  guard let id = listed.disk.first?.id else { throw StoreError.message("Disk candidate not in shared bounded queue") }
+  check(listed.disk.isEmpty, "Disk review must hide items smaller than 10 GB")
+  guard let id = try DiskSnapshot.load(store).candidates.first(where: { $0.path == build.path })?.id else { throw StoreError.message("Private fixture missing from native inventory") }
   let rationale = "The test created this exact disposable build output, preserved source, completed the build and has no remaining consumer."
   let preview = await call(AgentRequest("disk_preview", findingID: id, rationale: rationale))
   guard let token = preview.previewToken else { throw StoreError.message(preview.message) }
@@ -92,4 +95,63 @@ func diskProof() async throws {
   var preset = DiskPolicy(); preset.preset("proactive"); equal(preset.minimumAgeDays, 2); equal(preset.keepNewest, 2)
   preset.roots = [NSHomeDirectory()]; throwsError(try preset.validate())
   print("PASS exact disk opt-in, active/unknown visibility refusal, sensitive files, policy-change race, single-use removal, untouched source and verified byte accounting (isolated complete-visibility fixture)")
+}
+
+/// Large metadata fixtures exercise advice without allocating 10 GB or granting
+/// removal permission. Native removal must still reject these private fixtures.
+private func diskAdviceProof(_ seed: DiskCandidate, root: URL, policy original: DiskPolicy) async throws {
+  let store = try Store(root: root.appendingPathComponent("advice-state"))
+  var policy = original; policy.mode = "recommend"; policy.rules = []; try policy.save(store)
+  var candidate = seed
+  candidate.bytes = DiskCandidate.minimumReviewBytes; candidate.recommendationEligible = true
+  candidate.policyRevision = policy.revision; candidate.recommendationPolicyRevision = "preferences"
+  check(candidate.pendingReview, "10 GB is included even without deletion permission")
+  var small = candidate; small.bytes -= 1
+  checkFalse(small.pendingReview, "Anything below 10 GB is excluded")
+  var changed = candidate; changed.fingerprint = "new metadata"; changed.bytes += 4096
+  equal(changed.queueRevision, candidate.queueRevision, "Tiny file churn must not resubmit read-only advice")
+  changed.policyRevision = "unrelated folder preference"
+  equal(changed.queueRevision, candidate.queueRevision, "Unrelated preferences must not spend more tokens")
+  changed.recommendationPolicyRevision = "different retention"
+  notEqual(changed.queueRevision, candidate.queueRevision)
+  changed = candidate; changed.userRule = "regenerable"
+  notEqual(changed.queueRevision, candidate.queueRevision)
+  changed = candidate; changed.guardReason = "Inside your minimum retention period."
+  notEqual(changed.queueRevision, candidate.queueRevision)
+  changed = candidate; changed.recommendationEligible = false
+  notEqual(changed.queueRevision, candidate.queueRevision)
+  var catalog = Catalog(); catalog.diskCandidates = [small, candidate]
+  let pending = ReviewEvidence.pending(in: catalog)
+  equal(pending.count, 1); equal(pending.first?.recommendationOnly, true)
+  var signal = HarnessHook.Signal(observedAt: Date(), processCount: 0, residentBytes: 0, pressure: "Low")
+  signal.reviewEvidence = (0..<5).map { .init(id: "disk:\($0)", revision: "advice", processCount: 0, recommendationOnly: true) }
+  signal.reviewEvidence?.append(.init(id: "worktree", revision: "release", processCount: 0))
+  equal(MachineReviewState().pending(signal).count, 3, "Read-only advice batches at most three folders")
+  signal.reviewEvidence?.insert(.init(id: "cleanup", revision: "ready", processCount: 0), at: 0)
+  equal(MachineReviewState().pending(signal).map(\.id), ["cleanup"], "One cleanup does not mix with advice batches")
+  var snapshot = DiskSnapshot(); snapshot.date = Date(); snapshot.policyRevision = policy.revision
+  snapshot.freeBytes = 1; snapshot.candidates = [candidate]; try snapshot.save(store)
+  let monitor = try Monitor(root: store.root, workspaceVisibility: { _ in -1 })
+  _ = await monitor.refresh()
+  let service = AgentService(monitor: monitor)
+  func call(_ request: AgentRequest) async -> AgentReply { var r = request; r.callerPID = getpid(); return await service.call(r) }
+  let status = await call(.init("status"))
+  equal(status.disk.count, 1, "Recommendation visible before destructive eligibility")
+  checkFalse(status.disk.first?.reviewable == true)
+  let rationale = "This generated folder needs a reproducible build before approval. Keep it until its owner confirms completed use."
+  let preview = await call(.init("disk_preview", findingID: candidate.id, rationale: rationale))
+  checkFalse(preview.ok, "Read-only advice must never mint a removal token")
+  let saved = try await monitor.diskDecision(candidate.id, decision: "recommend", rationale: rationale)
+  check(saved.contains("Nothing removed"))
+  equal(try DiskSnapshot.load(store).candidates.first?.rationale, rationale)
+  equal(try DiskSnapshot.load(store).candidates.first?.decisionRevision, candidate.queueRevision)
+  equal((await call(.init("status"))).disk.count, 0, "A recommendation is not sent back on every observation")
+  check(FileManager.default.fileExists(atPath: candidate.path), "Advice must preserve the exact folder")
+  let restored = try DiskSnapshot.load(store)
+  checkFalse(restored.candidates.first?.pendingReview == true, "Saved advice remains settled after reload")
+  var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as! [String: Any]
+  legacy.removeValue(forKey: "recommendationVersion")
+  let old = try JSONDecoder().decode(DiskSnapshot.self, from: JSONSerialization.data(withJSONObject: legacy))
+  isNil(old.recommendationVersion)
+  print("PASS 10 GB threshold, advice without deletion permission, durable recommendations, stable token queue and three-item batching")
 }

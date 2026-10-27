@@ -65,10 +65,10 @@ struct ReviewSettingsView: View {
             .accessibilityIdentifier("review-model")
           if settings.configuration?.harness == "codex", !settings.catalog.isEmpty {
             Menu {
-              Button("Harness default") { settings.model = "" }
+              Button("Harness default") { settings.model = "" }.clickPointer()
               Divider()
-              ForEach(settings.catalog) { option in Button(option.name) { settings.model = option.id } }
-            } label: { Image(systemName: "chevron.down") }
+              ForEach(settings.catalog) { option in Button(option.name) { settings.model = option.id }.clickPointer() }
+            } label: { Image(systemName: "chevron.down") }.clickPointer()
             .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Choose a model")
           }
         }
@@ -80,7 +80,7 @@ struct ReviewSettingsView: View {
           if !settings.thinking.isEmpty && !settings.levels.contains(settings.thinking) {
             Text("\(settings.thinking.capitalized) — unavailable").tag(settings.thinking)
           }
-        }.accessibilityIdentifier("review-thinking")
+        }.clickPointer().accessibilityIdentifier("review-thinking")
       } else {
         LabeledContent("Thinking level", value: "Managed by harness").font(.callout)
       }
@@ -89,10 +89,10 @@ struct ReviewSettingsView: View {
       Text("One background reviewer checks new evidence at most hourly. Passive observation uses no model tokens.")
         .font(.caption).foregroundStyle(.secondary)
       HStack {
-        Button("Use defaults") { settings.model = ""; settings.thinking = ""; settings.notice = nil }
+        Button("Use defaults") { settings.model = ""; settings.thinking = ""; settings.notice = nil }.clickPointer()
           .buttonStyle(.plain).foregroundStyle(.secondary)
         Spacer()
-        Button("Save") { settings.save() }.buttonStyle(.borderedProminent).tint(orange)
+        Button("Save") { settings.save() }.clickPointer().buttonStyle(.borderedProminent).tint(orange)
           .disabled(!settings.changed || settings.validation != nil).accessibilityIdentifier("save-review-settings")
       }
       if let text = settings.validation ?? settings.notice {

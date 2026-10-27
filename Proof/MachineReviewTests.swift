@@ -59,6 +59,11 @@ func machineReviewProof() async throws {
   let failed = await reviewer.snapshot().lastStarted
   await reviewer.tick(now: now.addingTimeInterval(7400))
   equal(await reviewer.snapshot().lastStarted, failed)
+  let toolFailure = root.appendingPathComponent("failed-tool")
+  try Data("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"bz.tool\",\"name\":\"burnzombies_status\",\"status\":\"failed\"}'\n".utf8).write(to: toolFailure)
+  try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: toolFailure.path)
+  var failingToolConfig = config; failingToolConfig.executable = toolFailure.path
+  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture"))
   for harness in MachineReviewConfiguration.harnesses {
     config.harness = harness
     let args = try MachineReviewer.arguments(config, directory: root, root: root, prompt: "Review this computer")

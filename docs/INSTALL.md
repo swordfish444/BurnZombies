@@ -53,4 +53,4 @@ Codex children are associated with an owning turn through native process ancestr
 
 This first passive adapter covers local Codex and Claude Code sessions. The other three reviewer adapters remain available, but missing ownership metadata is preserved as a coverage gap. Explicit lifecycle claims remain supported for integrations; they are no longer injected into every working chat. Existing active claims never expire into disposable work.
 
-Reviews are separated by at least one hour and run only for changed supported evidence. Settings → Usage & estimated cost is collapsed initially. Expand it for 1–30 days of hourly/daily token and API-equivalent cost charts, with full and per-model rollups. Unknown model prices or missing usage are marked unavailable, not fabricated.
+Reviews are separated by at least one hour and run only for changed supported evidence. Settings → Usage & estimated cost is collapsed initially. Expand it for 1, 7 or 30 days of hourly/daily token and API-equivalent cost charts, with full and per-model rollups. Unknown model prices or missing usage are marked unavailable, not fabricated.

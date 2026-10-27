@@ -3,6 +3,7 @@ import Charts
 import SwiftUI
 
 @MainActor final class UsageHistoryModel: ObservableObject {
+  static let ranges = [1, 7, 30]
   @Published var expanded = false
   @Published var days = 7
   @Published var hourly = true
@@ -32,16 +33,16 @@ struct UsageHistoryView: View {
       VStack(alignment: .leading, spacing: 16) {
         HStack {
           Picker("Range", selection: $usage.days) {
-            ForEach(1...30, id: \.self) { Text($0 == 1 ? "1 day" : "\($0) days").tag($0) }
-          }.accessibilityIdentifier("usage-range")
+            ForEach(UsageHistoryModel.ranges, id: \.self) { Text($0 == 1 ? "1 day" : "\($0) days").tag($0) }
+          }.clickPointer().accessibilityIdentifier("usage-range")
           Picker("Buckets", selection: $usage.hourly) {
             Text("Hourly").tag(true); Text("Daily").tag(false)
-          }.pickerStyle(.segmented).labelsHidden().accessibilityIdentifier("usage-buckets")
+          }.clickPointer().pickerStyle(.segmented).labelsHidden().accessibilityIdentifier("usage-buckets")
         }
         Picker("Model", selection: $usage.selectedModel) {
           Text("All models").tag("")
           ForEach(usage.report.models) { Text($0.model).tag($0.model) }
-        }.accessibilityIdentifier("usage-model")
+        }.clickPointer().accessibilityIdentifier("usage-model")
         let report = usage.report
         HStack(alignment: .firstTextBaseline) {
           VStack(alignment: .leading, spacing: 4) {
@@ -57,7 +58,7 @@ struct UsageHistoryView: View {
         tokenRow(report.total)
         Picker("Chart", selection: $usage.costChart) {
           Text("Tokens").tag(false); Text("Estimated cost").tag(true)
-        }.pickerStyle(.segmented).accessibilityIdentifier("usage-chart-metric")
+        }.clickPointer().pickerStyle(.segmented).accessibilityIdentifier("usage-chart-metric")
         Chart {
           ForEach(report.buckets) { bucket in
             if usage.costChart {
@@ -76,6 +77,7 @@ struct UsageHistoryView: View {
         .chartForegroundStyleScale(["Uncached": orange, "Cached": Color.teal.opacity(0.7), "Cache writes": Color.yellow.opacity(0.75), "Output": Color.gray])
         .chartLegend(position: .bottom, alignment: .leading, spacing: 8)
         .chartXSelection(value: $selectedDate)
+        .clickPointer()
         .chartXAxis {
           AxisMarks(values: .automatic(desiredCount: 4)) { value in
             AxisGridLine()
@@ -118,16 +120,16 @@ struct UsageHistoryView: View {
         Text("BurnZombies reviews only. API-equivalent USD estimates use recorded models and rates saved with each review. Subscription credits, hidden approval overhead and unavailable usage are not inferred. Rate card: \(ModelPricing.date).")
           .font(.caption2).foregroundStyle(.secondary)
         HStack {
-          Link("OpenAI rates", destination: URL(string: ModelPricing.openAI)!)
-          Link("Claude rates", destination: URL(string: ModelPricing.anthropic)!)
+          Link("OpenAI rates", destination: URL(string: ModelPricing.openAI)!).clickPointer()
+          Link("Claude rates", destination: URL(string: ModelPricing.anthropic)!).clickPointer()
           Spacer()
-          Button("Refresh") { usage.reload() }.accessibilityIdentifier("usage-refresh")
+          Button("Refresh") { usage.reload() }.clickPointer().accessibilityIdentifier("usage-refresh")
         }.font(.caption)
         if let error = usage.error { Text(error).font(.caption).foregroundStyle(.orange) }
       }.padding(.top, 14)
     } label: {
       Label("Usage & estimated cost", systemImage: "chart.bar.xaxis").font(.callout.weight(.medium))
-    }.padding(14)
+    }.disclosureGroupStyle(ClickDisclosureStyle()).padding(14)
       .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
       .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08)))
       .onChange(of: usage.expanded) { _, expanded in if expanded { usage.reload() } }

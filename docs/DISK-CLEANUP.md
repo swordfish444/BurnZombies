@@ -1,17 +1,14 @@
 # Reclaim the leftovers. Keep the work.
 
-**Settings → Disk cleanup tuning** starts collapsed and in **Recommend** mode. A local inventory finds supported generated folders inside configured repository roots. It costs no model tokens. Native code supplies facts and enforces permissions; the existing harness makes the semantic decision about completed use and reproducibility.
+**Settings → Disk cleanup** starts collapsed and in **Recommend** mode. A local inventory finds supported generated folders inside configured repository roots. It costs no model tokens. Native code supplies facts and enforces permissions; the existing harness makes the semantic decision about completed use and reproducibility.
 
-## Tune it once, refine it over time
+## Start with the recommendation
 
-- **Conservative / Balanced / Proactive** set minimum age, newest-run protection, scan cadence and daily removal cap. Custom values remain editable.
-- **Free-space target** holds the disk review queue while available space is above the target. It never overrides a guard.
-- **Minimum candidate size** keeps small clutter out of the inventory.
-- **Protected paths** protect both a directory and any candidate containing it.
-- **Keep / Review / Regenerable** are durable exact-folder classifications. Review is the default, not deletion permission. Regenerable requires explicit confirmation that the folder contains replaceable output, not valuable evidence or user data.
-- **Preferences for the reviewing agent** preserve nuances such as keeping release evidence longer or never discarding repro cases. They are supplied with the candidate, not inserted into working chats. These are saved preferences, not model training.
+Only items of **10 GB or more** appear in disk review or enter the AI queue. Each card shows its size, the AI's short recommendation and the next action. **Keep** remembers a protected folder. **Approve cleanup…** asks you to confirm that the exact folder is replaceable output, then enables guarded automatic cleanup for approved folders. It does not remove anything immediately or invoke an extra model call.
 
-Save applies the next local scan. Recommend mode never removes anything. Automatic mode can remove an explicitly permitted folder only after independent harness review and fresh native checks. Changing age or free-space settings cannot grant that permission. Folder rules are exact, not recursive wildcards granting every future checkout cleanup authority.
+The AI can advise before a folder has deletion permission. Ignored, untracked generated output can be considered for read-only advice even when consumer visibility is incomplete. The reviewer must respect recent work, useful evidence and retained runs, and explain missing evidence rather than claim the folder is ready to delete. Its saved recommendation appears in Settings automatically. Only the separate removal path requires exact permission, completed use, reproducibility and all native guards.
+
+Expand **Advanced** only to tune retention, aggressiveness, scan cadence, free-space goal, daily removal cap, inspected roots, protected folders or instructions to the AI. Presets remain Conservative, Balanced and Proactive. The free-space goal holds the queue while available space is above the target; it never overrides safety. Folder rules are exact, not recursive cleanup grants. Recommend mode never removes anything.
 
 ## What qualifies
 
@@ -21,7 +18,7 @@ Before removal, the exact path must still belong to the same repository, be igno
 
 **Active consumers or incomplete same-user handle visibility block removal.** No permission downgrade, privacy-permission change or age threshold bypasses this boundary. Protected macOS services can make unattended disk cleanup unavailable on a particular Mac. The inventory explains the refusal; process observation continues.
 
-Only one disk/worktree candidate enters a review batch. The shared reviewer keeps its hourly cooldown, daily attempt/input limits and failure pause. Unchanged reviewed evidence is not resubmitted. Settings changes and scans never invoke a model directly. See [usage accounting](USAGE.md).
+A review batch contains up to three read-only disk recommendations, or one disk/worktree cleanup candidate. The shared reviewer keeps its hourly cooldown, daily attempt/input limits and failure pause. Saved advice is reused across small file changes and unrelated folder preferences. Material size, retention, eligibility or exact-folder permission changes can trigger a new review. Destructive actions always use fresh, complete filesystem evidence. Settings changes and scans never invoke a model directly. See [usage accounting](USAGE.md).
 
 ## Whole worktrees need their owner's lifecycle
 
