@@ -11,9 +11,17 @@ Validated on macOS 15.8.1 / Apple Silicon. Version 0.4 removes the dependency on
 - Codex's successful reviewer used four MCP calls: status, inspect, preview and burn. Native child identities removed its dependency on a denied supplemental `ps` call. Older shell-only working-agent tests hit the normal sandbox boundary; the default installer now connects MCP. Python.app fixtures remained protected rather than weakening application safety to make a test pass.
 - Lifecycle checks cover private capabilities, persisted owner claims, shared-consumer protection, stale identities, active parent protection, a retain arriving after preview, failed storage writes and redacted readback. MCP tests enforce the reviewer-only tool surface and its call budget.
 - Native setup tests cover five providers, preservation of unrelated settings and hooks, parsed Codex TOML with conflict refusal, portable skill installation, idempotent setup, provider pinning and cancellation of a TERM-resistant reviewer group while an unrelated active process survives.
-- The compact menu renders at 360 × 488 points. Offscreen OCR checks verify readable labels, the footer, an empty first-use state, populated impact, paused reviews, a quiet day with earlier history, and cleanups without a speed measurement. These fixtures never start an observer or write live history.
+- The compact menu renders at 360 × 550 points. Offscreen OCR checks verify readable labels, the footer, an empty first-use state, populated impact, paused reviews, a quiet day with earlier history, and cleanups without a speed measurement. These fixtures never start an observer or write live history.
 - Settings tests cover draft/save/reopen, default reset, invalid-input refusal, preservation of disabled reviews, and offscreen rendering of the native SwiftUI controls. Five-provider subprocess captures verify that saved model/effort selections reach the actual review worker; no model is invoked by those tests.
 - MCP protocol and compatibility tests cover live status/inspection, strict arguments, protected identities, invalid preview refusal, quiet legacy callbacks and EOF shutdown.
+
+## Worktree validation (0.7)
+
+Real isolated Git fixtures exercise creation, owner release/retain, dirty/staged/untracked/ignored files, locks, assume-unchanged entries, changed/unpushed HEAD, symlinks, open-file consumers, unknown workspaces, private tokens, preview reuse, new ignored output after preview, interrupted receipts and period totals. The positive deletion test uses a scoped simulated complete-consumer observation on hosts where macOS hides handles; Git removal, persistence, free-space measurement, commit retention and restoration are real. This is not proof of production-wide handle visibility.
+
+On the development Mac, the production native reader and actual MCP server **refused removal** because Apple services and a large VM descriptor table prevent complete inspection. The checkout remained intact. The operator explicitly selected this strict behavior. No incomplete-visibility override is exposed through settings, CLI or MCP, and no existing/Codex-managed worktree can be adopted. Live unattended worktree cleanup has not been demonstrated on that Mac.
+
+Both displays expose four counters. Offscreen OCR and native click tests cover the new layout and unchanged period navigation. Worktree-only benefit states and accounting preserve zero-credit interrupted operations; no prior process cleanup is converted into disk/worktree credit.
 
 ## Boundaries
 
@@ -21,7 +29,7 @@ The observer sees visible processes owned by the logged-in user across the compu
 
 Live background-model cleanup is verified for Codex and Claude. Cursor, Copilot and Gemini have launch/configuration adapters, but live execution is not verified on this machine. Their permissions may prevent unattended cleanup; there is no blanket bypass. Default setup selects one provider and never switches after a failure.
 
-The public 0.4 installer launched the real menu bar observer without opening a window or taking focus. Automatic Codex reviews ran independently of chats. The ongoing 24-hour real-workload trial has not yet demonstrated naturally occurring cleanup; its first reviews preserved uncertain work and reported a denied supplemental process-inspection command. Controlled-fixture cleanup proof is separate from that trial. Settings rendering and save/reopen behavior are exercised offscreen; foreground mouse/keyboard interaction remains untested under the operator's no-focus restriction.
+The public 0.4 installer launched the real menu bar observer without opening a window or taking focus. Automatic Codex reviews ran independently of chats. The first real-workload reviews preserved uncertain work and reported a denied supplemental process-inspection command. Later automatic reviews produced verified process-exit receipts; those remain separate from controlled fixtures and do not establish worktree-cleanup success. Controlled-fixture cleanup proof is separate from that trial. Settings rendering and save/reopen behavior are exercised offscreen; foreground mouse/keyboard interaction remains untested under the operator's no-focus restriction.
 
 Universal packaging supports arm64 and x86_64; execution is tested on Apple Silicon only. Releases are ad-hoc signed, not notarized. Source tests and local packages do not by themselves establish a published release; public installer verification is a separate delivery check.
 
@@ -29,6 +37,7 @@ Universal packaging supports arm64 and x86_64; execution is tested on Apple Sili
 
 ```sh
 scripts/test.sh --integration
+.build/debug/BurnProof --worktrees
 python3 scripts/test-machine-setup.py
 python3 scripts/test-mcp.py
 python3 scripts/test-harness-install.py

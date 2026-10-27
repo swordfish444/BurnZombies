@@ -10,6 +10,9 @@ A small native coordinator requests a bounded review from one selected, installe
 | `burnzombies_inspect` | Exact identities, parents, executable, working directory, descriptor summary, memory, CPU, I/O and protections; page or select PIDs |
 | `burnzombies_preview` | Exact identities, a label and ownership rationale; single-use 60-second token |
 | `burnzombies_burn` | Revalidate and request SIGTERM; native observer independently verifies exits |
+| `burnzombies_workspace` | Create a private disposable task worktree; release/retain its owner token without deleting |
+| `burnzombies_workspace_preview` | Revalidate a released worktree and return a one-use 60-second token |
+| `burnzombies_workspace_clean` | Preserve HEAD, remove without force, verify and record worktree/disk impact |
 | `burnzombies_checkpoint` | Legacy compatibility only; inert when machine review is configured |
 
 ## Scheduling and ownership
@@ -46,3 +49,7 @@ The working agent uses `burnzombies_lifecycle` to register exact helper identiti
 `burnzombies_status` includes up to eight released records and active/released claim counts. `burnzombies_work` pages owner statements without exposing update tokens. An active claim, including a claim on a parent, blocks preview and burn. All shared consumers must release. A process exit, expired time window or crashed owner never releases a live claim. Exact identities and observed ancestry are saved independently of chat context.
 
 The private background reviewer cannot call lifecycle mutations. It gets at most eight tool calls and two inspect calls per connection, prioritizes released records, and preserves uncertainty. Preview tokens are bound to the requesting process identity and are single-use. Read-only evidence does not grant cleanup authorization. [Research, tradeoffs and acceptance criteria](LIFECYCLE-EVIDENCE.md).
+
+## Disposable worktrees (0.7)
+
+The working agent can create and release a disposable worktree through the same MCP connection or native `workspace` JSON command. Existing worktrees are never adopted. Reviewers cannot create, release or retain claims. They can preview and clean one released worktree within the existing eight-call budget. Incomplete file-handle visibility blocks removal, including when macOS protects unrelated services; no permission bypass or unsupported clean-machine verdict. Disk/worktree counters require a completed verified receipt. [Safety rules, recovery and measurement](WORKTREE-CLEANUP.md).

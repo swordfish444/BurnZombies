@@ -29,6 +29,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 
 @main struct ProofRunner {
   static func main() async {
+    if CommandLine.arguments.contains("--worktrees") {
+      do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
+      print("Worktree checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--impact-metrics") {
       do { try impactMetricsProof(); try impactPeriodProof() } catch { failTest("Impact metrics: \(error)") }
       print("Impact metrics and period checks: \(failures) failures")
@@ -78,6 +83,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try test() } catch { failTest("\(name): \(error)") }
       if failures == before { print("PASS \(name)") }
     }
+    do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
     let beforeLifecycle = failures
     do { try await lifecycleProof() } catch { failTest("Lifecycle evidence: \(error)") }
     if failures == beforeLifecycle { print("PASS durable lifecycle evidence, shared consumers, token privacy, identity and release/retain races") }
@@ -90,7 +96,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     if CommandLine.arguments.contains("--integration") {
       do { try await integration() } catch { failTest("Integration: \(error)") }
     }
-    print("\(tests.count + 3) checks; \(failures) failures")
+    print("\(tests.count + 4) checks; \(failures) failures")
     exit(failures == 0 ? 0 : 1)
   }
   static func integration() async throws {

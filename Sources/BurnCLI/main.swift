@@ -43,11 +43,11 @@ do {
     defer { words.forEach { free($0) } }
     var pointers = words + [nil]
     exit(bz_review_worker(&pointers, 180))
-  case "lifecycle":
+  case "lifecycle", "workspace":
     guard args.count == 1, let data = try FileHandle.standardInput.read(upToCount: 16385) else {
       fail("Pass one lifecycle JSON object on stdin.")
     }
-    let raw = try AgentConnection.call(LifecycleInput.request(data))
+    let raw = try AgentConnection.call(args[0] == "workspace" ? WorkspaceInput.request(data) : LifecycleInput.request(data))
     print(raw, terminator: "")
     if let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], result["ok"] as? Bool != true { exit(1) }
   case "evidence":
@@ -67,8 +67,9 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.6.2
+      BurnZombies 0.7.0
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
+      workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
       install-skill [--home PATH] [--skill-file PATH]   Install portable lifecycle instructions only.
       setup [--harness auto|codex|claude|cursor|copilot|gemini|none] [--model ID|default] [--thinking LEVEL|default]

@@ -97,7 +97,7 @@ import Vision
   print("PASS real period hit targets in both directions, offscreen rendering, receipt updates and tab navigation")
   // A real cleanup's resource benefit must stay prominent without benchmark samples.
   // Capture all fallback states through the same native layout as the shipped window.
-  for name in ["reclaimed", "helpers", "quiet-day", "empty"] {
+  for name in ["reclaimed", "helpers", "quiet-day", "empty", "disk", "worktrees"] {
     model.state = Demo.state()
     for i in model.state.catalog.events.indices {
       model.state.catalog.events[i].responseBeforeMS = nil
@@ -106,8 +106,16 @@ import Vision
       model.state.catalog.events[i].responseAfterSamples = nil
       if name == "helpers" { model.state.catalog.events[i].residentBefore = 0 }
     }
-    if name == "quiet-day" { model.state.catalog.events = [] }
+    if name == "quiet-day" { model.state.catalog.events = []; model.state.catalog.workspaceReceipts = [] }
     if name == "empty" { model.state.catalog = Catalog() }
+    if name == "disk" || name == "worktrees" {
+      model.state.catalog.events = []; model.state.catalog.lifetimeVerified = 0
+      model.state.catalog.lifetimeResidentReleased = 0
+      if name == "worktrees" {
+        for i in model.state.catalog.workspaceReceipts!.indices { model.state.catalog.workspaceReceipts?[i].diskReclaimedBytes = 0 }
+        model.state.catalog.lifetimeDiskReclaimedBytes = 0
+      }
+    }
     try clickPeriod(.today)
     // Let numeric transitions settle after fixture changes.
     RunLoop.main.run(until: Date().addingTimeInterval(0.7))
@@ -122,7 +130,7 @@ import Vision
     recognition.recognitionLevel = .accurate
     try VNImageRequestHandler(cgImage: image, options: [:]).perform([recognition])
     let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-    let expected = name == "empty" ? "Still warming up" : name == "quiet-day" ? "880 helpers cleared all time" : "128 helpers cleared"
+    let expected = name == "empty" ? "Still warming up" : name == "quiet-day" ? "880 helpers cleared all time" : ["disk", "worktrees"].contains(name) ? "4 worktrees cleaned" : "128 helpers cleared"
     guard visible.contains(expected), !visible.contains("Before"), !visible.contains("No clear boost"),
       visible.contains("View impact details") else { throw StoreError.message("Benefit fallback missing or clipped: \(visible)") }
     if name == "reclaimed" && !visible.contains("Memory reclaimed") {

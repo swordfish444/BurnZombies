@@ -127,9 +127,25 @@ extension ImpactNumbers {
   var benefitTitle: String {
     benefit == .speed || benefit == .firstBurn ? "AGENT SPEED BOOST" : "AGENT BOOST"
   }
-  var benefitValue: String { benefit == .memory ? Self.bytes(memory) : "\(count)" }
-  var benefitCaption: String { benefit == .memory ? "Memory reclaimed" : "Helpers cleared" }
+  var benefitValue: String {
+    switch benefit {
+    case .memory: return Self.bytes(memory)
+    case .disk: return Self.bytes(disk)
+    case .worktrees: return "\(worktrees)"
+    default: return "\(count)"
+    }
+  }
+  var benefitCaption: String {
+    switch benefit {
+    case .memory: return "Memory reclaimed"
+    case .disk: return "Disk reclaimed"
+    case .worktrees: return "Worktrees cleaned"
+    default: return "Helpers cleared"
+    }
+  }
   var clearedHelpers: String {
+    let trees = benefit == .ready ? lifetimeWorktrees : worktrees
+    if (benefit == .ready ? lifetimeCount : count) == 0 && trees > 0 { return "\(trees) \(trees == 1 ? "worktree" : "worktrees") cleaned" + (benefit == .ready ? " all time" : "") }
     let total = benefit == .ready ? lifetimeCount : count
     return "\(total) \(total == 1 ? "helper" : "helpers") cleared" + (benefit == .ready ? " all time" : "")
   }
@@ -187,14 +203,14 @@ struct MemoryPressureRow: View {
   }
 }
 struct MiniImpactView: View {
-  static let size = NSSize(width: 360, height: 488)
+  static let size = NSSize(width: 360, height: 550)
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject var model: AppModel
   var numbers: ImpactNumbers { .make(model, period: .today) }
   var lastBurn: String {
     let history = ImpactNumbers.make(model, period: .all)
     if history.last != nil { return "Last burn \(history.age)" }
-    return history.count == 0 ? "Ready for your first burn" : "No burns yet today"
+    return history.count + history.worktrees == 0 ? "Ready for your first burn" : "No burns yet today"
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -212,13 +228,18 @@ struct MiniImpactView: View {
         .frame(height: 40, alignment: .leading).padding(.top, 16)
       Text("TODAY").font(.system(size: 11, weight: .semibold)).tracking(0.5)
         .foregroundStyle(BurnTheme.muted).frame(height: 14).padding(.top, 12)
-      HStack(spacing: 10) {
-        miniMetric("\(numbers.count)", "Zombies burned", flame: true)
-        Rectangle().fill(BurnTheme.line).frame(width: 1, height: 52)
-        miniMetric(ImpactNumbers.bytes(numbers.memory), "Memory released")
-        Rectangle().fill(BurnTheme.line).frame(width: 1, height: 52)
-        miniMetric(ImpactNumbers.cpuTime(numbers.cpuSeconds), "CPU time saved")
-      }.frame(height: 58).padding(.top, 6)
+      VStack(spacing: 10) {
+        HStack(spacing: 18) {
+          miniMetric("\(numbers.count)", "Zombies burned", flame: true)
+          Rectangle().fill(BurnTheme.line).frame(width: 1, height: 50)
+          miniMetric(ImpactNumbers.bytes(numbers.memory), "Memory released")
+        }
+        HStack(spacing: 18) {
+          miniMetric(ImpactNumbers.bytes(numbers.disk), "Disk reclaimed")
+          Rectangle().fill(BurnTheme.line).frame(width: 1, height: 50)
+          miniMetric("\(numbers.worktrees)", "Worktrees cleaned")
+        }
+      }.frame(height: 120).padding(.top, 6)
       speedCard.padding(.top, 25)
       line.padding(.top, 16)
       MemoryPressureRow(model: model, compact: true).frame(height: 18).padding(.top, 12)
@@ -265,7 +286,7 @@ struct MiniImpactView: View {
                 .foregroundStyle(BurnTheme.muted).lineLimit(1).minimumScaleFactor(0.85)
             }
           }
-        case .memory, .helpers:
+        case .memory, .helpers, .disk, .worktrees:
           HStack(spacing: 10) {
             ImpactValue(value: numbers.benefitValue, size: 32).foregroundStyle(BurnTheme.orange)
             VStack(alignment: .leading, spacing: 4) {
@@ -413,7 +434,9 @@ struct ImpactWindowView: View {
         Rectangle().fill(BurnTheme.line).frame(width: 1, height: 92)
         metric(ImpactNumbers.bytes(numbers.memory), "Memory released")
         Rectangle().fill(BurnTheme.line).frame(width: 1, height: 92)
-        metric(ImpactNumbers.cpuTime(numbers.cpuSeconds), "CPU time saved")
+        metric(ImpactNumbers.bytes(numbers.disk), "Disk reclaimed")
+        Rectangle().fill(BurnTheme.line).frame(width: 1, height: 92)
+        metric("\(numbers.worktrees)", "Worktrees cleaned")
       // A period switch replaces the totals immediately; new burns within a period still tick up.
       }.id(period).frame(height: 112).padding(.top, 5)
       Text(period.caption)
@@ -433,7 +456,7 @@ struct ImpactWindowView: View {
             Text(
               numbers.last == nil
                 ? "Review the helpers ready to go."
-                : "\(ImpactNumbers.bytes(numbers.latestMemory)) released · \(numbers.age)"
+                : "\(ImpactNumbers.bytes(numbers.latestIsWorkspace ? numbers.latestDisk : numbers.latestMemory)) \(numbers.latestIsWorkspace ? "disk reclaimed" : "released") · \(numbers.age)"
             )
             .font(.system(size: 16)).foregroundStyle(BurnTheme.muted)
           }
@@ -451,10 +474,10 @@ struct ImpactWindowView: View {
   }
   func metric(_ value: String, _ title: String, flame: Bool = false) -> some View {
     VStack(alignment: .leading, spacing: 0) {
-      ImpactValue(value: value, size: 64)
+      ImpactValue(value: value, size: 50)
       HStack(spacing: 12) {
         if flame { Flame() }
-        Text(title).font(.system(size: 21))
+        Text(title).font(.system(size: 17))
       }
     }.frame(maxWidth: .infinity, alignment: .center)
   }
@@ -467,7 +490,7 @@ struct ImpactWindowView: View {
           switch numbers.benefit {
           case .speed:
             Text(numbers.boost).font(BurnTheme.display(94)).foregroundStyle(BurnTheme.orange)
-          case .memory, .helpers:
+          case .memory, .helpers, .disk, .worktrees:
             VStack(alignment: .leading, spacing: 3) {
               ImpactValue(value: numbers.benefitValue, size: 64).foregroundStyle(BurnTheme.orange)
               Text(numbers.benefitCaption).font(.system(size: 17))
@@ -572,12 +595,25 @@ struct ImpactWindowView: View {
         }
         Text("RECENT BURNS").font(.system(size: 14, weight: .semibold, design: .monospaced))
           .foregroundStyle(.gray)
-        if model.state.catalog.events.isEmpty {
+        if model.state.catalog.events.isEmpty && (model.state.catalog.workspaceReceipts ?? []).isEmpty {
           Text(
             model.demo
               ? "18 disposable helpers · 1.2 GB released · 2m ago"
               : "No burns yet. Your work comes first."
           ).foregroundStyle(BurnTheme.muted).padding(.vertical, 24)
+        }
+        ForEach((model.state.catalog.workspaceReceipts ?? []).reversed(), id: \.id) { receipt in
+          DisclosureGroup {
+            Text(receipt.detail).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(.top, 8)
+          } label: {
+            HStack {
+              Image(systemName: "folder.badge.minus").foregroundStyle(BurnTheme.orange)
+              Text(receipt.label).fontWeight(.semibold)
+              Spacer()
+              Text(receipt.outcome == "verified" ? "1 worktree · \(ImpactNumbers.bytes(receipt.diskReclaimedBytes))" : receipt.outcome.capitalized)
+                .foregroundStyle(BurnTheme.muted)
+            }
+          }.padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
         }
         ForEach(model.state.catalog.events.reversed()) { event in
           DisclosureGroup {
@@ -606,6 +642,7 @@ struct ImpactWindowView: View {
         Spacer()
         Button("Done") { showCalculation = false }
       }
+      Text("Worktrees count only after native removal and receipt verification. Disk reclaimed is the observed free-space increase capped by allocated files removed; shared APFS blocks and concurrent disk activity can reduce attribution. Commits remain recoverable in the receipt’s Git ref. Existing checkouts, unsaved/ignored files and uncertain work are preserved.")
       Text(
         "Every burned helper has a verified exit receipt. Memory released uses its resident footprint before the stop; shared pages can overlap. CPU time saved applies the pre-stop CPU rate to observed awake time after verified exit, up to 24 hours per cleanup. Sleep, observation gaps, reboot and detected replacements add no credit. Older one-hour estimates are preserved until new observed time exceeds that credit. CPU already consumed is never counted as saved."
       )
@@ -614,6 +651,7 @@ struct ImpactWindowView: View {
           ? "This visual preview uses synthetic numbers from the supplied design."
           : "Agent speed uses the middle matched command-launch comparison across this period, including slower results. A boost needs stable samples, separated timing ranges, at least 5% improvement and a 1 ms difference. No clear improvement stays neutral. Legacy timings without sample dispersion cannot establish a boost. This measures local launches, not model or network speed."
       )
+      Text("CPU time saved: \(ImpactNumbers.cpuTime(numbers.cpuSeconds))").foregroundStyle(BurnTheme.muted)
       Text(
         "Before \(ImpactNumbers.latency(numbers.before)) · Now \(ImpactNumbers.latency(numbers.after))"
       ).font(.system(.body, design: .monospaced))

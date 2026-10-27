@@ -14,19 +14,22 @@ public struct AgentRequest: Codable, Sendable {
   public let action: String?
   public let workToken: String?
   public let completionCondition: String?
+  public let workspacePath: String?
+  public let workspaceID: String?
   // Populated from the authenticated Unix peer, never from request JSON.
   public var callerPID: Int32 = -1
   enum CodingKeys: String, CodingKey {
-    case operation, findingID, previewToken, processIDs, pids, offset, label, rationale, action, workToken, completionCondition
+    case operation, findingID, previewToken, processIDs, pids, offset, label, rationale, action, workToken, completionCondition, workspacePath, workspaceID
   }
   public init(_ operation: String, findingID: String? = nil, previewToken: String? = nil,
     processIDs: [String]? = nil, pids: [Int32]? = nil, offset: Int? = nil,
     label: String? = nil, rationale: String? = nil, action: String? = nil,
-    workToken: String? = nil, completionCondition: String? = nil) {
+    workToken: String? = nil, completionCondition: String? = nil, workspacePath: String? = nil, workspaceID: String? = nil) {
     self.operation = operation; self.findingID = findingID; self.previewToken = previewToken
     self.processIDs = processIDs; self.pids = pids; self.offset = offset
     self.label = label; self.rationale = rationale
     self.action = action; self.workToken = workToken; self.completionCondition = completionCondition
+    self.workspacePath = workspacePath; self.workspaceID = workspaceID
   }
 }
 
@@ -75,6 +78,10 @@ public struct AgentReply: Codable, Sendable {
   public var releasedWorkCount: Int = 0
   public var activeWorkCount: Int = 0
   public var previewToken: String?
+  public var workspaces: [WorkspaceSummary] = []
+  public var worktreeReceipts: [WorkspaceReceipt] = []
+  public var worktreesCleaned: Int = 0
+  public var diskReclaimedBytes: UInt64 = 0
   public init(ok: Bool = true, message: String) { self.ok = ok; self.message = message }
   public func json() throws -> String {
     let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
@@ -105,13 +112,20 @@ public actor AgentService {
     let created: Date
     let caller: ProcessIdentity
   }
+  private struct WorkspacePreview {
+    let claim: WorkspaceClaim
+    let created: Date
+    let caller: ProcessIdentity
+  }
+  private var workspacePreviews: [String: WorkspacePreview] = [:]
   private var previews: [String: Preview] = [:]
   public init(monitor: Monitor) { self.monitor = monitor }
   public func call(_ request: AgentRequest) async -> AgentReply {
-    guard ["status", "inspect", "preview", "burn", "lifecycle", "work"].contains(request.operation) else {
+    guard ["status", "inspect", "preview", "burn", "lifecycle", "work", "workspace", "workspace_preview", "workspace_clean"].contains(request.operation) else {
       return AgentReply(ok: false, message: "Unknown operation.")
     }
     previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
+    workspacePreviews = workspacePreviews.filter { Date().timeIntervalSince($0.value.created) < 60 }
     var state = await monitor.snapshot()
     if request.operation != "status" || Date().timeIntervalSince(state.catalog.lastSample ?? .distantPast) >= 5 {
       state = await monitor.refresh()
@@ -119,7 +133,30 @@ public actor AgentService {
     if let error = state.error { return AgentReply(ok: false, message: error) }
     var reply = AgentReply(message: "Computer-wide observation across all projects and sessions for this macOS user. Inspect live ownership evidence to distinguish abandoned helpers from active work. No active chat, wrapper or reboot required.")
     do {
-      if request.operation == "lifecycle" {
+      if request.operation == "workspace" {
+        let result = try await monitor.recordWorkspace(request)
+        reply.workToken = result.0; reply.message = result.1
+        if let claim = result.2 { reply.workspaces = [WorkspaceSummary(claim)] }
+        state = await monitor.snapshot()
+      } else if request.operation == "workspace_preview" {
+        guard let id = request.workspaceID, let rationale = request.rationale, (20...2000).contains(rationale.count),
+          workspacePreviews.count < 16, case .found(let peer) = Native().probe(request.callerPID) else {
+          throw StoreError.message("A released workspace ID, evidence-based rationale and authenticated caller are required.")
+        }
+        let claim = try await monitor.previewWorkspace(id)
+        let token = UUID().uuidString
+        workspacePreviews[token] = .init(claim: claim, created: Date(), caller: peer.identity)
+        reply.previewToken = token
+        reply.message = "Clean released workspace passed native guards. Removal preserves HEAD in a recovery ref. Token is single-use, bound to this caller and expires in 60 seconds. No files removed."
+      } else if request.operation == "workspace_clean" {
+        guard let token = request.previewToken, let preview = workspacePreviews[token],
+          case .found(let peer) = Native().probe(request.callerPID), preview.caller == peer.identity else {
+          throw StoreError.message("A fresh workspace preview token from this connection is required.")
+        }
+        workspacePreviews.removeValue(forKey: token)
+        reply.message = try await monitor.cleanWorkspace(preview.claim)
+        state = await monitor.snapshot()
+      } else if request.operation == "lifecycle" {
         let result = try await monitor.recordWork(request)
         reply.workToken = result.0; reply.message = result.1
         state = await monitor.snapshot()
@@ -180,6 +217,12 @@ public actor AgentService {
         state = await monitor.snapshot()
       }
     } catch { return AgentReply(ok: false, message: error.localizedDescription) }
+    reply.worktreesCleaned = state.catalog.lifetimeWorktreesCleaned ?? 0
+    reply.diskReclaimedBytes = state.catalog.lifetimeDiskReclaimedBytes ?? 0
+    reply.worktreeReceipts = Array((state.catalog.workspaceReceipts ?? []).suffix(8))
+    if request.operation == "status" {
+      reply.workspaces = (state.catalog.workspaces ?? []).filter { $0.state == "released" }.prefix(8).map(WorkspaceSummary.init)
+    }
     reply.verifiedHelpers = state.catalog.lifetimeVerified
     reply.memoryReleasedBytes = state.catalog.lifetimeResidentReleased ?? 0
     reply.cpuSecondsSaved = state.catalog.lifetimeCPUSecondsSaved

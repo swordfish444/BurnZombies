@@ -16,7 +16,7 @@ enum LifecycleSkillInstall {
     let source = try String(contentsOfFile: option("--skill-file") ?? bundled.path, encoding: .utf8)
     let prefix = ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"].map { "BURNZOMBIES_HOME=" + HarnessInstall.quoted($0) + " " } ?? ""
     let command = prefix + HarnessInstall.quoted(cli.path)
-    let text = source + "\n## Installed native command\n\n```sh\n" + command + " evidence PID\n" + command + " lifecycle <<'BZ_LIFECYCLE_JSON'\n{\"action\":\"release\",\"work_token\":\"your returned token\",\"evidence\":\"Your observed completion facts.\"}\nBZ_LIFECYCLE_JSON\n```\n"
+    let text = source + "\n## Installed native command\n\n```sh\n" + command + " workspace <<'BZ_WORKSPACE_JSON'\n{\"action\":\"create\",\"repository\":\"/absolute/repository\",\"label\":\"Task workspace\",\"evidence\":\"This task needs an isolated disposable workspace.\",\"completion_condition\":\"Work is finished, preserved and has no remaining consumers.\"}\nBZ_WORKSPACE_JSON\n" + command + " evidence PID\n" + command + " lifecycle <<'BZ_LIFECYCLE_JSON'\n{\"action\":\"release\",\"work_token\":\"your returned token\",\"evidence\":\"Your observed completion facts.\"}\nBZ_LIFECYCLE_JSON\n```\n"
     let data = Data(text.utf8), fm = FileManager.default
     let legacy: Set<String> = ["7770618dbd9bfa68af922bcae491aa7e8ae6365640920ca94a17ce183c61dd83", "a430105c72b745b391e911b7e113c8f0418e7d6cb30eecdbcbea0660fc280259"]
     func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
