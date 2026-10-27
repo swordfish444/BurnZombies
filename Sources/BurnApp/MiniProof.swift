@@ -11,7 +11,7 @@ import Vision
   BurnTheme.registerFonts()
   let directory = URL(fileURLWithPath: output, isDirectory: true)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  let cases = catalog == nil ? ["empty", "populated", "paused", "quiet-day", "pruned", "unmeasured", "zero-memory", "legacy-negative", "slower", "noisy"] : ["receipt-replay"]
+  let cases = catalog == nil ? ["empty", "populated", "paused", "quiet-day", "pruned", "unmeasured", "zero-memory", "legacy-negative", "slower", "noisy", "disk", "worktrees"] : ["receipt-replay"]
   for name in cases {
     let model = AppModel(demo: true)
     if let catalog { model.state.catalog = catalog }
@@ -20,8 +20,9 @@ import Vision
     if name == "quiet-day" {
       let today = Calendar.current.startOfDay(for: Date())
       model.state.catalog.events.removeAll { ($0.verificationDate ?? $0.date) >= today }
+      model.state.catalog.workspaceReceipts?.removeAll { ($0.verifiedAt ?? $0.date) >= today }
     }
-    if name == "pruned" { model.state.catalog.events = [] }
+    if name == "pruned" { model.state.catalog.events = []; model.state.catalog.workspaceReceipts = [] }
     if name == "unmeasured" || name == "zero-memory" {
       for index in model.state.catalog.events.indices {
         model.state.catalog.events[index].responseBeforeMS = nil
@@ -40,6 +41,14 @@ import Vision
         model.state.catalog.events[i].responseAfterSamples = name == "legacy-negative" ? nil : Array(repeating: 2.88971, count: 7)
       }
     }
+    if name == "disk" || name == "worktrees" {
+      model.state.catalog.events = []; model.state.catalog.lifetimeVerified = 0
+      model.state.catalog.lifetimeResidentReleased = 0
+      if name == "worktrees" {
+        for i in model.state.catalog.workspaceReceipts!.indices { model.state.catalog.workspaceReceipts?[i].diskReclaimedBytes = 0 }
+        model.state.catalog.lifetimeDiskReclaimedBytes = 0
+      }
+    }
     let view = MiniImpactView(model: model)
     let host = NSHostingView(rootView: view)
     host.frame = NSRect(origin: .zero, size: MiniImpactView.size)
@@ -53,9 +62,15 @@ import Vision
     guard !surface.isVisible, !surface.isKeyWindow else {
       throw StoreError.message("Proof surface must stay offscreen")
     }
-    guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+    // CI can have a 1x virtual display. Render the same native view at a fixed
+    // 2x backing resolution so OCR is not dependent on the attached monitor.
+    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+      pixelsWide: Int(host.bounds.width * 2), pixelsHigh: Int(host.bounds.height * 2),
+      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
       throw StoreError.message("Compact render unavailable")
     }
+    bitmap.size = host.bounds.size
     host.cacheDisplay(in: host.bounds, to: bitmap)
     guard let cgImage = bitmap.cgImage,
       let png = bitmap.representation(using: .png, properties: [:]) else {
@@ -70,7 +85,7 @@ import Vision
       .joined(separator: "\n")
     try visible.write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
     guard visible.contains("View impact"), visible.contains("Burn Log"),
-      visible.contains("Memory pressure"), visible.contains("CPU time saved") else {
+      visible.contains("Memory pressure"), visible.contains("Disk reclaimed"), visible.contains("Worktrees cleaned") else {
       throw StoreError.message("Compact labels or footer clipped: \(visible)")
     }
     if name == "receipt-replay" {
@@ -86,6 +101,11 @@ import Vision
       guard visible.contains("AGENT BOOST"), visible.contains("Memory reclaimed"),
         visible.contains("128 helpers cleared"), !visible.contains("23%"), view.numbers.boost == "—" else {
         throw StoreError.message("Verified resource benefit missing: \(visible)")
+      }
+    } else if name == "disk" || name == "worktrees" {
+      guard visible.contains(name == "disk" ? "Disk reclaimed" : "Worktrees cleaned"),
+        !visible.contains("Still warming up"), view.numbers.count == 0, view.numbers.worktrees == 4 else {
+        throw StoreError.message("Worktree-only verified benefit missing: \(visible)")
       }
     } else if name == "zero-memory" {
       guard visible.contains("Helpers cleared"), visible.contains("Dead weight. Gone.") else {
@@ -118,7 +138,7 @@ import Vision
       throw StoreError.message("Paused reviewer hidden by compact status")
     }
     guard host.frame.size == MiniImpactView.size else { throw StoreError.message("Popover size changed") }
-    print("PASS offscreen compact \(name): 360 × 488, readable labels and footer")
+    print("PASS offscreen compact \(name): 360 × 550, readable labels and footer")
   }
 }
 #endif

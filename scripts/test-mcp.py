@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         assert initialized["result"]["serverInfo"]["name"] == "BurnZombies"
         send("notifications/initialized", notification=True)
         tools = send("tools/list")["result"]["tools"]
-        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint", "burnzombies_work", "burnzombies_lifecycle"}
+        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint", "burnzombies_work", "burnzombies_lifecycle", "burnzombies_workspace", "burnzombies_workspace_preview", "burnzombies_workspace_clean"}
         burn = next(t for t in tools if t["name"] == "burnzombies_burn")
         assert burn["annotations"]["destructiveHint"] is True
         def call(name, args): return send("tools/call", {"name": name, "arguments": args})
@@ -102,6 +102,37 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
             assert json.loads(call("burnzombies_status", {})["result"]["content"][0]["text"])["releasedWorkCount"] == 1
         finally:
             worker.terminate(); worker.wait(timeout=5)
+        # Actual MCP -> private socket -> Git lifecycle. Production visibility rules stay enabled.
+        repository = Path(root, "repository"); repository.mkdir()
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repository), *args], check=True, capture_output=True, text=True)
+        git("init", "--initial-branch=main"); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid")
+        Path(repository, "file.txt").write_text("saved fixture work\n")
+        git("add", "."); git("commit", "-m", "fixture"); git("update-ref", "refs/remotes/origin/main", "HEAD")
+        created = json.loads(call("burnzombies_workspace", {"action": "create", "repository": str(repository),
+            "label": "MCP fixture workspace", "evidence": "This isolated protocol fixture needs a temporary Git worktree.",
+            "completion_condition": "Protocol checks finish with all changes saved and no consumer remaining."})["result"]["content"][0]["text"])
+        assert created["ok"], created
+        workspace = created["workspaces"][0]; workspace_token = created["workToken"]
+        preview_args = {"workspace_id": workspace["id"], "rationale": "Protocol checks are finished with all commits preserved and no fixture consumer remaining."}
+        assert call("burnzombies_workspace_preview", preview_args)["result"]["isError"]
+        released = call("burnzombies_workspace", {"action": "release", "work_token": workspace_token,
+            "evidence": "All protocol checks completed; fixture commits are saved and no consumer uses this worktree."})["result"]
+        assert not released.get("isError"), released
+        workspace_preview = call("burnzombies_workspace_preview", preview_args)["result"]
+        response = json.loads(workspace_preview["content"][0]["text"])
+        if response["ok"]:
+            cleaned = call("burnzombies_workspace_clean", {"preview_token": response["previewToken"]})["result"]
+            assert not cleaned.get("isError"), cleaned
+            result = json.loads(cleaned["content"][0]["text"])
+            assert result["worktreesCleaned"] == 1 and not Path(workspace["path"]).exists()
+            print("PASS production MCP worktree removal verified on this host")
+        else:
+            assert "visibility" in response["message"], response
+            assert Path(workspace["path"]).is_dir()
+            print("PASS production MCP worktree preserves checkout on incomplete host visibility; positive deletion covered by scoped fixture simulation")
+        assert "error" in call("burnzombies_workspace", {"action": "release", "work_token": workspace_token,
+            "evidence": "Completed fixture must reject extra mutation arguments.", "repository": str(repository)})
         assert send("prompts/list")["result"]["prompts"][0]["name"] == "tame_the_horde"
         assert send("prompts/get", {"name": "tame_the_horde"})["result"]["messages"]
         assert "error" in send("not/a/method")
@@ -112,8 +143,9 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         send("initialize", {"protocolVersion":"2025-11-25", "capabilities":{}, "clientInfo":{"name":"Bounded review proof","version":"1"}})
         send("notifications/initialized", notification=True)
         review_tools = {t['name'] for t in send('tools/list')['result']['tools']}
-        assert 'burnzombies_lifecycle' not in review_tools and 'burnzombies_checkpoint' not in review_tools
+        assert 'burnzombies_lifecycle' not in review_tools and 'burnzombies_checkpoint' not in review_tools and 'burnzombies_workspace' not in review_tools
         assert 'error' in call('burnzombies_lifecycle', registration)
+        assert 'error' in call('burnzombies_workspace', {'action':'create'})
         for _ in range(8): assert not call('burnzombies_status', {})['result'].get('isError')
         assert call('burnzombies_status', {})['result']['isError']
         server.stdin.close(); assert server.wait(timeout=10)==0

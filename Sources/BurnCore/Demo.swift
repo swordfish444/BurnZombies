@@ -12,6 +12,9 @@ public enum Demo {
     addBurn(in: &state.catalog, count: 110, memory: 5_200_000_000, cpu: 3.8 * 3600 - 60,
       date: today)
     recordBurn(in: &state.catalog, now: max(today, now.addingTimeInterval(-120)))
+    addWorkspaces(in: &state.catalog, count: 4, disk: 2_100_000_000, date: today)
+    addWorkspaces(in: &state.catalog, count: 8, disk: 4_700_000_000, date: calendar.date(byAdding: .day, value: -3, to: today)!)
+    addWorkspaces(in: &state.catalog, count: 6, disk: 3_200_000_000, date: calendar.date(byAdding: .day, value: -12, to: today)!)
     let owner = ProcessIdentity(pid: 90000, seconds: 1)
     let o = Observation(
       identity: ProcessIdentity(pid: 90001, seconds: 2), executable: "/example/disposable-helper",
@@ -50,6 +53,18 @@ public enum Demo {
   /// Preview receipts stay in memory and use the same period accounting as real receipts.
   public static func recordBurn(in catalog: inout Catalog, now: Date = Date()) {
     addBurn(in: &catalog, count: 18, memory: 1_200_000_000, cpu: 60, date: now)
+  }
+
+  private static func addWorkspaces(in catalog: inout Catalog, count: Int, disk: UInt64, date: Date) {
+    for _ in 0..<count {
+      let receipt = WorkspaceReceipt(id: UUID(), workspaceID: UUID().uuidString,
+        identity: .init(path: "/example/disposable-worktree", common: "/example/repo/.git", gitDirectory: "/example/repo/.git/worktrees/example", device: 0, inode: 0),
+        label: "Completed task worktree", head: String(repeating: "0", count: 40), recoveryRef: "refs/burnzombies/worktrees/example",
+        date: date, verifiedAt: date, outcome: "verified", diskReclaimedBytes: disk / UInt64(count), detail: "In-memory preview receipt.")
+      catalog.workspaceReceipts = (catalog.workspaceReceipts ?? []) + [receipt]
+    }
+    catalog.lifetimeWorktreesCleaned = (catalog.lifetimeWorktreesCleaned ?? 0) + count
+    catalog.lifetimeDiskReclaimedBytes = (catalog.lifetimeDiskReclaimedBytes ?? 0) + disk
   }
 
   private static func addBurn(in catalog: inout Catalog, count: Int, memory: UInt64, cpu: Double, date: Date) {

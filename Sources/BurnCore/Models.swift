@@ -180,6 +180,10 @@ public struct Preferences: Codable, Sendable {
 public struct Catalog: Codable, Sendable {
   public var version = 1
   public var workEvidence: [WorkEvidence]?
+  public var workspaces: [WorkspaceClaim]?
+  public var workspaceReceipts: [WorkspaceReceipt]?
+  public var lifetimeWorktreesCleaned: Int?
+  public var lifetimeDiskReclaimedBytes: UInt64?
   public var records: [String: Record] = [:]
   public var events: [CleanupEvent] = []
   public var preferences = Preferences()
@@ -207,6 +211,9 @@ public struct Catalog: Codable, Sendable {
     if records.count > 4096 {
       let keep = records.values.sorted { $0.latest.time > $1.latest.time }.prefix(4096)
       records = Dictionary(uniqueKeysWithValues: keep.map { ($0.id, $0) })
+    }
+    if let receipts = workspaceReceipts {
+      workspaceReceipts = receipts.filter { $0.outcome == "prepared" } + Array(receipts.filter { $0.outcome != "prepared" && now.timeIntervalSince($0.verifiedAt ?? $0.date) < 30 * 86400 }.suffix(500))
     }
     events = Array(events.filter { now.timeIntervalSince($0.date) < 30 * 86400 }.suffix(500))
   }

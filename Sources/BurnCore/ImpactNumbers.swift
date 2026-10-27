@@ -27,6 +27,11 @@ public enum ImpactPeriod: String, CaseIterable, Sendable {
 public struct ImpactNumbers: Sendable {
   public var count: Int = 0
   public var memory: UInt64 = 0
+  public var disk: UInt64 = 0
+  public var worktrees: Int = 0
+  public var lifetimeWorktrees: Int = 0
+  public var latestIsWorkspace: Bool = false
+  public var latestDisk: UInt64 = 0
   public var cpuSeconds: Double? = 0
   public var before: Double?
   public var after: Double?
@@ -37,11 +42,13 @@ public struct ImpactNumbers: Sendable {
   public var speedBoostPercent: Double?
   public var lifetimeCount: Int = 0
 
-  public enum Benefit: Equatable, Sendable { case firstBurn, ready, speed, memory, helpers }
+  public enum Benefit: Equatable, Sendable { case firstBurn, ready, speed, memory, helpers, disk, worktrees }
   public var benefit: Benefit {
-    guard count > 0 else { return lifetimeCount > 0 ? .ready : .firstBurn }
+    guard count > 0 || worktrees > 0 else { return lifetimeCount + lifetimeWorktrees > 0 ? .ready : .firstBurn }
     if boost != "—" { return .speed }
-    return memory > 0 ? .memory : .helpers
+    if memory > 0 { return .memory }
+    if count > 0 { return .helpers }
+    return disk > 0 ? .disk : .worktrees
   }
 
   public var boost: String {
@@ -61,20 +68,29 @@ public struct ImpactNumbers: Sendable {
     let latest = verified.last
     let measured = verified.last { $0.responseBeforeMS != nil && $0.responseAfterMS != nil }
     let comparison = Responsiveness.comparison(verified)
+    let workspaces = (catalog.workspaceReceipts ?? []).filter {
+      $0.outcome == "verified" && $0.verifiedAt != nil && $0.verifiedAt! >= start && $0.verifiedAt! <= now
+    }.sorted { $0.verifiedAt! < $1.verifiedAt! }
+    let workspace = workspaces.last
+    let latestIsWorkspace = (workspace?.verifiedAt ?? .distantPast) > (latest?.verificationDate ?? latest?.date ?? .distantPast)
     return Self(
       count: period == .all
         ? catalog.lifetimeVerified : verified.reduce(0) { $0 + $1.verifiedCount },
       memory: period == .all
         ? (catalog.lifetimeResidentReleased ?? verified.reduce(0) { $0 + $1.residentBefore })
         : verified.reduce(0) { $0 + $1.residentBefore },
+      disk: period == .all ? (catalog.lifetimeDiskReclaimedBytes ?? 0) : workspaces.reduce(0) { $0 + $1.diskReclaimedBytes },
+      worktrees: period == .all ? (catalog.lifetimeWorktreesCleaned ?? 0) : workspaces.count,
+      lifetimeWorktrees: catalog.lifetimeWorktreesCleaned ?? 0,
+      latestIsWorkspace: latestIsWorkspace, latestDisk: latestIsWorkspace ? (workspace?.diskReclaimedBytes ?? 0) : 0,
       cpuSeconds: period == .all
         ? (catalog.lifetimeCPUSecondsSaved ?? (catalog.lifetimeVerified == 0 ? 0 : nil))
         : (cpu.isEmpty && !verified.isEmpty ? nil : cpu.reduce(0, +)),
       before: comparison?.before ?? measured?.responseBeforeMS,
       after: comparison?.after ?? measured?.responseAfterMS,
-      last: latest?.verificationDate ?? latest?.date, latestCount: latest?.verifiedCount ?? 0,
+      last: latestIsWorkspace ? workspace?.verifiedAt : latest?.verificationDate ?? latest?.date, latestCount: latest?.verifiedCount ?? 0,
       latestMemory: latest?.residentBefore ?? 0,
-      latestLabel: latest.map {
+      latestLabel: latestIsWorkspace ? "Worktree cleaned" : latest.map {
         "\($0.verifiedCount) \($0.verifiedCount == 1 ? "helper" : "helpers") burned"
       }, speedBoostPercent: comparison?.boostPercent,
       lifetimeCount: max(catalog.lifetimeVerified, catalog.events.filter {

@@ -13,7 +13,7 @@ import UserNotifications
       }) {
         message = finished.outcome == "verified" ? "Cleanup verified." : finished.detail
       }
-      if didLoadState && state.catalog.lifetimeVerified > oldValue.catalog.lifetimeVerified {
+      if didLoadState && state.catalog.lifetimeVerified + (state.catalog.lifetimeWorktreesCleaned ?? 0) > oldValue.catalog.lifetimeVerified + (oldValue.catalog.lifetimeWorktreesCleaned ?? 0) {
         burnPulse += 1
       }
       didLoadState = true
