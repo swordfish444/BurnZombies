@@ -73,7 +73,7 @@ public struct MachineReviewState: Codable, Sendable {
       if let lane, itemLane != lane { continue }
       if item.processCount == 0 {
         if item.recommendationOnly == true {
-          guard workspaces == 0, recommendations < 2 else { continue }; recommendations += 1
+          guard workspaces == 0, recommendations < (itemLane == .discovery ? 2 : 3) else { continue }; recommendations += 1
         } else {
           guard workspaces == 0, recommendations == 0 else { continue }; workspaces += 1
         }
