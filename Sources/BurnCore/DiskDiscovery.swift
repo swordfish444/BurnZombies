@@ -40,10 +40,11 @@ public struct DiskSpaceNode: Codable, Sendable, Identifiable {
     "space:" + WorkEvidence.hash(path + "|" + (members == nil ? "folder" : "group"))
   }
   public var revision: String {
-    WorkEvidence.hash(
-      id
-        + "|\(allocated / 10_000_000_000)|\(unshared / 10_000_000_000)|\(complete)|\(errors > 0)|\(unknown > 0)|\(dataless > 0)|"
-        + (members?.joined(separator: "|") ?? "") + "|" + (reviewPolicyRevision ?? ""))
+    let sizes = "\(allocated / 10_000_000_000)|\(unshared / 10_000_000_000)"
+    let coverage = "\(complete)|\(errors > 0)|\(unknown > 0)|\(dataless > 0)"
+    let memberKey = members?.joined(separator: "|") ?? ""
+    return WorkEvidence.hash(
+      [id, sizes, coverage, memberKey, reviewPolicyRevision ?? ""].joined(separator: "|"))
   }
   public var folderCount: Int { members?.count ?? 1 }
 }
