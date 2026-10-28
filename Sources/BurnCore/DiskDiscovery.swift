@@ -17,6 +17,7 @@ public struct DiskSpaceNode: Codable, Sendable, Identifiable {
   public var childrenTruncated = false
   public var measured: Date
   public var members: [String]? = nil
+  public var reviewPolicyRevision: String? = nil
   public init(
     path: String, scanRoot: String, allocated: UInt64, unshared: UInt64, files: UInt64,
     unknown: UInt64 = 0, errors: UInt64 = 0, hardlinks: UInt64 = 0, dataless: UInt64 = 0,
@@ -42,7 +43,7 @@ public struct DiskSpaceNode: Codable, Sendable, Identifiable {
     WorkEvidence.hash(
       id
         + "|\(allocated / 10_000_000_000)|\(unshared / 10_000_000_000)|\(complete)|\(errors > 0)|\(unknown > 0)|\(dataless > 0)|"
-        + (members?.joined(separator: "|") ?? ""))
+        + (members?.joined(separator: "|") ?? "") + "|" + (reviewPolicyRevision ?? ""))
   }
   public var folderCount: Int { members?.count ?? 1 }
 }
@@ -99,6 +100,7 @@ public struct DiskDiscoveryState: Codable, Sendable {
   public var updated: Date = .distantPast
   public var explored: [String] = []
   public var unavailable: [String]? = []
+  public var policyRevision: String?
   public var detail = "Preparing a read-only storage map."
   public init() {}
   public static func load(_ store: Store) throws -> Self {
@@ -176,6 +178,13 @@ public final class DiskDiscovery: @unchecked Sendable {
     mutex.withLock {
       enabled = policy.mode != "off"
       protected = policy.protectedPaths
+      let revision = policy.revision
+      if state.policyRevision != revision {
+        state.policyRevision = revision
+        state.explored = []
+        for i in state.nodes.indices { state.nodes[i].reviewPolicyRevision = revision }
+        guard saveLocked() else { return }
+      }
       guard enabled else { return }
       if state.queue.isEmpty && !worker
         && now.timeIntervalSince(state.lastCycle) >= Double(policy.scanHours * 3600)
@@ -235,8 +244,9 @@ public final class DiskDiscovery: @unchecked Sendable {
       while mutex.withLock({ enabled }) && !done {
         done = bz_disk_step(walk, 2000) != 0
         if done || Date().timeIntervalSince(lastPublish) >= 15 {
-          let values = Self.read(walk, root: path, complete: done)
+          var values = Self.read(walk, root: path, complete: done)
           mutex.withLock {
+            for i in values.indices { values[i].reviewPolicyRevision = state.policyRevision }
             // Prefer the latest measurement for identical paths. Never add an
             // ancestor's size to its descendants' sizes.
             let paths = Set(values.map(\.path))
@@ -387,6 +397,7 @@ public final class DiskDiscovery: @unchecked Sendable {
           dataless: members.reduce(0) { $0 + $1.dataless },
           complete: members.allSatisfy(\.complete), measured: node.measured)
         group.members = members.map(\.path).sorted()
+        group.reviewPolicyRevision = node.reviewPolicyRevision
         groups.append(group)
       }
       groups = Array(groups.sorted { $0.unshared > $1.unshared }.prefix(8))

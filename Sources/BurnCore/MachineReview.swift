@@ -191,6 +191,7 @@ public actor MachineReviewer {
     Native guards preserve active, dirty, ignored, locked, unpushed and ambiguous work. Never adopt existing worktrees,
     create or release workspace claims, remove files in the shell, or retry a refused cleanup in this review.
     Status.diskDiscovery contains large storage branches discovered across the Mac, independent of cleanup roots.
+    Apply diskPolicy retention preferences and user instructions to these recommendations too; a policy is a constraint, not proof of disposability.
     Investigate these like a filesystem audit: follow the largest consumers, inspect exact branches with disk_inspect,
     correlate producer manifests and repeated directory groups, distinguish rebuildable output from source, databases,
     retained QA evidence and active consumers. Directory names, age, ignored status and archived chats are clues, never proof.

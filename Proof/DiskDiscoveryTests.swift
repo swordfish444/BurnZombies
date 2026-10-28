@@ -129,6 +129,25 @@ func diskDiscoveryProof() throws {
     "Grouped advice must not double count parent folders")
   equal(
     discovery.snapshot().pending.count, 0, "Unchanged advice must not cause another model review")
+  var tuning = DiskPolicy()
+  tuning.mode = "off"
+  discovery.tick(policy: tuning)
+  check(!discovery.snapshot().pending.isEmpty, "Changed policy must invalidate cached advice")
+  _ = try discovery.recommend(
+    group.id, disposition: "rebuildable", title: "Trim completed build output",
+    summary:
+      "The compiler creates these outputs. Source and retained acceptance evidence must remain.",
+    nextStep: "Wait for full consumer visibility before approving exact output folders.",
+    allowed: [root.id])
+  equal(discovery.snapshot().pending.count, 0)
+  discovery.tick(policy: tuning)
+  equal(
+    discovery.snapshot().pending.count, 0, "Unchanged tuning must not repeatedly consume tokens")
+  let priorPolicyRevision = discovery.snapshot().nodes.first { $0.id == root.id }!.revision
+  tuning.instructions = "Keep accepted captures and all release evidence."
+  discovery.tick(policy: tuning)
+  check(!discovery.snapshot().pending.isEmpty)
+  notEqual(priorPolicyRevision, discovery.snapshot().nodes.first { $0.id == root.id }!.revision)
   var protected = DiskPolicy()
   protected.mode = "off"
   protected.protectedPaths = [home.appendingPathComponent("run-0").path]

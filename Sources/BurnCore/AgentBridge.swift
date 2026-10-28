@@ -257,7 +257,7 @@ public actor AgentService {
     reply.partial = state.partial
     reply.disk = Array((state.catalog.diskCandidates ?? []).filter { $0.bytes >= DiskCandidate.minimumReviewBytes && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id)) }.prefix(3))
     reply.diskDiscovery = (state.catalog.diskDiscovery ?? []).filter { request.reviewIDs == nil || request.reviewIDs!.contains($0.id) }.prefix(3).map(DiskSpaceSummary.init)
-    if !reply.disk.isEmpty { reply.diskPolicy = (try? await monitor.diskPolicy()).map(DiskReviewPolicy.init) }
+    if !reply.disk.isEmpty || !reply.diskDiscovery.isEmpty { reply.diskPolicy = (try? await monitor.diskPolicy()).map(DiskReviewPolicy.init) }
     let work = await monitor.workSummaries()
     reply.activeWorkCount = work.filter { $0.state == "active" && !$0.livePIDs.isEmpty }.count
     let released = work.filter { ["released", "candidate"].contains($0.state) && !$0.blockedByActiveClaim && !$0.livePIDs.isEmpty

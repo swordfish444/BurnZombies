@@ -67,6 +67,7 @@ with tempfile.TemporaryDirectory(prefix="bz-discovery-mcp-") as directory:
             return result, json.loads(result["content"][0]["text"])
         result, status = call("status", {})
         assert not result.get("isError") and status["diskDiscovery"][0]["id"] == identity
+        assert status["diskPolicy"]["mode"] == "recommend", "Discovery-only reviews must receive user policy"
         result, facts = call("disk_inspect", {"node_id": identity})
         assert not result.get("isError"), facts
         evidence = facts["diskInspection"]
