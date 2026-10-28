@@ -36,4 +36,19 @@ int bz_agent_connect(const char *path);
 int bz_agent_read(int fd, char *buffer, int capacity);
 int bz_agent_write(int fd, const char *buffer, int count);
 int bz_review_worker(char *const argv[], int seconds);
+// Runs only a caller-created tool group; bounds capture and closes its descendants.
+int bz_capture_tool(char *const argv[], char *const env[], int output, int milliseconds, uint64_t max_bytes);
+// Read-only, incremental metadata walker. Never follows links or hydrates files.
+typedef struct {
+    char path[4096];
+    uint64_t allocated, unshared, files, unknown, errors, links, dataless;
+    int64_t newest;
+    int finished;
+} bz_disk_node;
+void *bz_disk_open(const char *path, int depth);
+int bz_disk_step(void *walk, int entries);
+int bz_disk_count(void *walk);
+int bz_disk_node_at(void *walk, int index, bz_disk_node *out);
+int bz_disk_overflow(void *walk);
+void bz_disk_close(void *walk);
 #endif

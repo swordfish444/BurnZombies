@@ -4,7 +4,7 @@
 
 **Keep your agents running. Lose the leftovers.**
 
-Long sessions leave a mess: abandoned Node workers, forgotten browser helpers, cancelled jobs that never quite died. Eventually your Mac pays for work that already ended.
+Long sessions leave a mess: abandoned Node workers, forgotten browser helpers, repeated build caches and worktrees full of yesterday's output. Eventually your Mac pays for work that already ended.
 
 BurnZombies watches your whole Mac—across projects, terminals, agents and old sessions. **Your existing harness supplies the intelligence. BurnZombies runs quietly in the background, cleans up confirmed leftovers and shows what you got back.** No active chat. No reboot.
 
@@ -53,7 +53,7 @@ Everything that matters in one small panel: **zombies burned, memory released, d
 - **Remembers what finished.** Native ownership and bounded completion evidence feed a shared queue. A finished turn alone never authorizes a kill; active consumers keep their helpers.
 - **Your harness does the thinking.** Model reasoning and live ownership evidence decide what is abandoned. No fixed “old process = zombie” rule.
 - **Lose finished workspaces.** Your agent can create disposable worktrees through BurnZombies and release them after preserving the work. A second review checks completion; native guards keep active, dirty, ignored and unpushed work safe. Existing and Codex-managed checkouts remain with their owning tools. [Worktree cleanup →](docs/WORKTREE-CLEANUP.md)
-- **Make room for the next run.** **Settings → Disk cleanup** shows AI recommendations for folders of 10 GB or more, with Keep or Approve cleanup. Detailed tuning stays under Advanced. Advice never grants deletion permission; active work and incomplete visibility stay protected. [Disk cleanup →](docs/DISK-CLEANUP.md)
+- **Find the big pockets.** **Settings → Disk cleanup** follows storage across your Mac, including folders outside agent worktrees. Your AI investigates what created it, groups repeated outputs and gives you a practical next step. Cards start at 10 GB of measured unshared storage; APFS copies don't inflate the number. Scanning uses no AI tokens. Already use Mole? Its storage analysis adds context to the same bounded review. [Disk discovery & cleanup →](docs/DISK-CLEANUP.md) · [Mole integration →](docs/MOLE-INTEGRATION.md)
 - **Keep the good stuff alive.** Exact identities, protected harnesses, graceful stops and verified receipts. Uncertain work stays running.
 - **See the payoff.** Zombies burned, memory released, disk reclaimed, worktrees cleaned and a concrete cleanup benefit in a quiet menu bar app.
 - **Stays out of your way.** No windows opening when reviews start. Only new supported evidence triggers a review: at least one hour between reviews, at most eight reviews per rolling day, and a pause on failure.

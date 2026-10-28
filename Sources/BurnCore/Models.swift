@@ -182,6 +182,7 @@ public struct Catalog: Codable, Sendable {
   public var workEvidence: [WorkEvidence]?
   public var passiveEvidence: [PassiveEvidence]?
   public var diskCandidates: [DiskCandidate]?
+  public var diskDiscovery: [DiskSpaceNode]?
   public var diskReceipts: [DiskReceipt]?
   public var workspaces: [WorkspaceClaim]?
   public var workspaceReceipts: [WorkspaceReceipt]?

@@ -30,6 +30,46 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.contains("--mole-leaf-fixture") {
+      alarm(10)
+      signal(SIGTERM, SIG_IGN)
+      while true { pause() }
+    }
+    if CommandLine.arguments.contains("--mole-hang-fixture") {
+      alarm(10)
+      signal(SIGTERM, SIG_IGN)
+      var argv = [CommandLine.arguments[0], "--mole-leaf-fixture"].map { (value: String) in value.withCString { strdup($0) } } + [nil]
+      var environment = [strdup("PATH=/usr/bin:/bin"), nil]
+      var child: pid_t = -1
+      let code = posix_spawn(&child, argv[0]!, nil, nil, &argv, &environment)
+      argv.forEach { free($0) }; environment.forEach { free($0) }
+      guard code == 0, child > 0 else { exit(2) }
+      print("\(getpid()) \(child)")
+      while true { pause() }
+    }
+    if CommandLine.arguments.contains("--mole-output-fixture") {
+      alarm(10)
+      try? FileHandle.standardOutput.write(contentsOf: Data(repeating: 65, count: 131072))
+      while true { pause() }
+    }
+    if CommandLine.arguments.contains("--mole-proof") {
+      do { try moleIntegrationProof() } catch { failTest("Mole integration: \(error)") }
+      print("Mole integration checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--disk-discovery") {
+      do { try diskDiscoveryProof() } catch { failTest("Disk discovery: \(error)") }
+      print("Disk discovery checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--measure-disk" {
+      do {
+        let nodes = try DiskDiscovery.measure(CommandLine.arguments[2])
+        let data = try JSONEncoder().encode(nodes)
+        print(String(decoding: data, as: UTF8.self))
+      } catch { print("FAIL: \(error)"); exit(1) }
+      return
+    }
     if CommandLine.arguments.contains("--passive-child") { Thread.sleep(forTimeInterval: 120); return }
     if CommandLine.arguments.contains("--passive-usage") {
       do { try usageProof(); try await passiveProof(); try await diskProof() } catch { failTest("Passive/usage: \(error)") }
@@ -72,6 +112,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     let s = StorageNativeTests()
     let pressure = PressureTests()
     let tests: [(String, () throws -> Void)] = [
+      ("whole-machine disk discovery, APFS clones, grouped advice and scope safety", diskDiscoveryProof),
       ("cumulative awake CPU savings and stable nonnegative speed impact", impactMetricsProof),
       ("impact periods, completion dates, DST, empty history and preview accounting", impactPeriodProof),
       ("review model/effort migration, persistence, provider arguments and defaults", reviewSelectionProof),

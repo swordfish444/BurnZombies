@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         assert initialized["result"]["serverInfo"]["name"] == "BurnZombies"
         send("notifications/initialized", notification=True)
         tools = send("tools/list")["result"]["tools"]
-        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint", "burnzombies_work", "burnzombies_lifecycle", "burnzombies_workspace", "burnzombies_workspace_preview", "burnzombies_workspace_clean", "burnzombies_disk_decide", "burnzombies_disk_preview", "burnzombies_disk_clean"}
+        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint", "burnzombies_work", "burnzombies_lifecycle", "burnzombies_workspace", "burnzombies_workspace_preview", "burnzombies_workspace_clean", "burnzombies_disk_decide", "burnzombies_disk_preview", "burnzombies_disk_clean", "burnzombies_disk_inspect", "burnzombies_disk_explore", "burnzombies_disk_evidence", "burnzombies_disk_recommend"}
         burn = next(t for t in tools if t["name"] == "burnzombies_burn")
         assert burn["annotations"]["destructiveHint"] is True
         def call(name, args): return send("tools/call", {"name": name, "arguments": args})

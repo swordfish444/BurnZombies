@@ -20,6 +20,7 @@ public actor Monitor {
   private let lock: InstanceLock
   private let native = Native()
   private let passive: PassiveCollector?
+  private let discovery: DiskDiscovery?
   private var diskSnapshot = DiskSnapshot()
   private var diskScanLoaded = false
   private let workspaceVisibility: @Sendable (String) -> Int32
@@ -31,9 +32,11 @@ public actor Monitor {
   private var lastMonotonic: Double?
   private var lastWall: Date?
   private var lastAwake: Double?
-  public init(root: URL = Store.defaultRoot, passiveHome: URL? = nil, workspaceVisibility: @escaping @Sendable (String) -> Int32 = { bz_path_in_use($0) }) throws {
+  public init(root: URL = Store.defaultRoot, passiveHome: URL? = nil, discoveryRoots: [String]? = nil, workspaceVisibility: @escaping @Sendable (String) -> Int32 = { bz_path_in_use($0) }) throws {
     self.workspaceVisibility = workspaceVisibility
     store = try Store(root: root)
+    discovery = discoveryRoots != nil || (root.standardizedFileURL == Store.defaultRoot.standardizedFileURL && ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil)
+      ? try DiskDiscovery(store: store, roots: discoveryRoots) : nil
     passive = root.standardizedFileURL == Store.defaultRoot.standardizedFileURL || passiveHome != nil
       ? try PassiveCollector(store: store, home: passiveHome ?? FileManager.default.homeDirectoryForCurrentUser) : nil
     lock = try InstanceLock(url: root.appendingPathComponent("monitor.lock"))
@@ -142,6 +145,12 @@ public actor Monitor {
       catalog.prune(now: now)
       if let passive {
         catalog.passiveEvidence = try passive.poll(records: catalog.records, claims: catalog.workEvidence ?? [], now: now, partial: scan.partial)
+      }
+      catalog.diskDiscovery = nil
+      if let discovery {
+        let policy = try DiskPolicy.load(store)
+        discovery.tick(policy: policy)
+        catalog.diskDiscovery = policy.mode == "off" ? [] : discovery.snapshot().pending
       }
       if store.root.standardizedFileURL == Store.defaultRoot.standardizedFileURL || FileManager.default.fileExists(atPath: store.root.appendingPathComponent("disk-policy.json").path) {
         let policy = try DiskPolicy.load(store)
@@ -389,6 +398,25 @@ public actor Monitor {
   }
 
   public func diskPolicy() throws -> DiskPolicy { try DiskPolicy.load(store) }
+  public func diskDiscoveryRequest(_ request: AgentRequest) async throws -> AgentReply {
+    guard let discovery, try DiskPolicy.load(store).mode != "off" else { throw StoreError.message("Storage discovery is unavailable or disabled.") }
+    let id = request.findingID ?? ""
+    var reply = AgentReply(message: "Read-only storage evidence; no removal authority.")
+    switch request.operation {
+    case "disk_explore": reply.message = try discovery.explore(id, allowed: request.reviewIDs)
+    case "disk_inspect":
+      reply.diskInspection = try await Task.detached { try discovery.inspect(id, allowed: request.reviewIDs) }.value
+    case "disk_evidence":
+      reply.diskEvidence = try discovery.readEvidence(id, relativePath: request.workspacePath ?? "", allowed: request.reviewIDs)
+    case "disk_recommend":
+      reply.message = try discovery.recommend(id, disposition: request.action ?? "", title: request.label ?? "",
+        summary: request.rationale ?? "", nextStep: request.completionCondition ?? "", allowed: request.reviewIDs)
+    default: throw StoreError.message("Unknown discovery operation.")
+    }
+    catalog.diskDiscovery = discovery.snapshot().pending
+    state.catalog = catalog
+    return reply
+  }
   public func diskDecision(_ id: String, decision: String, rationale: String) throws -> String {
     guard ["keep", "recommend"].contains(decision), (20...1200).contains(rationale.count),
       let i = diskSnapshot.candidates.firstIndex(where: { $0.id == id && $0.pendingReview }),

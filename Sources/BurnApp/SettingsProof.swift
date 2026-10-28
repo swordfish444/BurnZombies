@@ -93,9 +93,17 @@ import SwiftUI
   guard disk.candidates.map(\.id) == [candidate.id, boundary.id] else { throw StoreError.message("Disk UI did not enforce 10 GB floor") }
   disk.inventory.candidates = [candidate]; disk.inventory.freeBytes = 80_000_000_000
   try disk.inventory.save(Store(root: root))
+  var discoveryNode = DiskSpaceNode(path: "/example/build-environments", scanRoot: "/example", allocated: 74_000_000_000,
+    unshared: 32_000_000_000, files: 180_000, complete: true, measured: now)
+  discoveryNode.members = (1...12).map { "/example/build-environments/run-\($0)/compiler-cache" }
+  disk.discovery.nodes = [discoveryNode]
+  disk.discovery.advice[discoveryNode.id] = DiskAdvice(id: discoveryNode.id, revision: discoveryNode.revision,
+    title: "Trim repeated compiler caches", summary: "These build outputs can be recreated. Keep source, manifests and the latest accepted evidence.",
+    nextStep: "Use the build tool’s cache cleanup after the current builds finish.", disposition: "owner-cleanup", date: now)
+  try disk.discovery.save(Store(root: root))
   let diskHost = NSHostingView(rootView: DiskSettingsView(model: disk).padding(20).frame(width: 440)
     .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
-  diskHost.frame = NSRect(x: 0, y: 0, width: 440, height: 430); diskHost.layoutSubtreeIfNeeded()
+  diskHost.frame = NSRect(x: 0, y: 0, width: 440, height: 480); diskHost.layoutSubtreeIfNeeded()
   if let bitmap = diskHost.bitmapImageRepForCachingDisplay(in: diskHost.bounds) {
     diskHost.cacheDisplay(in: diskHost.bounds, to: bitmap)
     try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension("disk.png"))

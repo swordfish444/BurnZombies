@@ -79,6 +79,9 @@ public struct AgentReply: Codable, Sendable {
   public var work: [WorkSummary] = []
   public var releasedWorkCount: Int = 0
   public var disk: [DiskCandidate] = []
+  public var diskDiscovery: [DiskSpaceSummary] = []
+  public var diskInspection: DiskInspection?
+  public var diskEvidence: [String: String]?
   public var diskPolicy: DiskReviewPolicy?
   public var activeWorkCount: Int = 0
   public var previewToken: String?
@@ -126,7 +129,7 @@ public actor AgentService {
   private var previews: [String: Preview] = [:]
   public init(monitor: Monitor) { self.monitor = monitor }
   public func call(_ request: AgentRequest) async -> AgentReply {
-    guard ["status", "inspect", "preview", "burn", "lifecycle", "work", "workspace", "workspace_preview", "workspace_clean", "disk_decide", "disk_preview", "disk_clean"].contains(request.operation) else {
+    guard ["status", "inspect", "preview", "burn", "lifecycle", "work", "workspace", "workspace_preview", "workspace_clean", "disk_decide", "disk_preview", "disk_clean", "disk_inspect", "disk_explore", "disk_recommend", "disk_evidence"].contains(request.operation) else {
       return AgentReply(ok: false, message: "Unknown operation.")
     }
     previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
@@ -138,7 +141,9 @@ public actor AgentService {
     if let error = state.error { return AgentReply(ok: false, message: error) }
     var reply = AgentReply(message: "Computer-wide observation across all projects and sessions for this macOS user. Inspect live ownership evidence to distinguish abandoned helpers from active work. No active chat, wrapper or reboot required.")
     do {
-      if request.operation == "workspace" {
+      if ["disk_inspect", "disk_explore", "disk_recommend", "disk_evidence"].contains(request.operation) {
+        return try await monitor.diskDiscoveryRequest(request)
+      } else if request.operation == "workspace" {
         let result = try await monitor.recordWorkspace(request)
         reply.workToken = result.0; reply.message = result.1
         if let claim = result.2 { reply.workspaces = [WorkspaceSummary(claim)] }
@@ -251,7 +256,8 @@ public actor AgentService {
     reply.observedAt = state.catalog.lastSample
     reply.partial = state.partial
     reply.disk = Array((state.catalog.diskCandidates ?? []).filter { $0.bytes >= DiskCandidate.minimumReviewBytes && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id)) }.prefix(3))
-    if !reply.disk.isEmpty { reply.diskPolicy = (try? await monitor.diskPolicy()).map(DiskReviewPolicy.init) }
+    reply.diskDiscovery = (state.catalog.diskDiscovery ?? []).filter { request.reviewIDs == nil || request.reviewIDs!.contains($0.id) }.prefix(3).map(DiskSpaceSummary.init)
+    if !reply.disk.isEmpty || !reply.diskDiscovery.isEmpty { reply.diskPolicy = (try? await monitor.diskPolicy()).map(DiskReviewPolicy.init) }
     let work = await monitor.workSummaries()
     reply.activeWorkCount = work.filter { $0.state == "active" && !$0.livePIDs.isEmpty }.count
     let released = work.filter { ["released", "candidate"].contains($0.state) && !$0.blockedByActiveClaim && !$0.livePIDs.isEmpty
