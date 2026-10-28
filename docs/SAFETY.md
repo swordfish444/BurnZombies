@@ -22,7 +22,7 @@ Memory release uses pre-stop resident footprints; shared pages may overlap. CPU 
 
 ## Privacy and storage
 
-The app observes executable paths, PID/start/boot, UID, parent PID and resource counters, plus a bounded sample history, agent-provided rationale and receipts. It does not collect command arguments, environment, prompts, repository/file contents, browser profiles, terminal text or credentials. MCP inspect evidence is visible to the chosen harness and its model provider.
+The process observer records executable paths, PID/start/boot, UID, parent PID and resource counters, plus bounded sample history, agent-provided rationale and receipts. It does not collect command arguments, environment, prompts, browser profiles, terminal text or credentials. Storage discovery also records bounded directory metadata. Its explicit evidence tools can return short, filtered source/build/retention excerpts from a measured branch; private state, transcripts, credentials, linked files and online-only content are refused. MCP evidence is visible to the chosen harness and its model provider. See [disk discovery and cleanup](DISK-CLEANUP.md) for the separate file-removal boundary.
 
 The bridge is a private same-user Unix socket and verifies the peer PID for ancestry protection. It is not a security boundary against malicious code already running as that user. No root helper, HTTP listener, telemetry service or separate model account is used.
 

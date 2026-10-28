@@ -36,6 +36,9 @@ public struct ReviewEvidence: Codable, Equatable, Sendable {
     for candidate in catalog.diskCandidates ?? [] where candidate.pendingReview {
       result.append(.init(id: candidate.id, revision: candidate.queueRevision, processCount: 0, recommendationOnly: !candidate.reviewable))
     }
+    for node in catalog.diskDiscovery ?? [] {
+      result.append(.init(id: node.id, revision: node.revision, processCount: 0, recommendationOnly: true))
+    }
     for workspace in catalog.workspaces ?? [] where workspace.state == "released" {
       result.append(.init(id: workspace.id, revision: digest(workspace.id + "|" + String(workspace.updated.timeIntervalSinceReferenceDate)), processCount: 0))
     }

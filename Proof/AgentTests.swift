@@ -113,7 +113,13 @@ func agentBridgeProof() async throws {
 }
 
 func runAgentFixture(root: URL) async throws {
-  let monitor = try Monitor(root: root)
+  let discoveryFile = root.appendingPathComponent("discovery-roots.json")
+  let discoveryRoots = FileManager.default.fileExists(atPath: discoveryFile.path)
+    ? try JSONDecoder().decode([String].self, from: Data(contentsOf: discoveryFile)) : nil
+  guard discoveryRoots?.allSatisfy({ WorkspaceSafety.contains(WorkspaceSafety.canonical(root.path), WorkspaceSafety.canonical($0)) }) != false else {
+    throw StoreError.message("Fixture discovery must stay inside the test-owned directory.")
+  }
+  let monitor = try Monitor(root: root, discoveryRoots: discoveryRoots)
   // Like the resident observer, finish the first bounded inventory before a model
   // connects; a cold filesystem scan must not consume the MCP request timeout.
   _ = await monitor.refresh()

@@ -13,11 +13,16 @@ A small native coordinator requests a bounded review from one selected, installe
 | `burnzombies_workspace` | Create a private disposable task worktree; release/retain its owner token without deleting |
 | `burnzombies_workspace_preview` | Revalidate a released worktree and return a one-use 60-second token |
 | `burnzombies_workspace_clean` | Preserve HEAD, remove without force, verify and record worktree/disk impact |
+| `burnzombies_disk_inspect` | Compact sizes, repeated-folder groups, producer manifests and consumer evidence for a measured branch |
+| `burnzombies_disk_explore` | Queue deeper native metadata mapping; finish the AI turn while it runs locally |
+| `burnzombies_disk_evidence` | Bounded source/build/retention evidence inside the measured branch; no credentials, transcripts or execution |
+| `burnzombies_disk_recommend` | Save one practical recommendation and next step; never grants deletion permission |
+| `burnzombies_disk_decide` / `disk_preview` / `disk_clean` | Exact-folder advice, guarded preview and verified removal |
 | `burnzombies_checkpoint` | Legacy compatibility only; inert when machine review is configured |
 
 ## Scheduling and ownership
 
-Only new owner-released or passively corroborated completion evidence can dispatch a review. Releases batch for two minutes and reviews are separated by at least one hour. Memory/process churn and elapsed hours are not triggers. **Safe cleanup** joins the same queue and cannot bypass deduplication, cooldown or daily limits. Reviews do not overlap; stale/incomplete scans cannot dispatch them. The private usage ledger counts failed/interrupted starts and survives restarts. A maximum of eight starts per rolling 24 hours and a 200,000 recorded-input-token dispatch threshold bound repeat spending; the final review can cross the token threshold. Missing usage is reported as unavailable, not zero.
+Only new owner-released, passively corroborated completion or material storage-discovery evidence can dispatch a review. Releases batch for two minutes and reviews are separated by at least one hour. Memory/process churn and elapsed hours are not triggers. **Safe cleanup** joins the same queue and cannot bypass deduplication, cooldown or daily limits. Reviews do not overlap; stale/incomplete scans cannot dispatch them. The private usage ledger counts failed/interrupted starts and survives restarts. A maximum of eight starts per rolling 24 hours and a 200,000 recorded-input-token dispatch threshold bound repeat spending; the final review can cross the token threshold. Missing usage is reported as unavailable, not zero.
 
 Every review has a three-minute limit and one MiB output cap. A supervised process group owns its harness and MCP children, and closes them on completion, timeout or owner exit. The native observer continues separately, including the 120-second verification watch. A failure pauses reviews; there is no automatic retry or provider/model/account switch. The pause survives app restart.
 

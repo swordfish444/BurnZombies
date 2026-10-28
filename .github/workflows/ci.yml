@@ -26,6 +26,8 @@ jobs:
         run: scripts/build-app.sh
       - name: MCP client protocol proof
         run: python3 scripts/test-mcp.py
+      - name: Storage discovery through the production MCP bridge
+        run: python3 scripts/test-disk-discovery.py
       - name: Five-harness configuration proof
         run: python3 scripts/test-harness-install.py
       - name: Portable lifecycle skill installation

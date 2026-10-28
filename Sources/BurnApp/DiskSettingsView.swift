@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor final class DiskSettingsModel: ObservableObject {
   @Published var policy = DiskPolicy()
   @Published var inventory = DiskSnapshot()
+  @Published var discovery = DiskDiscoveryState()
   @Published var expanded = false
   @Published var advanced = false
   @Published var reviewStatus = ""
@@ -35,6 +36,7 @@ import SwiftUI
   func refreshInventory() {
     do {
       let store = try Store(root: root); inventory = try DiskSnapshot.load(store)
+      discovery = try DiskDiscoveryState.load(store)
       if let data = try? store.read(root.appendingPathComponent("machine-review-state.json"), limit: 65536),
         let state = try? JSONDecoder().decode(MachineReviewState.self, from: data) {
         reviewStatus = state.phase == "paused" ? state.detail : ""
@@ -75,15 +77,24 @@ struct DiskSettingsView: View {
           Spacer()
           Button { settings.refreshInventory() } label: { Image(systemName: "arrow.clockwise") }.clickPointer().help("Refresh recommendations")
         }
-        Text("Your AI recommends what to clear and what to keep. Only items of 10 GB or more appear here.")
+        Text("Your AI follows the largest storage pockets across your Mac and recommends the next step. Only opportunities of 10 GB or more appear here.")
           .font(.caption).foregroundStyle(.secondary)
         if settings.policy.mode == "off" { Text("Disk review is off. Enable it in Advanced.").font(.callout) }
         else if !settings.reviewStatus.isEmpty { Text(settings.reviewStatus).font(.caption).foregroundStyle(.orange) }
-        if settings.candidates.isEmpty {
-          Label("No items of 10 GB or more in the latest scan.", systemImage: "checkmark.circle")
+        if settings.discovery.running != nil || !settings.discovery.queue.isEmpty {
+          Label("Mapping your Mac · no AI tokens used for scanning", systemImage: "externaldrive.badge.magnifyingglass")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        if !(settings.discovery.unavailable ?? []).isEmpty || settings.discovery.nodes.contains(where: { $0.errors > 0 }) {
+          Text("Some locations could not be read. Missing visibility is kept protected.").font(.caption).foregroundStyle(.secondary)
+        }
+        let opportunities = settings.discovery.opportunities.filter { $0.unshared >= DiskCandidate.minimumReviewBytes }
+        if opportunities.isEmpty && settings.candidates.isEmpty {
+          Label(settings.discovery.updated == .distantPast || settings.discovery.running != nil ? "Looking for the biggest opportunities…" : "No measured opportunities over 10 GB yet.", systemImage: "magnifyingglass")
             .font(.callout).foregroundStyle(.secondary).padding(.vertical, 10)
         }
-        ForEach(settings.candidates.prefix(6)) { candidate in recommendation(candidate) }
+        ForEach(opportunities.prefix(5)) { node in discoveryCard(node) }
+        if opportunities.isEmpty { ForEach(settings.candidates.prefix(3)) { candidate in recommendation(candidate) } }
         if let notice = settings.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
         DisclosureGroup(isExpanded: $settings.advanced) { advanced.padding(.top, 14) } label: {
           Text("Advanced").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -106,6 +117,36 @@ struct DiskSettingsView: View {
       }
     }
     .accessibilityIdentifier("disk-cleanup-settings")
+  }
+  private func discoveryCard(_ node: DiskSpaceNode) -> some View {
+    let saved = settings.discovery.advice[node.id]
+    let advice = saved?.revision == node.revision ? saved : nil
+    return VStack(alignment: .leading, spacing: 9) {
+      HStack(alignment: .firstTextBaseline) {
+        Text(ImpactNumbers.bytes(node.unshared)).font(.title3.weight(.semibold)).foregroundStyle(orange)
+        Text("unshared storage").font(.caption).foregroundStyle(.secondary)
+        Spacer()
+        if node.folderCount > 1 { Text("\(node.folderCount) folders").font(.caption).foregroundStyle(.secondary) }
+      }
+      Text(advice?.title ?? URL(fileURLWithPath: node.path).lastPathComponent).font(.callout.weight(.semibold)).lineLimit(2)
+      Text(advice?.summary ?? "Your AI will inspect what created this storage and what can safely be rebuilt.")
+        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      if let advice {
+        Label(advice.nextStep, systemImage: advice.disposition == "keep" ? "shield" : "arrow.right.circle")
+          .font(.caption).fixedSize(horizontal: false, vertical: true)
+      }
+      DisclosureGroup("Details") {
+        VStack(alignment: .leading, spacing: 5) {
+          Text(node.path).textSelection(.enabled)
+          Text("\(ImpactNumbers.bytes(node.allocated)) referenced footprint · \(node.files.formatted()) files")
+          Text("Shared copies and hardlinks are excluded from the unshared amount. Actual recovery depends on the exact cleanup scope and fresh safety checks.")
+          if node.errors + node.unknown + node.dataless > 0 || node.childrenTruncated {
+            Text("Some storage could not be fully inspected. Unknown usage remains protected.")
+          }
+          Text("Measured \(node.measured.formatted(date: .abbreviated, time: .shortened))")
+        }.font(.caption2).foregroundStyle(.secondary).padding(.top, 6)
+      }.font(.caption).disclosureGroupStyle(ClickDisclosureStyle())
+    }.padding(12).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
   }
   private func recommendation(_ candidate: DiskCandidate) -> some View {
     let fresh = candidate.reviewable || candidate.recommendationEligible == true
@@ -150,7 +191,7 @@ struct DiskSettingsView: View {
       Stepper("Scan every \(settings.policy.scanHours) hours", value: $settings.policy.scanHours, in: 1...24).clickPointer()
       Stepper("Free-space goal: \(settings.policy.targetFreeGB) GB", value: $settings.policy.targetFreeGB, in: 10...1000, step: 10).clickPointer()
       Stepper("Remove at most \(settings.policy.maximumGBPerDay) GB / day", value: $settings.policy.maximumGBPerDay, in: 1...500).clickPointer()
-      field("Folders to inspect", value: $settings.roots, height: 50)
+      field("Folders eligible for guarded cleanup", value: $settings.roots, height: 50)
       field("Always protect", value: $settings.protectedPaths, height: 44)
       field("Preferences for your AI", value: $settings.policy.instructions, height: 65)
       HStack { Button("Reload") { settings.reload() }.clickPointer(); Spacer(); Button("Save settings") { settings.save() }.clickPointer().buttonStyle(.borderedProminent).tint(orange) }
@@ -167,7 +208,12 @@ struct DiskSettingsView: View {
         }
       }
       Text(settings.inventory.detail).font(.caption2).foregroundStyle(.secondary)
-      Text("Advice uses the same limited background reviewer, with up to three large items per review. Unchanged recommendations are reused. Local scans use no model tokens.").font(.caption2).foregroundStyle(.secondary)
+      Text(settings.discovery.detail).font(.caption2).foregroundStyle(.secondary)
+      Text("Discovery covers accessible storage across your Mac, independently of cleanup folders. Advice shares the existing review budget. Unchanged recommendations are reused; local scans use no model tokens.").font(.caption2).foregroundStyle(.secondary)
+      if !settings.candidates.isEmpty {
+        Text("Guarded cleanup candidates").font(.caption.weight(.semibold))
+        ForEach(settings.candidates.prefix(6)) { candidate in recommendation(candidate) }
+      }
     }
   }
   private func field(_ title: String, value: Binding<String>, height: CGFloat) -> some View {

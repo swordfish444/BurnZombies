@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "burnzombies",
   "display_name": "BurnZombies",
-  "version": "0.7.1",
+  "version": "0.9.0",
   "description": "Computer-wide observation and guarded cleanup of abandoned agent helpers on macOS.",
   "long_description": "Computer-wide process evidence, guarded graceful stops and verified impact through MCP. Use the single-command installer to enable the independent background observer and its selected harness reviewer; this MCP bundle alone provides interactive tools. Native macOS 14+, Apple Silicon/Intel. Ad-hoc signed, not notarized.",
   "author": {
@@ -49,6 +49,46 @@
     {
       "name": "burnzombies_work",
       "description": "Read durable lifecycle evidence across tasks without exposing ownership tokens."
+    },
+    {
+      "name": "burnzombies_workspace",
+      "description": "Register, release or inspect explicitly disposable workspaces."
+    },
+    {
+      "name": "burnzombies_workspace_preview",
+      "description": "Preview owner-released worktree cleanup with preservation checks."
+    },
+    {
+      "name": "burnzombies_workspace_clean",
+      "description": "Clean a supported worktree using a fresh guarded preview."
+    },
+    {
+      "name": "burnzombies_disk_decide",
+      "description": "Save advice for an exact disk candidate without removing files."
+    },
+    {
+      "name": "burnzombies_disk_inspect",
+      "description": "Inspect compact storage, producer and optional Mole evidence."
+    },
+    {
+      "name": "burnzombies_disk_explore",
+      "description": "Queue deeper local storage measurements without keeping a model running."
+    },
+    {
+      "name": "burnzombies_disk_evidence",
+      "description": "Read bounded source, build or retention evidence in a measured branch."
+    },
+    {
+      "name": "burnzombies_disk_recommend",
+      "description": "Save one practical storage recommendation without granting deletion permission."
+    },
+    {
+      "name": "burnzombies_disk_preview",
+      "description": "Preview an explicitly approved regenerable folder."
+    },
+    {
+      "name": "burnzombies_disk_clean",
+      "description": "Remove only the exact freshly previewed folder under native guards."
     }
   ],
   "compatibility": {
