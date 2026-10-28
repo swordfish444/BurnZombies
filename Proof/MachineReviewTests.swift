@@ -64,6 +64,28 @@ func machineReviewProof() async throws {
   try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: toolFailure.path)
   var failingToolConfig = config; failingToolConfig.executable = toolFailure.path
   throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture"))
+  let deferredAttempt = UUID()
+  try ReviewProgress(attempt: deferredAttempt, selected: ["space:fixture"]).save(store)
+  try ReviewProgress.record(store: store, attempt: deferredAttempt, operation: "disk_recommend", id: "space:fixture", succeeded: false)
+  try Data("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"bz.tool\",\"name\":\"burnzombies_disk_recommend\",\"status\":\"failed\"}'\n".utf8).write(to: toolFailure)
+  try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: deferredAttempt)
+  let rejectedProgress = try ReviewProgress.load(store)
+  check(rejectedProgress.completed.isEmpty, "A rejected recommendation never acknowledges work")
+  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: UUID()))
+  let refusalLine = "{\"type\":\"bz.tool\",\"name\":\"burnzombies_disk_recommend\",\"status\":\"failed\"}"
+  try Data("#!/bin/sh\nprintf '%s\\n' '\(refusalLine)' '\(refusalLine)'\n".utf8).write(to: toolFailure)
+  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: deferredAttempt))
+  try Data("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"error\",\"error\":\"quota fixture\"}'\n".utf8).write(to: toolFailure)
+  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: deferredAttempt))
+  let slowRoot = URL(fileURLWithPath: "/private/tmp/bz-slow-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: slowRoot) }
+  let slow = try AgentListener(root: slowRoot) { _ in
+    try? await Task.sleep(nanoseconds: 6_000_000_000)
+    return AgentReply(message: "Bounded inspection completed.")
+  }
+  let slowResult = try await Task.detached { try AgentConnection.call(AgentRequest("disk_inspect"), root: slowRoot) }.value
+  check(slowResult.contains("Bounded inspection completed"), "An inspection longer than the ordinary five-second frame deadline completes")
+  await slow.stop()
   for harness in MachineReviewConfiguration.harnesses {
     config.harness = harness
     let args = try MachineReviewer.arguments(config, directory: root, root: root, prompt: "Review this computer")

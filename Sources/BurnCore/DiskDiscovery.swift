@@ -2,6 +2,11 @@ import CBurn
 import Darwin
 import Foundation
 
+enum DiskAdviceError: LocalizedError {
+  case invalidText
+  var errorDescription: String? { "Supply a short factual recommendation and one concrete next step." }
+}
+
 /// Storage facts are deliberately independent of cleanup permissions and folder names.
 public struct DiskSpaceNode: Codable, Sendable, Identifiable {
   public var path: String
@@ -281,7 +286,7 @@ public final class DiskDiscovery: @unchecked Sendable {
               state.running = nil
               state.detail =
                 (state.unavailable ?? []).isEmpty
-                ? "Storage mapped. Recommendations use saved evidence and your existing AI budget."
+                ? "Storage mapped. Recommendations use saved evidence and focused AI reviews."
                 : "Storage mapped with \(state.unavailable?.count ?? 0) unavailable locations. Missing visibility is not empty space."
             }
             saveLocked()
@@ -362,7 +367,7 @@ public final class DiskDiscovery: @unchecked Sendable {
       guard saveLocked() else { throw StoreError.message(state.detail) }
       startLocked()
       return
-        "Deeper read-only mapping queued. New evidence will be reviewed later within the same daily budget. Finish now; do not wait or poll."
+        "Deeper read-only mapping queued. New evidence will be reviewed later in a later scheduled review. Finish now; do not wait or poll."
     }
   }
   public func inspect(
@@ -550,8 +555,7 @@ public final class DiskDiscovery: @unchecked Sendable {
         (3...80).contains(title.count), (20...500).contains(summary.count),
         (10...280).contains(nextStep.count)
       else {
-        throw StoreError.message(
-          "Supply a short factual recommendation and one concrete next step.")
+        throw DiskAdviceError.invalidText
       }
       let selected = node.members ?? [node.path]
       for other in state.nodes where other.id != id && state.advice[other.id] != nil {

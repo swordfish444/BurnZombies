@@ -82,6 +82,7 @@ public struct AgentReply: Codable, Sendable {
   public var diskDiscovery: [DiskSpaceSummary] = []
   public var diskInspection: DiskInspection?
   public var diskEvidence: [String: String]?
+  public var failureKind: String?
   public var diskPolicy: DiskReviewPolicy?
   public var activeWorkCount: Int = 0
   public var previewToken: String?
@@ -241,6 +242,10 @@ public actor AgentService {
           rationale: preview.rationale, callerPID: request.callerPID)
         state = await monitor.snapshot()
       }
+    } catch is DiskAdviceError {
+      var reply = AgentReply(ok: false, message: "Recommendation text did not meet the declared limits. Leave this branch pending; do not retry in this review.")
+      reply.failureKind = "recommendation_rejected"
+      return reply
     } catch { return AgentReply(ok: false, message: error.localizedDescription) }
     reply.worktreesCleaned = state.catalog.lifetimeWorktreesCleaned ?? 0
     reply.diskReclaimedBytes = state.catalog.lifetimeDiskReclaimedBytes ?? 0
@@ -354,7 +359,9 @@ public enum AgentConnection {
       throw StoreError.message("Agent request could not be sent.")
     }
     var buffer = [CChar](repeating: 0, count: 262_144)
-    let count = bz_agent_read(fd, &buffer, Int32(buffer.count))
+    // Inspection can include an eight-second bounded Mole analysis. Keep ordinary
+    // requests and the server's incoming-frame deadline short.
+    let count = bz_agent_read_timeout(fd, &buffer, Int32(buffer.count), request.operation == "disk_inspect" ? 15000 : 5000)
     guard count > 0 else { throw StoreError.message("BurnZombies did not respond. Check the app and try again.") }
     return buffer.withUnsafeBytes { String(decoding: $0.prefix(Int(count)), as: UTF8.self) }
   }

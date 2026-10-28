@@ -102,6 +102,7 @@ public struct ReviewProgress: Codable, Sendable {
   public var attempt: UUID
   public var selected: [String]
   public var steps: [Step] = []
+  public var refusals: [Step]?
   public init(attempt: UUID, selected: [String]) { self.attempt = attempt; self.selected = selected }
   public var completed: Set<String> {
     Set(steps.filter { ["disk_recommend", "disk_explore"].contains($0.tool) }.map(\.id))
@@ -112,14 +113,16 @@ public struct ReviewProgress: Codable, Sendable {
   public func save(_ store: Store) throws {
     try store.write(JSONEncoder().encode(self), to: store.root.appendingPathComponent("review-progress.json"), limit: 16384)
   }
-  public static func record(store: Store, attempt: UUID, operation: String, id: String?) throws {
+  public static func record(store: Store, attempt: UUID, operation: String, id: String?, succeeded: Bool = true) throws {
     guard let id, ["disk_inspect", "disk_evidence", "disk_recommend", "disk_explore"].contains(operation) else { return }
+    guard succeeded || operation == "disk_recommend" else { return }
     // Calls may be delivered in parallel by the harness; serialize their receipts.
     let lock = try InstanceLock(url: store.root.appendingPathComponent("review-progress.lock"))
     defer { withExtendedLifetime(lock) {} }
     var value = try load(store)
-    guard value.attempt == attempt, value.selected.contains(id), value.steps.count < 8 else { return }
-    value.steps.append(.init(tool: operation, id: id))
+    guard value.attempt == attempt, value.selected.contains(id), value.steps.count + (value.refusals?.count ?? 0) < 8 else { return }
+    if succeeded { value.steps.append(.init(tool: operation, id: id)) }
+    else { value.refusals = (value.refusals ?? []) + [.init(tool: operation, id: id)] }
     try value.save(store)
   }
 }

@@ -34,6 +34,7 @@ int32_t bz_agent_peer_pid(int fd);
 int bz_agent_wakeup_pair(int *fds);
 int bz_agent_connect(const char *path);
 int bz_agent_read(int fd, char *buffer, int capacity);
+int bz_agent_read_timeout(int fd, char *buffer, int capacity, int milliseconds);
 int bz_agent_write(int fd, const char *buffer, int count);
 int bz_review_worker(char *const argv[], int seconds);
 // Runs only a caller-created tool group; bounds capture and closes its descendants.

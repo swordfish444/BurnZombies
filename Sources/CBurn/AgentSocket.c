@@ -80,8 +80,12 @@ int bz_agent_accept(int listener, int wakeup) {
 }
 // A single bounded newline frame. A trickling peer cannot hold the bridge forever.
 int bz_agent_read(int fd, char *buffer, int capacity) {
+    return bz_agent_read_timeout(fd, buffer, capacity, 5000);
+}
+int bz_agent_read_timeout(int fd, char *buffer, int capacity, int milliseconds) {
+    if (milliseconds < 1 || milliseconds > 15000) { errno = EINVAL; return -1; }
     int used = 0;
-    uint64_t deadline = bz_continuous_ns() + 5000000000ull;
+    uint64_t deadline = bz_continuous_ns() + (uint64_t)milliseconds * 1000000ull;
     while (used < capacity && bz_continuous_ns() < deadline) {
         struct pollfd p = {fd, POLLIN, 0};
         int ready = poll(&p, 1, 500);

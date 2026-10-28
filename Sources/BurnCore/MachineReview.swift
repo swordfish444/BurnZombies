@@ -408,7 +408,21 @@ public actor MachineReviewer {
     guard process.terminationStatus == 0 else {
       throw StoreError.message("\(c.harness) could not complete the review (exit \(process.terminationStatus)). Check its login, permissions or usage limits, then resume. No automatic retry or provider switch.")
     }
+    // A native read-only refusal is useful evidence, not an account failure.
+    // Accept only exact-attempt receipts; transport, permission, harness and
+    // destructive-operation failures still pause instead of being retried.
+    let progress = try? ReviewProgress.load(store)
+    var deferred = lane == .discovery && progress?.attempt == attempt
+      ? (progress?.refusals ?? []).filter { $0.tool == "disk_recommend" && progress?.selected.contains($0.id) == true }
+        .map { "burnzombies_" + $0.tool } : []
     for line in String(decoding: bytes, as: UTF8.self).split(separator: "\n") {
+      if let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+        object["type"] as? String == "bz.tool", object["status"] as? String == "failed",
+        object["error"] == nil, object["is_error"] as? Bool != true,
+        let name = object["name"] as? String, let i = deferred.firstIndex(of: name) {
+        deferred.remove(at: i)
+        continue
+      }
       if let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
         object["is_error"] as? Bool == true || object["type"] as? String == "error" || object["error"] != nil ||
           (object["type"] as? String == "bz.tool" && object["status"] as? String == "failed") {
