@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """App-server protocol fixture. No provider call or live config access."""
-import json,sys
+import json,sys,os
 assert sys.argv[1] == 'app-server'
 assert 'mcp_servers={}' in sys.argv
 assert 'features.hooks=false' in sys.argv
@@ -13,9 +13,13 @@ for line in sys.stdin:
     if method=='initialize':emit({'id':v['id'],'result':{}})
     elif method=='thread/start':
         assert params['ephemeral'] and params['approvalsReviewer']=='auto_review'
+        if os.environ.get('BZ_EXPECT_FOCUSED'):
+            assert params['baseInstructions']=='Focused fixture instructions', 'Wrong instructions crossed app-server boundary'
         model=params.get('model','gpt-6.1-sol')
         emit({'id':v['id'],'result':{'thread':{'id':'fixture-thread'},'model':model,'reasoningEffort':effort}})
     elif method=='turn/start':
+        if os.environ.get('BZ_EXPECT_FOCUSED'):
+            assert params['input']==[{'type':'text','text':'Review supplied evidence.'}], 'Instructions duplicated in user input'
         emit({'id':v['id'],'result':{'turn':{'id':'fixture-turn'}}})
         usage={'inputTokens':100,'cachedInputTokens':80,'outputTokens':10,'reasoningOutputTokens':5,'totalTokens':110}
         for _ in range(2):emit({'method':'thread/tokenUsage/updated','params':{'threadId':'fixture-thread','turnId':'fixture-turn','tokenUsage':{'total':usage,'last':usage}}})

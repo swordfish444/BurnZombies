@@ -56,7 +56,7 @@ Everything that matters in one small panel: **zombies burned, memory released, d
 - **Find the big pockets.** **Settings → Disk cleanup** follows storage across your Mac, including folders outside agent worktrees. Your AI investigates what created it, groups repeated outputs and gives you a practical next step. Cards start at 10 GB of measured unshared storage; APFS copies don't inflate the number. Scanning uses no AI tokens. Already use Mole? Its storage analysis adds context to the same bounded review. [Disk discovery & cleanup →](docs/DISK-CLEANUP.md) · [Mole integration →](docs/MOLE-INTEGRATION.md)
 - **Keep the good stuff alive.** Exact identities, protected harnesses, graceful stops and verified receipts. Uncertain work stays running.
 - **See the payoff.** Zombies burned, memory released, disk reclaimed, worktrees cleaned and a concrete cleanup benefit in a quiet menu bar app.
-- **Stays out of your way.** No windows opening when reviews start. Only new supported evidence triggers a review: at least one hour between reviews, at most eight reviews per rolling day, and a pause on failure.
+- **Spends tokens on useful work.** Reviews get a small, focused evidence batch and only the tools it needs. Completed work stays quiet, unfinished investigations stay queued, and reviews run at most hourly. No daily token cutoff strands useful work. Failures pause instead of retrying. No windows open when reviews start.
 
 Native code observes, schedules and verifies. Your selected harness supplies the model and uses MCP for guarded cleanup. Reviews use its existing account and usage allowance. [How it works →](docs/MCP.md) · [Lifecycle evidence →](docs/LIFECYCLE-EVIDENCE.md)
 

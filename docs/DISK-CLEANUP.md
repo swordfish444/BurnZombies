@@ -24,7 +24,7 @@ Before removal, the path must belong to the same repository, be ignored and cont
 
 **Active consumers or incomplete same-user handle visibility block removal.** No permission downgrade or age threshold bypasses this boundary. Protected macOS services can make unattended disk cleanup unavailable. Discovery can still explain the opportunity; process observation continues.
 
-Discovery and cleanup share the same hourly cooldown, eight daily starts, recorded-input threshold, eight-call review budget and failure pause. Small file changes and unchanged recommendations do not launch new reviews. Deeper scans produce new evidence for a later budgeted review. Destructive actions always use fresh, complete evidence. Settings changes and local scans never invoke a model directly. See [usage accounting](USAGE.md).
+Discovery and cleanup share the hourly cooldown, eight-call review budget and failure pause. Daily token/count cutoffs do not stop useful work. Discovery reviews expose only storage tools and concise storage instructions; up to two supplied branches match the inspection budget. Unhandled branches stay queued, with backoff after repeated attempts without progress. Small file changes and unchanged recommendations do not launch new reviews. Deeper native scans produce evidence for a later review without keeping a model running. Destructive actions always use fresh, complete evidence. Settings changes and local scans never invoke a model directly. See [usage accounting](USAGE.md).
 
 ## Whole worktrees need their owner's lifecycle
 

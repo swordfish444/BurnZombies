@@ -80,18 +80,81 @@ func machineReviewProof() async throws {
   equal(ledger.entries.count, 2, "Every attempt has a durable receipt, including failure")
   var exhausted = ReviewLedger()
   for _ in 0..<8 { _ = exhausted.reserve(harness: "codex", evidenceCount: 1, now: now) }
-  check(exhausted.limitReason(now: now) != nil)
-  check(exhausted.limitReason(now: now.addingTimeInterval(86401)) == nil)
-  try exhausted.save(store: store)
-  let persistedLimit = try ReviewLedger.load(store: store).limitReason(now: now)
-  check(persistedLimit != nil, "Restart cannot reset the daily attempt limit")
   let usage = ReviewUsage.parse(Data("{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"output_tokens\":5}}\n".utf8))
   equal(usage?.inputTokens, 100); equal(usage?.cachedInputTokens, 80)
   equal(usage?.outputTokens, 5)
   check(ReviewUsage.parse(Data("{}".utf8)) == nil, "Missing usage is unknown, not zero")
-  exhausted.entries = Array(exhausted.entries.prefix(1))
   exhausted.entries[0].usage = .init(inputTokens: 200_000, cachedInputTokens: 190_000, outputTokens: 1)
-  check(exhausted.limitReason(now: now) != nil, "Cached input also counts toward the launch threshold")
+  try exhausted.save(store: store)
+  // A real coordinator invocation must proceed above the former cap, not just a helper assertion.
+  config.harness = "claude"; config.executable = "/usr/bin/true"; try config.save(root: root)
+  var fresh = MachineReviewState(); fresh.pendingSince = now.addingTimeInterval(-120)
+  try store.write(JSONEncoder().encode(fresh), to: root.appendingPathComponent("machine-review-state.json"), limit: 65536)
+  try HarnessHook.publish(.init(observedAt: now, processCount: 1, residentBytes: 1, pressure: "Low",
+    reviewEvidence: [.init(id: "above-old-cap", revision: "new")]), store: store)
+  let uncapped = try MachineReviewer(root: root)
+  await uncapped.tick(now: now)
+  let uncappedState = await uncapped.snapshot()
+  equal(uncappedState.phase, "observing")
+  check(uncappedState.lastStarted != nil, "Useful evidence launches above 200k recorded input")
+  equal(try ReviewLedger.load(store: store).entries.count, 9, "Useful evidence continues after eight reviews")
+
+  let branches = (0..<3).map { ReviewEvidence(id: "space:\($0)", revision: "v1", processCount: 0, recommendationOnly: true) }
+  var queue = MachineReviewState()
+  queue.reviewedEvidence = ["space:0": "v1", "work": "released"]
+  queue.migrateProgress()
+  check(queue.reviewedEvidence?["space:0"] == nil, "Repair old offered-but-uninspected discovery acknowledgments")
+  equal(queue.reviewedEvidence?["work"], "released", "Migration must not retry uncertain cleanup mutations")
+  var diskSignal = HarnessHook.Signal(observedAt: now, processCount: 1, residentBytes: 1, pressure: "Low", reviewEvidence: branches)
+  let selected = queue.pending(diskSignal, now: now)
+  equal(selected.map(\.id), ["space:0", "space:1"], "Offer no more branches than can be inspected")
+  queue.begin(selected, now: now)
+  let attempt = UUID()
+  try ReviewProgress(attempt: attempt, selected: selected.map(\.id)).save(store)
+  try ReviewProgress.record(store: store, attempt: attempt, operation: "disk_inspect", id: "space:0")
+  queue.complete(selected, progress: try ReviewProgress.load(store))
+  check(queue.reviewedEvidence?["space:0"] == nil, "Inspection alone is not a saved decision")
+  try ReviewProgress.record(store: store, attempt: UUID(), operation: "disk_recommend", id: "space:0")
+  try ReviewProgress.record(store: store, attempt: attempt, operation: "disk_recommend", id: "space:2")
+  let refusedProgress = try ReviewProgress.load(store)
+  check(refusedProgress.completed.isEmpty, "Wrong attempt and out-of-scope IDs cannot acknowledge work")
+  try ReviewProgress.record(store: store, attempt: attempt, operation: "disk_recommend", id: "space:0")
+  queue.complete(selected, progress: try ReviewProgress.load(store))
+  equal(queue.reviewedEvidence?["space:0"], "v1")
+  check(queue.reviewedEvidence?["space:1"] == nil)
+  equal(queue.pending(diskSignal, now: now.addingTimeInterval(3600)).map(\.id), ["space:2", "space:1"], "Untouched work precedes deferred work; neither is lost")
+  queue.begin([branches[1]], now: now.addingTimeInterval(3600))
+  equal(queue.pending(diskSignal, now: now.addingTimeInterval(7200)).map(\.id), ["space:2"], "Repeated no-progress evidence backs off without blocking fresh evidence")
+  diskSignal.reviewEvidence = [.init(id: "space:1", revision: "v2", processCount: 0, recommendationOnly: true)]
+  equal(queue.pending(diskSignal, now: now.addingTimeInterval(7200)).count, 1, "New evidence supersedes backoff")
+  let roundTrip = try JSONDecoder().decode(MachineReviewState.self, from: JSONEncoder().encode(queue))
+  equal(roundTrip.pending(diskSignal, now: now.addingTimeInterval(7200)).count, 1)
+  check(ReviewLane.discovery.instructions.utf8.count < MachineReviewer.prompt.utf8.count / 2, "Discovery instructions exclude unrelated playbooks")
+  checkFalse(ReviewLane.discovery.tools.contains("burnzombies_burn"))
+  equal(ReviewLane.discovery.tools.count, 5)
+  equal(ReviewLane.process.tools.count, 4)
+  var simulation = MachineReviewState()
+  let backlog = (0..<40).map { ReviewEvidence(id: "space:backlog-\($0)", revision: "v1", processCount: 0, recommendationOnly: true) }
+  var completedIDs = Set<String>(), starts = 0
+  for hour in 0..<24 {
+    let at = now.addingTimeInterval(Double(hour * 3600))
+    let current = HarnessHook.Signal(observedAt: at, processCount: 1, residentBytes: 1, pressure: "Low", reviewEvidence: backlog)
+    simulation.pendingSince = at.addingTimeInterval(-120)
+    guard simulation.due(current, requested: false, now: at) else { continue }
+    let batch = simulation.pending(current, now: at)
+    check(Set(batch.map(\.id)).isDisjoint(with: completedIDs), "Completed evidence must never be reviewed twice")
+    simulation.lastStarted = at; simulation.begin(batch, now: at)
+    let token = UUID()
+    try ReviewProgress(attempt: token, selected: batch.map(\.id)).save(store)
+    for item in batch {
+      try ReviewProgress.record(store: store, attempt: token, operation: "disk_recommend", id: item.id)
+      completedIDs.insert(item.id)
+    }
+    simulation.complete(batch, progress: try ReviewProgress.load(store))
+    starts += 1
+  }
+  equal(completedIDs.count, 40, "A day-long backlog keeps progressing beyond the former eight-review limit")
+  equal(starts, 20, "No empty reviews after finishing a forty-branch backlog")
   var facts = Catalog()
   let record = SafetyTests().record()
   facts.records[record.id] = record

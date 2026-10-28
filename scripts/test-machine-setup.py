@@ -56,6 +56,14 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
         subprocess.run(command+['--model','default','--thinking','default'],env=env,check=True,capture_output=True)
         reset = json.loads((state/'machine-review.json').read_text())
         assert reset.get('model') is None and reset.get('reasoningEffort') is None
+    # Verify the real Codex adapter sends one focused instruction block, not the full playbook twice.
+    plan = root/'focused-plan.json'
+    plan.write_text(json.dumps({'executable':str(fake/'codex'),'model':'example-model','effort':'low',
+        'instructions':'Focused fixture instructions','prompt':'Review supplied evidence.',
+        'overrides':['features.hooks=false']}))
+    focused = subprocess.run([str(cli),'review-codex',str(plan)],
+        env=dict(env,BZ_EXPECT_FOCUSED='1'),capture_output=True,text=True,timeout=15)
+    assert focused.returncode==0, focused.stdout+focused.stderr
     # One reviewer group is cancelled without touching a sibling active job.
     script = root/'worker'; pidfile = root/'pids'
     script.write_text('#!/bin/sh\ntrap "" TERM\nsleep 60 &\necho "$$ $!" > "$1"\nwait\n')
