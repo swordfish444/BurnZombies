@@ -36,7 +36,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     }
     if CommandLine.arguments.contains("--mole-hang-fixture") {
       signal(SIGTERM, SIG_IGN)
-      var argv = [CommandLine.arguments[0], "--mole-leaf-fixture"].map { strdup($0) } + [nil]
+      var argv = [CommandLine.arguments[0], "--mole-leaf-fixture"].map { (value: String) in value.withCString { strdup($0) } } + [nil]
       var environment = [strdup("PATH=/usr/bin:/bin"), nil]
       var child: pid_t = -1
       let code = posix_spawn(&child, argv[0]!, nil, nil, &argv, &environment)

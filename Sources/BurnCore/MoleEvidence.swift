@@ -98,10 +98,11 @@ public struct MoleEvidence: Codable, Sendable {
       try? handle.close()
       try? FileManager.default.removeItem(at: output)
     }
-    var argv = [binary, "--json", path].map { strdup($0) } + [nil]
+    var argv =
+      [binary, "--json", path].map { (value: String) in value.withCString { strdup($0) } } + [nil]
     var environment =
       ["HOME=" + NSHomeDirectory(), "PATH=/usr/bin:/bin", "LC_ALL=C", "NO_COLOR=1"]
-      .map { strdup($0) } + [nil]
+      .map { (value: String) in value.withCString { strdup($0) } } + [nil]
     defer {
       argv.forEach { free($0) }
       environment.forEach { free($0) }

@@ -185,7 +185,7 @@ func toolCaptureProof() throws {
     try? FileManager.default.removeItem(at: output)
   }
   func run(_ args: [String], limit: UInt64 = 4096) -> Int32 {
-    var argv = args.map { strdup($0) } + [nil]
+    var argv = args.map { (value: String) in value.withCString { strdup($0) } } + [nil]
     var env = [strdup("PATH=/usr/bin:/bin"), nil]
     defer {
       argv.forEach { free($0) }
