@@ -8,6 +8,7 @@ import select
 import subprocess
 import tempfile
 import time
+import uuid
 
 repo = Path(__file__).resolve().parents[1]
 binary = repo / ".build/debug"
@@ -46,8 +47,11 @@ with tempfile.TemporaryDirectory(prefix="bz-discovery-mcp-") as directory:
     server = None
     try:
         assert line(fixture).strip() == b"READY"
+        attempt = str(uuid.uuid4()).upper()
+        (root / 'review-progress.json').write_text(json.dumps({'attempt':attempt,'selected':[identity],'steps':[]}))
         env = dict(os.environ, BURNZOMBIES_HOME=str(root), BURNZOMBIES_REVIEW_MODE="1",
-                   BURNZOMBIES_REVIEW_IDS=json.dumps([identity]))
+                   BURNZOMBIES_REVIEW_IDS=json.dumps([identity]), BURNZOMBIES_REVIEW_LANE='discovery',
+                   BURNZOMBIES_REVIEW_ATTEMPT=attempt)
         server = subprocess.Popen([str(binary / "burnzombies-mcp")], env=env,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         sequence = 0
@@ -62,6 +66,11 @@ with tempfile.TemporaryDirectory(prefix="bz-discovery-mcp-") as directory:
             return response
         send("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "storage-proof", "version": "1"}})
         send("notifications/initialized", {}, True)
+        names = {t['name'] for t in send('tools/list', {})['result']['tools']}
+        assert names == {'burnzombies_status','burnzombies_disk_inspect','burnzombies_disk_evidence',
+                         'burnzombies_disk_explore','burnzombies_disk_recommend'}, names
+        rejected = send('tools/call', {'name':'burnzombies_burn','arguments':{'preview_token':str(uuid.uuid4())}})
+        assert 'error' in rejected, 'Unrelated mutation tools must be refused, not merely hidden'
         def call(name, arguments):
             result = send("tools/call", {"name": "burnzombies_" + name, "arguments": arguments})["result"]
             return result, json.loads(result["content"][0]["text"])
@@ -90,6 +99,10 @@ with tempfile.TemporaryDirectory(prefix="bz-discovery-mcp-") as directory:
         assert stored["advice"][group["id"]]["disposition"] == "rebuildable"
         result, queued = call("disk_explore", {"node_id": identity})
         assert not result.get("isError") and "queued" in queued["message"]
+        progress = json.loads((root / 'review-progress.json').read_text())
+        assert progress['attempt'] == attempt
+        assert any(s['tool']=='disk_explore' and s['id']==identity for s in progress['steps'])
+        assert not any(s['id']=='space:unknown' for s in progress['steps']), 'Failed calls cannot acknowledge work'
         for path, digest in expected.items(): assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
         assert not (root / "review-usage.json").exists(), "Read-only protocol tests must not start a model"
         print("PASS production MCP discovery: grouped storage, producer/retention evidence, scope refusals, saved advice, queued native exploration; no deletion or model tokens")

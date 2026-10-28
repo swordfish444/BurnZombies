@@ -6,7 +6,8 @@ public struct CodexReviewPlan: Codable {
   public var effort: String?
   public var prompt: String
   public var overrides: [String]
-  public init(executable: String, model: String?, effort: String?, prompt: String, overrides: [String]) {
-    self.executable = executable; self.model = model; self.effort = effort; self.prompt = prompt; self.overrides = overrides
+  public var instructions: String?
+  public init(executable: String, model: String?, effort: String?, prompt: String, overrides: [String], instructions: String? = nil) {
+    self.executable = executable; self.model = model; self.effort = effort; self.prompt = prompt; self.overrides = overrides; self.instructions = instructions
   }
 }

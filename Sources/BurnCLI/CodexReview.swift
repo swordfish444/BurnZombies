@@ -98,11 +98,11 @@ enum CodexReview {
         try event(object)
       }
     }
-    _ = try rpc("initialize", ["clientInfo": ["name": "burnzombies", "version": "0.9.0"], "capabilities": ["experimentalApi": true]])
+    _ = try rpc("initialize", ["clientInfo": ["name": "burnzombies", "version": "0.9.1"], "capabilities": ["experimentalApi": true]])
     try send(["method": "initialized"])
     var start: [String: Any] = ["cwd": planURL.deletingLastPathComponent().path, "ephemeral": true,
       "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "sandbox": "workspace-write",
-      "baseInstructions": MachineReviewer.prompt]
+      "baseInstructions": plan.instructions ?? MachineReviewer.prompt]
     if let selected = plan.model { start["model"] = selected }
     let response = try rpc("thread/start", start)
     guard let thread = response["thread"] as? [String: Any], let id = thread["id"] as? String,

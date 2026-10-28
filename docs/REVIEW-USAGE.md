@@ -4,7 +4,7 @@ Cause: the old observer launched a model on startup, every hour, on ordinary mem
 
 The 24-hour trial captured 25 distinct completed review logs with 5,133,398 input tokens (4,173,056 cached) and 17,749 output tokens. This is a lower bound from retained evidence, not account-credit or billing telemetry. Eighteen captured no-op reviews had a median of 226,328 input tokens.
 
-The repair gates model dispatch on new released lifecycle evidence, coalesces releases for two minutes, uses a 30-minute minimum interval, persists reviewed revisions, and limits starts to eight per rolling day. A 200,000 recorded-input-token threshold, including cached input, blocks further starts; the final run can exceed that threshold. Unavailable usage remains unknown and consumes an attempt. This is not a provider-enforced hard token or credit ceiling.
+The original repair added dispatch gates and daily cutoffs. Version 0.9.1 replaces the daily cutoffs with focused evidence batches, relevant tools, an hourly interval, explicit storage-progress receipts and backoff for read-only attempts without progress. The observer stays useful after a busy morning instead of stopping at a cached-input threshold. Unavailable usage remains unknown, and failures still pause. See [current accounting and controls](USAGE.md).
 
 Codex loads a focused cleanup policy with optional apps, plugins, memories, host skills and unrelated tools disabled for the invocation. Authentication, selected model/thinking and managed security controls stay with Codex. Native identity, consumer, worktree and preview safeguards are unchanged. The working-task lifecycle skill uses the CLI by default; global MCP integration remains opt-in. No chat hooks are installed.
 

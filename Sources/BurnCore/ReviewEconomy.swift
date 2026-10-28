@@ -42,7 +42,8 @@ public struct ReviewEvidence: Codable, Equatable, Sendable {
     for workspace in catalog.workspaces ?? [] where workspace.state == "released" {
       result.append(.init(id: workspace.id, revision: digest(workspace.id + "|" + String(workspace.updated.timeIntervalSinceReferenceDate)), processCount: 0))
     }
-    return result.sorted { $0.id < $1.id }
+    // Preserve the producer's measured opportunity order instead of sorting opaque hashes.
+    return result
   }
   private static func digest(_ value: String) -> String {
     SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -113,16 +114,6 @@ public struct ReviewLedger: Codable, Sendable {
   }
   public var entries: [Entry] = []
   public init() {}
-  public static let maximumReviews = 8
-  public static let inputTokenLimit = 200_000
-  public func limitReason(now: Date) -> String? {
-    let recent = entries.filter { now.timeIntervalSince($0.started) < 86400 }
-    if recent.count >= Self.maximumReviews { return "Daily review limit reached (8 per rolling 24 hours). Observation continues." }
-    if recent.reduce(0, { $0 + ($1.usage?.inputTokens ?? 0) }) >= Self.inputTokenLimit {
-      return "Daily review token threshold reached. Observation continues; no further reviews today."
-    }
-    return nil
-  }
   public mutating func reserve(harness: String, evidenceCount: Int, now: Date, model: String? = nil) -> UUID {
     entries.removeAll { now.timeIntervalSince($0.started) > 32 * 86400 }
     let id = UUID()

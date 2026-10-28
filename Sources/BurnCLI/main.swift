@@ -72,7 +72,7 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.9.0
+      BurnZombies 0.9.1
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.

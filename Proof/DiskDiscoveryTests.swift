@@ -186,12 +186,7 @@ func diskDiscoveryProof() throws {
   let evidence = ReviewEvidence.pending(in: catalog)
   equal(evidence.count, 1)
   equal(evidence[0].recommendationOnly, true)
-  var ledger = ReviewLedger()
-  for _ in 0..<ReviewLedger.maximumReviews {
-    _ = ledger.reserve(harness: "codex", evidenceCount: 1, now: Date())
-  }
-  check(
-    ledger.limitReason(now: Date()) != nil, "Discovery must share the existing daily review limit")
+  equal(ReviewLane.lane(for: evidence[0]), .discovery, "Discovery gets a focused read-only toolset")
 }
 
 func toolCaptureProof() throws {
