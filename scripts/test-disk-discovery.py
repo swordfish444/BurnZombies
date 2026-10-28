@@ -91,6 +91,10 @@ with tempfile.TemporaryDirectory(prefix="bz-discovery-mcp-") as directory:
         assert result.get("isError") and not refusal["ok"]
         result, refusal = call("disk_inspect", {"node_id": "space:unknown"})
         assert result.get("isError") and not refusal["ok"]
+        result, refused_advice = call("disk_recommend", {"node_id": identity, "disposition": "investigate",
+            "title": "x" * 81, "summary": "Fixture recommendation with invalid display length.",
+            "next_step": "Preserve this branch for a future review."})
+        assert result.get('isError') and refused_advice['failureKind'] == 'recommendation_rejected'
         result, saved = call("disk_recommend", {"node_id": group["id"], "disposition": "rebuildable",
             "title": "Review repeated compilation output", "summary": "The compiler produces these folders; preserve source and accepted evidence. Incomplete visibility still blocks removal.",
             "next_step": "Validate that consumers are finished before approving exact generated folders."})
@@ -103,6 +107,7 @@ with tempfile.TemporaryDirectory(prefix="bz-discovery-mcp-") as directory:
         assert progress['attempt'] == attempt
         assert any(s['tool']=='disk_explore' and s['id']==identity for s in progress['steps'])
         assert not any(s['id']=='space:unknown' for s in progress['steps']), 'Failed calls cannot acknowledge work'
+        assert progress['refusals'] == [{'tool':'disk_recommend','id':identity}]
         for path, digest in expected.items(): assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
         assert not (root / "review-usage.json").exists(), "Read-only protocol tests must not start a model"
         print("PASS production MCP discovery: grouped storage, producer/retention evidence, scope refusals, saved advice, queued native exploration; no deletion or model tokens")
