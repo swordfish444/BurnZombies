@@ -31,10 +31,12 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
   static func main() async {
     setbuf(stdout, nil)
     if CommandLine.arguments.contains("--mole-leaf-fixture") {
+      alarm(10)
       signal(SIGTERM, SIG_IGN)
       while true { pause() }
     }
     if CommandLine.arguments.contains("--mole-hang-fixture") {
+      alarm(10)
       signal(SIGTERM, SIG_IGN)
       var argv = [CommandLine.arguments[0], "--mole-leaf-fixture"].map { (value: String) in value.withCString { strdup($0) } } + [nil]
       var environment = [strdup("PATH=/usr/bin:/bin"), nil]
@@ -46,6 +48,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       while true { pause() }
     }
     if CommandLine.arguments.contains("--mole-output-fixture") {
+      alarm(10)
       try? FileHandle.standardOutput.write(contentsOf: Data(repeating: 65, count: 131072))
       while true { pause() }
     }

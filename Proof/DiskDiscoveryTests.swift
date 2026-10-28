@@ -234,10 +234,17 @@ func toolCaptureProof() throws {
   equal(pids.count, 2, "Timeout fixture must create both analyzer and helper")
   for pid in pids {
     var process = bz_process()
-    let found = bz_read(pid, &process)
+    var found: Int32 = -1
+    let deadline = ProcessInfo.processInfo.systemUptime + 2
+    repeat {
+      found = bz_read(pid, &process)
+      if found == 0 || (found == 1 && process.status == 5) { break }
+      Thread.sleep(forTimeInterval: 0.01)
+    } while ProcessInfo.processInfo.systemUptime < deadline
     check(
       found == 0 || (found == 1 && process.status == 5),
-      "Owned analyzer/helper must be exited after timeout")
+      "Owned analyzer/helper must exit after timeout: pid=\(pid), read=\(found), status=\(process.status), group=\(process.pgid)"
+    )
   }
   check(control.isRunning, "Unrelated processes must survive analyzer cancellation")
   equal(run([binary, "--mole-output-fixture"]), 125)
