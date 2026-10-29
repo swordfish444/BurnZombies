@@ -17,6 +17,8 @@ func json<T: Encodable>(_ value: T) throws {
 let args = Array(CommandLine.arguments.dropFirst())
 do {
   switch args.first ?? "help" {
+  case "--disk-walk-worker":
+    exit(DiskWalkWorker.run(arguments: Array(args.dropFirst())))
   case "start-observer":
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     let app = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

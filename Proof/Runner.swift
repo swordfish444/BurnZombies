@@ -30,6 +30,17 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.firstIndex(of: "--disk-walk-worker") == 1 {
+      exit(DiskWalkWorker.run(arguments: Array(CommandLine.arguments.dropFirst(2))))
+    }
+    if CommandLine.arguments.firstIndex(of: "--disk-walk-fixture") == 1 {
+      do { try diskWalkFixture() } catch { print("Disk worker fixture: \(error)"); exit(1) }
+    }
+    if CommandLine.arguments.contains("--disk-worker") {
+      do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
+      print("Disk worker checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--owner-agent-fixture" {
       do { try await runOwnerHarnessFixture(root: URL(fileURLWithPath: CommandLine.arguments[2])) }
       catch { print("FAIL: \(error)"); exit(1) }
@@ -185,6 +196,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try test() } catch { failTest("\(name): \(error)") }
       if failures == before { print("PASS \(name)") }
     }
+    do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
     do { try await gradleDaemonProof() } catch { failTest("Gradle daemon: \(error)") }
     do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
     do { try usageProof(); try await passiveProof(); try await diskProof() } catch { failTest("Passive/usage: \(error)") }

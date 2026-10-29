@@ -170,16 +170,22 @@ public final class DiskDiscovery: @unchecked Sendable {
   private let mutex = NSLock()
   private var state: DiskDiscoveryState
   private var worker = false
+  private var walkTeardownFailed = false
+  private let walker: DiskWalkRunner
   private var enabled = true
   private var protected: [String] = []
   private let moleAnalyzer: MoleAnalyzer
   private let useMole: Bool
-  public init(store: Store, roots: [String]? = nil, moleAnalyzer: MoleAnalyzer? = nil) throws {
+  public init(store: Store, roots: [String]? = nil, moleAnalyzer: MoleAnalyzer? = nil,
+    walker: DiskWalkRunner? = nil) throws {
+    self.walker = walker ?? DiskWalkRunner()
     self.moleAnalyzer = moleAnalyzer ?? MoleAnalyzer()
     useMole = moleAnalyzer != nil || (store.root == Store.defaultRoot && ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil)
     self.store = store
-    self.roots = (roots ?? [NSHomeDirectory(), "/Applications", "/Library", "/private/var"])
-      .map(WorkspaceSafety.canonical)
+    self.roots = roots ?? [NSHomeDirectory(), "/Applications", "/Library", "/private/var"]
+    guard self.roots.allSatisfy(DiskWalkRunner.validPath) else {
+      throw StoreError.message("Storage roots must be normalized absolute paths.")
+    }
     state = try DiskDiscoveryState.load(store)
     if let interrupted = state.running {
       state.queue.insert(interrupted, at: 0)
@@ -225,7 +231,7 @@ public final class DiskDiscovery: @unchecked Sendable {
     }
   }
   private func startLocked() {
-    guard enabled, !worker, !state.queue.isEmpty else { return }
+    guard enabled, !worker, !walkTeardownFailed, !state.queue.isEmpty else { return }
     worker = true
     DispatchQueue.global(qos: .background).async { [self] in run() }
   }
@@ -253,88 +259,109 @@ public final class DiskDiscovery: @unchecked Sendable {
       saveLocked()
       return p
     }) {
-      guard roots.contains(where: { WorkspaceSafety.contains($0, path) }),
-        path == WorkspaceSafety.canonical(path), let walk = bz_disk_open(path, 3)
-      else {
-        mutex.withLock {
-          state.running = nil
-          state.unavailable = Array(Set((state.unavailable ?? []) + [path])).sorted()
-          state.detail =
-            "Some storage is unavailable or online-only. It has not been treated as empty."
-          saveLocked()
-        }
+      let revision = mutex.withLock { state.policyRevision }
+      guard roots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }),
+        DiskWalkRunner.validPath(path) else {
+        mutex.withLock { markUnavailableLocked(path, detail: "Storage scope is unavailable.") }
         continue
       }
-      var done = false
       var lastPublish = Date.distantPast
-      while mutex.withLock({ enabled }) && !done {
-        done = bz_disk_step(walk, 2000) != 0
-        if done || Date().timeIntervalSince(lastPublish) >= 15 {
-          var values = Self.read(walk, root: path, complete: done)
-          mutex.withLock {
-            let priorSupplements = Dictionary(uniqueKeysWithValues: state.nodes.filter { $0.members == nil }
-              .map { ($0.path, $0.supplementaryRevision) })
-            for i in values.indices {
-              values[i].reviewPolicyRevision = state.policyRevision
-              values[i].supplementaryRevision = priorSupplements[values[i].path] ?? nil
-            }
-            // Prefer the latest measurement for identical paths. Never add an
-            // ancestor's size to its descendants' sizes.
-            let paths = Set(values.map(\.path))
-            state.nodes.removeAll {
-              $0.members == nil && ($0.scanRoot == path || paths.contains($0.path))
-            }
-            state.nodes += values
-            if done {
-              let byPath = Dictionary(uniqueKeysWithValues: values.map { ($0.path, $0) })
-              for i in state.nodes.indices {
-                guard let members = state.nodes[i].members,
-                  members.contains(where: { byPath[$0] != nil })
-                else { continue }
-                let measured = members.compactMap { byPath[$0] }
-                guard measured.count == members.count else {
-                  state.nodes[i].complete = false
-                  continue
-                }
-                state.nodes[i].allocated = measured.reduce(0) { $0 + $1.allocated }
-                state.nodes[i].unshared = measured.reduce(0) { $0 + $1.unshared }
-                state.nodes[i].files = measured.reduce(0) { $0 + $1.files }
-                state.nodes[i].unknown = measured.reduce(0) { $0 + $1.unknown }
-                state.nodes[i].errors = measured.reduce(0) { $0 + $1.errors }
-                state.nodes[i].dataless = measured.reduce(0) { $0 + $1.dataless }
-                state.nodes[i].measured = Date()
-                state.nodes[i].complete = true
-              }
-            }
-            state.nodes = Array(state.nodes.sorted { $0.measured > $1.measured }.prefix(12_000))
-            if done {
-              state.running = nil
-              state.detail =
-                (state.unavailable ?? []).isEmpty
-                ? "Storage mapped. Recommendations use saved evidence and focused AI reviews."
-                : "Storage mapped with \(state.unavailable?.count ?? 0) unavailable locations. Missing visibility is not empty space."
-            }
-            saveLocked()
-          }
-          lastPublish = Date()
-        }
-        if !done { Thread.sleep(forTimeInterval: 0.01) }
-      }
-      bz_disk_close(walk)
-      if !done {
+      func publish(_ nodes: [DiskSpaceNode], _ done: Bool) {
+        var values = nodes
         mutex.withLock {
-          state.queue.insert(path, at: 0)
-          state.running = nil
+          let priorSupplements = Dictionary(uniqueKeysWithValues: state.nodes.filter { $0.members == nil }
+            .map { ($0.path, $0.supplementaryRevision) })
+          for i in values.indices {
+            values[i].reviewPolicyRevision = state.policyRevision
+            values[i].supplementaryRevision = priorSupplements[values[i].path] ?? nil
+          }
+          // Prefer the latest measurement for identical paths. Never add an
+          // ancestor's size to its descendants' sizes.
+          let paths = Set(values.map(\.path))
+          state.nodes.removeAll {
+            $0.members == nil && ($0.scanRoot == path || paths.contains($0.path))
+          }
+          state.nodes += values
+          do {
+            let byPath = Dictionary(uniqueKeysWithValues: values.map { ($0.path, $0) })
+            for i in state.nodes.indices {
+              guard let members = state.nodes[i].members,
+                members.contains(where: {
+                  $0 == path || $0.hasPrefix(path + "/") || path.hasPrefix($0 + "/")
+                })
+              else { continue }
+              let measured = members.compactMap { byPath[$0] }
+              guard measured.count == members.count, measured.allSatisfy(\.complete) else {
+                state.nodes[i].complete = false
+                continue
+              }
+              state.nodes[i].allocated = measured.reduce(0) { $0 + $1.allocated }
+              state.nodes[i].unshared = measured.reduce(0) { $0 + $1.unshared }
+              state.nodes[i].files = measured.reduce(0) { $0 + $1.files }
+              state.nodes[i].unknown = measured.reduce(0) { $0 + $1.unknown }
+              state.nodes[i].errors = measured.reduce(0) { $0 + $1.errors }
+              state.nodes[i].dataless = measured.reduce(0) { $0 + $1.dataless }
+              state.nodes[i].measured = Date()
+              state.nodes[i].complete = true
+            }
+          }
+          state.nodes = Array(state.nodes.sorted { $0.measured > $1.measured }.prefix(12_000))
+          if done {
+            state.running = nil
+            state.unavailable?.removeAll { $0 == path }
+            state.detail =
+              (state.unavailable ?? []).isEmpty
+              ? "Storage mapped. Recommendations use saved evidence and focused AI reviews."
+              : "Storage mapped with \(state.unavailable?.count ?? 0) unavailable locations. Missing visibility is not empty space."
+          }
           saveLocked()
         }
+        lastPublish = Date()
       }
+      let result = walker.run(root: path, temporaryParent: store.root,
+        shouldContinue: { self.mutex.withLock {
+          self.enabled && self.state.policyRevision == revision
+        } }, publish: { values, done in
+          if done || Date().timeIntervalSince(lastPublish) >= 15 { publish(values, done) }
+        })
+      if !result.nodes.isEmpty && result.status != "complete" { publish(result.nodes, false) }
+      mutex.withLock {
+        state.running = nil
+        if result.status == "cancelled" {
+          // A deliberate policy change can resume this root under its new revision.
+          if !state.queue.contains(path) { state.queue.append(path) }
+          saveLocked()
+        } else if result.status != "complete" {
+          if result.nodes.isEmpty {
+            for i in state.nodes.indices where state.nodes[i].scanRoot == path {
+              state.nodes[i].complete = false
+            }
+          }
+          let detail = result.status == "teardownFailed"
+            ? "Storage discovery stopped because its private worker could not be reaped. Other apps and processes were not signalled."
+            : "A storage branch stopped responding. Its partial coverage is retained; discovery is continuing with other roots."
+          markUnavailableLocked(path, detail: detail)
+          if result.status == "teardownFailed" { walkTeardownFailed = true; worker = false }
+        }
+      }
+      if result.status == "teardownFailed" { return }
     }
   }
-  private static func read(_ walk: UnsafeMutableRawPointer, root: String, complete: Bool)
+  private func markUnavailableLocked(_ path: String, detail: String) {
+    state.running = nil
+    state.unavailable = Array(Set((state.unavailable ?? []) + [path])).sorted()
+    if let i = state.nodes.firstIndex(where: { $0.path == path && $0.members == nil }) {
+      state.nodes[i].complete = false
+      state.nodes[i].errors = max(1, state.nodes[i].errors)
+    }
+    state.detail = detail
+    saveLocked()
+  }
+  static func read(_ walk: UnsafeMutableRawPointer, root: String, complete: Bool)
     -> [DiskSpaceNode]
   {
     var result: [DiskSpaceNode] = []
-    var now = Date()
+    let now = Date()
     for i in 0..<bz_disk_count(walk) {
       var n = bz_disk_node()
       guard bz_disk_node_at(walk, i, &n) != 0 else { continue }
@@ -345,7 +372,7 @@ public final class DiskDiscovery: @unchecked Sendable {
         .init(
           path: path, scanRoot: root, allocated: n.allocated, unshared: n.unshared, files: n.files,
           unknown: n.unknown, errors: n.errors, hardlinks: n.links, dataless: n.dataless,
-          complete: complete || n.finished != 0,
+          complete: path == root ? complete : (complete || n.finished != 0),
           childrenTruncated: bz_disk_overflow(walk) != 0, measured: now))
     }
     return result
@@ -380,7 +407,7 @@ public final class DiskDiscovery: @unchecked Sendable {
     try mutex.withLock {
       let node = try resolved(id, allowed: allowed)
       guard node.members == nil, roots.contains(where: { WorkspaceSafety.contains($0, node.path) }),
-        node.path == WorkspaceSafety.canonical(node.path),
+        DiskWalkRunner.validPath(node.path),
         node.path.split(separator: "/").count < 24,
         state.explored.count < 24
       else { throw StoreError.message("Discovery scope or per-cycle exploration limit reached.") }
