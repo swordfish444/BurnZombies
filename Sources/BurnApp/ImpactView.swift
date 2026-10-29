@@ -174,7 +174,7 @@ struct BurnStatus: View {
         .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
       Text(status).font(.system(size: compact ? 13 : 18)).foregroundStyle(Color(white: 0.82))
       Button {
-        if model.accessReady { model.requestAgentCleanup() } else { model.openSettings?() }
+        if model.accessReady { model.requestAgentCleanup() } else { model.openFullDiskAccessSettings() }
       } label: {
         Text(!model.accessReady ? "Finish setup" : model.cleanupQueued ? "Queued" : "Safe cleanup")
           .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
@@ -245,7 +245,7 @@ struct MiniImpactView: View {
         }
       }.frame(height: 120).padding(.top, 6)
       Group {
-        if model.accessReady { speedCard } else { accessCard }
+        if model.showsAccessBanner { accessCard } else { speedCard }
       }.padding(.top, 25)
       line.padding(.top, 16)
       MemoryPressureRow(model: model, compact: true).frame(height: 18).padding(.top, 12)
@@ -276,25 +276,25 @@ struct MiniImpactView: View {
       .background(BurnBackdrop()).preferredColorScheme(.dark)
   }
   var accessCard: some View {
-    Button { model.openSettings?() } label: {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("FINISH SETUP").font(.system(size: 10.5, weight: .bold)).tracking(0.3)
-          .foregroundStyle(BurnTheme.orange)
+    HStack(spacing: 0) {
+      Button { model.openFullDiskAccessSettings() } label: {
         HStack(spacing: 10) {
-          Image(systemName: "lock.shield").font(.system(size: 25)).foregroundStyle(BurnTheme.orange)
-          VStack(alignment: .leading, spacing: 4) {
-            Text("Allow Full Disk Access").font(.system(size: 13, weight: .semibold))
-            Text("One permission. Whole-Mac discovery.")
-              .font(.system(size: 10.5)).foregroundStyle(BurnTheme.muted)
+          Image(systemName: "lock.shield").font(.system(size: 23)).foregroundStyle(BurnTheme.orange)
+          VStack(alignment: .leading, spacing: 5) {
+            Text("Allow Full Disk Access").font(.system(size: 12.5, weight: .semibold))
+            Text("Open System Settings ↗").font(.system(size: 10.5)).foregroundStyle(BurnTheme.muted)
           }
           Spacer(minLength: 0)
-          Image(systemName: "chevron.right").font(.system(size: 12, weight: .medium))
-        }
-      }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14)
-        .frame(height: 84).contentShape(RoundedRectangle(cornerRadius: 7))
-        .background(BurnTheme.orange.opacity(0.085), in: RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.75)))
-    }.clickPointer().help("Finish setup")
+        }.frame(maxWidth: .infinity).frame(height: 68).padding(.leading, 13).contentShape(Rectangle())
+      }.clickPointer().help("Open Full Disk Access in System Settings")
+        .accessibilityIdentifier("compact-open-full-disk-access")
+      Button { model.dismissAccessBanner() } label: {
+        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(BurnTheme.muted).frame(width: 34, height: 68).contentShape(Rectangle())
+      }.clickPointer().help("Dismiss banner. Access setup remains in Settings.")
+        .accessibilityLabel("Dismiss access banner").accessibilityIdentifier("dismiss-access-banner")
+    }.background(BurnTheme.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 7))
+      .overlay(RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.55)).allowsHitTesting(false))
   }
   var speedCard: some View {
     Button { model.openImpact?() } label: {

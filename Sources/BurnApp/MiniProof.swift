@@ -94,7 +94,7 @@ import Vision
       throw StoreError.message("Compact labels or footer clipped: \(visible)")
     }
     if name.hasPrefix("access-") {
-      guard visible.contains("Setup required"), visible.contains("FINISH SETUP"),
+      guard visible.contains("Setup required"), visible.contains("Open System Settings"),
         visible.contains("Allow Full Disk Access"), !visible.contains("Agent-led cleanup"),
         !visible.contains("Still warming up"), !visible.contains("Ready for your first burn") else {
         throw StoreError.message("Access prerequisite missing or presented as active cleanup: \(visible)")

@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import OSLog
 
 public enum FullDiskAccessState: String, Codable, Sendable { case required, unknown, granted }
 
@@ -21,6 +22,7 @@ public enum FullDiskAccess {
     var verified: Bool
   }
   private static let lock = NSLock()
+  private static let logger = Logger(subsystem: "io.burnzombies.app", category: "disk-access")
   // A different ad-hoc build is a different privacy identity. Helpers bind to the
   // same app executable, but verify their own inherited operational capability.
   private static let digest: String? = {
@@ -70,20 +72,31 @@ public enum FullDiskAccess {
     guard access.canScan else { throw StoreError.message(access.detail) }
   }
   /// FDA-only directories, not per-folder Desktop/Documents grants. No contents
-  /// are enumerated or read. Apple's public preflight avoids consent dialogs.
-  /// Missing paths are inconclusive, never proof of access.
+  /// are enumerated or read. This is called only after explicit setup intent or a
+  /// previously verified receipt. Missing paths never prove access.
   public static func probe() -> FullDiskAccessStatus {
     let home = FileManager.default.homeDirectoryForCurrentUser
     return evaluate(paths: [home.appendingPathComponent("Library/Mail").path,
       home.appendingPathComponent("Library/Messages").path]) { path in
       var metadata = stat()
       guard lstat(path, &metadata) == 0 else {
-        return errno == ENOENT ? .missing : .unavailable
+        let failure = errno
+        logger.info("Access metadata check failed for \(URL(fileURLWithPath: path).lastPathComponent, privacy: .public), errno \(failure)")
+        return failure == ENOENT ? .missing : .unavailable
       }
       guard metadata.st_mode & S_IFMT == S_IFDIR else { return .unavailable }
-      guard FileManager.default.isReadableFile(atPath: path), access(path, R_OK | X_OK) == 0 else { return .denied }
-      guard let directory = opendir(path) else { return .denied }
+      // An access()/FileManager preflight is not the result of the operation.
+      // Use the actual directory handle, then close without reading entries.
+      let apparentReadability = FileManager.default.isReadableFile(atPath: path)
+      guard let directory = opendir(path) else {
+        let failure = errno
+        logger.error("Access directory open denied for \(URL(fileURLWithPath: path).lastPathComponent, privacy: .public), errno \(failure)")
+        return .denied
+      }
       closedir(directory)
+      if !apparentReadability {
+        logger.notice("Directory access verified despite negative readability preflight for \(URL(fileURLWithPath: path).lastPathComponent, privacy: .public)")
+      }
       return .readable
     }
   }

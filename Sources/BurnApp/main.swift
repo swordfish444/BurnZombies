@@ -7,6 +7,13 @@ import UserNotifications
 @MainActor final class AppModel: ObservableObject {
   @Published var state = ViewState() {
     didSet {
+      if !restoringAccessPresentation && state.fullDiskAccess.canScan {
+        accessPreferences?.removeObject(forKey: Self.accessVerificationPendingKey)
+        if accessBannerDismissed {
+          accessBannerDismissed = false
+          accessPreferences?.removeObject(forKey: Self.accessBannerDismissedKey)
+        }
+      }
       let pending = Set(oldValue.catalog.events.filter { $0.outcome == "verifying" }.map(\.id))
       if let finished = state.catalog.events.last(where: {
         pending.contains($0.id) && $0.outcome != "verifying"
@@ -20,6 +27,7 @@ import UserNotifications
     }
   }
   private var didLoadState = false
+  private var restoringAccessPresentation = true
   @Published var burnPulse = 0
   func previewBurn() {
     guard demo else { return }
@@ -31,27 +39,75 @@ import UserNotifications
   @Published var cleanupQueued = false
   @Published var machineReview = MachineReviewState()
   @Published var machineReviewEnabled = false
+  static let accessBannerDismissedKey = "fullDiskAccessBannerDismissed"
+  static let accessVerificationPendingKey = "fullDiskAccessVerificationPending"
+  @Published private(set) var accessBannerDismissed = false
+  private let accessPreferences: UserDefaults?
+  private let accessOpener: (URL) -> Bool
+  private let accessChecker: (() async throws -> FullDiskAccessStatus)?
+  private var awaitingAccessReturn = false
+  private var leftForAccessSettings = false
+  private var accessReturnPending = false
   var accessReady: Bool { state.fullDiskAccess.canScan }
+  var showsAccessBanner: Bool { !accessReady && !accessBannerDismissed }
+  var installedAppPath: String {
+    Bundle.main.bundleURL.pathExtension == "app" ? Bundle.main.bundleURL.path : "~/Applications/BurnZombies.app"
+  }
+  func dismissAccessBanner() {
+    accessBannerDismissed = true
+    accessPreferences?.set(true, forKey: Self.accessBannerDismissedKey)
+  }
+  func copyInstalledAppPath() {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(installedAppPath, forType: .string)
+    message = "App path copied. Use +, then Command-Shift-G in Full Disk Access."
+  }
 
-  /// System Settings opens only in response to this explicit user action.
+  /// Explicit setup arms one return check and survives macOS Quit & Reopen.
+  /// The saved intent authorizes a check, never a permission grant.
   func openFullDiskAccessSettings() {
-    guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
-      NSWorkspace.shared.open(url) else {
+    guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
+    awaitingAccessReturn = true; leftForAccessSettings = false; accessReturnPending = false
+    accessPreferences?.set(true, forKey: Self.accessVerificationPendingKey)
+    guard accessOpener(url) else {
+      awaitingAccessReturn = false
+      accessPreferences?.removeObject(forKey: Self.accessVerificationPendingKey)
       message = "Open System Settings → Privacy & Security → Full Disk Access and enable BurnZombies."
       return
     }
   }
+  private func restoreAccessVerificationAfterRelaunch() {
+    guard accessPreferences?.bool(forKey: Self.accessVerificationPendingKey) == true else { return }
+    // Consume before checking so denial, errors or another relaunch cannot loop.
+    accessPreferences?.removeObject(forKey: Self.accessVerificationPendingKey)
+    accessReturnPending = true
+  }
+  func accessSetupDidResignActive() {
+    if awaitingAccessReturn { leftForAccessSettings = true }
+  }
+  func accessSetupDidBecomeActive() {
+    guard awaitingAccessReturn && leftForAccessSettings else { return }
+    awaitingAccessReturn = false; leftForAccessSettings = false; accessReturnPending = true
+    checkAccessAfterReturnIfReady()
+  }
+  private func checkAccessAfterReturnIfReady() {
+    guard accessReturnPending && !working else { return }
+    accessReturnPending = false
+    recheckFullDiskAccess()
+  }
   func recheckFullDiskAccess() {
-    guard !demo, !working, let monitor else { return }
+    guard !working, accessChecker != nil || (!demo && monitor != nil) else { return }
+    awaitingAccessReturn = false; leftForAccessSettings = false; accessReturnPending = false
     working = true
     Task {
       do {
-        state = try await monitor.recheckFullDiskAccess()
+        if let accessChecker { state.fullDiskAccess = try await accessChecker() }
+        else if let monitor { state = try await monitor.recheckFullDiskAccess() }
         message = accessReady ? "Access is available. Observation continues on its normal schedule." : state.fullDiskAccess.detail
       } catch { message = error.localizedDescription }
       working = false
       onUpdate?()
-      schedule()
+      if !demo { schedule() }
     }
   }
 
@@ -65,7 +121,9 @@ import UserNotifications
       Task { try? await reviewer?.resume(); await reviewer?.tick(); await receiveReviewState() }
     } catch { message = error.localizedDescription }
   }
-  @Published var working = false
+  @Published var working = false {
+    didSet { if oldValue && !working { checkAccessAfterReturnIfReady() } }
+  }
   @Published var message: String?
   @Published var technical = [String]()
   @Published var impactTab = "Impact"
@@ -82,14 +140,23 @@ import UserNotifications
   private var reviewer: MachineReviewer?
   private var timer: Timer?
   var onUpdate: (() -> Void)?
-  init(demo: Bool = CommandLine.arguments.contains("--demo")) {
+  init(demo: Bool = CommandLine.arguments.contains("--demo"), accessPreferences: UserDefaults? = nil,
+    accessOpener: ((URL) -> Bool)? = nil, accessChecker: (() async throws -> FullDiskAccessStatus)? = nil) {
     self.demo = demo
+    self.accessPreferences = accessPreferences ?? (demo ? nil : .standard)
+    self.accessOpener = accessOpener ?? { NSWorkspace.shared.open($0) }
+    self.accessChecker = accessChecker
+    accessBannerDismissed = self.accessPreferences?.bool(forKey: Self.accessBannerDismissedKey) ?? false
     if demo {
       state = Demo.state()
       state.fullDiskAccess = .init(state: .granted, detail: "Preview access state.")
       pressure = "Low"
+      restoringAccessPresentation = false
+      restoreAccessVerificationAfterRelaunch()
+      checkAccessAfterReturnIfReady()
       return
     }
+    restoringAccessPresentation = false
     do {
       monitor = try Monitor(); reviewer = try MachineReviewer()
       machineReviewEnabled = try MachineReviewConfiguration.load(root: Store.defaultRoot)?.enabled ?? false
@@ -108,6 +175,7 @@ import UserNotifications
         }
       } catch { message = error.localizedDescription }
     }
+    restoreAccessVerificationAfterRelaunch()
     refresh()
   }
   func worktree(_ request: WorktreeRequest) async throws -> WorktreeReply {
@@ -756,6 +824,8 @@ struct Dashboard: View {
       NSApp.activate(ignoringOtherApps: true)
     }
   }
+  func applicationDidResignActive(_ notification: Notification) { model?.accessSetupDidResignActive() }
+  func applicationDidBecomeActive(_ notification: Notification) { model?.accessSetupDidBecomeActive() }
   @objc func sleeping() { model.suspend() }
   @objc func waking() { model.wake() }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
@@ -775,6 +845,10 @@ MainActor.assumeIsolated {
   #if DEBUG
   if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--worktree-view-proof" {
     do { try worktreeViewProof(output: CommandLine.arguments[2]); exit(0) }
+    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
+  }
+  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--access-banner-proof" {
+    do { try accessBannerProof(output: CommandLine.arguments[2]); exit(0) }
     catch { print("FAIL \(error.localizedDescription)"); exit(1) }
   }
   if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--settings-proof" {

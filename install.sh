@@ -70,5 +70,5 @@ fi
 if $launch; then "$app/Contents/MacOS/burnzombies" start-observer; fi
 echo "Installed BurnZombies $version. Your work can keep running."
 echo 'Required setup: System Settings → Privacy & Security → Full Disk Access.'
-echo "Add and enable $app, then choose I enabled access — check again in BurnZombies Settings."
+echo "Use Allow Full Disk Access in the menu-bar banner, add and enable $app, then return to BurnZombies."
 echo 'BurnZombies waits quietly until setup is complete. No computer restart is needed.'
