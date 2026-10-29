@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "burnzombies",
   "display_name": "BurnZombies",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "description": "Computer-wide observation and guarded cleanup of abandoned agent helpers on macOS.",
   "long_description": "Computer-wide process evidence, guarded graceful stops and verified impact through MCP. Use the single-command installer to enable the independent background observer and its selected harness reviewer; this MCP bundle alone provides interactive tools. Native macOS 14+, Apple Silicon/Intel. Ad-hoc signed, not notarized.",
   "author": {
@@ -89,6 +89,22 @@
     {
       "name": "burnzombies_disk_clean",
       "description": "Remove only the exact freshly previewed folder under native guards."
+    },
+    {
+      "name": "burnzombies_owner_preview",
+      "description": "Preview one exact supported idle producer for owner-mediated retirement."
+    },
+    {
+      "name": "burnzombies_owner_stop",
+      "description": "Request authenticated stop-when-idle for a fresh exact producer preview."
+    },
+    {
+      "name": "burnzombies_cache_preview",
+      "description": "Preview exact eligible local BuildKit cache records under retention and allowance guards."
+    },
+    {
+      "name": "burnzombies_cache_clean",
+      "description": "Request owner-managed GC of exact freshly previewed cache records."
     }
   ],
   "compatibility": {

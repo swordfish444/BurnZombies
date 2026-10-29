@@ -30,6 +30,63 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.firstIndex(of: "--disk-walk-worker") == 1 {
+      exit(DiskWalkWorker.run(arguments: Array(CommandLine.arguments.dropFirst(2))))
+    }
+    if CommandLine.arguments.firstIndex(of: "--disk-walk-fixture") == 1 {
+      do { try diskWalkFixture() } catch { print("Disk worker fixture: \(error)"); exit(1) }
+    }
+    if CommandLine.arguments.contains("--disk-worker") {
+      do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
+      print("Disk worker checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--owner-agent-fixture" {
+      do { try await runOwnerHarnessFixture(root: URL(fileURLWithPath: CommandLine.arguments[2])) }
+      catch { print("FAIL: \(error)"); exit(1) }
+      return
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--review-owner-model" {
+      do { try runOwnerHarnessReview(root: URL(fileURLWithPath: CommandLine.arguments[2])) }
+      catch { print("FAIL: \(error)"); exit(1) }
+      return
+    }
+    if CommandLine.arguments.contains("--owner-maintenance") {
+      do { try await ownerMaintenanceProof(); try await agentBridgeProof() } catch { failTest("Owner maintenance: \(error)") }
+      print("Owner maintenance checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--gradle-daemon") {
+      do { try await gradleDaemonProof() } catch { failTest("Gradle daemon: \(error)") }
+      print("Gradle checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--owner-inspect") {
+      do { try gradleOwnerInspectionCLI() } catch { print("Owner inspection: \(error)"); exit(1) }
+      exit(0)
+    }
+    if CommandLine.arguments.contains("--gradle-fixture") {
+      do { try gradleFixtureCLI() } catch {
+        let value: [String: Any] = ["ok": false, "error": String(describing: error)]
+        if let data = try? JSONSerialization.data(withJSONObject: value) { print(String(decoding: data, as: UTF8.self)) }
+        exit(1)
+      }
+      exit(0)
+    }
+    if CommandLine.arguments.contains("--managed-cache") {
+      do { try managedCacheProof() } catch { failTest("Managed cache: \(error)") }
+      print("Managed cache checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--cache-inspect") || CommandLine.arguments.contains("--cache-contract") {
+      do { try managedCacheInspectionCLI() } catch { print("Cache inspection: \(error)"); exit(1) }
+      exit(0)
+    }
+    if CommandLine.arguments.contains("--transport") {
+      do { try await transportProof() } catch { failTest("Transport: \(error)") }
+      print("Transport checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--mole-leaf-fixture") {
       alarm(10)
       signal(SIGTERM, SIG_IGN)
@@ -112,6 +169,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     let s = StorageNativeTests()
     let pressure = PressureTests()
     let tests: [(String, () throws -> Void)] = [
+      ("owner-managed BuildKit cleanup plans and receipts", managedCacheProof),
       ("whole-machine disk discovery, APFS clones, grouped advice and scope safety", diskDiscoveryProof),
       ("cumulative awake CPU savings and stable nonnegative speed impact", impactMetricsProof),
       ("impact periods, completion dates, DST, empty history and preview accounting", impactPeriodProof),
@@ -138,12 +196,16 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try test() } catch { failTest("\(name): \(error)") }
       if failures == before { print("PASS \(name)") }
     }
+    do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
+    do { try await gradleDaemonProof() } catch { failTest("Gradle daemon: \(error)") }
     do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
     do { try usageProof(); try await passiveProof(); try await diskProof() } catch { failTest("Passive/usage: \(error)") }
     let beforeLifecycle = failures
     do { try await lifecycleProof() } catch { failTest("Lifecycle evidence: \(error)") }
     if failures == beforeLifecycle { print("PASS durable lifecycle evidence, shared consumers, token privacy, identity and release/retain races") }
     let beforeAgent = failures
+    do { try await ownerMaintenanceProof() } catch { failTest("Owner maintenance: \(error)") }
+    do { try await transportProof() } catch { failTest("Transport: \(error)") }
     do { try await agentBridgeProof() } catch { failTest("Agent bridge: \(error)") }
     if failures == beforeAgent { print("PASS private agent bridge, refusal and socket protection") }
     let beforeMachine = failures

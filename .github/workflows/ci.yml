@@ -22,6 +22,8 @@ jobs:
         run: swift --version
       - name: Safety and native lifecycle checks
         run: scripts/test.sh --integration
+      - name: Transport with one cooperative worker
+        run: LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 .build/debug/BurnProof --transport
       - name: Build local app bundle
         run: scripts/build-app.sh
       - name: MCP client protocol proof

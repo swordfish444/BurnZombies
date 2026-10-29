@@ -21,6 +21,8 @@ public actor Monitor {
   private let native = Native()
   private let passive: PassiveCollector?
   private let discovery: DiskDiscovery?
+  private let ownerMaintenance: OwnerMaintenance?
+  private var diskScanRunning = false
   private var diskSnapshot = DiskSnapshot()
   private var diskScanLoaded = false
   private let workspaceVisibility: @Sendable (String) -> Int32
@@ -35,6 +37,7 @@ public actor Monitor {
   public init(root: URL = Store.defaultRoot, passiveHome: URL? = nil, discoveryRoots: [String]? = nil, workspaceVisibility: @escaping @Sendable (String) -> Int32 = { bz_path_in_use($0) }) throws {
     self.workspaceVisibility = workspaceVisibility
     store = try Store(root: root)
+    ownerMaintenance = root.standardizedFileURL == Store.defaultRoot.standardizedFileURL && ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil ? OwnerMaintenance(store: store) : nil
     discovery = discoveryRoots != nil || (root.standardizedFileURL == Store.defaultRoot.standardizedFileURL && ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil)
       ? try DiskDiscovery(store: store, roots: discoveryRoots) : nil
     passive = root.standardizedFileURL == Store.defaultRoot.standardizedFileURL || passiveHome != nil
@@ -60,6 +63,13 @@ public actor Monitor {
       }
       loaded.workspaceReceipts = receipts
     }
+    if var attempts = loaded.managedCacheAttempts {
+      for i in attempts.indices where attempts[i].outcome == "prepared" {
+        attempts[i].outcome = "uncertain"; attempts[i].detail = "Interrupted owner operation; preserve exact record IDs until reconciliation. Never retry automatically."
+      }
+      loaded.managedCacheAttempts = attempts
+    }
+    for i in loaded.events.indices where loaded.events[i].outcome == "prepared" { loaded.events[i].outcome = "unverified" }
     ImpactAccounting.migrate(&loaded)
     loaded.resetContinuity()
     catalog = loaded
@@ -155,9 +165,23 @@ public actor Monitor {
       if store.root.standardizedFileURL == Store.defaultRoot.standardizedFileURL || FileManager.default.fileExists(atPath: store.root.appendingPathComponent("disk-policy.json").path) {
         let policy = try DiskPolicy.load(store)
         if !diskScanLoaded { diskSnapshot = try DiskSnapshot.load(store); diskScanLoaded = true }
-        if diskSnapshot.recommendationVersion != 2 || now.timeIntervalSince(diskSnapshot.date) >= Double(policy.scanHours * 3600) || diskSnapshot.policyRevision != policy.revision {
-          diskSnapshot = DiskInventory.scan(policy: policy, previous: diskSnapshot, visibility: workspaceVisibility)
-          try diskSnapshot.save(store)
+        if !diskScanRunning && (diskSnapshot.recommendationVersion != 2 || now.timeIntervalSince(diskSnapshot.date) >= Double(policy.scanHours * 3600) || diskSnapshot.policyRevision != policy.revision) {
+          diskScanRunning = true
+          let previous = diskSnapshot, visibility = workspaceVisibility
+          Task.detached(priority: .utility) { [self] in
+            let result = DiskInventory.scan(policy: policy, previous: previous, visibility: visibility)
+            await self.acceptDiskScan(result)
+          }
+        }
+        if let ownerMaintenance {
+          ownerMaintenance.tick(records: catalog.records, policy: policy, complete: !scan.partial && scan.observations.count <= 4096, now: now)
+          let owners = ownerMaintenance.snapshot()
+          catalog.ownerDaemons = owners.daemons
+          catalog.managedCache = owners.cache
+          let free = try? WorkspaceSafety.freeBytes(store.root.path)
+          catalog.managedCacheAllowanceBytes = policy.mode == "automatic" ? try managedAvailableBytes() : nil
+          catalog.managedCacheReviewAllowed = policy.mode == "recommend" || (policy.mode == "automatic" && free.map { $0 < UInt64(policy.targetFreeGB) * 1_000_000_000 } == true)
+          catalog.ownerEvidenceGaps = owners.gaps
         }
         catalog.diskCandidates = diskSnapshot.candidates.filter { $0.pendingReview && diskSnapshot.freeBytes < UInt64(policy.targetFreeGB) * 1_000_000_000 }
       }
@@ -183,12 +207,33 @@ public actor Monitor {
     state.scanMS = (ProcessInfo.processInfo.systemUptime - start) * 1000
     return state
   }
+  private func acceptDiskScan(_ result: DiskSnapshot) {
+    defer { diskScanRunning = false }
+    do {
+      guard try DiskPolicy.load(store).revision == result.policyRevision else { return }
+      try result.save(store); diskSnapshot = result
+    } catch { state.error = "Disk inventory could not be saved: " + error.localizedDescription }
+  }
+
   private func verifyPending(now: Date, observations: [Observation]) {
     for i in catalog.events.indices where catalog.events[i].outcome == "verifying" {
       let e = catalog.events[i]
-      let elapsed = now.timeIntervalSince(e.date)
+      var elapsed = now.timeIntervalSince(e.date)
       guard elapsed >= 15 else { continue }
       let statuses = e.targets.map { native.ownerState($0.identity) }
+      if e.ownerProtocol == true {
+        switch Verification.ownerWatch(elapsed: elapsed, targets: statuses, partialScan: state.partial,
+          elapsedSinceExit: e.ownerExitObservedAt.map { now.timeIntervalSince($0) }) {
+        case .waiting: continue
+        case .observedExit:
+          catalog.events[i].ownerExitObservedAt = now; receiptNeedsCheckpoint = true; continue
+        case .unverified:
+          catalog.events[i].outcome = "unverified"
+          catalog.events[i].detail = "Owner watch lost continuity or exceeded its bounded wait; no escalation or credit."
+          continue
+        case .verify(let elapsedSinceExit): elapsed = elapsedSinceExit
+        }
+      }
       let recurrence = Verification.recurrence(event: e, observations: observations) { parent in
         guard case .found(let live) = native.probe(parent.identity.pid) else { return false }
         return Member(live) == parent && !live.zombie
@@ -354,6 +399,7 @@ public actor Monitor {
   }
 
   public func cleanWorkspace(_ preview: WorkspaceClaim) throws -> String {
+    guard !busy else { throw StoreError.message("A cleanup is already in progress.") }; busy = true; defer { busy = false }
     guard let current = catalog.workspaces?.first(where: { $0.id == preview.id }),
       current.updated == preview.updated, current.head == preview.head, current.state == "released",
       !(catalog.workspaceReceipts ?? []).contains(where: { $0.workspaceID == current.id }) else {
@@ -433,13 +479,13 @@ public actor Monitor {
     guard policy.mode == "automatic", let c = diskSnapshot.candidates.first(where: { $0.id == id && $0.reviewable }),
       policy.revision == diskSnapshot.policyRevision else { throw StoreError.message("Automatic mode, unchanged policy and a current candidate are required.") }
     guard try WorkspaceSafety.freeBytes(c.path) < UInt64(policy.targetFreeGB) * 1_000_000_000 else { throw StoreError.message("Free-space target is already satisfied; no removal.") }
-    let today = (catalog.diskReceipts ?? []).filter { Date().timeIntervalSince($0.date) < 86400 }
-    let used = today.reduce(UInt64(0)) { $0 + $1.allocatedRemoved }
+    let used = managedUsedToday()
     guard used + c.bytes <= UInt64(policy.maximumGBPerDay) * 1_000_000_000 else { throw StoreError.message("Daily disk cleanup cap reached; no removal.") }
     _ = try DiskInventory.check(c, policy: policy, visibility: workspaceVisibility)
     return c
   }
   public func cleanDisk(_ preview: DiskCandidate, rationale: String) throws -> String {
+    guard !busy else { throw StoreError.message("A cleanup is already in progress.") }; busy = true; defer { busy = false }
     let c = try previewDisk(preview.id)
     guard c.revision == preview.revision else { throw StoreError.message("Disk evidence changed after preview.") }
     let id = UUID(), quarantine = store.root.appendingPathComponent("disk-pending-" + id.uuidString)
@@ -564,6 +610,145 @@ public actor Monitor {
     return owned + (catalog.passiveEvidence ?? []).map(\.workSummary)
   }
 
+  private func ownerGuard(_ evidence: GradleDaemonEvidence, callerPID: Int32) throws -> Record {
+    guard !state.partial, let record = catalog.records[evidence.member.identity.key],
+      record.missingSince == nil, Member(record.latest) == evidence.member,
+      let ancestors = AgentSafety.ancestors(of: callerPID), let own = AgentSafety.ancestors(of: getpid()),
+      AgentSafety.refusal(record, preferences: catalog.preferences, protectedPIDs: ancestors.union(own)) == nil,
+      !WorkEvidence.blockingTree(catalog.workEvidence ?? [], record: record, records: catalog.records),
+      !catalog.records.values.contains(where: { $0.missingSince == nil && $0.latest.parent == record.latest.identity.pid }),
+      !catalog.events.contains(where: { ["prepared", "verifying", "unverified"].contains($0.outcome) && $0.targets.contains(evidence.member) })
+    else { throw StoreError.message("Owner identity, active use, visibility or an earlier uncertain stop prevents this action.") }
+    return record
+  }
+  public func previewOwnerProcess(_ id: String, callerPID: Int32) throws -> GradleDaemonEvidence {
+    _ = refresh()
+    guard let evidence = catalog.ownerDaemons?.first(where: { $0.id == id }), evidence.eligible else {
+      throw StoreError.message("Supported cached owner evidence required; exact producer facts must be revalidated before dispatch.")
+    }
+    _ = try ownerGuard(evidence, callerPID: callerPID)
+    return evidence
+  }
+  public func startOwnerStop(_ evidence: GradleDaemonEvidence, rationale: String, callerPID: Int32) throws -> String {
+    guard !busy else { throw StoreError.message("A cleanup is already in progress.") }
+    _ = refresh()
+    let target = try ownerGuard(evidence, callerPID: callerPID)
+    var event = CleanupEvent(leaseID: UUID(), label: "Idle Gradle daemon", date: Date(),
+      targets: [evidence.member], residentBefore: target.latest.rss, outcome: "prepared",
+      detail: "Owner-protocol decision: " + rationale + ". Revalidating exact daemon; no benefit credited.")
+    event.ownerProtocol = true
+    event.cpuSavingsRate = ImpactAccounting.cpuRate([target])
+    event.cpuObservedSeconds = event.cpuSavingsRate == nil ? nil : 0
+    event.cpuSecondsSavedEstimate = event.cpuSavingsRate == nil ? nil : 0
+    catalog.events.append(event); try checkpoint(); state.catalog = catalog
+    busy = true
+    let eventID = event.id
+    Task.detached(priority: .utility) { [self] in
+      let result = Result { () throws -> String in
+        let (fresh, records) = try OwnerStopFailure.preflight { () -> (GradleDaemonEvidence, [String: Record]) in
+          let scan = Native().scan()
+          guard !scan.partial, let live = scan.observations.first(where: { Member($0) == evidence.member }) else {
+            throw StoreError.message("Fresh complete process visibility unavailable; owner stop refused.")
+          }
+          let records = Dictionary(uniqueKeysWithValues: scan.observations.map { ($0.identity.key, Record($0)) })
+          guard let fresh = try GradleDaemon.inspect(live, records: records, complete: true), fresh.eligible,
+            fresh.daemonUID == evidence.daemonUID, fresh.lastBusy == evidence.lastBusy,
+            fresh.evidenceFingerprint == evidence.evidenceFingerprint, fresh.gradleHome == evidence.gradleHome else {
+            throw StoreError.message("Daemon activity or ownership changed since preview; preserved.")
+          }
+          return (fresh, records)
+        }
+        return try GradleDaemon.requestGracefulStop(fresh, records: records, authorize: {
+          let saved = try self.store.load()
+          guard let current = saved.records[fresh.member.identity.key],
+            AgentSafety.refusal(current, preferences: saved.preferences, protectedPIDs: []) == nil,
+            !WorkEvidence.blockingTree(saved.workEvidence ?? [], record: current, records: saved.records) else {
+            throw StoreError.message("Owner protections or active claims changed; preserved.")
+          }
+        })
+      }
+      await self.finishOwnerStop(eventID, result: result)
+    }
+    return "Exact owner stop queued with a durable receipt. It will recheck activity, allow any raced build to finish, and verify exit independently. Do not poll or retry."
+  }
+  private func finishOwnerStop(_ id: UUID, result: Result<String, Error>) {
+    defer { busy = false }
+    guard let index = catalog.events.firstIndex(where: { $0.id == id }) else { return }
+    switch result {
+    case .success(let message):
+      catalog.events[index].date = Date(); catalog.events[index].outcome = "verifying"
+      catalog.events[index].detail = message
+    case .failure(let error):
+      catalog.events[index].outcome = OwnerStopFailure.receiptOutcome(for: error)
+      catalog.events[index].detail = (catalog.events[index].outcome == "refused" ? "No owner stop was dispatched. " : "") + error.localizedDescription
+    }
+    do { try checkpoint() } catch { state.error = error.localizedDescription }
+    state.catalog = catalog
+  }
+  public func managedAvailableBytes() throws -> UInt64 {
+    let limit = UInt64(try DiskPolicy.load(store).maximumGBPerDay) * 1_000_000_000
+    let used = managedUsedToday(); return used < limit ? limit - used : 0
+  }
+  private func managedUsedToday() -> UInt64 {
+    let since = Date().addingTimeInterval(-86400)
+    let files = (catalog.diskReceipts ?? []).filter { $0.date > since }.reduce(UInt64(0)) { $0 + $1.allocatedRemoved }
+    return (catalog.managedCacheAttempts ?? []).filter { $0.date > since }.reduce(files) {
+      $0 + (["prepared", "uncertain"].contains($1.outcome) ? $1.plan.cacheBytes : ($1.receipt?.cacheReleasedBytes ?? 0))
+    }
+  }
+  public func previewManagedCache(_ id: String, recordIDs: [String]) throws -> BuildKitCache.Plan {
+    let policy = try DiskPolicy.load(store)
+    guard (catalog.managedCacheAttempts ?? []).filter({ ["prepared", "uncertain"].contains($0.outcome) }).count < 128 else { throw StoreError.message("Unresolved cache operations require reconciliation before another cleanup.") }
+    guard let inventory = catalog.managedCache, ManagedCacheSummary(inventory).id == id,
+      try WorkspaceSafety.freeBytes(store.root.path) < UInt64(policy.targetFreeGB) * 1_000_000_000,
+      ManagedCacheAttempt.blockedIDs(catalog.managedCacheAttempts ?? [], inventory: inventory).isDisjoint(with: recordIDs) else { throw StoreError.message("Cache inventory expired, free-space target met, or an exact record was already attempted. Preserve it.") }
+    return try BuildKitCache.preview(inventory: inventory, recordIDs: recordIDs, policy: policy, usedTodayBytes: managedUsedToday())
+  }
+  public func startManagedCache(_ plan: BuildKitCache.Plan, rationale: String) throws -> String {
+    guard !busy else { throw StoreError.message("A cleanup is already in progress.") }
+    let fresh = try previewManagedCache(ManagedCacheSummary(plan.inventory).id, recordIDs: plan.recordIDs)
+    guard fresh.inventory.revision == plan.inventory.revision, Date() <= plan.expires else {
+      throw StoreError.message("Cache plan changed or expired; preserved.")
+    }
+    let policy = try DiskPolicy.load(store), used = managedUsedToday()
+    var durablePlan = plan
+    durablePlan.inventory.records = plan.inventory.records.filter { plan.recordIDs.contains($0.id) }
+    durablePlan.inventory.eligibleIDs = plan.recordIDs; durablePlan.inventory.eligibleBytes = plan.cacheBytes
+    catalog.managedCacheAttempts = (catalog.managedCacheAttempts ?? []) + [ManagedCacheAttempt(plan: durablePlan, date: Date(),
+      outcome: "prepared", receipt: nil, detail: "Owner cache decision: " + rationale + ". Prepared exact IDs; no recovery credited.")]
+    try checkpoint(); state.catalog = catalog; busy = true
+    let operationStore = store
+    Task.detached(priority: .utility) { [self] in
+      let result = Result { () throws -> BuildKitCache.Receipt in
+        guard try DiskPolicy.load(operationStore).revision == policy.revision else { throw StoreError.message("Disk policy changed; preserved.") }
+        return try BuildKitCache.live(store: operationStore).clean(plan: plan, policy: policy, usedTodayBytes: used, authorize: {
+          guard try DiskPolicy.load(operationStore).revision == policy.revision,
+            try WorkspaceSafety.freeBytes(operationStore.root.path) < UInt64(policy.targetFreeGB) * 1_000_000_000 else {
+            throw StoreError.message("Disk authorization or free-space target changed; preserved.")
+          }
+        })
+      }
+      await self.finishManagedCache(plan.id, result: result)
+    }
+    return "Exact owner cache cleanup queued. The durable receipt will distinguish verified owner cache bytes from physical host recovery. Do not poll or retry."
+  }
+  private func finishManagedCache(_ id: UUID, result: Result<BuildKitCache.Receipt, Error>) {
+    defer { busy = false; ownerMaintenance?.invalidateCache() }
+    guard let index = catalog.managedCacheAttempts?.firstIndex(where: { $0.plan.id == id }) else { return }
+    switch result {
+    case .success(let receipt):
+      catalog.managedCacheAttempts?[index].receipt = receipt
+      catalog.managedCacheAttempts?[index].outcome = receipt.outcome
+      catalog.managedCacheAttempts?[index].detail = receipt.detail
+    case .failure(let error):
+      catalog.managedCacheAttempts?[index].outcome = "refused"
+      catalog.managedCacheAttempts?[index].detail = error.localizedDescription
+    }
+    catalog.managedCache = nil
+    do { try checkpoint() } catch { state.error = error.localizedDescription }
+    state.catalog = catalog
+  }
+
   public func previewTargets(_ ids: [String], callerPID: Int32) throws -> [Observation] {
     let before = refresh()
     guard before.error == nil, !before.partial,
@@ -572,6 +757,7 @@ public actor Monitor {
       let ownAncestors = AgentSafety.ancestors(of: getpid())
     else { throw StoreError.message("Complete visibility and 1–64 distinct process identities are required.") }
     let protectedPIDs = callerAncestors.union(ownAncestors)
+    let leases = try store.leases()
     var targets = [Observation]()
     for id in ids {
       guard let r = catalog.records[id], r.missingSince == nil else {
@@ -585,6 +771,21 @@ public actor Monitor {
       }
       if let evidence = catalog.passiveEvidence?.first(where: { $0.member.identity.key == id }), !evidence.canReview() {
         throw StoreError.message("PID \(r.latest.identity.pid): passive owner evidence changed or is incomplete. Preserve this helper.")
+      }
+      let released = (catalog.workEvidence ?? []).contains { claim in
+        claim.state == "released" && claim.members.contains { $0 == Member(r.latest) }
+      }
+      let passiveReady = catalog.passiveEvidence?.contains { $0.member == Member(r.latest) && $0.canReview() } == true
+      let explicitLifetime = leases.contains { lease in
+        lease.allowCleanup && !lease.disarmed && lease.ended != nil && lease.members.contains(Member(r.latest))
+          && native.ownerState(lease.owner) == .gone
+      }
+      guard released || passiveReady || explicitLifetime else {
+        throw StoreError.message("PID \(r.latest.identity.pid): no positive completion evidence. Use a supported owner protocol; generic signaling is blocked.")
+      }
+      var sockets: Int32 = 0, files: Int32 = 0
+      guard bz_fd_summary(r.latest.identity.pid, &sockets, &files) >= 0, sockets == 0 else {
+        throw StoreError.message("PID \(r.latest.identity.pid): socket consumers or incomplete descriptor visibility; preserved.")
       }
       targets.append(r.latest)
     }

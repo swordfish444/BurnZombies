@@ -2,6 +2,7 @@
 #define CBURN_H
 #include <stdint.h>
 #include <stddef.h>
+#include "GradleIdentity.h"
 typedef struct {
     int32_t pid, ppid, pgid;
     uint32_t uid, status;

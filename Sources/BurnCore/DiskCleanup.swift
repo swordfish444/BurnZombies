@@ -275,11 +275,14 @@ public enum DiskInventory {
 }
 
 public struct DiskReviewPolicy: Codable, Sendable {
+  public var maximumGBPerDay: Int
+  public var targetFreeGB: Int
   public var mode: String
   public var instructions: String
   public var minimumAgeDays: Int
   public var keepNewest: Int
   public init(_ policy: DiskPolicy) {
     mode = policy.mode; instructions = policy.instructions; minimumAgeDays = policy.minimumAgeDays; keepNewest = policy.keepNewest
+    maximumGBPerDay = policy.maximumGBPerDay; targetFreeGB = policy.targetFreeGB
   }
 }

@@ -17,6 +17,8 @@ func json<T: Encodable>(_ value: T) throws {
 let args = Array(CommandLine.arguments.dropFirst())
 do {
   switch args.first ?? "help" {
+  case "--disk-walk-worker":
+    exit(DiskWalkWorker.run(arguments: Array(args.dropFirst())))
   case "start-observer":
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     let app = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -50,13 +52,13 @@ do {
     guard args.count == 1, let data = try FileHandle.standardInput.read(upToCount: 16385) else {
       fail("Pass one lifecycle JSON object on stdin.")
     }
-    let raw = try AgentConnection.call(args[0] == "workspace" ? WorkspaceInput.request(data) : LifecycleInput.request(data))
+    let raw = try await AgentConnection.callAsync(args[0] == "workspace" ? WorkspaceInput.request(data) : LifecycleInput.request(data))
     print(raw, terminator: "")
     if let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], result["ok"] as? Bool != true { exit(1) }
   case "evidence":
     guard args.count >= 2, args.count <= 17,
       args.dropFirst().allSatisfy({ Int32($0).map { $0 > 0 } ?? false }) else { fail("Use evidence PID [PID ...], up to 16 exact helper PIDs.") }
-    print(try AgentConnection.call(AgentRequest("inspect", pids: args.dropFirst().compactMap(Int32.init))), terminator: "")
+    print(try await AgentConnection.callAsync(AgentRequest("inspect", pids: args.dropFirst().compactMap(Int32.init))), terminator: "")
   case "retire-skill":
     try LifecycleSkillInstall.retire(Array(args.dropFirst()))
   case "install-skill":
@@ -72,7 +74,7 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.9.2
+      BurnZombies 0.10.0
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
