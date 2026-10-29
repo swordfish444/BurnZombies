@@ -83,7 +83,7 @@ int bz_agent_read(int fd, char *buffer, int capacity) {
     return bz_agent_read_timeout(fd, buffer, capacity, 5000);
 }
 int bz_agent_read_timeout(int fd, char *buffer, int capacity, int milliseconds) {
-    if (milliseconds < 1 || milliseconds > 15000) { errno = EINVAL; return -1; }
+    if (milliseconds < 1 || milliseconds > 900000) { errno = EINVAL; return -1; }
     int used = 0;
     uint64_t deadline = bz_continuous_ns() + (uint64_t)milliseconds * 1000000ull;
     while (used < capacity && bz_continuous_ns() < deadline) {

@@ -20,7 +20,10 @@ import UserNotifications
       }) {
         message = finished.outcome == "verified" ? "Cleanup verified." : finished.detail
       }
-      if didLoadState && state.catalog.lifetimeVerified + (state.catalog.lifetimeWorktreesCleaned ?? 0) > oldValue.catalog.lifetimeVerified + (oldValue.catalog.lifetimeWorktreesCleaned ?? 0) {
+      if didLoadState
+        && state.catalog.lifetimeVerified + (state.catalog.lifetimeWorktreesCleaned ?? 0) > oldValue
+          .catalog.lifetimeVerified + (oldValue.catalog.lifetimeWorktreesCleaned ?? 0)
+      {
         burnPulse += 1
       }
       didLoadState = true
@@ -42,7 +45,9 @@ import UserNotifications
   @Published var harnessConfigured = false
   @Published var huntSnapshot: HuntSnapshot?
   @Published private(set) var huntLaunching = false
-  var huntRunning: Bool { huntLaunching || huntSnapshot?.isRunning == true || machineReview.phase == "reviewing" }
+  var huntRunning: Bool {
+    huntLaunching || huntSnapshot?.isRunning == true || machineReview.phase == "reviewing"
+  }
   private var reviewTaskActive = false
   private var pendingManualHunt = false
   private var huntProgressTimer: Timer?
@@ -61,7 +66,8 @@ import UserNotifications
   var accessReady: Bool { state.fullDiskAccess.canScan }
   var showsAccessBanner: Bool { !accessReady && !accessBannerDismissed }
   var installedAppPath: String {
-    Bundle.main.bundleURL.pathExtension == "app" ? Bundle.main.bundleURL.path : "~/Applications/BurnZombies.app"
+    Bundle.main.bundleURL.pathExtension == "app"
+      ? Bundle.main.bundleURL.path : "~/Applications/BurnZombies.app"
   }
   func dismissAccessBanner() {
     accessBannerDismissed = true
@@ -76,13 +82,19 @@ import UserNotifications
   /// Explicit setup arms one return check and survives macOS Quit & Reopen.
   /// The saved intent authorizes a check, never a permission grant.
   func openFullDiskAccessSettings() {
-    guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
-    awaitingAccessReturn = true; leftForAccessSettings = false; accessReturnPending = false
+    guard
+      let url = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+    else { return }
+    awaitingAccessReturn = true
+    leftForAccessSettings = false
+    accessReturnPending = false
     accessPreferences?.set(true, forKey: Self.accessVerificationPendingKey)
     guard accessOpener(url) else {
       awaitingAccessReturn = false
       accessPreferences?.removeObject(forKey: Self.accessVerificationPendingKey)
-      message = "Open System Settings → Privacy & Security → Full Disk Access and enable BurnZombies."
+      message =
+        "Open System Settings → Privacy & Security → Full Disk Access and enable BurnZombies."
       return
     }
   }
@@ -97,7 +109,9 @@ import UserNotifications
   }
   func accessSetupDidBecomeActive() {
     guard awaitingAccessReturn && leftForAccessSettings else { return }
-    awaitingAccessReturn = false; leftForAccessSettings = false; accessReturnPending = true
+    awaitingAccessReturn = false
+    leftForAccessSettings = false
+    accessReturnPending = true
     checkAccessAfterReturnIfReady()
   }
   private func checkAccessAfterReturnIfReady() {
@@ -107,13 +121,21 @@ import UserNotifications
   }
   func recheckFullDiskAccess() {
     guard !working, accessChecker != nil || (!demo && monitor != nil) else { return }
-    awaitingAccessReturn = false; leftForAccessSettings = false; accessReturnPending = false
+    awaitingAccessReturn = false
+    leftForAccessSettings = false
+    accessReturnPending = false
     working = true
     Task {
       do {
-        if let accessChecker { state.fullDiskAccess = try await accessChecker() }
-        else if let monitor { state = try await monitor.recheckFullDiskAccess() }
-        message = accessReady ? "Access is available. Observation continues on its normal schedule." : state.fullDiskAccess.detail
+        if let accessChecker {
+          state.fullDiskAccess = try await accessChecker()
+        } else if let monitor {
+          state = try await monitor.recheckFullDiskAccess()
+        }
+        message =
+          accessReady
+          ? "Access is available. Observation continues on its normal schedule."
+          : state.fullDiskAccess.detail
       } catch { message = error.localizedDescription }
       working = false
       onUpdate?()
@@ -122,9 +144,18 @@ import UserNotifications
   }
 
   func requestAgentCleanup() {
-    guard accessReady else { message = state.fullDiskAccess.detail; return }
-    if huntRunning { openHunt?(); return }
-    guard demo || harnessConfigured else { message = "Choose a harness in Settings before hunting."; return }
+    guard accessReady else {
+      message = state.fullDiskAccess.detail
+      return
+    }
+    if huntRunning {
+      openHunt?()
+      return
+    }
+    guard demo || harnessConfigured else {
+      message = "Choose a harness in Settings before hunting."
+      return
+    }
     openHunt?()
     guard !demo || huntAction != nil else { return }
     huntLaunching = true
@@ -134,7 +165,8 @@ import UserNotifications
     guard !demo else { return }
     do {
       let config = try MachineReviewConfiguration.load(root: Store.defaultRoot)
-      harnessConfigured = config != nil; machineReviewEnabled = config?.enabled ?? false
+      harnessConfigured = config != nil
+      machineReviewEnabled = config?.enabled ?? false
     } catch { message = error.localizedDescription }
   }
   func runScheduledHunt() { runHunt(manual: false) }
@@ -148,25 +180,39 @@ import UserNotifications
     startHuntProgressTimer()
     Task {
       let previousReview = await reviewer?.snapshot()
-      if let huntAction { await huntAction() }
-      else if manual { await reviewer?.hunt() }
-      else { await reviewer?.tick() }
+      if let huntAction {
+        await huntAction()
+      } else if manual {
+        await reviewer?.hunt()
+      } else {
+        await reviewer?.tick()
+      }
       await receiveReviewState()
       if let monitor { state = await monitor.snapshot() }
       let beganHunt = machineReview.lastStarted != previousReview?.lastStarted
       let followUp = pendingManualHunt && !beganHunt
       pendingManualHunt = false
-      huntLaunching = followUp; reviewTaskActive = false
+      huntLaunching = followUp
+      reviewTaskActive = false
       if followUp { runHunt(manual: true) }
-      if !huntProgressVisible && !reviewTaskActive { huntProgressTimer?.invalidate(); huntProgressTimer = nil }
+      if !huntProgressVisible && !reviewTaskActive {
+        huntProgressTimer?.invalidate()
+        huntProgressTimer = nil
+      }
       onUpdate?()
     }
   }
   func setHuntProgressVisible(_ visible: Bool) {
     huntProgressVisible = visible
-    if visible { startHuntProgressTimer(); pollHuntProgress() }
-    else if !reviewTaskActive { huntProgressTimer?.invalidate(); huntProgressTimer = nil }
-    else { startHuntProgressTimer() }
+    if visible {
+      startHuntProgressTimer()
+      pollHuntProgress()
+    } else if !reviewTaskActive {
+      huntProgressTimer?.invalidate()
+      huntProgressTimer = nil
+    } else {
+      startHuntProgressTimer()
+    }
   }
   private func startHuntProgressTimer() {
     guard !demo else { return }
@@ -200,6 +246,7 @@ import UserNotifications
   var openLog: (() -> Void)?
   var openSettings: (() -> Void)?
   var openAudit: (() -> Void)?
+  var openWorktrees: (() -> Void)?
   var openHunt: (() -> Void)?
   let demo: Bool
   private var monitor: Monitor?
@@ -207,20 +254,25 @@ import UserNotifications
   private var reviewer: MachineReviewer?
   private var timer: Timer?
   var onUpdate: (() -> Void)?
-  init(demo: Bool = CommandLine.arguments.contains("--demo"), accessPreferences: UserDefaults? = nil,
-    accessOpener: ((URL) -> Bool)? = nil, accessChecker: (() async throws -> FullDiskAccessStatus)? = nil,
-    huntAction: (() async -> Void)? = nil) {
+  init(
+    demo: Bool = CommandLine.arguments.contains("--demo"), accessPreferences: UserDefaults? = nil,
+    accessOpener: ((URL) -> Bool)? = nil,
+    accessChecker: (() async throws -> FullDiskAccessStatus)? = nil,
+    huntAction: (() async -> Void)? = nil
+  ) {
     self.demo = demo
     self.accessPreferences = accessPreferences ?? (demo ? nil : .standard)
     self.accessOpener = accessOpener ?? { NSWorkspace.shared.open($0) }
     self.accessChecker = accessChecker
     self.huntAction = huntAction
-    accessBannerDismissed = self.accessPreferences?.bool(forKey: Self.accessBannerDismissedKey) ?? false
+    accessBannerDismissed =
+      self.accessPreferences?.bool(forKey: Self.accessBannerDismissedKey) ?? false
     if demo {
       state = Demo.state()
       state.fullDiskAccess = .init(state: .granted, detail: "Preview access state.")
       pressure = "Low"
-      harnessConfigured = true; machineReviewEnabled = true
+      harnessConfigured = true
+      machineReviewEnabled = true
       restoringAccessPresentation = false
       restoreAccessVerificationAfterRelaunch()
       checkAccessAfterReturnIfReady()
@@ -228,8 +280,10 @@ import UserNotifications
     }
     restoringAccessPresentation = false
     do {
-      let observer = try Monitor(); monitor = observer
-      reviewer = try MachineReviewer(prepareHunt: { _ = try await observer.prepareHunt() },
+      let observer = try Monitor()
+      monitor = observer
+      reviewer = try MachineReviewer(
+        prepareHunt: { _ = try await observer.prepareHunt() },
         settleHunt: { _ = try await observer.settleHuntDiscovery() })
       reloadReviewConfiguration()
     } catch {
@@ -250,9 +304,17 @@ import UserNotifications
     restoreAccessVerificationAfterRelaunch()
     refresh()
   }
+  func worktree(_ request: WorktreeRequest) async throws -> WorktreeReply {
+    if demo { return WorktreeExamples.snapshot() }
+    guard let monitor else { return WorktreeReply() }
+    let reply = try await monitor.worktreeRequest(request, caller: "native-operator")
+    if !["list", "operations"].contains(request.action) { state = await monitor.snapshot() }
+    return reply
+  }
   private func receiveAgentSnapshot(_ snapshot: ViewState) {
     state = snapshot
-    cleanupQueued = FileManager.default.fileExists(atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
+    cleanupQueued = FileManager.default.fileExists(
+      atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
     pressure = Native().memoryPressure()
     onUpdate?()
     schedule()
@@ -261,8 +323,10 @@ import UserNotifications
     guard !working, let monitor else { return }
     working = true
     Task {
-      state = await monitor.refresh()
-      cleanupQueued = FileManager.default.fileExists(atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
+      _ = await monitor.refresh()
+      state = await monitor.snapshot()
+      cleanupQueued = FileManager.default.fileExists(
+        atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
       pressure = Native().memoryPressure()
       working = false
       if let selected = selection { selection = state.findings.first { $0.id == selected.id } }
@@ -280,14 +344,19 @@ import UserNotifications
       }
       onUpdate?()
       schedule()
+      Task { await monitor.worktreeTick() }
       // Observation continues on its own timer while a bounded review runs.
       if accessReady && state.error == nil && !state.partial { runScheduledHunt() }
     }
   }
   private func receiveReviewState(includeHunt: Bool = true) async {
     if let reviewer { machineReview = await reviewer.snapshot() }
-    if !demo && includeHunt { huntSnapshot = try? HuntSnapshot.load(root: Store.defaultRoot) }
-    cleanupQueued = FileManager.default.fileExists(atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
+    if !demo && includeHunt {
+      huntSnapshot = try? HuntSnapshot.load(root: Store.defaultRoot)
+      if let monitor { huntSnapshot?.includeReceipts((await monitor.snapshot()).catalog) }
+    }
+    cleanupQueued = FileManager.default.fileExists(
+      atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
   }
   private func schedule() {
     timer?.invalidate()
@@ -299,6 +368,10 @@ import UserNotifications
     // and keep observing during AppKit menu tracking and modal interactions.
     RunLoop.main.add(next, forMode: .common)
     timer = next
+  }
+  func shutdownWorktrees() async {
+    timer?.invalidate()
+    await monitor?.shutdownWorktrees()
   }
   func suspend() {
     timer?.invalidate()
@@ -380,14 +453,25 @@ import UserNotifications
     }
   }
   func setAutomatic(_ enabled: Bool) {
-    guard !enabled || accessReady else { message = state.fullDiskAccess.detail; return }
+    guard !enabled || accessReady else {
+      message = state.fullDiskAccess.detail
+      return
+    }
     do {
       guard var config = try MachineReviewConfiguration.load(root: Store.defaultRoot) else {
-        message = "Run BurnZombies setup to select an installed harness."; return
+        message = "Run BurnZombies setup to select an installed harness."
+        return
       }
-      config.enabled = enabled; try config.save(root: Store.defaultRoot)
+      config.enabled = enabled
+      try config.save(root: Store.defaultRoot)
       machineReviewEnabled = enabled
-      if enabled { Task { try? await reviewer?.resume(); await receiveReviewState(); runHunt(manual: false) } }
+      if enabled {
+        Task {
+          try? await reviewer?.resume()
+          await receiveReviewState()
+          runHunt(manual: false)
+        }
+      }
     } catch { message = error.localizedDescription }
   }
   func setNotifications(_ enabled: Bool) {
@@ -547,13 +631,17 @@ struct Dashboard: View {
       if !model.accessReady { FullDiskAccessView(model: model) }
       VStack(alignment: .leading, spacing: 8) {
         Text(
-          !model.accessReady ? "One step before cleanup." : attention == 0
-            ? "Room to keep going." : eligible > 0 ? "A few loose ends." : "Worth a closer look."
+          !model.accessReady
+            ? "One step before cleanup."
+            : attention == 0
+              ? "Room to keep going." : eligible > 0 ? "A few loose ends." : "Worth a closer look."
         ).font(.system(size: 25, weight: .semibold, design: .rounded))
         Text(
-          !model.accessReady ? "Grant Full Disk Access to begin whole-Mac discovery and background reviews." : attention == 0
-            ? "Your connected agent reviews live evidence and decides what is safe to stop."
-            : "\(attention) activities need a look. \(eligible) have enough ownership evidence to review for cleanup."
+          !model.accessReady
+            ? "Grant Full Disk Access to begin whole-Mac discovery and background reviews."
+            : attention == 0
+              ? "Your connected agent reviews live evidence and decides what is safe to stop."
+              : "\(attention) activities need a look. \(eligible) have enough ownership evidence to review for cleanup."
         ).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
       HStack(spacing: 0) {
@@ -652,11 +740,14 @@ struct Dashboard: View {
               Text(
                 "Use the owning tool's supported shutdown first when it is available. These helpers must be disposable; idle CPU cannot prove that work is safe to discard."
               ).font(.caption).foregroundStyle(.secondary)
-              Button("Request graceful stop") { model.clean() }.clickPointer().buttonStyle(.borderedProminent)
-                .disabled(model.working)
+              Button("Request graceful stop") { model.clean() }.clickPointer().buttonStyle(
+                .borderedProminent
+              )
+              .disabled(model.working)
             }.padding(14).background(ember.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
           } else if f.disposition == .eligible {
-            Button("Preview cleanup") { model.preview = true }.clickPointer().buttonStyle(.borderedProminent)
+            Button("Preview cleanup") { model.preview = true }.clickPointer().buttonStyle(
+              .borderedProminent)
           }
           HStack {
             Button("Protect executable") { model.protect() }.clickPointer()
@@ -713,20 +804,28 @@ struct Dashboard: View {
       FullDiskAccessView(model: model)
       Text("Quiet by default.").font(.title2.weight(.semibold))
       Text("Your whole Mac. One observer.").font(.headline)
-      Text("BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running.")
-        .font(.caption).foregroundStyle(.secondary)
-      Text(model.accessReady ? model.machineReview.detail : "Background reviews wait until Full Disk Access is available.").font(.caption).foregroundStyle(.secondary)
+      Text(
+        "BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running."
+      )
+      .font(.caption).foregroundStyle(.secondary)
+      Text(
+        model.accessReady
+          ? model.machineReview.detail
+          : "Background reviews wait until Full Disk Access is available."
+      ).font(.caption).foregroundStyle(.secondary)
       if model.accessReady && model.machineReview.phase == "paused" {
         Button("Resume scheduled hunts") { model.setAutomatic(true) }.clickPointer()
       }
-      HuntSettingsView(settings: huntSettings, onSaved: model.reloadReviewConfiguration).disabled(model.demo)
+      HuntSettingsView(settings: huntSettings, onSaved: model.reloadReviewConfiguration).disabled(
+        model.demo)
       ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
       UsageHistoryView().disabled(model.demo)
       DiskSettingsView(accessReady: model.accessReady).disabled(model.demo)
       Toggle(
         "Grouped notifications",
         isOn: Binding(
-          get: { model.state.catalog.preferences.notifications }, set: model.setNotifications)).clickPointer()
+          get: { model.state.catalog.preferences.notifications }, set: model.setNotifications)
+      ).clickPointer()
       Text(
         "Off by default. A finding notifies once; materially worse impact can notify again after a day. Snoozed and protected activities stay quiet."
       ).font(.caption).foregroundStyle(.secondary)
@@ -775,6 +874,7 @@ struct Dashboard: View {
   var item: NSStatusItem!
   var popover: NSPopover!
   var window: NSWindow?
+  var worktreeWindow: NSWindow?
   var auditWindow: NSWindow?
   var menuPreviewWindow: NSWindow?
   var huntWindow: NSWindow?
@@ -791,6 +891,7 @@ struct Dashboard: View {
       self?.model.tab = "Settings"
       self?.showAudit()
     }
+    model.openWorktrees = { [weak self] in self?.showWorktrees() }
     model.openAudit = { [weak self] in self?.showAudit() }
     model.openHunt = { [weak self] in self?.showHunt() }
     item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -810,6 +911,7 @@ struct Dashboard: View {
       self, selector: #selector(sleeping), name: NSWorkspace.willSleepNotification, object: nil)
     NSWorkspace.shared.notificationCenter.addObserver(
       self, selector: #selector(waking), name: NSWorkspace.didWakeNotification, object: nil)
+    if CommandLine.arguments.contains("--show-worktrees") { showWorktrees() }
     if CommandLine.arguments.contains("--show-window") { showImpact("Impact") }
     if CommandLine.arguments.contains("--show-popover") { toggle() }
     if CommandLine.arguments.contains("--show-mini-window") {
@@ -854,6 +956,22 @@ struct Dashboard: View {
     window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
+  func showWorktrees() {
+    popover?.performClose(nil)
+    if worktreeWindow == nil {
+      let w = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered,
+        defer: false)
+      w.title = "BurnZombies — Worktrees"
+      w.isReleasedWhenClosed = false
+      w.contentView = NSHostingView(rootView: WorktreesView(model: model))
+      w.center()
+      worktreeWindow = w
+    }
+    worktreeWindow?.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
   func showAudit() {
     popover.performClose(nil)
     if auditWindow == nil {
@@ -872,15 +990,21 @@ struct Dashboard: View {
   func showHunt() {
     popover?.performClose(nil)
     if huntWindow == nil {
-      let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 948, height: 780),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 948, height: 780),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+        backing: .buffered, defer: false)
       window.title = "BurnZombies — Hunt Zombies"
-      window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
-      window.isReleasedWhenClosed = false; window.delegate = self
+      window.titlebarAppearsTransparent = true
+      window.titleVisibility = .hidden
+      window.isReleasedWhenClosed = false
+      window.delegate = self
       window.contentMinSize = NSSize(width: 800, height: 740)
-      let hosting = NSHostingView(rootView: HuntView(model: model)); hosting.sizingOptions = []
+      let hosting = NSHostingView(rootView: HuntView(model: model))
+      hosting.sizingOptions = []
       window.contentView = hosting
-      window.center(); huntWindow = window
+      window.center()
+      huntWindow = window
     }
     model.setHuntProgressVisible(true)
     huntWindow?.deminiaturize(nil)
@@ -888,14 +1012,19 @@ struct Dashboard: View {
     NSApp.activate(ignoringOtherApps: true)
   }
   func windowWillClose(_ notification: Notification) {
-    if let window = notification.object as? NSWindow, window === huntWindow { model.setHuntProgressVisible(false) }
+    if let window = notification.object as? NSWindow, window === huntWindow {
+      model.setHuntProgressVisible(false)
+    }
   }
   func windowDidMiniaturize(_ notification: Notification) {
-    if let window = notification.object as? NSWindow, window === huntWindow { model.setHuntProgressVisible(false) }
+    if let window = notification.object as? NSWindow, window === huntWindow {
+      model.setHuntProgressVisible(false)
+    }
   }
   func windowDidChangeOcclusionState(_ notification: Notification) {
     if let window = notification.object as? NSWindow, window === huntWindow {
-      model.setHuntProgressVisible(window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible))
+      model.setHuntProgressVisible(
+        window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible))
     }
   }
   @objc func toggle() {
@@ -906,8 +1035,12 @@ struct Dashboard: View {
       NSApp.activate(ignoringOtherApps: true)
     }
   }
-  func applicationDidResignActive(_ notification: Notification) { model?.accessSetupDidResignActive() }
-  func applicationDidBecomeActive(_ notification: Notification) { model?.accessSetupDidBecomeActive() }
+  func applicationDidResignActive(_ notification: Notification) {
+    model?.accessSetupDidResignActive()
+  }
+  func applicationDidBecomeActive(_ notification: Notification) {
+    model?.accessSetupDidBecomeActive()
+  }
   @objc func sleeping() { model.suspend() }
   @objc func waking() { model.wake() }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
@@ -916,41 +1049,91 @@ struct Dashboard: View {
     // menu-bar click or window action may present UI and take keyboard focus.
     return false
   }
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    Task {
+      await model.shutdownWorktrees()
+      sender.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
+  }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 MainActor.assumeIsolated {
   let app = NSApplication.shared
   #if DEBUG
-  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--hunt-proof" {
-    do { try huntProof(output: CommandLine.arguments[2]); exit(0) }
-    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
-  }
-  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--hunt-scene-proof" {
-    do { try huntSceneProof(output: CommandLine.arguments[2]); exit(0) }
-    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
-  }
-  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--access-banner-proof" {
-    do { try accessBannerProof(output: CommandLine.arguments[2]); exit(0) }
-    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
-  }
-  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--settings-proof" {
-    do { try settingsProof(output: CommandLine.arguments[2]); exit(0) }
-    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
-  }
-  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--impact-proof" {
-    do { try impactProof(output: CommandLine.arguments[2]); exit(0) }
-    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
-  }
-  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--mini-proof" {
-    do { try miniProof(output: CommandLine.arguments[2]); exit(0) }
-    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
-  }
-  if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--receipt-proof" {
-    do {
-      let catalog = try Store(root: URL(fileURLWithPath: CommandLine.arguments[2])).load()
-      try miniProof(output: CommandLine.arguments[3], catalog: catalog); exit(0)
-    } catch { print("FAIL \(error.localizedDescription)"); exit(1) }
-  }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--worktree-view-proof" {
+      do {
+        try worktreeViewProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--hunt-proof" {
+      do {
+        try huntProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--hunt-scene-proof" {
+      do {
+        try huntSceneProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--access-banner-proof" {
+      do {
+        try accessBannerProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--settings-proof" {
+      do {
+        try settingsProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--impact-proof" {
+      do {
+        try impactProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--mini-proof" {
+      do {
+        try miniProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
+    if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--receipt-proof" {
+      do {
+        let catalog = try Store(root: URL(fileURLWithPath: CommandLine.arguments[2])).load()
+        try miniProof(output: CommandLine.arguments[3], catalog: catalog)
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
   #endif
   let delegate = AppDelegate()
   app.delegate = delegate

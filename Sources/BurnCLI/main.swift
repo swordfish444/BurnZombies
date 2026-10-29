@@ -1,5 +1,5 @@
-import BurnCore
 import AppKit
+import BurnCore
 import CBurn
 import Darwin
 import Foundation
@@ -14,36 +14,137 @@ func json<T: Encodable>(_ value: T) throws {
   e.outputFormatting = [.prettyPrinted, .sortedKeys]
   print(String(decoding: try e.encode(value), as: UTF8.self))
 }
+@MainActor func stopObserver(at app: URL) async throws {
+  guard app.pathExtension == "app", Bundle(url: app)?.bundleIdentifier == "io.burnzombies.app"
+  else {
+    throw StoreError.message("Only an exact BurnZombies app bundle can be stopped for an update.")
+  }
+  let previous = NSWorkspace.shared.runningApplications.filter {
+    $0.bundleIdentifier == "io.burnzombies.app"
+      && $0.bundleURL.map { WorkspaceSafety.canonical($0.path) }
+        == WorkspaceSafety.canonical(app.path)
+  }
+  for running in previous {
+    guard running.terminate() else {
+      throw StoreError.message(
+        "The previous observer did not accept graceful shutdown. No update or force stop performed."
+      )
+    }
+  }
+  for _ in 0..<300 {
+    if previous.allSatisfy({ $0.isTerminated }) { return }
+    try await Task.sleep(nanoseconds: 100_000_000)
+  }
+  throw StoreError.message(
+    "The previous observer is still closing. Its existing app bundle is preserved.")
+}
 let args = Array(CommandLine.arguments.dropFirst())
 do {
   switch args.first ?? "help" {
+  case "--worktree-scan-worker":
+    exit(WorktreeScanWorker.run(arguments: Array(args.dropFirst())))
+  case "worktrees":
+    guard args.count >= 2 else {
+      fail("Use worktrees list|scan|operations or worktrees request with a JSON object on stdin.")
+    }
+    if ["retire", "archive-retire", "quarantine"].contains(args[1]) {
+      guard args.count == 6, args[4] == "--evidence", (20...1200).contains(args[5].count) else {
+        fail(
+          "Use worktrees retire|archive-retire|quarantine ID REVISION --evidence 'Observed completion and no remaining use'. Manage the exact checkout first."
+        )
+      }
+      func sendWorktree(_ q: WorktreeRequest) async throws -> (String, [String: Any]) {
+        let raw = try await AgentConnection.callAsync(.init("worktrees", worktreeRequest: q))
+        guard let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+          object["ok"] as? Bool == true,
+          let body = object["worktreeInventory"] as? [String: Any]
+        else { fail(raw) }
+        return (raw, body)
+      }
+      _ = try await sendWorktree(
+        .init("confirm", id: args[2], revision: args[3], evidence: args[5]))
+      let (_, preview) = try await sendWorktree(
+        .init(args[1] == "retire" ? "preview" : "preview_dirty", id: args[2], revision: args[3]))
+      guard let token = preview["token"] as? String else { fail("No guarded preview was issued.") }
+      let (result, _) = try await sendWorktree(
+        .init(
+          args[1] == "retire"
+            ? "retire" : (args[1] == "quarantine" ? "quarantine" : "retire_dirty"), token: token))
+      print(result, terminator: "")
+      break
+    }
+    let query: WorktreeRequest
+    if args[1] == "request" {
+      guard args.count == 2, let data = try FileHandle.standardInput.read(upToCount: 16385),
+        data.count <= 16384
+      else { fail("Pass one bounded worktree JSON request on stdin.") }
+      query = try JSONDecoder().decode(WorktreeRequest.self, from: data)
+    } else {
+      guard args.count == 2, ["list", "scan", "operations"].contains(args[1]) else {
+        fail("Use worktrees request for exact ID/revision actions; see docs/WORKTREE-CLEANUP.md.")
+      }
+      query = WorktreeRequest(args[1])
+    }
+    let raw = try await AgentConnection.callAsync(AgentRequest("worktrees", worktreeRequest: query))
+    print(raw, terminator: "")
+    if let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+      object["ok"] as? Bool != true
+    {
+      exit(1)
+    }
   case "--disk-walk-worker":
     exit(DiskWalkWorker.run(arguments: Array(args.dropFirst())))
+  case "stop-observer":
+    guard args.count == 2, args[1].hasPrefix("/")
+    else { fail("Use stop-observer with the exact canonical BurnZombies.app path.") }
+    try await stopObserver(at: URL(fileURLWithPath: WorkspaceSafety.canonical(args[1])))
   case "start-observer":
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-    let app = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let app = executable.deletingLastPathComponent().deletingLastPathComponent()
+      .deletingLastPathComponent()
     guard app.pathExtension == "app" else { fail("Start observer from the installed app bundle.") }
-    let previous = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.standardizedFileURL == app.standardizedFileURL }
-    for running in previous {
-      guard running.terminate() else { fail("Could not close the previous BurnZombies observer. Quit it and reopen BurnZombies to finish upgrading.") }
-    }
-    for _ in 0..<50 {
-      if previous.allSatisfy({ $0.isTerminated }) { break }
-      try await Task.sleep(nanoseconds: 100_000_000)
-    }
-    guard previous.allSatisfy({ $0.isTerminated }) else { fail("Previous observer is still closing. No force stop or reopen event was sent.") }
-    let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = false; configuration.hides = true
+    try await stopObserver(at: app)
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.activates = false
+    configuration.hides = true
     let _: NSRunningApplication = try await withCheckedThrowingContinuation { continuation in
-      NSWorkspace.shared.openApplication(at: app, configuration: configuration) { application, error in
-        if let application { continuation.resume(returning: application) }
-        else { continuation.resume(throwing: error ?? StoreError.message("Could not start the background observer.")) }
+      NSWorkspace.shared.openApplication(at: app, configuration: configuration) {
+        application, error in
+        if let application {
+          continuation.resume(returning: application)
+        } else {
+          continuation.resume(
+            throwing: error ?? StoreError.message("Could not start the background observer."))
+        }
       }
     }
+    let readyDeadline = Date().addingTimeInterval(20)
+    var ready = false
+    while Date() < readyDeadline {
+      if AgentConnection.isAvailable(),
+        let reply = try? await AgentConnection.callAsync(AgentRequest("access_status")),
+        let value = try? JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any],
+        value["ok"] as? Bool == true
+      {
+        ready = true
+        break
+      }
+      try await Task.sleep(nanoseconds: 100_000_000)
+    }
+    guard ready else {
+      fail(
+        "Observer launch was acknowledged but its private connection did not become ready. No cleanup was requested."
+      )
+    }
   case "review-codex":
-    guard args.count == 2 || (args.count == 3 && args[2] == "--probe") else { fail("Internal Codex review requires a private plan.") }
+    guard args.count == 2 || (args.count == 3 && args[2] == "--probe") else {
+      fail("Internal Codex review requires a private plan.")
+    }
     try CodexReview.run(URL(fileURLWithPath: args[1]), probeOnly: args.count == 3)
   case "review-worker":
-    guard args.count >= 3, args[1] == "--", args[2].hasPrefix("/") else { fail("Internal worker requires an absolute harness executable.") }
+    guard args.count >= 3, args[1] == "--", args[2].hasPrefix("/") else {
+      fail("Internal worker requires an absolute harness executable.")
+    }
     let words = args.dropFirst(2).map { strdup($0) }
     defer { words.forEach { free($0) } }
     var pointers = words + [nil]
@@ -52,13 +153,21 @@ do {
     guard args.count == 1, let data = try FileHandle.standardInput.read(upToCount: 16385) else {
       fail("Pass one lifecycle JSON object on stdin.")
     }
-    let raw = try await AgentConnection.callAsync(args[0] == "workspace" ? WorkspaceInput.request(data) : LifecycleInput.request(data))
+    let raw = try await AgentConnection.callAsync(
+      args[0] == "workspace" ? WorkspaceInput.request(data) : LifecycleInput.request(data))
     print(raw, terminator: "")
-    if let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], result["ok"] as? Bool != true { exit(1) }
+    if let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+      result["ok"] as? Bool != true
+    {
+      exit(1)
+    }
   case "evidence":
     guard args.count >= 2, args.count <= 17,
-      args.dropFirst().allSatisfy({ Int32($0).map { $0 > 0 } ?? false }) else { fail("Use evidence PID [PID ...], up to 16 exact helper PIDs.") }
-    print(try await AgentConnection.callAsync(AgentRequest("inspect", pids: args.dropFirst().compactMap(Int32.init))), terminator: "")
+      args.dropFirst().allSatisfy({ Int32($0).map { $0 > 0 } ?? false })
+    else { fail("Use evidence PID [PID ...], up to 16 exact helper PIDs.") }
+    print(
+      try await AgentConnection.callAsync(
+        AgentRequest("inspect", pids: args.dropFirst().compactMap(Int32.init))), terminator: "")
   case "retire-skill":
     try LifecycleSkillInstall.retire(Array(args.dropFirst()))
   case "install-skill":
@@ -75,7 +184,7 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.11.0
+      BurnZombies 0.12.0
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
@@ -92,6 +201,7 @@ do {
       scan     Aggregate visibility and scanner timing; no private process list.
       status   Aggregate saved catalog totals; does not start a monitor.
       access-status   Read the running app's disk-access setup status; never opens settings or requests access.
+      access-check    Verify existing protected-folder access after an update; never grants macOS permissions.
       measure PID SECONDS   Aggregate CPU, footprint, wakeups, and writes (10–3600s).
       fixture-tree orphan|detached|hung
         Sacrificial 48 MiB helper, hard lifetime 20 minutes. Tests only.
@@ -106,7 +216,10 @@ do {
         let ei = args.firstIndex(of: "--event"), ei + 1 < args.count,
         let data = try FileHandle.standardInput.read(upToCount: 1_048_576),
         let input = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-      else { print("{}"); exit(0) }
+      else {
+        print("{}")
+        exit(0)
+      }
       let output = try HarnessHook.response(client: args[ci + 1], event: args[ei + 1], input: input)
       let encoded = try JSONSerialization.data(withJSONObject: output, options: .sortedKeys)
       print(String(decoding: encoded, as: UTF8.self))
@@ -150,14 +263,20 @@ do {
       "diskWrittenBytes": Double(last[4] - first[4]),
       "logicalWrittenBytes": Double(last[5] - first[5]),
     ])
-  case "access-status":
-    let raw = try await AgentConnection.callAsync(AgentRequest("access_status"))
+  case "access-status", "access-check":
+    let raw = try await AgentConnection.callAsync(
+      AgentRequest(args[0] == "access-check" ? "access_check" : "access_status"))
     guard let reply = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
-      reply["ok"] as? Bool == true, let access = reply["fullDiskAccess"] else {
-      fail("The observer has no disk-access status. Update and start BurnZombies, then check Settings.")
+      let access = reply["fullDiskAccess"]
+    else {
+      fail(
+        "The observer has no disk-access status. Update and start BurnZombies, then check Settings."
+      )
     }
-    let data = try JSONSerialization.data(withJSONObject: access, options: [.prettyPrinted, .sortedKeys])
+    let data = try JSONSerialization.data(
+      withJSONObject: access, options: [.prettyPrinted, .sortedKeys])
     print(String(decoding: data, as: UTF8.self))
+    if args[0] == "access-check", reply["ok"] as? Bool != true { exit(1) }
   case "status":
     let c = try Store().load()
     try json([

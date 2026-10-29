@@ -132,7 +132,7 @@ func machineReviewProof() async throws {
   manualConfig.executable = slowHarness.path
   try manualConfig.save(root: manualRoot)
   let multi = [ReviewEvidence(id: "process-fixture", revision: "v1"),
-    ReviewEvidence(id: "workspace-fixture", revision: "v1", processCount: 0),
+    ReviewEvidence(id: "worktree:fixture", revision: "v1", processCount: 0),
     ReviewEvidence(id: "space:fixture", revision: "v1", processCount: 0, recommendationOnly: true)]
   try HarnessHook.publish(.init(observedAt: now, processCount: 123, residentBytes: 100, pressure: "Low", reviewEvidence: multi), store: manualStore)
   let manualReviewer = try MachineReviewer(root: manualRoot, accessCheck: fixtureAccess, prepareHunt: {

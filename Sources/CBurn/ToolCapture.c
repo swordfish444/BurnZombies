@@ -7,9 +7,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-int bz_capture_tool(char *const argv[], char *const env[], int output, int milliseconds, uint64_t max_bytes) {
+static int capture_group(char *const argv[], char *const env[], int output, int milliseconds, uint64_t max_bytes, int (*progress)(void *, uint64_t), void *context, int *unreaped, int fast) {
     if (!argv || !argv[0] || argv[0][0] != '/' || !env || output < 0 ||
-        milliseconds < 1 || milliseconds > 8000 || max_bytes < 1 || max_bytes > 1048576) return 64;
+        milliseconds < 1 || milliseconds > 300000 || max_bytes < 1 || max_bytes > 16777216) return 64;
+    if (unreaped) *unreaped = -1;
+    struct sigaction child_signal;
+    if (sigaction(SIGCHLD, NULL, &child_signal) || child_signal.sa_handler == SIG_IGN || (child_signal.sa_flags & SA_NOCLDWAIT)) return 71;
     posix_spawnattr_t attr;
     posix_spawn_file_actions_t actions;
     posix_spawnattr_init(&attr);
@@ -36,21 +39,45 @@ int bz_capture_tool(char *const argv[], char *const env[], int output, int milli
         siginfo_t info = {0};
         if (waitid(P_PID, (id_t)child, &info, WEXITED | WNOHANG | WNOWAIT) < 0) {
             if (errno == EINTR) continue;
-            failure = 71; break;
+            if (unreaped) *unreaped = child;
+            return 72; // Ownership cannot be established; never signal a reused group.
         }
         struct stat size;
         if (fstat(output, &size) || size.st_size < 0 || (uint64_t)size.st_size > max_bytes) { failure = 125; break; }
+        if (progress && !progress(context, (uint64_t)size.st_size)) { failure = 130; break; }
         if (info.si_pid == child) break;
         if (bz_continuous_ns() - started >= (uint64_t)milliseconds * 1000000ULL) { failure = 124; break; }
-        usleep(10000);
+        usleep(fast ? 1000 : 10000);
     }
     // WNOWAIT retains the group leader until teardown, preventing PID/group reuse.
     // This group contains only our analyzer and its own helpers, never user jobs.
     kill(-child, SIGTERM);
-    usleep(50000);
+    usleep(fast ? 1000 : 50000);
     kill(-child, SIGKILL);
     int status = 0;
-    while (waitpid(child, &status, 0) < 0) { if (errno != EINTR) return 71; }
+    uint64_t teardown = bz_continuous_ns();
+    while (1) {
+        pid_t got = waitpid(child, &status, WNOHANG);
+        if (got == child) break;
+        if (got < 0 && errno != EINTR) { if (unreaped) *unreaped = child; return 72; }
+        if (bz_continuous_ns() - teardown >= 5000000000ULL) { if (unreaped) *unreaped = child; return 72; }
+        usleep(fast ? 1000 : 10000);
+    }
     if (failure) return failure;
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+
+int bz_capture_tool(char *const argv[], char *const env[], int output, int milliseconds, uint64_t max_bytes) {
+    if (milliseconds > 8000 || max_bytes > 1048576) return 64;
+    return capture_group(argv, env, output, milliseconds, max_bytes, NULL, NULL, NULL, 0);
+}
+int bz_capture_worktree_worker(char *const argv[], char *const env[], int output,
+                              int (*progress)(void *, uint64_t), void *context, int *unreaped) {
+    if (!progress || !context) return 64;
+    return capture_group(argv, env, output, 300000, 16777216, progress, context, unreaped, 0);
+}
+int bz_capture_worktree_git(char *const argv[], char *const env[], int output, int milliseconds,
+                           int (*progress)(void *, uint64_t), void *context, int *unreaped) {
+    if (!progress || !context || milliseconds > 180000) return 64;
+    return capture_group(argv, env, output, milliseconds, 8388608, progress, context, unreaped, 1);
 }

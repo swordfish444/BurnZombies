@@ -5,7 +5,9 @@ import Foundation
 // Explicit capability injection belongs only to the isolated proof executable.
 func fixtureAccess() -> FullDiskAccessStatus { .init(state: .granted, detail: "Isolated fixture") }
 func fixtureWalker() -> DiskWalkRunner {
-  DiskWalkRunner(executable: URL(fileURLWithPath: CommandLine.arguments[0]), argumentPrefix: ["--disk-walk-worker"])
+  DiskWalkRunner(
+    executable: URL(fileURLWithPath: CommandLine.arguments[0]),
+    argumentPrefix: ["--disk-walk-worker"])
 }
 
 // A dependency-free test runner: also works with Apple's Command Line Tools alone.
@@ -36,11 +38,70 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.contains("--worktree-visibility") {
+      do { try worktreeVisibilityProof() } catch { failTest("Worktree visibility: \(error)") }
+      print("Worktree visibility checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--process-integration") {
+      do { try await integration() } catch { failTest("Process integration: \(error)") }
+      print("Process integration checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-native-status") {
+      let snapshot = WorktreeConsumerSnapshot()
+      print(
+        "Native consumer paths: \(snapshot.paths.count); coverage: \(snapshot.gap ?? "complete")")
+      return
+    }
+    if CommandLine.arguments.contains("--worktree-native-descriptors") {
+      do { try await worktreeNativeProof(descriptorOnly: true) } catch {
+        failTest("Native descriptor coverage: \(error)")
+      }
+      print("Native descriptor checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-native") {
+      do {
+        try worktreeVisibilityProof()
+        try await worktreeNativeProof()
+      } catch { failTest("Native worktrees: \(error)") }
+      print("Native worktree checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-keychain") {
+      do { try worktreeKeychainProof() } catch { failTest("Worktree Keychain: \(error)") }
+      print("Worktree Keychain checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-scale") {
+      do { try worktreeScaleProof() } catch { failTest("Worktree scale: \(error)") }
+      print("Worktree scale checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.firstIndex(of: "--worktree-scan-worker") == 1 {
+      exit(
+        WorktreeScanWorker.run(
+          arguments: Array(CommandLine.arguments.dropFirst(2)), access: fixtureAccess))
+    }
+    if CommandLine.arguments.contains("--worktree-lifecycle") {
+      do {
+        try await worktreeLifecycleProof()
+        try await worktreeSafetyProof()
+      } catch { failTest("Worktree lifecycle: \(error)") }
+      print("Worktree lifecycle checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.firstIndex(of: "--disk-walk-worker") == 1 {
-      exit(DiskWalkWorker.run(arguments: Array(CommandLine.arguments.dropFirst(2)), accessCheck: fixtureAccess))
+      exit(
+        DiskWalkWorker.run(
+          arguments: Array(CommandLine.arguments.dropFirst(2)), accessCheck: fixtureAccess))
     }
     if CommandLine.arguments.firstIndex(of: "--disk-walk-fixture") == 1 {
-      do { try diskWalkFixture() } catch { print("Disk worker fixture: \(error)"); exit(1) }
+      do { try diskWalkFixture() } catch {
+        print("Disk worker fixture: \(error)")
+        exit(1)
+      }
     }
     if CommandLine.arguments.contains("--full-disk-access") {
       do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
@@ -53,17 +114,26 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--owner-agent-fixture" {
-      do { try await runOwnerHarnessFixture(root: URL(fileURLWithPath: CommandLine.arguments[2])) }
-      catch { print("FAIL: \(error)"); exit(1) }
+      do {
+        try await runOwnerHarnessFixture(root: URL(fileURLWithPath: CommandLine.arguments[2]))
+      } catch {
+        print("FAIL: \(error)")
+        exit(1)
+      }
       return
     }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--review-owner-model" {
-      do { try runOwnerHarnessReview(root: URL(fileURLWithPath: CommandLine.arguments[2])) }
-      catch { print("FAIL: \(error)"); exit(1) }
+      do { try runOwnerHarnessReview(root: URL(fileURLWithPath: CommandLine.arguments[2])) } catch {
+        print("FAIL: \(error)")
+        exit(1)
+      }
       return
     }
     if CommandLine.arguments.contains("--owner-maintenance") {
-      do { try await ownerMaintenanceProof(); try await agentBridgeProof() } catch { failTest("Owner maintenance: \(error)") }
+      do {
+        try await ownerMaintenanceProof()
+        try await agentBridgeProof()
+      } catch { failTest("Owner maintenance: \(error)") }
       print("Owner maintenance checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
@@ -73,13 +143,18 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--owner-inspect") {
-      do { try gradleOwnerInspectionCLI() } catch { print("Owner inspection: \(error)"); exit(1) }
+      do { try gradleOwnerInspectionCLI() } catch {
+        print("Owner inspection: \(error)")
+        exit(1)
+      }
       exit(0)
     }
     if CommandLine.arguments.contains("--gradle-fixture") {
       do { try gradleFixtureCLI() } catch {
         let value: [String: Any] = ["ok": false, "error": String(describing: error)]
-        if let data = try? JSONSerialization.data(withJSONObject: value) { print(String(decoding: data, as: UTF8.self)) }
+        if let data = try? JSONSerialization.data(withJSONObject: value) {
+          print(String(decoding: data, as: UTF8.self))
+        }
         exit(1)
       }
       exit(0)
@@ -89,8 +164,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       print("Managed cache checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
-    if CommandLine.arguments.contains("--cache-inspect") || CommandLine.arguments.contains("--cache-contract") {
-      do { try managedCacheInspectionCLI() } catch { print("Cache inspection: \(error)"); exit(1) }
+    if CommandLine.arguments.contains("--cache-inspect")
+      || CommandLine.arguments.contains("--cache-contract")
+    {
+      do { try managedCacheInspectionCLI() } catch {
+        print("Cache inspection: \(error)")
+        exit(1)
+      }
       exit(0)
     }
     if CommandLine.arguments.contains("--transport") {
@@ -106,11 +186,15 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     if CommandLine.arguments.contains("--mole-hang-fixture") {
       alarm(10)
       signal(SIGTERM, SIG_IGN)
-      var argv = [CommandLine.arguments[0], "--mole-leaf-fixture"].map { (value: String) in value.withCString { strdup($0) } } + [nil]
+      var argv =
+        [CommandLine.arguments[0], "--mole-leaf-fixture"].map { (value: String) in
+          value.withCString { strdup($0) }
+        } + [nil]
       var environment = [strdup("PATH=/usr/bin:/bin"), nil]
       var child: pid_t = -1
       let code = posix_spawn(&child, argv[0]!, nil, nil, &argv, &environment)
-      argv.forEach { free($0) }; environment.forEach { free($0) }
+      argv.forEach { free($0) }
+      environment.forEach { free($0) }
       guard code == 0, child > 0 else { exit(2) }
       print("\(getpid()) \(child)")
       while true { pause() }
@@ -135,12 +219,22 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         let nodes = try DiskDiscovery.measure(CommandLine.arguments[2])
         let data = try JSONEncoder().encode(nodes)
         print(String(decoding: data, as: UTF8.self))
-      } catch { print("FAIL: \(error)"); exit(1) }
+      } catch {
+        print("FAIL: \(error)")
+        exit(1)
+      }
       return
     }
-    if CommandLine.arguments.contains("--passive-child") { Thread.sleep(forTimeInterval: 120); return }
+    if CommandLine.arguments.contains("--passive-child") {
+      Thread.sleep(forTimeInterval: 120)
+      return
+    }
     if CommandLine.arguments.contains("--passive-usage") {
-      do { try usageProof(); try await passiveProof(); try await diskProof() } catch { failTest("Passive/usage: \(error)") }
+      do {
+        try usageProof()
+        try await passiveProof()
+        try await diskProof()
+      } catch { failTest("Passive/usage: \(error)") }
       print("Passive/usage checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
@@ -150,30 +244,51 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--worktrees") {
+      do {
+        try await worktreeLifecycleProof()
+        try await worktreeSafetyProof()
+      } catch { failTest("Worktree lifecycle: \(error)") }
       do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
       print("Worktree checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--impact-metrics") {
-      do { try impactMetricsProof(); try impactPeriodProof() } catch { failTest("Impact metrics: \(error)") }
+      do {
+        try impactMetricsProof()
+        try impactPeriodProof()
+      } catch { failTest("Impact metrics: \(error)") }
       print("Impact metrics and period checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
-    if [5, 6].contains(CommandLine.arguments.count) && CommandLine.arguments[1] == "--review-model" {
+    if [5, 6].contains(CommandLine.arguments.count) && CommandLine.arguments[1] == "--review-model"
+    {
       do {
         let root = URL(fileURLWithPath: CommandLine.arguments[2])
-        guard let config = try MachineReviewConfiguration.load(root: root) else { throw StoreError.message("Missing proof config") }
-        let prompt = CommandLine.arguments[4] == "--production" ? MachineReviewer.prompt
+        guard let config = try MachineReviewConfiguration.load(root: root) else {
+          throw StoreError.message("Missing proof config")
+        }
+        let prompt =
+          CommandLine.arguments[4] == "--production"
+          ? MachineReviewer.prompt
           : try String(contentsOfFile: CommandLine.arguments[4], encoding: .utf8)
-        let ids = CommandLine.arguments.count == 6
-          ? try JSONDecoder().decode([String].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[5]))) : nil
-        try MachineReviewer.execute(config, root: root, prompt: prompt, reviewIDs: ids, accessCheck: fixtureAccess)
-      } catch { print("FAIL: \(error)"); exit(1) }
+        let ids =
+          CommandLine.arguments.count == 6
+          ? try JSONDecoder().decode(
+            [String].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[5])))
+          : nil
+        try MachineReviewer.execute(
+          config, root: root, prompt: prompt, reviewIDs: ids, accessCheck: fixtureAccess)
+      } catch {
+        print("FAIL: \(error)")
+        exit(1)
+      }
       return
     }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--agent-fixture" {
-      do { try await runAgentFixture(root: URL(fileURLWithPath: CommandLine.arguments[2])) }
-      catch { print("FAIL: \(error)"); exit(1) }
+      do { try await runAgentFixture(root: URL(fileURLWithPath: CommandLine.arguments[2])) } catch {
+        print("FAIL: \(error)")
+        exit(1)
+      }
       return
     }
     let d = SafetyTests()
@@ -181,10 +296,19 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     let pressure = PressureTests()
     let tests: [(String, () throws -> Void)] = [
       ("owner-managed BuildKit cleanup plans and receipts", managedCacheProof),
-      ("whole-machine disk discovery, APFS clones, grouped advice and scope safety", diskDiscoveryProof),
+      (
+        "whole-machine disk discovery, APFS clones, grouped advice and scope safety",
+        diskDiscoveryProof
+      ),
       ("cumulative awake CPU savings and stable nonnegative speed impact", impactMetricsProof),
-      ("impact periods, completion dates, DST, empty history and preview accounting", impactPeriodProof),
-      ("review model/effort migration, persistence, provider arguments and defaults", reviewSelectionProof),
+      (
+        "impact periods, completion dates, DST, empty history and preview accounting",
+        impactPeriodProof
+      ),
+      (
+        "review model/effort migration, persistence, provider arguments and defaults",
+        reviewSelectionProof
+      ),
       ("agent execution safety boundaries", d.testExecutionBoundaries),
       ("owner-scoped recurrence", d.testRecurrenceScope),
       ("checkpoint", s.testCheckpointRoundTripAndPermissions),
@@ -207,14 +331,27 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try test() } catch { failTest("\(name): \(error)") }
       if failures == before { print("PASS \(name)") }
     }
+    do { try worktreeVisibilityProof() } catch { failTest("Worktree visibility: \(error)") }
     do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
     do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
     do { try await gradleDaemonProof() } catch { failTest("Gradle daemon: \(error)") }
+    do {
+      try await worktreeLifecycleProof()
+      try await worktreeSafetyProof()
+    } catch { failTest("Worktree lifecycle: \(error)") }
     do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
-    do { try usageProof(); try await passiveProof(); try await diskProof() } catch { failTest("Passive/usage: \(error)") }
+    do {
+      try usageProof()
+      try await passiveProof()
+      try await diskProof()
+    } catch { failTest("Passive/usage: \(error)") }
     let beforeLifecycle = failures
     do { try await lifecycleProof() } catch { failTest("Lifecycle evidence: \(error)") }
-    if failures == beforeLifecycle { print("PASS durable lifecycle evidence, shared consumers, token privacy, identity and release/retain races") }
+    if failures == beforeLifecycle {
+      print(
+        "PASS durable lifecycle evidence, shared consumers, token privacy, identity and release/retain races"
+      )
+    }
     let beforeAgent = failures
     do { try await ownerMaintenanceProof() } catch { failTest("Owner maintenance: \(error)") }
     do { try await transportProof() } catch { failTest("Transport: \(error)") }
@@ -222,11 +359,15 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     if failures == beforeAgent { print("PASS private agent bridge, refusal and socket protection") }
     let beforeMachine = failures
     do { try await machineReviewProof() } catch { failTest("Machine review: \(error)") }
-    if failures == beforeMachine { print("PASS computer-wide review without chat events, coalescing, failure pause and cross-project visibility") }
+    if failures == beforeMachine {
+      print(
+        "PASS computer-wide review without chat events, coalescing, failure pause and cross-project visibility"
+      )
+    }
     if CommandLine.arguments.contains("--integration") {
       do { try await integration() } catch { failTest("Integration: \(error)") }
     }
-    print("\(tests.count + 4) checks; \(failures) failures")
+    print("All proof groups completed; \(failures) failures")
     exit(failures == 0 ? 0 : 1)
   }
   static func integration() async throws {
@@ -264,17 +405,26 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         }
       }
     }
-    let monitor = try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+    let monitor = try Monitor(
+      root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
     let service = AgentService(monitor: monitor)
     let start = Date()
     for lease in leases {
       let targets = lease.members.compactMap { member -> Observation? in
-        if case .found(let o) = Native().probe(member.identity.pid), o.identity == member.identity, !o.zombie { return o }
+        if case .found(let o) = Native().probe(member.identity.pid), o.identity == member.identity,
+          !o.zombie
+        {
+          return o
+        }
         return nil
       }
-      equal(targets.count, 1)
-      var request = AgentRequest("preview", processIDs: targets.map { $0.identity.key },
-        label: "Controlled detached fixture", rationale: "The test created these exact helpers; the owning job finished and its recorded descendants are disposable.")
+      equal(targets.count, 1, "Expected one detached fixture target, found \(targets.count)")
+      var request = AgentRequest(
+        "preview", processIDs: targets.map { $0.identity.key },
+        label: "Controlled detached fixture",
+        rationale:
+          "The test created these exact helpers; the owning job finished and its recorded descendants are disposable."
+      )
       request.callerPID = getpid()
       let preview = await service.call(request)
       guard let token = preview.previewToken else { throw StoreError.message(preview.message) }
@@ -289,6 +439,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     while Date() < deadline {
       try await Task.sleep(nanoseconds: 15_000_000_000)
       let state = await monitor.refresh()
+      if state.catalog.events.contains(where: {
+        $0.outcome != "verifying" && $0.outcome != "verified"
+      }) {
+        throw StoreError.message(
+          "Verification stopped without credit: "
+            + state.catalog.events.map { $0.outcome + ": " + $0.detail }.joined(separator: " "))
+      }
       if state.catalog.events.count == workerCount
         && state.catalog.events.allSatisfy({ $0.outcome != "verifying" })
       {

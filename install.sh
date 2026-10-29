@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.11.0"
+version="0.12.0"
 client="auto"
 launch=true
 while [[ $# -gt 0 ]]; do
@@ -49,6 +49,8 @@ if [[ -e "$app" || -L "$app" ]]; then
   [[ ! -L "$app" ]] || { echo 'Refusing to replace an app symlink.' >&2; exit 1; }
   existing="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
   [[ "$existing" == io.burnzombies.app ]] || { echo 'An unrelated app already occupies the install path.' >&2; exit 1; }
+  # Finish the old observer before moving its running executable or database owner.
+  "$work/BurnZombies.app/Contents/MacOS/burnzombies" stop-observer "$app"
   mv "$app" "$work/previous.app"
 fi
 if ! ditto "$work/BurnZombies.app" "$app"; then

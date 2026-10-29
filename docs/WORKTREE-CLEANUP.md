@@ -1,43 +1,77 @@
-# Finished work. Room for the next run.
+# Worktree discovery, retirement and recovery
 
-BurnZombies shows **disk reclaimed** and **worktrees cleaned** beside helpers burned and memory released. These counters come from verified native cleanup receipts, not an agent's reported estimate. Old installations start these two counters at zero; previous process exits are not converted into disk savings.
+The Worktrees window inventories registered Git checkouts under folders you select, including small checkouts, detached HEADs, missing registrations and repositories with many linked worktrees. Open it by clicking **Worktrees cleaned** in Impact. Discovery is read-only. Age and file/commit dates are review hints, not a last-used measurement or permission to delete.
 
-## How a workspace becomes disposable
+## Review and manage
 
-1. When an agent needs a throwaway task checkout, `burnzombies_workspace create` creates it from repository HEAD inside BurnZombies's private workspace directory. The agent records its purpose and observable completion condition and receives a private owner token.
-2. The working agent finishes or cancels the task, preserves useful changes and outputs, finishes uploads and consumers, and releases its own token with observed completion evidence. A long-lived agent can release one finished workspace while continuing other work. No manual chat archive is necessary.
-3. The independent background reviewer compares that evidence with the completion condition and contradictions. It can preview one released workspace and use the resulting short-lived token to request native removal.
-4. Native checks run again immediately before removal. `git worktree remove` runs without force. The exact HEAD is retained in `refs/burnzombies/worktrees/<receipt-id>`; branches are never deleted. Counters update only after removal and the durable receipt are verified.
+1. Add a repository or its parent folder and scan. Disk settings can suggest folders; you still choose which to add. Scans publish partial results, report coverage limits and rotate detailed inspection across large inventories. Canceling preserves completed observations.
+2. Select a checkout to inspect its identity, HEAD/branch, local and ignored changes, consumers, owner claims and blockers. **Refresh PR metadata** optionally uses your existing GitHub CLI login for bounded exact-commit metadata. Merged PRs never establish retirement authority.
+3. **Manage this worktree** explicitly adopts an eligible existing linked checkout. Main/bare repository anchors, default-branch checkouts and recognized Codex/Claude/Cursor-managed locations stay protected. Owner-managed locations receive a handoff to their owning application. **Keep** vetoes retirement.
+4. Every consumer can retain a private owner token and later release it with factual completion evidence. All owners must release; HEAD, branch/content or ownership changes invalidate old authority. Human retirement requires an exact current revision and an observed completion explanation. Uncertainty preserves the checkout.
+5. Clean retirement needs a fresh caller-bound, single-use preview. Dirty or ignored content requires the separate manual **Archive and retire** flow. **Rescue local work** makes a verified snapshot while keeping the original. Supported symlinks are archived as links, never traversed.
 
-**An archived chat is a useful clue, not deletion authority.** Codex already manages its own worktree archive, snapshots and restoration. BurnZombies does not adopt existing worktrees, infer completion from age, or remove Codex-managed worktrees at default or custom locations. Automatic whole-worktree removal applies only to disposable workspaces created through its optional MCP/CLI interface. Version 0.8 also discovers generated output inside configured repositories; its separate [disk tuning controls](DISK-CLEANUP.md) require exact folder permission, independent review and fresh guards. Downloads, browser profiles, databases, arbitrary repositories and global caches remain outside automatic removal.
+Selected clean checkouts can be reviewed as a batch of at most 50 exact IDs/revisions. Only eligible items execute. Each item receives its own archive and current checks; changed or vetoed items are skipped. Batch review does not confirm completion on your behalf.
 
-## What blocks removal
+## Preserve before removal
 
-- An active/retained owner claim, missing release evidence, changed HEAD, changed directory identity, or reused preview.
-- Tracked/staged changes, untracked **or ignored** files, including `.env` and generated output. The reviewer must not delete these to satisfy a guard.
-- A worktree lock, unfinished merge/rebase/cherry-pick, sparse or assume-unchanged index entries, submodules, nested repositories, hardlinks, symlinks or special files.
-- HEAD not reachable from an existing remote-tracking ref. No network fetch, push or credential use happens during cleanup. Remote reachability preserves work; it does not establish completion.
-- A process using the checkout as cwd, executable location or open file path; incomplete same-user process/file-handle visibility also blocks cleanup.
-- Unknown ownership, an inaccessible file tree, inspection limits, failed checkpoint or failed Git command.
+Before removing anything, BurnZombies writes a durable operation journal, retains a Git recovery ref, creates an independent encrypted archive and restores it into an isolated directory. It verifies Git objects, file digests, the raw index and staged/unstaged status. The archive contains reachable commit objects, staged objects, working files, untracked/ignored files, supported extended attributes, modes and modification times. Repository configuration, hooks and remote credentials are not copied. A clean archive can preserve a unique local commit even without a remote-tracking ref.
 
-Owner release is the primary evidence that future consumers are finished. Live checks are a second line of defense, not a proof that another process can never open a file: macOS/Git provide no transaction covering every future consumer and filesystem operation. Shared or uncertain workspaces must remain active. Tokens must not be handed to independent reviewers; retain before reuse. An interrupted/uncertain removal receives no credit and preserves its recovery ref.
+The app rechecks the complete source file set, hashes, identity, claims, policy and native consumers before removal. Clean removal uses `git worktree remove` without force. Explicit manual dirty retirement uses a single `--force` only after independent recovery verification. There is no double force, branch deletion, broad `git clean`, garbage collection or automatic metadata prune. Git documents these separate [worktree operations](https://git-scm.com/docs/git-worktree); independent commit preservation uses [Git bundles](https://git-scm.com/docs/git-bundle).
 
-On a Mac where protected services or a large descriptor table prevent complete inspection, unattended worktree removal stays blocked. BurnZombies does not request privacy permissions, ignore those failures, or claim a successful cleanup. Process cleanup continues under its existing guards.
+Normal verification uses a private temporary plaintext checkout and removes it after checking. A crash or failed user restoration can leave private staging/partial files for inspection; the journal preserves this uncertainty.
 
-## Disk accounting and recovery
+Recovery files use chunked AES-GCM authenticated encryption with a random key stored in this Mac's Keychain. Archive integrity is bound to the operation, file and chunk. Losing the key can make independent recovery impossible. **Check recovery key** allows an explicit access/unlock prompt after an app upgrade; background work never prompts. A missing key is not silently replaced while unpurged archives depend on it. Keep the private state directory and Keychain together in your backup strategy.
 
-Disk credit is the increase in filesystem free bytes observed around removal, capped by allocated regular-file blocks in the removed checkout. APFS clones/snapshots and concurrent disk activity affect attribution. A verified worktree can therefore count as cleaned with zero disk credit. The full calculation stays in the receipt details. CPU-time history remains available in details; it is no longer a headline metric.
+**Archive and quarantine** first verifies recovery, then uses Git's move operation to put the checkout in a private directory on the same volume. Moving reclaims no disk space. Final retirement recommends seven days of grace, or requires an explicit **Retire now** choice. Files added or changed during quarantine block final removal. The independent archive remains after final retirement.
 
-To restore a cleaned checkout, use its repository and recovery ref from Burn Log:
+## What stays protected
+
+Removal requires complete same-user cwd, executable and vnode-file visibility plus no observed consumer. Large descriptor tables are collected dynamically with explicit bounds. Moved executable names are resolved through actual file-backed VM regions. For descriptors denied by libproc, a bounded invocation of the verified Apple-signed /usr/sbin/lsof resolves only the exact PID/descriptor set. Every selected descriptor must have complete typed device/inode/path metadata; missing, changed or ambiguous results still block removal. Confirmed kernel zombies have exited and hold no files. An executable or descriptor that remains unresolved, a process identity race, unknown ownership, disconnected volume or inspection limit blocks removal. Full Disk Access setup does not guarantee complete native process visibility.
+
+Additional blockers include active claims, a Keep decision, locks, unfinished Git operations, sparse/conflicted/assume-unchanged indexes, submodules, nested repositories, filters/LFS, shallow/partial clones, hardlinks, online-only files, special file types/bits, native flags, extended ACLs, unsupported encodings and failed database or archive verification. The supported file ceiling is 100,000 entries, with a 10 GiB capture ceiling and bounded Git/worker deadlines. Root-directory ACLs are refused; creation/access times are outside the recovery contract. Unsupported state needs owner-native recovery; it is never silently discarded.
+
+The final check narrows races but cannot make every future filesystem access atomic with Git removal. Owner release must mean continuing and future consumers have finished. Retain before reuse. Readiness changes are eligible for a new bounded review; unchanged age or resource churn does not repeatedly spend model tokens.
+
+## Recovery and interrupted work
+
+**Recovery** lists durable operations separately from the short-lived Burn Log. **Restore to new folder** creates and verifies a standalone repository in a new canonical directory. It never overwrites an existing destination. Recovery has been tested after deleting the original sacrificial repository. A failed restore retains the archive and records its partial destination for inspection.
+
+On restart, incomplete operations become **uncertain**; they are never replayed or credited automatically. **Reconcile recovery** verifies the archive and the actual original/quarantine state. It can establish that the original is intact, the exact quarantine exists, or the checkout is absent. Absence discovered during reconciliation receives no cleanup or disk attribution. Ambiguous state remains protected. An interrupted purge is reconciled only when its exact archive directory is proven absent.
+
+**Purge recovery** is a separate explicit destructive decision. No background archive expiry is enabled; archives remain until you choose to purge them. Purging independent recovery leaves Git recovery refs intact. The worktree SQLite database, claims and recovery dependency records outlive process-log pruning. A corrupt or newer database disables worktree management while process observation continues.
+
+## Automatic policy and model access
+
+Automatic clean retirement requires an explicitly managed repository with automatic retirement enabled, every exact owner released for at least 24 hours, complete checks, verified independent recovery, and the shared disk settings in Automatic mode below their free-space goal. It respects the shared daily disk allowance and a default maximum of three worktree retirements per day. Dirty retirement, adoption, human confirmation, quarantine finalization, restoration and archive purge stay manual. Legacy BurnZombies-created disposable workspaces keep their original stricter clean/remote-reachability contract and private owner tokens through migration.
+
+MCP exposes bounded inventory, inspection, claims, release/retain, recommendations and guarded automatic clean retirement. Review sessions receive only their supplied IDs. Background reviewers cannot adopt, invent human confirmation, change policy, release owners, force removal or purge archives. No private file contents or owner-token hashes enter model inventory responses. **View local changes** is a separate explicit native-only view; it never opens ignored/untracked file contents or invokes external diff/text-conversion drivers.
+
+## CLI
+
+The installed app owns all mutations. These commands use its authenticated private socket:
 
 ```sh
-git -C /path/to/repository worktree add --detach /new/restore/path refs/burnzombies/worktrees/RECEIPT_ID
+burnzombies worktrees list
+burnzombies worktrees scan
+burnzombies worktrees operations
+printf '%s\n' '{"action":"list","offset":100}' | burnzombies worktrees request
+printf '%s\n' '{"action":"inspect","id":"EXACT_ID"}' | burnzombies worktrees request
 ```
 
-Use the exact lowercase ref from the receipt. The saved ref keeps the commit reachable without relying on the remote. Ignored/uncommitted files never enter this recovery flow because they block removal.
+Native management requests use exact IDs/revisions from inspection, for example `adopt`, `keep`, `rescue`, or `restore` with an operation ID and a new absolute `path`. Use the UI for reviewing destructive choices. The paired CLI flow keeps confirmation, preview and retirement in one authenticated process:
 
-## Evidence sources
+```sh
+burnzombies worktrees retire EXACT_ID CURRENT_REVISION --evidence 'Observed completion and no remaining consumer.'
+burnzombies worktrees archive-retire EXACT_ID CURRENT_REVISION --evidence 'Observed completion; preserve all local content before removal.'
+burnzombies worktrees quarantine EXACT_ID CURRENT_REVISION --evidence 'Observed completion; preserve and quarantine this local work.'
+```
 
-- [Git worktree documentation](https://git-scm.com/docs/git-worktree): clean removal, locks and why pruning metadata is not disk cleanup.
-- [Codex worktree lifecycle](https://learn.chatgpt.com/docs/environments/git-worktrees): managed worktrees, archive/restore and protected work.
-- [Apple File System features](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/APFS_Guide/Features/Features.html): clones, snapshots and shared space.
+Do not copy a preview token between separate CLI invocations: it is caller-bound. A lost response is not permission to retry. Inspect operation history first. Worktree requests allow up to 15 minutes for preservation; scans and Git subprocesses have their own shorter bounds.
+
+## Impact and validation
+
+Only a verified removal with a durable receipt counts as a worktree cleaned. Disk credit is the observed filesystem free-space increase around removal, capped by allocated regular-file blocks. APFS sharing, snapshots and unrelated activity limit attribution; a completed retirement may earn zero disk bytes. Rescue, quarantine moves, failed/interrupted operations and reconciliation earn no removal credit. Recovery storage is displayed separately.
+
+See [validation and remaining live-host limits](VALIDATION.md#worktree-lifecycle-012) for actual fixture, native, scale and packaging evidence. A local build is not an installed or published release.
+
+After an update, `burnzombies access-check` verifies the running app's existing protected-folder access. It never grants macOS permissions or changes System Settings.

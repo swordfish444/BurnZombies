@@ -145,9 +145,13 @@ extension ImpactNumbers {
   }
   var clearedHelpers: String {
     let trees = benefit == .ready ? lifetimeWorktrees : worktrees
-    if (benefit == .ready ? lifetimeCount : count) == 0 && trees > 0 { return "\(trees) \(trees == 1 ? "worktree" : "worktrees") cleaned" + (benefit == .ready ? " all time" : "") }
+    if (benefit == .ready ? lifetimeCount : count) == 0 && trees > 0 {
+      return "\(trees) \(trees == 1 ? "worktree" : "worktrees") cleaned"
+        + (benefit == .ready ? " all time" : "")
+    }
     let total = benefit == .ready ? lifetimeCount : count
-    return "\(total) \(total == 1 ? "helper" : "helpers") cleared" + (benefit == .ready ? " all time" : "")
+    return "\(total) \(total == 1 ? "helper" : "helpers") cleared"
+      + (benefit == .ready ? " all time" : "")
   }
   var age: String {
     guard let last else { return "No burns yet" }
@@ -175,21 +179,40 @@ struct BurnStatus: View {
         .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
       Text(status).font(.system(size: compact ? 13 : 18)).foregroundStyle(Color(white: 0.82))
       Button {
-        if !model.accessReady { model.openFullDiskAccessSettings() }
-        else if model.huntRunning { model.openHunt?() }
-        else { model.requestAgentCleanup() }
+        if !model.accessReady {
+          model.openFullDiskAccessSettings()
+        } else if model.huntRunning {
+          model.openHunt?()
+        } else {
+          model.requestAgentCleanup()
+        }
       } label: {
         HStack(spacing: 6) {
-          if model.accessReady && model.huntRunning { Image(systemName: "arrow.up.right") }
-          else { Text(!model.accessReady ? "Finish setup" : "Hunt Zombies") }
+          if model.accessReady && model.huntRunning {
+            Image(systemName: "arrow.up.right")
+          } else {
+            Text(!model.accessReady ? "Finish setup" : "Hunt Zombies")
+          }
         }
-          .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
-          .padding(.horizontal, 9).padding(.vertical, compact ? 4 : 6)
-          .background(BurnTheme.orange.opacity(0.08), in: Capsule()).contentShape(Capsule())
-      }.buttonStyle(.plain).clickPointer().disabled(model.accessReady && !model.demo && !model.harnessConfigured)
-        .accessibilityLabel(!model.accessReady ? "Finish setup" : model.huntRunning ? "View hunt progress" : "Hunt Zombies")
-        .accessibilityIdentifier(model.huntRunning ? "view-hunt-progress" : "start-hunt")
-        .help(!model.accessReady ? "Enable Full Disk Access in Settings to begin." : model.huntRunning ? "Watch the hunt and its live activity log." : "Start a deep hunt across this Mac now.")
+        .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(
+          BurnTheme.orange
+        )
+        .padding(.horizontal, 9).padding(.vertical, compact ? 4 : 6)
+        .background(BurnTheme.orange.opacity(0.08), in: Capsule()).contentShape(Capsule())
+      }.buttonStyle(.plain).clickPointer().disabled(
+        model.accessReady && !model.demo && !model.harnessConfigured
+      )
+      .accessibilityLabel(
+        !model.accessReady
+          ? "Finish setup" : model.huntRunning ? "View hunt progress" : "Hunt Zombies"
+      )
+      .accessibilityIdentifier(model.huntRunning ? "view-hunt-progress" : "start-hunt")
+      .help(
+        !model.accessReady
+          ? "Enable Full Disk Access in Settings to begin."
+          : model.huntRunning
+            ? "Watch the hunt and its live activity log." : "Start a deep hunt across this Mac now."
+      )
     }
   }
 }
@@ -209,7 +232,8 @@ struct MemoryPressureRow: View {
           .foregroundStyle(BurnTheme.muted).font(.system(size: 16))
       }
       Spacer()
-      Text(model.pressure).font(.system(size: compact ? 12 : 17, weight: compact ? .medium : .regular))
+      Text(model.pressure).font(
+        .system(size: compact ? 12 : 17, weight: compact ? .medium : .regular))
     }
   }
 }
@@ -222,7 +246,8 @@ struct MiniImpactView: View {
     let history = ImpactNumbers.make(model, period: .all)
     if history.last != nil { return "Last burn \(history.age)" }
     if !model.accessReady { return "Waiting for Full Disk Access" }
-    return history.count + history.worktrees == 0 ? "Ready for your first burn" : "No burns yet today"
+    return history.count + history.worktrees == 0
+      ? "Ready for your first burn" : "No burns yet today"
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -230,7 +255,9 @@ struct MiniImpactView: View {
         Skull(size: 34, celebration: model.burnPulse)
         Text("BURNZOMBIES").font(BurnTheme.display(22)).tracking(0.25)
         Spacer(minLength: 8)
-        Button { model.openSettings?() } label: {
+        Button {
+          model.openSettings?()
+        } label: {
           Image(systemName: "gearshape.fill").font(.system(size: 20)).foregroundStyle(.gray)
             .frame(width: 28, height: 32).contentShape(Rectangle())
         }.clickPointer().help("Settings").accessibilityLabel("Settings")
@@ -249,7 +276,11 @@ struct MiniImpactView: View {
         HStack(spacing: 18) {
           miniMetric(ImpactNumbers.bytes(numbers.disk), "Disk reclaimed")
           Rectangle().fill(BurnTheme.line).frame(width: 1, height: 50)
-          miniMetric("\(numbers.worktrees)", "Worktrees cleaned")
+          Button {
+            model.openWorktrees?()
+          } label: {
+            miniMetric("\(numbers.worktrees)", "Worktrees cleaned")
+          }.clickPointer().help("Open worktree inventory and recovery")
         }
       }.frame(height: 120).padding(.top, 6)
       Group {
@@ -261,7 +292,9 @@ struct MiniImpactView: View {
         .frame(height: 14).padding(.top, 5)
       line.padding(.top, 18)
       HStack(spacing: 0) {
-        Button { model.openImpact?() } label: {
+        Button {
+          model.openImpact?()
+        } label: {
           HStack(spacing: 10) {
             Text("View impact").fontWeight(.semibold)
             Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
@@ -269,7 +302,9 @@ struct MiniImpactView: View {
           }.frame(maxWidth: .infinity).frame(height: 44).contentShape(Rectangle())
         }.clickPointer()
         Rectangle().fill(BurnTheme.line).frame(width: 1, height: 22)
-        Button { model.openLog?() } label: {
+        Button {
+          model.openLog?()
+        } label: {
           HStack(spacing: 10) {
             Spacer(minLength: 0)
             Text("Burn Log").fontWeight(.medium)
@@ -285,27 +320,38 @@ struct MiniImpactView: View {
   }
   var accessCard: some View {
     HStack(spacing: 0) {
-      Button { model.openFullDiskAccessSettings() } label: {
+      Button {
+        model.openFullDiskAccessSettings()
+      } label: {
         HStack(spacing: 10) {
           Image(systemName: "lock.shield").font(.system(size: 23)).foregroundStyle(BurnTheme.orange)
           VStack(alignment: .leading, spacing: 5) {
             Text("Allow Full Disk Access").font(.system(size: 12.5, weight: .semibold))
-            Text("Open System Settings ↗").font(.system(size: 10.5)).foregroundStyle(BurnTheme.muted)
+            Text("Open System Settings ↗").font(.system(size: 10.5)).foregroundStyle(
+              BurnTheme.muted)
           }
           Spacer(minLength: 0)
-        }.frame(maxWidth: .infinity).frame(height: 68).padding(.leading, 13).contentShape(Rectangle())
+        }.frame(maxWidth: .infinity).frame(height: 68).padding(.leading, 13).contentShape(
+          Rectangle())
       }.clickPointer().help("Open Full Disk Access in System Settings")
         .accessibilityIdentifier("compact-open-full-disk-access")
-      Button { model.dismissAccessBanner() } label: {
+      Button {
+        model.dismissAccessBanner()
+      } label: {
         Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
           .foregroundStyle(BurnTheme.muted).frame(width: 34, height: 68).contentShape(Rectangle())
       }.clickPointer().help("Dismiss banner. Access setup remains in Settings.")
-        .accessibilityLabel("Dismiss access banner").accessibilityIdentifier("dismiss-access-banner")
+        .accessibilityLabel("Dismiss access banner").accessibilityIdentifier(
+          "dismiss-access-banner")
     }.background(BurnTheme.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 7))
-      .overlay(RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.55)).allowsHitTesting(false))
+      .overlay(
+        RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.55)).allowsHitTesting(
+          false))
   }
   var speedCard: some View {
-    Button { model.openImpact?() } label: {
+    Button {
+      model.openImpact?()
+    } label: {
       VStack(alignment: .leading, spacing: 8) {
         Text(numbers.benefitTitle).font(.system(size: 10.5, weight: .bold)).tracking(0.3)
           .foregroundStyle(BurnTheme.orange)
@@ -316,9 +362,12 @@ struct MiniImpactView: View {
             VStack(alignment: .leading, spacing: 4) {
               Text(numbers.benefit == .firstBurn ? "Still warming up." : "Ready for the next burn.")
                 .font(.system(size: 13, weight: .semibold))
-              Text(numbers.benefit == .firstBurn ? "Your first cleanup starts here." : numbers.clearedHelpers)
-                .font(.system(size: 11))
-                .foregroundStyle(BurnTheme.muted).lineLimit(1).minimumScaleFactor(0.85)
+              Text(
+                numbers.benefit == .firstBurn
+                  ? "Your first cleanup starts here." : numbers.clearedHelpers
+              )
+              .font(.system(size: 11))
+              .foregroundStyle(BurnTheme.muted).lineLimit(1).minimumScaleFactor(0.85)
             }
           }
         case .memory, .helpers, .disk, .worktrees:
@@ -349,7 +398,8 @@ struct MiniImpactView: View {
   var warmupGauge: some View {
     ZStack {
       Path { path in
-        path.addArc(center: CGPoint(x: 17, y: 23), radius: 15,
+        path.addArc(
+          center: CGPoint(x: 17, y: 23), radius: 15,
           startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
       }.stroke(style: StrokeStyle(lineWidth: 4, lineCap: .round))
       Path { path in
@@ -437,8 +487,8 @@ struct ImpactWindowView: View {
               period == option ? Color.white.opacity(0.08) : .clear,
               in: RoundedRectangle(cornerRadius: 11))
           }.clickPointer()
-          .accessibilityIdentifier("impact-period-" + option.rawValue)
-          .accessibilityValue(period == option ? "Selected" : "Not selected")
+            .accessibilityIdentifier("impact-period-" + option.rawValue)
+            .accessibilityValue(period == option ? "Selected" : "Not selected")
         }
       }.padding(.horizontal, 18).padding(.top, 22)
       HStack(alignment: .center, spacing: 28) {
@@ -447,7 +497,9 @@ struct ImpactWindowView: View {
             BrandHeading(text: "TAME THE", size: 98).frame(height: 85)
             BrandHeading(text: "HORDE", size: 98).frame(height: 85)
           }.frame(height: 178)
-          Text(model.accessReady ? "Your agents have room to run." : "One permission. Then we watch.").font(.system(size: 29, weight: .medium))
+          Text(
+            model.accessReady ? "Your agents have room to run." : "One permission. Then we watch."
+          ).font(.system(size: 29, weight: .medium))
             .foregroundStyle(BurnTheme.muted).padding(.top, 13)
         }.frame(maxWidth: .infinity, alignment: .leading)
         Skull(size: 272, celebration: model.burnPulse).padding(.trailing, 125)
@@ -460,10 +512,10 @@ struct ImpactWindowView: View {
         metric(ImpactNumbers.bytes(numbers.disk), "Disk reclaimed")
         Rectangle().fill(BurnTheme.line).frame(width: 1, height: 92)
         metric("\(numbers.worktrees)", "Worktrees cleaned")
-      // A period switch replaces the totals immediately; new burns within a period still tick up.
+        // A period switch replaces the totals immediately; new burns within a period still tick up.
       }.id(period).frame(height: 112).padding(.top, 5)
       Text(period.caption)
-      .font(.system(size: 15)).foregroundStyle(.gray).padding(.top, 3).padding(.bottom, 12)
+        .font(.system(size: 15)).foregroundStyle(.gray).padding(.top, 3).padding(.bottom, 12)
       speedCard
       MemoryPressureRow(model: model).padding(.horizontal, 28).frame(height: 49)
         .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 11))
@@ -539,10 +591,14 @@ struct ImpactWindowView: View {
           HStack(spacing: 14) {
             Flame(size: 30)
             VStack(alignment: .leading, spacing: 4) {
-              Text(numbers.benefit == .firstBurn ? "Your first cleanup starts here." : numbers.clearedHelpers)
-                .font(.system(size: 20, weight: .semibold))
+              Text(
+                numbers.benefit == .firstBurn
+                  ? "Your first cleanup starts here." : numbers.clearedHelpers
+              )
+              .font(.system(size: 20, weight: .semibold))
               if numbers.benefit != .firstBurn {
-                Text("Less background baggage.").font(.system(size: 16)).foregroundStyle(BurnTheme.muted)
+                Text("Less background baggage.").font(.system(size: 16)).foregroundStyle(
+                  BurnTheme.muted)
               }
             }
           }.frame(height: 57, alignment: .leading)
@@ -618,7 +674,10 @@ struct ImpactWindowView: View {
         }
         Text("RECENT BURNS").font(.system(size: 14, weight: .semibold, design: .monospaced))
           .foregroundStyle(.gray)
-        if model.state.catalog.events.isEmpty && (model.state.catalog.workspaceReceipts ?? []).isEmpty && (model.state.catalog.diskReceipts ?? []).isEmpty {
+        if model.state.catalog.events.isEmpty
+          && (model.state.catalog.workspaceReceipts ?? []).isEmpty
+          && (model.state.catalog.diskReceipts ?? []).isEmpty
+        {
           Text(
             model.demo
               ? "18 disposable helpers · 1.2 GB released · 2m ago"
@@ -627,28 +686,40 @@ struct ImpactWindowView: View {
         }
         ForEach((model.state.catalog.diskReceipts ?? []).reversed(), id: \.id) { receipt in
           DisclosureGroup {
-            Text(receipt.path + "\n" + receipt.rationale).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(.top, 8)
+            Text(receipt.path + "\n" + receipt.rationale).font(.system(size: 15)).foregroundStyle(
+              BurnTheme.muted
+            ).padding(.top, 8)
           } label: {
             HStack {
               Image(systemName: "externaldrive").foregroundStyle(BurnTheme.orange)
               Text("Regenerable output").fontWeight(.semibold)
               Spacer()
-              Text(receipt.outcome == "verified" ? ImpactNumbers.bytes(receipt.diskReclaimedBytes) : receipt.outcome.capitalized).foregroundStyle(BurnTheme.muted)
+              Text(
+                receipt.outcome == "verified"
+                  ? ImpactNumbers.bytes(receipt.diskReclaimedBytes) : receipt.outcome.capitalized
+              ).foregroundStyle(BurnTheme.muted)
             }
-          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
+            .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
         }
         ForEach((model.state.catalog.workspaceReceipts ?? []).reversed(), id: \.id) { receipt in
           DisclosureGroup {
-            Text(receipt.detail).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(.top, 8)
+            Text(receipt.detail).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(
+              .top, 8)
           } label: {
             HStack {
               Image(systemName: "folder.badge.minus").foregroundStyle(BurnTheme.orange)
               Text(receipt.label).fontWeight(.semibold)
               Spacer()
-              Text(receipt.outcome == "verified" ? "1 worktree · \(ImpactNumbers.bytes(receipt.diskReclaimedBytes))" : receipt.outcome.capitalized)
-                .foregroundStyle(BurnTheme.muted)
+              Text(
+                receipt.outcome == "verified"
+                  ? "1 worktree · \(ImpactNumbers.bytes(receipt.diskReclaimedBytes))"
+                  : receipt.outcome.capitalized
+              )
+              .foregroundStyle(BurnTheme.muted)
             }
-          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
+            .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
         }
         ForEach(model.state.catalog.events.reversed()) { event in
           DisclosureGroup {
@@ -665,7 +736,8 @@ struct ImpactWindowView: View {
                   : event.outcome.capitalized
               ).foregroundStyle(BurnTheme.muted)
             }
-          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
+            .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
         }
       }.padding(38).frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -677,7 +749,9 @@ struct ImpactWindowView: View {
         Spacer()
         Button("Done") { showCalculation = false }.clickPointer()
       }
-      Text("Worktrees count only after native removal and receipt verification. Disk reclaimed is the observed free-space increase capped by allocated files removed; shared APFS blocks and concurrent disk activity can reduce attribution. Commits remain recoverable in the receipt’s Git ref. Existing checkouts, unsaved/ignored files and uncertain work are preserved.")
+      Text(
+        "Worktrees count only after native removal and receipt verification. Disk reclaimed is the observed free-space increase capped by allocated files removed; shared APFS blocks and concurrent disk activity can reduce attribution. Commits remain recoverable in the receipt’s Git ref. Existing checkouts, unsaved/ignored files and uncertain work are preserved."
+      )
       Text(
         "Every burned helper has a verified exit receipt. Memory released uses its resident footprint before the stop; shared pages can overlap. CPU time saved applies the pre-stop CPU rate to observed awake time after verified exit, up to 24 hours per cleanup. Sleep, observation gaps, reboot and detected replacements add no credit. Older one-hour estimates are preserved until new observed time exceeds that credit. CPU already consumed is never counted as saved."
       )
@@ -686,7 +760,8 @@ struct ImpactWindowView: View {
           ? "This visual preview uses synthetic numbers from the supplied design."
           : "Agent speed uses the middle matched command-launch comparison across this period, including slower results. A boost needs stable samples, separated timing ranges, at least 5% improvement and a 1 ms difference. No clear improvement stays neutral. Legacy timings without sample dispersion cannot establish a boost. This measures local launches, not model or network speed."
       )
-      Text("CPU time saved: \(ImpactNumbers.cpuTime(numbers.cpuSeconds))").foregroundStyle(BurnTheme.muted)
+      Text("CPU time saved: \(ImpactNumbers.cpuTime(numbers.cpuSeconds))").foregroundStyle(
+        BurnTheme.muted)
       Text(
         "Before \(ImpactNumbers.latency(numbers.before)) · Now \(ImpactNumbers.latency(numbers.after))"
       ).font(.system(.body, design: .monospaced))
