@@ -256,7 +256,7 @@ public struct BuildKitCache {
   private func controls(_ target: Target) throws -> Controls {
     struct Container: Decodable { var id: String; var state: String }
     func lines(_ data: Data) throws -> [Data] {
-      let result = data.split(separator: 10).map(Data.init)
+      let result: [Data] = data.split(separator: UInt8(10))
       guard result.count <= 5000 else { throw Self.fail("Docker control inventory is incomplete.") }
       return result
     }

@@ -82,6 +82,7 @@ func ownerMaintenanceProof() async throws {
   try await ownerProbeFairnessProof(store: store)
   try await ownerBacklogFairnessProof(store: store, evidence: evidence)
   ownerLaneFairnessProof(now: now)
+  try ownerRefusalRecoveryProof(evidence: evidence, now: now)
   try await collectorGenerationProof(store: store)
   ownerWatchProof()
   print("PASS owner queue visibility, unchanged-evidence economy, active claims, identities/children, collector invalidation and owner exit watch")
@@ -274,17 +275,25 @@ private func ownerBacklogFairnessProof(store: Store, evidence: GradleDaemonEvide
     selectedIDs.formUnion(selected.map(\.id))
   }
   equal(selectedIDs.count, 48, "Hourly reviews must eventually visit all 48 owners, not one repeating 16-owner tranche")
+  catalog.managedCache = try ownerInventory(policy, now: now)
+  try store.save(catalog)
+  let restarted = OwnerMaintenance(store: store, processCollector: { probe.collect($0, $1, $2) },
+    cacheCollector: { _ in throw StoreError.message("Off policy must not collect cache") })
+  equal(restarted.snapshot().daemons.count, 48, "An observer restart must retain the saved owner review backlog")
+  equal(restarted.snapshot().daemons.first?.checkedAt, now.addingTimeInterval(-3600), "Restoring facts must not freshen their timestamps")
+  check(restarted.snapshot().cache == nil, "A persisted managed-cache route must not be restored as fresh owner evidence")
+  check(restarted.snapshot().checkedAt == nil, "Restored owner facts are not a completed local probe")
   probe.setChanges(failed: owners[0].id, busy: owners[1].id)
-  let previous = collector.snapshot().checkedAt
-  collector.tick(records: records, policy: policy, complete: true, now: now.addingTimeInterval(900))
-  try await waitForOwner({ collector.snapshot().checkedAt != previous }, "Changed owner round did not finish")
-  let updated = collector.snapshot().daemons
+  let previous = restarted.snapshot().checkedAt
+  restarted.tick(records: records, policy: policy, complete: true, now: now.addingTimeInterval(900))
+  try await waitForOwner({ restarted.snapshot().checkedAt != previous }, "Changed owner round did not finish")
+  let updated = restarted.snapshot().daemons
   checkFalse(updated.contains { $0.member.identity.key == owners[0].id }, "Inaccessible reprobes must remove stale positive facts")
   checkFalse(updated.first { $0.member.identity.key == owners[1].id }?.eligible ?? true, "A freshly BUSY owner must replace stale IDLE facts")
   check(updated.contains { $0.member.identity.key == owners[47].id }, "Unprobed owners remain pending after another tranche changes")
   records.removeValue(forKey: owners[47].id)
-  collector.tick(records: records, policy: policy, complete: true, now: now.addingTimeInterval(901))
-  checkFalse(collector.snapshot().daemons.contains { $0.member.identity.key == owners[47].id }, "Departed identities are removed without another producer probe")
+  restarted.tick(records: records, policy: policy, complete: true, now: now.addingTimeInterval(901))
+  checkFalse(restarted.snapshot().daemons.contains { $0.member.identity.key == owners[47].id }, "Departed identities are removed without another producer probe")
 }
 
 private func ownerLaneFairnessProof(now: Date) {
@@ -304,6 +313,74 @@ private func ownerLaneFairnessProof(now: Date) {
   }
   equal(lanes, [.process, .ownerProcess, .managedCache, .discovery],
     "A continuous stream of new process owners cannot starve disk cleanup or discovery")
+}
+
+private func ownerRefusalRecoveryProof(evidence: GradleDaemonEvidence, now: Date) throws {
+  // Exercise the exact failure boundary used by Monitor and the Gradle actuator.
+  // Wording is deliberately identical: classification follows stage, never prose.
+  let sameError = StoreError.message("Owner operation failed")
+  var refused: Error = sameError, uncertain: Error = sameError
+  do { _ = try OwnerStopFailure.preflight { () throws -> String in throw sameError }; failTest("Preflight failure escaped") }
+  catch { refused = error }
+  do { _ = try OwnerStopFailure.dispatch { throw sameError }; failTest("Dispatch failure escaped") }
+  catch { uncertain = error }
+  equal(OwnerStopFailure.receiptOutcome(for: refused), "refused")
+  equal(OwnerStopFailure.receiptOutcome(for: uncertain), "unverified")
+  equal(OwnerStopFailure.receiptOutcome(for: sameError), "unverified", "Unknown untyped failure must never become retryable")
+  do { _ = try OwnerStopFailure.preflight { () throws -> String in throw uncertain }; failTest("Nested uncertain failure escaped") }
+  catch { equal(OwnerStopFailure.receiptOutcome(for: error), "unverified", "An uncertain dispatch must never be downgraded by another boundary") }
+  do { _ = try OwnerStopFailure.dispatch { throw refused }; failTest("Post-dispatch refusal escaped") }
+  catch { equal(OwnerStopFailure.receiptOutcome(for: error), "unverified", "Any error after entering dispatch remains uncertain") }
+
+  let record = Record(Observation(identity: evidence.member.identity, executable: evidence.member.executable))
+  var catalog = Catalog(); catalog.records[record.id] = record; catalog.ownerDaemons = [evidence]
+  var reviewer = MachineReviewState()
+  var signal = HarnessHook.Signal(observedAt: now, processCount: 1, residentBytes: 0, pressure: "Low",
+    reviewEvidence: ReviewEvidence.pending(in: catalog))
+  reviewer.begin(reviewer.pending(signal, now: now), now: now)
+  var event = CleanupEvent(leaseID: UUID(), label: "Owned refusal fixture", date: now, targets: [evidence.member],
+    residentBefore: 4096, outcome: OwnerStopFailure.receiptOutcome(for: refused), detail: "Read-only producer preflight refused")
+  event.ownerProtocol = true; catalog.events = [event]
+  signal.reviewEvidence = ReviewEvidence.pending(in: catalog)
+  check(reviewer.pending(signal, now: now.addingTimeInterval(3600)).isEmpty,
+    "Known pre-dispatch refusal must not re-review unchanged producer evidence")
+  var changed = evidence; changed.state = "BUSY"; changed.eligible = false; changed.lastBusy = now
+  catalog.ownerDaemons = [changed]
+  check(ReviewEvidence.pending(in: catalog).isEmpty, "BUSY must remain protected after a refused attempt")
+  changed.state = "IDLE"; changed.eligible = true; changed.checkedAt = now.addingTimeInterval(3600)
+  catalog.ownerDaemons = [changed]
+  signal.reviewEvidence = ReviewEvidence.pending(in: catalog)
+  equal(reviewer.pending(signal, now: now.addingTimeInterval(3600)).map(\.id), [changed.id],
+    "Meaningfully new BUSY-to-IDLE producer facts may queue after a proven no-dispatch refusal")
+  catalog.events[0].outcome = OwnerStopFailure.receiptOutcome(for: uncertain)
+  check(ReviewEvidence.pending(in: catalog).isEmpty, "Uncertain dispatch remains blocked even after new producer activity")
+  equal(catalog.lifetimeVerified, 0, "Neither refused nor uncertain operations earn cleanup credit")
+}
+
+/// Use the existing owned sleep control: a forged cached Gradle classification
+/// must fail real Monitor preflight, preserve the process and write no-stop proof.
+func ownerMonitorPreflightRefusalProof(monitor: Monitor, ownedFixture: Observation) async throws {
+  let now = Date()
+  let evidence: GradleDaemonEvidence = try ownerDecode([
+    "member": ownerObject(Member(ownedFixture)), "daemonUID": UUID().uuidString,
+    "gradleHome": "/fixture/not-a-gradle-owner", "distribution": "/fixture/not-a-distribution", "version": "8.14.6",
+    "state": "IDLE", "residentBytes": ownedFixture.rss, "cpuTimeNS": 0, "nativeChildren": [], "childrenVisibilityComplete": true,
+    "checkedAt": now.timeIntervalSinceReferenceDate, "lastBusy": now.addingTimeInterval(-900).timeIntervalSinceReferenceDate,
+    "evidenceFingerprint": "untrusted-cached-fixture", "eligible": true, "reason": "Negative cached classification control"])
+  _ = try await monitor.startOwnerStop(evidence, rationale: "Negative fixture must refuse a non-producer before any stop is sent.", callerPID: getpid())
+  var receipt: CleanupEvent?
+  for _ in 0..<200 {
+    receipt = await monitor.snapshot().catalog.events.last { $0.ownerProtocol == true && $0.targets.contains(Member(ownedFixture)) }
+    if let receipt, receipt.outcome != "prepared" { break }
+    try await Task.sleep(nanoseconds: 10_000_000)
+  }
+  equal(receipt?.outcome, "refused", "Actual Monitor read-only preflight failure must not poison this identity as uncertain")
+  equal(Native().ownerState(ownedFixture.identity), .alive, "Preflight refusal must preserve the owned control")
+  let state = await monitor.snapshot()
+  equal(state.catalog.lifetimeVerified, 0)
+  // No live producer RPC is possible with an expired/no-record request.
+  do { _ = try GradleDaemon.requestGracefulStop(evidence, records: [:]); failTest("Missing-record owner request escaped preflight") }
+  catch { equal(OwnerStopFailure.receiptOutcome(for: error), "refused", "Production Gradle preflight must emit typed no-dispatch evidence") }
 }
 
 private final class CollectorGate: @unchecked Sendable {

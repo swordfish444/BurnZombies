@@ -58,6 +58,8 @@ func agentBridgeProof() async throws {
   let unbound = try await call(AgentRequest("preview", processIDs: targets.processes.map(\.id),
     label: "Unbound fixture", rationale: "Plausible prose is not positive owner completion evidence; this helper must remain alive."))
   checkFalse(unbound.ok, "An unbound helper received generic cleanup permission from prose alone")
+  guard case .found(let ownedFixture) = Native().probe(disposable.processIdentifier) else { throw StoreError.message("Owned fixture disappeared") }
+  try await ownerMonitorPreflightRefusalProof(monitor: monitor, ownedFixture: ownedFixture)
   let ownership = try await call(AgentRequest("lifecycle", processIDs: targets.processes.map(\.id),
     label: "Owned transport fixture", rationale: "This test created and owns the exact disposable helper for its completed transport check.",
     action: "register", completionCondition: "Transport inspection finishes and the test releases its sole consumer."))

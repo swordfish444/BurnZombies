@@ -42,6 +42,9 @@ func gradleFixtureCLI() throws {
         })
       }
       catch {
+        guard OwnerStopFailure.receiptOutcome(for: error) == "refused" else {
+          throw StoreError.message("A proven pre-dispatch fixture refusal was incorrectly classified as uncertain")
+        }
         guard Native().ownerState(process.identity) == .alive else { throw StoreError.message("Refused fixture did not survive") }
         print("{\"ok\":true,\"refused\":true}"); return
       }

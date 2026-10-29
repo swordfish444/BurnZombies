@@ -43,6 +43,10 @@ public final class OwnerMaintenance: @unchecked Sendable {
       let context = try JSONDecoder().decode(Config.self, from: data).currentContext ?? "default"
       return try BuildKitCache.live(store: store).inspect(target: .init(context: context, builder: context), policy: policy)
     }
+    // Restore selection facts only. The next native tick prunes exact identities,
+    // and every owner action still requires fresh producer revalidation. Never
+    // restore a managed-cache route or treat saved checkedAt as a new probe.
+    value.daemons = (try? store.load().ownerDaemons) ?? []
   }
   public func snapshot() -> Snapshot { lock.withLock { value } }
   public func tick(records: [String: Record], policy: DiskPolicy, complete: Bool, now: Date = Date()) {

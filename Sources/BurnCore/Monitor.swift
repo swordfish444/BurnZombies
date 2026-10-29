@@ -645,15 +645,18 @@ public actor Monitor {
     let eventID = event.id
     Task.detached(priority: .utility) { [self] in
       let result = Result { () throws -> String in
-        let scan = Native().scan()
-        guard !scan.partial, let live = scan.observations.first(where: { Member($0) == evidence.member }) else {
-          throw StoreError.message("Fresh complete process visibility unavailable; owner stop refused.")
-        }
-        let records = Dictionary(uniqueKeysWithValues: scan.observations.map { ($0.identity.key, Record($0)) })
-        guard let fresh = try GradleDaemon.inspect(live, records: records, complete: true), fresh.eligible,
-          fresh.daemonUID == evidence.daemonUID, fresh.lastBusy == evidence.lastBusy,
-          fresh.evidenceFingerprint == evidence.evidenceFingerprint, fresh.gradleHome == evidence.gradleHome else {
-          throw StoreError.message("Daemon activity or ownership changed since preview; preserved.")
+        let (fresh, records) = try OwnerStopFailure.preflight { () -> (GradleDaemonEvidence, [String: Record]) in
+          let scan = Native().scan()
+          guard !scan.partial, let live = scan.observations.first(where: { Member($0) == evidence.member }) else {
+            throw StoreError.message("Fresh complete process visibility unavailable; owner stop refused.")
+          }
+          let records = Dictionary(uniqueKeysWithValues: scan.observations.map { ($0.identity.key, Record($0)) })
+          guard let fresh = try GradleDaemon.inspect(live, records: records, complete: true), fresh.eligible,
+            fresh.daemonUID == evidence.daemonUID, fresh.lastBusy == evidence.lastBusy,
+            fresh.evidenceFingerprint == evidence.evidenceFingerprint, fresh.gradleHome == evidence.gradleHome else {
+            throw StoreError.message("Daemon activity or ownership changed since preview; preserved.")
+          }
+          return (fresh, records)
         }
         return try GradleDaemon.requestGracefulStop(fresh, records: records, authorize: {
           let saved = try self.store.load()
@@ -676,7 +679,8 @@ public actor Monitor {
       catalog.events[index].date = Date(); catalog.events[index].outcome = "verifying"
       catalog.events[index].detail = message
     case .failure(let error):
-      catalog.events[index].outcome = "unverified"; catalog.events[index].detail = error.localizedDescription
+      catalog.events[index].outcome = OwnerStopFailure.receiptOutcome(for: error)
+      catalog.events[index].detail = (catalog.events[index].outcome == "refused" ? "No owner stop was dispatched. " : "") + error.localizedDescription
     }
     do { try checkpoint() } catch { state.error = error.localizedDescription }
     state.catalog = catalog

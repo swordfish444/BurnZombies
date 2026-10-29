@@ -3,6 +3,31 @@ import CryptoKit
 import Darwin
 import Foundation
 
+/// Only a proven pre-dispatch refusal can become retryable on new producer
+/// evidence. Errors after entering the owner message boundary remain uncertain.
+public enum OwnerStopFailure: Error, LocalizedError, Sendable {
+  case refused(String)
+  case uncertain(String)
+  public var errorDescription: String? {
+    switch self { case .refused(let detail), .uncertain(let detail): return detail }
+  }
+  public static func preflight<T>(_ operation: () throws -> T) throws -> T {
+    do { return try operation() }
+    catch {
+      if let known = error as? OwnerStopFailure { throw known }
+      throw OwnerStopFailure.refused(error.localizedDescription)
+    }
+  }
+  public static func dispatch(_ operation: () throws -> String) throws -> String {
+    do { return try operation() }
+    catch { throw OwnerStopFailure.uncertain(error.localizedDescription) }
+  }
+  public static func receiptOutcome(for error: Error) -> String {
+    if let known = error as? OwnerStopFailure, case .refused = known { return "refused" }
+    return "unverified"
+  }
+}
+
 /// Owner evidence for one exact Gradle daemon. It does not authorize generic SIGTERM.
 public struct GradleDaemonEvidence: Codable, Sendable {
   public var member: Member
@@ -123,27 +148,32 @@ public enum GradleDaemon {
   /// Active owner claims/user protections remain mandatory in the caller's native preview.
   public static func requestGracefulStop(_ expected: GradleDaemonEvidence, records: [String: Record],
                                         authorize: () throws -> Void = {}) throws -> String {
-    let scan = Native().scan()
-    let freshRecords = Dictionary(uniqueKeysWithValues: scan.observations.map { ($0.identity.key, Record($0)) })
-    guard !scan.partial, expected.eligible, expected.childrenVisibilityComplete,
-      (0...60).contains(Date().timeIntervalSince(expected.checkedAt)),
-      let record = records[expected.member.identity.key], record.missingSince == nil,
-      Member(record.latest) == expected.member,
-      let current = try inspect(record.latest, records: freshRecords, complete: true), current.eligible,
-      current.daemonUID == expected.daemonUID, current.gradleHome == expected.gradleHome,
-      current.distribution == expected.distribution, current.version == expected.version,
-      current.lastBusy == expected.lastBusy,
-      current.evidenceFingerprint == expected.evidenceFingerprint else {
-      throw StoreError.message("Gradle preview expired, owner became active, or exact evidence changed; preserved.")
+    let prepared = try OwnerStopFailure.preflight { () -> (Observation, String, String, URL) in
+      let scan = Native().scan()
+      let freshRecords = Dictionary(uniqueKeysWithValues: scan.observations.map { ($0.identity.key, Record($0)) })
+      guard !scan.partial, expected.eligible, expected.childrenVisibilityComplete,
+        (0...60).contains(Date().timeIntervalSince(expected.checkedAt)),
+        let record = records[expected.member.identity.key], record.missingSince == nil,
+        Member(record.latest) == expected.member,
+        let current = try inspect(record.latest, records: freshRecords, complete: true), current.eligible,
+        current.daemonUID == expected.daemonUID, current.gradleHome == expected.gradleHome,
+        current.distribution == expected.distribution, current.version == expected.version,
+        current.lastBusy == expected.lastBusy,
+        current.evidenceFingerprint == expected.evidenceFingerprint else {
+        throw StoreError.message("Gradle preview expired, owner became active, or exact evidence changed; preserved.")
+      }
+      let (home, distribution, signature, resource) = try configuration(record.latest)
+      guard signature == expected.evidenceFingerprint else { throw StoreError.message("Gradle adapter changed; preserved.") }
+      try authorize()
+      return (record.latest, home, distribution, resource)
     }
-    let (home, distribution, signature, resource) = try configuration(record.latest)
-    guard signature == expected.evidenceFingerprint else { throw StoreError.message("Gradle adapter changed; preserved.") }
-    try authorize()
-    let reply = try call("stop-when-idle", observation: record.latest, home: home, distribution: distribution,
-      resource: resource, uid: expected.daemonUID, lastBusy: expected.lastBusy)
-    guard reply.uid == expected.daemonUID, reply.accepted == true else {
-      throw StoreError.message("No exact owner stop request was confirmed; no cleanup credited.")
+    return try OwnerStopFailure.dispatch {
+      let reply = try call("stop-when-idle", observation: prepared.0, home: prepared.1, distribution: prepared.2,
+        resource: prepared.3, uid: expected.daemonUID, lastBusy: expected.lastBusy)
+      guard reply.uid == expected.daemonUID, reply.accepted == true else {
+        throw StoreError.message("No exact owner stop request was confirmed; no cleanup credited.")
+      }
+      return "Exact owner stop-when-idle requested. Any raced build is allowed to finish. Verify native exit before crediting cleanup."
     }
-    return "Exact owner stop-when-idle requested. Any raced build is allowed to finish. Verify native exit before crediting cleanup."
   }
 }
