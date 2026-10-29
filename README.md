@@ -20,7 +20,17 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 Apple Silicon or Intel, macOS 14+. The installer selects an available **Codex, Claude Code, Cursor CLI, GitHub Copilot CLI or Gemini CLI**, starts the menu bar observer, and configures one background reviewer. The reviewer connects privately when needed; everyday chats get no hooks or always-loaded MCP connection. Use your existing harness login. No BurnZombies account, API key or package manager.
 
-**One required macOS step:** enable **BurnZombies** in **System Settings → Privacy & Security → Full Disk Access**, then choose **I enabled access — check again** in BurnZombies Settings. BurnZombies waits quietly until setup is complete instead of asking for each folder. macOS requires you to grant this access yourself; your agent cannot grant it for you. [Access setup →](docs/INSTALL.md#required-full-disk-access)
+**One required macOS step:** click **Allow Full Disk Access** in the menu-bar banner to open the right System Settings pane, then enable **BurnZombies**. Return to the app and it checks access automatically. If macOS asks you to relaunch, use **Check access** afterward. macOS requires you to grant the permission yourself; your agent handles the installation.
+
+Dismiss the banner with **×** whenever you like; setup remains under the **Settings cog → Full Disk Access**. Once verified, the banner disappears and Settings shows a muted completed section with a green checkmark. BurnZombies waits quietly for access—dismissing the reminder never enables scanning. [Access setup →](docs/INSTALL.md#required-full-disk-access)
+
+<details>
+<summary>See the permission setup</summary>
+
+<p align="center"><img src="docs/media/full-disk-access-banner.png" width="360" alt="Compact BurnZombies menu with a Full Disk Access link and a separate dismiss button."></p>
+<p align="center"><img src="docs/media/full-disk-access-complete.png" width="440" alt="Full Disk Access completed in Settings: muted section, green checkmark and Manage access link."></p>
+
+</details>
 
 Supported tools also supply their own live ownership evidence: idle Gradle daemons can retire through Gradle, and unused Docker build cache can be reclaimed through BuildKit. Codex and Claude Code ownership and completion evidence is collected passively from local session metadata. Your working chats do no BurnZombies bookkeeping. Only a new, supported candidate can wake the reviewer; incomplete or ambiguous evidence stays protected. The observer continues across projects, even with no chat open. [Setup details →](docs/INSTALL.md)
 
