@@ -7,9 +7,12 @@ import UserNotifications
 @MainActor final class AppModel: ObservableObject {
   @Published var state = ViewState() {
     didSet {
-      if !restoringAccessPresentation && state.fullDiskAccess.canScan && accessBannerDismissed {
-        accessBannerDismissed = false
-        accessPreferences?.removeObject(forKey: Self.accessBannerDismissedKey)
+      if !restoringAccessPresentation && state.fullDiskAccess.canScan {
+        accessPreferences?.removeObject(forKey: Self.accessVerificationPendingKey)
+        if accessBannerDismissed {
+          accessBannerDismissed = false
+          accessPreferences?.removeObject(forKey: Self.accessBannerDismissedKey)
+        }
       }
       let pending = Set(oldValue.catalog.events.filter { $0.outcome == "verifying" }.map(\.id))
       if let finished = state.catalog.events.last(where: {
@@ -37,6 +40,7 @@ import UserNotifications
   @Published var machineReview = MachineReviewState()
   @Published var machineReviewEnabled = false
   static let accessBannerDismissedKey = "fullDiskAccessBannerDismissed"
+  static let accessVerificationPendingKey = "fullDiskAccessVerificationPending"
   @Published private(set) var accessBannerDismissed = false
   private let accessPreferences: UserDefaults?
   private let accessOpener: (URL) -> Bool
@@ -59,16 +63,24 @@ import UserNotifications
     message = "App path copied. Use +, then Command-Shift-G in Full Disk Access."
   }
 
-  /// A successful explicit open arms one check when the user leaves and returns.
-  /// Neither app activation by itself nor opening BurnZombies performs a new probe.
+  /// Explicit setup arms one return check and survives macOS Quit & Reopen.
+  /// The saved intent authorizes a check, never a permission grant.
   func openFullDiskAccessSettings() {
     guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
     awaitingAccessReturn = true; leftForAccessSettings = false; accessReturnPending = false
+    accessPreferences?.set(true, forKey: Self.accessVerificationPendingKey)
     guard accessOpener(url) else {
       awaitingAccessReturn = false
+      accessPreferences?.removeObject(forKey: Self.accessVerificationPendingKey)
       message = "Open System Settings → Privacy & Security → Full Disk Access and enable BurnZombies."
       return
     }
+  }
+  private func restoreAccessVerificationAfterRelaunch() {
+    guard accessPreferences?.bool(forKey: Self.accessVerificationPendingKey) == true else { return }
+    // Consume before checking so denial, errors or another relaunch cannot loop.
+    accessPreferences?.removeObject(forKey: Self.accessVerificationPendingKey)
+    accessReturnPending = true
   }
   func accessSetupDidResignActive() {
     if awaitingAccessReturn { leftForAccessSettings = true }
@@ -139,6 +151,8 @@ import UserNotifications
       state.fullDiskAccess = .init(state: .granted, detail: "Preview access state.")
       pressure = "Low"
       restoringAccessPresentation = false
+      restoreAccessVerificationAfterRelaunch()
+      checkAccessAfterReturnIfReady()
       return
     }
     restoringAccessPresentation = false
@@ -160,6 +174,7 @@ import UserNotifications
         }
       } catch { message = error.localizedDescription }
     }
+    restoreAccessVerificationAfterRelaunch()
     refresh()
   }
   private func receiveAgentSnapshot(_ snapshot: ViewState) {

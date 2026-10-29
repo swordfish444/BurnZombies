@@ -31,7 +31,7 @@ struct FullDiskAccessView: View {
         VStack(alignment: .leading, spacing: 7) {
           Text("1. Open Privacy & Security → Full Disk Access.")
           Text("2. Add BurnZombies with + and turn it on.")
-          Text("3. Return to BurnZombies. We’ll check access once. If macOS asks, quit and reopen the app, then check below.")
+          Text("3. Return to BurnZombies, or choose Quit & Reopen if macOS asks. We’ll verify access automatically.")
         }.font(.caption).fixedSize(horizontal: false, vertical: true)
         HStack(alignment: .top, spacing: 8) {
           Text(model.installedAppPath).font(.caption2.monospaced()).textSelection(.enabled)
