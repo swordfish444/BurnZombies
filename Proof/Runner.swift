@@ -38,6 +38,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.contains("--worktree-visibility") {
+      do { try worktreeVisibilityProof() } catch { failTest("Worktree visibility: \(error)") }
+      print("Worktree visibility checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--process-integration") {
       do { try await integration() } catch { failTest("Process integration: \(error)") }
       print("Process integration checks: \(failures) failures")
@@ -57,7 +62,10 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--worktree-native") {
-      do { try await worktreeNativeProof() } catch { failTest("Native worktrees: \(error)") }
+      do {
+        try worktreeVisibilityProof()
+        try await worktreeNativeProof()
+      } catch { failTest("Native worktrees: \(error)") }
       print("Native worktree checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
@@ -96,6 +104,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       }
     }
     if CommandLine.arguments.contains("--full-disk-access") {
+      do { try worktreeVisibilityProof() } catch { failTest("Worktree visibility: \(error)") }
       do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
       print("Full Disk Access checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
@@ -323,6 +332,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try test() } catch { failTest("\(name): \(error)") }
       if failures == before { print("PASS \(name)") }
     }
+    do { try worktreeVisibilityProof() } catch { failTest("Worktree visibility: \(error)") }
     do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
     do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
     do { try await gradleDaemonProof() } catch { failTest("Gradle daemon: \(error)") }

@@ -164,7 +164,8 @@ public actor AgentService {
   public func call(_ request: AgentRequest) async -> AgentReply {
     guard
       [
-        "status", "access_status", "inspect", "preview", "burn", "lifecycle", "work", "workspace",
+        "status", "access_status", "access_check", "inspect", "preview", "burn", "lifecycle",
+        "work", "workspace",
         "workspace_preview", "workspace_clean", "worktrees", "worktrees_read", "disk_decide",
         "disk_preview", "disk_clean", "disk_inspect", "disk_explore", "disk_recommend",
         "disk_evidence", "owner_preview", "owner_stop", "cache_preview", "cache_clean",
@@ -175,6 +176,18 @@ public actor AgentService {
     previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
     workspacePreviews = workspacePreviews.filter { Date().timeIntervalSince($0.value.created) < 60 }
     var state = await monitor.snapshot()
+    if request.operation == "access_check" {
+      guard case .found = Native().probe(request.callerPID) else {
+        return AgentReply(
+          ok: false, message: "An authenticated native caller is required to recheck access.")
+      }
+      do { state = try await monitor.recheckFullDiskAccess() } catch {
+        return AgentReply(ok: false, message: error.localizedDescription)
+      }
+      var reply = AgentReply(ok: state.fullDiskAccess.canScan, message: state.fullDiskAccess.detail)
+      reply.fullDiskAccess = state.fullDiskAccess
+      return reply
+    }
     if request.operation == "access_status" {
       var reply = AgentReply(message: state.fullDiskAccess.detail)
       reply.fullDiskAccess = state.fullDiskAccess
@@ -694,7 +707,8 @@ public final class AgentListener: @unchecked Sendable {
             var request = try JSONDecoder().decode(AgentRequest.self, from: data)
             // The operation field is untrusted too. Persist only known wire operation names.
             let known = [
-              "status", "inspect", "preview", "burn", "lifecycle", "work", "workspace",
+              "status", "access_status", "access_check", "inspect", "preview", "burn", "lifecycle",
+              "work", "workspace",
               "workspace_preview", "workspace_clean", "worktrees", "worktrees_read", "disk_decide",
               "disk_preview", "disk_clean",
               "disk_inspect", "disk_explore", "disk_recommend", "disk_evidence",

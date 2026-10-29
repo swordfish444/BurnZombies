@@ -16,7 +16,7 @@ let package = Package(
   ],
   targets: [
     .systemLibrary(name: "CSQLite"),
-    .target(name: "CBurn"),
+    .target(name: "CBurn", linkerSettings: [.linkedFramework("Security")]),
     .target(
       name: "BurnCore", dependencies: ["CBurn", "CSQLite"],
       resources: [.copy("Resources/BZGradleDaemon.java")]),

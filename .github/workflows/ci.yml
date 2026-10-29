@@ -23,7 +23,7 @@ jobs:
       - name: Safety and native lifecycle checks
         run: scripts/test.sh --integration
       - name: Native large-descriptor worktree regression
-        run: .build/debug/BurnProof --worktree-native-descriptors
+        run: .build/debug/BurnProof --worktree-native
       - name: Native worktree and recovery screens
         run: .build/debug/BurnZombiesApp --worktree-view-proof "$RUNNER_TEMP/bz-worktrees"
       - name: Transport with one cooperative worker

@@ -26,7 +26,7 @@ Recovery files use chunked AES-GCM authenticated encryption with a random key st
 
 ## What stays protected
 
-Removal requires complete same-user cwd, executable and vnode-file visibility plus no observed consumer. Large descriptor tables are collected dynamically with explicit bounds. An unresolvable executable, inaccessible descriptor, process identity race, unknown ownership, disconnected volume or inspection limit blocks removal. Full Disk Access setup does not guarantee complete native process visibility.
+Removal requires complete same-user cwd, executable and vnode-file visibility plus no observed consumer. Large descriptor tables are collected dynamically with explicit bounds. Moved executable names are resolved through actual file-backed VM regions. For descriptors denied by libproc, a bounded invocation of the verified Apple-signed /usr/sbin/lsof resolves only the exact PID/descriptor set. Every selected descriptor must have complete typed device/inode/path metadata; missing, changed or ambiguous results still block removal. Confirmed kernel zombies have exited and hold no files. An executable or descriptor that remains unresolved, a process identity race, unknown ownership, disconnected volume or inspection limit blocks removal. Full Disk Access setup does not guarantee complete native process visibility.
 
 Additional blockers include active claims, a Keep decision, locks, unfinished Git operations, sparse/conflicted/assume-unchanged indexes, submodules, nested repositories, filters/LFS, shallow/partial clones, hardlinks, online-only files, special file types/bits, native flags, extended ACLs, unsupported encodings and failed database or archive verification. The supported file ceiling is 100,000 entries, with a 10 GiB capture ceiling and bounded Git/worker deadlines. Root-directory ACLs are refused; creation/access times are outside the recovery contract. Unsupported state needs owner-native recovery; it is never silently discarded.
 
@@ -73,3 +73,5 @@ Do not copy a preview token between separate CLI invocations: it is caller-bound
 Only a verified removal with a durable receipt counts as a worktree cleaned. Disk credit is the observed filesystem free-space increase around removal, capped by allocated regular-file blocks. APFS sharing, snapshots and unrelated activity limit attribution; a completed retirement may earn zero disk bytes. Rescue, quarantine moves, failed/interrupted operations and reconciliation earn no removal credit. Recovery storage is displayed separately.
 
 See [validation and remaining live-host limits](VALIDATION.md#worktree-lifecycle-011) for actual fixture, native, scale and packaging evidence. A local build is not an installed or published release.
+
+After an update, `burnzombies access-check` verifies the running app's existing protected-folder access. It never grants macOS permissions or changes System Settings.

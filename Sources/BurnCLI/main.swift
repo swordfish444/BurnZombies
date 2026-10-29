@@ -171,6 +171,7 @@ do {
       scan     Aggregate visibility and scanner timing; no private process list.
       status   Aggregate saved catalog totals; does not start a monitor.
       access-status   Read the running app's disk-access setup status; never opens settings or requests access.
+      access-check    Verify existing protected-folder access after an update; never grants macOS permissions.
       measure PID SECONDS   Aggregate CPU, footprint, wakeups, and writes (10–3600s).
       fixture-tree orphan|detached|hung
         Sacrificial 48 MiB helper, hard lifetime 20 minutes. Tests only.
@@ -232,10 +233,11 @@ do {
       "diskWrittenBytes": Double(last[4] - first[4]),
       "logicalWrittenBytes": Double(last[5] - first[5]),
     ])
-  case "access-status":
-    let raw = try await AgentConnection.callAsync(AgentRequest("access_status"))
+  case "access-status", "access-check":
+    let raw = try await AgentConnection.callAsync(
+      AgentRequest(args[0] == "access-check" ? "access_check" : "access_status"))
     guard let reply = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
-      reply["ok"] as? Bool == true, let access = reply["fullDiskAccess"]
+      let access = reply["fullDiskAccess"]
     else {
       fail(
         "The observer has no disk-access status. Update and start BurnZombies, then check Settings."
@@ -244,6 +246,7 @@ do {
     let data = try JSONSerialization.data(
       withJSONObject: access, options: [.prettyPrinted, .sortedKeys])
     print(String(decoding: data, as: UTF8.self))
+    if args[0] == "access-check", reply["ok"] as? Bool != true { exit(1) }
   case "status":
     let c = try Store().load()
     try json([

@@ -21,6 +21,8 @@ int bz_fd_summary(int32_t pid, int *sockets, int *files);
 int bz_path_in_use(const char *root);
 int bz_worktree_pid_paths(int pid, void (*visit)(void *, const char *), void *context, char *gap, size_t gap_size);
 int bz_worktree_paths(void (*visit)(void *, const char *), void *context, char *gap, size_t gap_size);
+int bz_worktree_lsof_parse(const char *input, size_t size, int pid, const int *fds, int count,
+                          void (*visit)(void *, const char *), void *context);
 int bz_capture_worktree_git(char *const argv[], char *const env[], int output, int milliseconds,
                            int (*progress)(void *, uint64_t), void *context, int *unreaped);
 int bz_capture_worktree_worker(char *const argv[], char *const env[], int output,
