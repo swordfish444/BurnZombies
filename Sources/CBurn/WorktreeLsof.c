@@ -77,7 +77,7 @@ int bz_worktree_lsof_parse(const char *input, size_t size, int pid, const int *f
                 case 'i': bit = 8; if (!number(field + 1, 10, &value) || !value) goto done; break;
                 case 'n':
                     bit = 16;
-                    if (field[1] != '/' || strlen(field + 1) >= 4096 || strstr(field + 1, " (deleted)") || strstr(field + 1, " (revoked)")) goto done;
+                    if (field[1] != '/' || strlen(field + 1) >= 4096 || strchr(field + 1, '\\') || strstr(field + 1, " (deleted)") || strstr(field + 1, " (revoked)")) goto done;
                     row.path = field + 1;
                     break;
                 default: goto done;

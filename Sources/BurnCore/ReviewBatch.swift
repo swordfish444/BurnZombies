@@ -150,6 +150,14 @@ public struct ReviewProgress: Codable, Sendable {
   public var selected: [String]
   public var steps: [Step] = []
   public var refusals: [Step]?
+  public struct Activity: Codable, Sendable {
+    public var tool: String
+    public var succeeded: Bool
+    public var date: Date
+    public var detail: String?
+    public var id: String?
+  }
+  public var activity: [Activity]?
   public init(attempt: UUID, selected: [String]) {
     self.attempt = attempt
     self.selected = selected
@@ -168,19 +176,47 @@ public struct ReviewProgress: Codable, Sendable {
       limit: 16384)
   }
   public static func record(
-    store: Store, attempt: UUID, operation: String, id: String?, succeeded: Bool = true
+    store: Store, attempt: UUID, operation: String, id: String?, succeeded: Bool = true,
+    detail: String? = nil
   ) throws {
-    guard let id,
-      ["disk_inspect", "disk_evidence", "disk_recommend", "disk_explore"].contains(operation)
-    else { return }
-    guard succeeded || operation == "disk_recommend" else { return }
-    // Calls may be delivered in parallel by the harness; serialize their receipts.
+    let tools = [
+      "worktrees", "status", "inspect", "preview", "burn", "owner_preview", "owner_stop",
+      "cache_preview", "cache_clean", "workspace_preview", "workspace_clean", "disk_decide",
+      "disk_preview", "disk_clean", "disk_inspect", "disk_evidence", "disk_recommend",
+      "disk_explore",
+    ]
+    guard tools.contains(operation) else { return }
     let lock = try InstanceLock(url: store.root.appendingPathComponent("review-progress.lock"))
     defer { withExtendedLifetime(lock) {} }
     var value = try load(store)
-    guard value.attempt == attempt, value.selected.contains(id),
+    guard value.attempt == attempt else { return }
+    // Bounded service-result copy, never model reasoning or raw transcripts.
+    var bounded = ""
+    var bytes = 0
+    for character in detail ?? "" {
+      let piece = character.isNewline ? " " : String(character)
+      guard !piece.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+      else { continue }
+      let size = piece.utf8.count
+      guard bytes + size <= 240 else { break }
+      bounded += piece
+      bytes += size
+    }
+    let clean = bounded.trimmingCharacters(in: .whitespacesAndNewlines)
+    value.activity = Array(
+      ((value.activity ?? []) + [
+        .init(
+          tool: operation, succeeded: succeeded, date: Date(),
+          detail: clean.isEmpty ? nil : clean, id: UUID().uuidString)
+      ]).suffix(24))
+    guard let id,
+      ["disk_inspect", "disk_evidence", "disk_recommend", "disk_explore"].contains(operation),
+      succeeded || operation == "disk_recommend", value.selected.contains(id),
       value.steps.count + (value.refusals?.count ?? 0) < 8
-    else { return }
+    else {
+      try value.save(store)
+      return
+    }
     if succeeded {
       value.steps.append(.init(tool: operation, id: id))
     } else {

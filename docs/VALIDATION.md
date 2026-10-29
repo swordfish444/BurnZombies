@@ -61,9 +61,9 @@ Disk fixtures exercise exact regenerable permission, ignored versus tracked scop
 
 Offscreen native Settings rendering verifies collapsed defaults, range/model selection, hourly/daily charts, durable cost snapshots, disk presets and policy persistence. It neither activates the app nor invokes a model. Foreground pointer interaction is not claimed. The shared reviewer admits only new evidence, has a one-hour minimum interval and preserves its existing daily bounds. Installer-owned global lifecycle instructions are retired by verified hash; customized files are preserved.
 
-## Worktree lifecycle (0.11)
+## Worktree lifecycle (0.12)
 
-Local candidate: 0.11.0, build 23, on `codex/worktree-lifecycle`, integrated with upstream `main` through `a6f9619` (permission-banner and relaunch verification fixes). Platform: macOS 27.0.1 (26A434), Apple Silicon arm64. This is local implementation and package evidence; no release was published or installed over the operator's app.
+Local candidate: 0.12.0, build 24, on `codex/worktree-lifecycle`, integrated with upstream `main` through `760c999` (Hunt Zombies and permission-banner/relaunch fixes). Platform: macOS 27.0.1 (26A434), Apple Silicon arm64. Delivery and installed acceptance results are recorded below. The 0.11.0 Hunt Zombies release is retained and this addition uses its own 0.12.0 version.
 
 | Check | Observed result |
 | --- | --- |

@@ -38,6 +38,7 @@ func worktreeVisibilityProof() throws {
     valid.replacingOccurrences(of: "D0x10", with: "D0"),
     valid.replacingOccurrences(of: "i25", with: "i0"),
     valid.replacingOccurrences(of: "n/synthetic/other", with: "nrelative"),
+    valid.replacingOccurrences(of: "n/synthetic/other", with: "n/synthetic/escaped\\x0a"),
     valid.replacingOccurrences(of: "n/synthetic/other", with: "n/synthetic/other (deleted)"),
     valid.replacingOccurrences(of: "tDIR", with: "tunknown"),
     valid.replacingOccurrences(of: "f4\0tDIR", with: "f4\0xunexpected\0tDIR"),

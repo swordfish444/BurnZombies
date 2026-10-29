@@ -8,7 +8,7 @@ func agentBridgeProof() async throws {
   defer { try? FileManager.default.removeItem(at: root) }
   let monitor = try Monitor(
     root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker(),
-    worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 91, count: 32)) })
+    worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 42, count: 32)) })
   _ = await monitor.refresh()  // The observer samples; cheap status must not trigger a scan.
   let service = AgentService(monitor: monitor)
   let listener = try AgentListener(root: root) { await service.call($0) }
@@ -44,15 +44,44 @@ func agentBridgeProof() async throws {
 
   let disposable = Process()
   let active = Process()
+  var fixtureIdentities = [ProcessIdentity]()
+  // This async proof has observed Foundation's waitUntilExit remain blocked
+  // after its child was already reaped. Prove exact native disappearance with
+  // a deadline instead; never compete with Foundation's child reaper.
+  func fixtureExited(_ identity: ProcessIdentity, timeout: TimeInterval = 5) -> Bool {
+    let deadline = ProcessInfo.processInfo.systemUptime + timeout
+    repeat {
+      switch Native().probe(identity.pid) {
+      case .absent: return true
+      case .found(let current) where current.identity != identity: return true
+      default: break
+      }
+      Thread.sleep(forTimeInterval: 0.02)
+    } while ProcessInfo.processInfo.systemUptime < deadline
+    return false
+  }
+  defer {
+    withExtendedLifetime([disposable, active]) {
+      for identity in fixtureIdentities {
+        if case .found(let current) = Native().probe(identity.pid), current.identity == identity,
+          !current.zombie
+        {
+          _ = Native().terminate(current)
+        }
+        check(
+          fixtureExited(identity),
+          "Owned transport fixture did not exit within the teardown deadline")
+      }
+    }
+  }
   for process in [disposable, active] {
     process.executableURL = URL(fileURLWithPath: "/bin/sleep")
     process.arguments = ["300"]
     try process.run()
-  }
-  defer {
-    for process in [disposable, active] {
-      if kill(process.processIdentifier, 0) == 0 { process.terminate() }
+    guard case .found(let current) = Native().probe(process.processIdentifier) else {
+      throw StoreError.message("Owned transport fixture identity unavailable")
     }
+    fixtureIdentities.append(current.identity)
   }
   _ = await monitor.refresh()
   let tree = try await call(AgentRequest("inspect", pids: [getpid()]))
@@ -115,16 +144,8 @@ func agentBridgeProof() async throws {
   let burned = try await call(AgentRequest("burn", previewToken: token))
   check(burned.ok, burned.message)
   equal(burned.verifiedHelpers, 0, "pending request credited as verified")
-  // Foundation waitUntilExit can stall when an async test resumes on a different
-  // cooperative thread. Observe the exact sacrificial child with a bounded wait.
-  for _ in 0..<250 {
-    if case .absent = Native().probe(disposable.processIdentifier) { break }
-    try await Task.sleep(nanoseconds: 20_000_000)
-  }
-  if case .absent = Native().probe(disposable.processIdentifier) {
-  } else {
-    throw StoreError.message("Sacrificial process exit was not observed within five seconds.")
-  }
+  check(
+    fixtureExited(ownedFixture.identity), "Burn did not stop and reap the exact disposable fixture")
   check(active.isRunning, "active control was killed")
   let replay = try await call(AgentRequest("burn", previewToken: token))
   checkFalse(replay.ok, "single-use token replay accepted")
@@ -223,7 +244,7 @@ func runAgentFixture(root: URL) async throws {
   let monitor = try Monitor(
     root: root, discoveryRoots: discoveryRoots, accessCheck: fixtureAccess,
     discoveryWalker: fixtureWalker(),
-    worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 91, count: 32)) })
+    worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 42, count: 32)) })
   // Like the resident observer, finish the first bounded inventory before a model
   // connects; a cold filesystem scan must not consume the MCP request timeout.
   _ = await monitor.refresh()

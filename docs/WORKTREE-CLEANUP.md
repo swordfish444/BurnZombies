@@ -72,6 +72,6 @@ Do not copy a preview token between separate CLI invocations: it is caller-bound
 
 Only a verified removal with a durable receipt counts as a worktree cleaned. Disk credit is the observed filesystem free-space increase around removal, capped by allocated regular-file blocks. APFS sharing, snapshots and unrelated activity limit attribution; a completed retirement may earn zero disk bytes. Rescue, quarantine moves, failed/interrupted operations and reconciliation earn no removal credit. Recovery storage is displayed separately.
 
-See [validation and remaining live-host limits](VALIDATION.md#worktree-lifecycle-011) for actual fixture, native, scale and packaging evidence. A local build is not an installed or published release.
+See [validation and remaining live-host limits](VALIDATION.md#worktree-lifecycle-012) for actual fixture, native, scale and packaging evidence. A local build is not an installed or published release.
 
 After an update, `burnzombies access-check` verifies the running app's existing protected-folder access. It never grants macOS permissions or changes System Settings.

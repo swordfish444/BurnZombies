@@ -217,6 +217,14 @@ public final class DiskDiscovery: @unchecked Sendable {
       saveLocked()
     }
   }
+  /// User/scheduler initiated read-only map refresh. An existing walk is reused.
+  public func requestCycle(policy: DiskPolicy) {
+    mutex.withLock {
+      if !worker && state.queue.isEmpty { state.lastCycle = .distantPast }
+    }
+    tick(policy: policy)
+  }
+  public var isMeasuring: Bool { mutex.withLock { worker || !state.queue.isEmpty } }
   public func tick(policy: DiskPolicy, now: Date = Date()) {
     let allowed = accessCheck().canScan
     mutex.withLock {

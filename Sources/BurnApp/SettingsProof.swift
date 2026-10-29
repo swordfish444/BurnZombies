@@ -37,6 +37,60 @@ import Vision
   restored.model = ""; restored.thinking = ""; restored.save()
   guard try MachineReviewConfiguration.load(root: root)?.model == nil,
     try MachineReviewConfiguration.load(root: root)?.reasoningEffort == nil else { throw StoreError.message("Reset failed") }
+  // Hunt scheduling is independent of intelligence selection, running work and pauses.
+  let huntRoot = root.appendingPathComponent("hunt-schedule")
+  var huntConfiguration = MachineReviewConfiguration(harness: "codex", executable: "/bin/true", launcher: "/bin/true", server: "/bin/true")
+  try huntConfiguration.save(root: huntRoot)
+  let huntStore = try Store(root: huntRoot)
+  let paused = Data("{\"phase\":\"paused\",\"detail\":\"Fixture harness failure\"}".utf8)
+  try huntStore.write(paused, to: huntRoot.appendingPathComponent("machine-review-state.json"), limit: 65536)
+  let hunts = HuntSettingsModel(root: huntRoot)
+  guard hunts.automatic, hunts.intervalHours == 4, !hunts.changed,
+    MachineReviewConfiguration.huntIntervals == [1, 2, 4, 8, 12, 24] else {
+    throw StoreError.message("Legacy hunt configuration did not default to four hours")
+  }
+  func renderHuntSettings(_ label: String) throws {
+    let view = NSHostingView(rootView: HuntSettingsView(settings: hunts).padding(20).frame(width: 440)
+      .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
+    view.frame = NSRect(x: 0, y: 0, width: 440, height: 280); view.layoutSubtreeIfNeeded()
+    guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw StoreError.message("Hunt settings render unavailable") }
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    guard let image = bitmap.cgImage, let png = bitmap.representation(using: .png, properties: [:]) else { throw StoreError.message("Hunt settings PNG unavailable") }
+    try png.write(to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension("hunt-" + label + ".png"))
+    let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+    recognition.recognitionLanguages = ["en-US"]
+    try VNImageRequestHandler(cgImage: image, options: [:]).perform([recognition])
+    let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    guard visible.contains("Zombie hunts"), visible.contains("Automatic hunts"), visible.contains("Hunt every"), visible.contains("Save") else {
+      throw StoreError.message("Hunt settings controls clipped: \(visible)")
+    }
+  }
+  try renderHuntSettings("default")
+  hunts.intervalHours = 8; hunts.automatic = false
+  guard try MachineReviewConfiguration.load(root: huntRoot)?.enabled == true,
+    try MachineReviewConfiguration.load(root: huntRoot)?.effectiveHuntIntervalHours == 4 else { throw StoreError.message("Hunt schedule draft saved prematurely") }
+  // Model settings saved after this draft must survive the schedule save.
+  huntConfiguration.model = "newer-model"; huntConfiguration.reasoningEffort = "low"; try huntConfiguration.save(root: huntRoot)
+  hunts.save()
+  let savedHunts = HuntSettingsModel(root: huntRoot)
+  guard !savedHunts.automatic, savedHunts.intervalHours == 8, !savedHunts.changed,
+    savedHunts.configuration?.model == "newer-model", savedHunts.configuration?.reasoningEffort == "low",
+    savedHunts.configuration?.executable == "/bin/true", !hunts.failed else { throw StoreError.message("Hunt schedule failed round-trip or overwrote intelligence") }
+  try renderHuntSettings("off")
+  savedHunts.intervalHours = 3; savedHunts.save()
+  guard savedHunts.failed, try MachineReviewConfiguration.load(root: huntRoot)?.effectiveHuntIntervalHours == 8 else { throw StoreError.message("Invalid hunt frequency was saved") }
+  savedHunts.intervalHours = 1; savedHunts.automatic = true; savedHunts.save()
+  guard !savedHunts.failed, try MachineReviewConfiguration.load(root: huntRoot)?.enabled == true,
+    try MachineReviewConfiguration.load(root: huntRoot)?.effectiveHuntIntervalHours == 1 else { throw StoreError.message("Automatic hunt re-enable failed") }
+  huntConfiguration = try MachineReviewConfiguration.load(root: huntRoot)!
+  huntConfiguration.harness = "claude"; try huntConfiguration.save(root: huntRoot)
+  savedHunts.intervalHours = 2; savedHunts.save()
+  guard savedHunts.failed, try MachineReviewConfiguration.load(root: huntRoot)?.harness == "claude",
+    try MachineReviewConfiguration.load(root: huntRoot)?.effectiveHuntIntervalHours == 1 else { throw StoreError.message("Stale hunt draft overwrote changed harness") }
+  guard try huntStore.read(huntRoot.appendingPathComponent("machine-review-state.json"), limit: 65536) == paused,
+    !FileManager.default.fileExists(atPath: huntRoot.appendingPathComponent("review-request").path),
+    !FileManager.default.fileExists(atPath: huntRoot.appendingPathComponent("review-usage.json").path) else { throw StoreError.message("Saving a schedule resumed or dispatched a review") }
+  print("PASS four-hour default, hunt schedule draft/save/reopen, automatic off/on, invalid frequency and stale harness refusal, preserved model and pause, no review dispatch")
   let usage = UsageHistoryModel(root: root)
   guard !usage.expanded else { throw StoreError.message("Usage must be collapsed by default") }
   var ledger = ReviewLedger()

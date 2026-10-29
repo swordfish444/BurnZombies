@@ -32,9 +32,9 @@ Dismiss the banner with **×** whenever you like; setup remains under the **Sett
 
 </details>
 
-Supported tools also supply their own live ownership evidence: idle Gradle daemons can retire through Gradle, and unused Docker build cache can be reclaimed through BuildKit. Codex and Claude Code ownership and completion evidence is collected passively from local session metadata. Your working chats do no BurnZombies bookkeeping. Only a new, supported candidate can wake the reviewer; incomplete or ambiguous evidence stays protected. The observer continues across projects, even with no chat open. [Setup details →](docs/INSTALL.md)
+Supported tools also supply their own live ownership evidence: idle Gradle daemons can retire through Gradle, and unused Docker build cache can be reclaimed through BuildKit. Codex and Claude Code ownership and completion evidence is collected passively from local session metadata. Your working chats do no BurnZombies bookkeeping. Native evidence is batched into deep hunts every four hours by default; incomplete or ambiguous evidence stays protected. The observer continues across projects, even with no chat open. [Setup details →](docs/INSTALL.md)
 
-Want to choose the brain? **Settings → Review intelligence** lets you set the model and thinking level. Expand **Usage & estimated cost** for hourly or daily charts, 1, 7 or 30 days, cached/uncached input and output, and per-model cost estimates. Idle observation uses no model tokens; new completion evidence triggers batched, limited reviews.
+Want to choose the brain? **Settings → Review intelligence** lets you set the model and thinking level. Expand **Usage & estimated cost** for hourly or daily charts, 1, 7 or 30 days, cached/uncached input and output, and per-model cost estimates. Observation between hunts uses no model tokens. Each hunt gives your harness focused evidence and skips work already resolved.
 
 Installing through an agent? Tell it:
 
@@ -50,6 +50,18 @@ Everything that matters in one small panel: **zombies burned, memory released, d
 </p>
 
 **Small by default. More when you need it.** Open Impact for Today, 7 days or All time. Burn Log keeps the cleanup receipts one click away.
+
+### Hunt Zombies
+
+Want to clear the buildup now? Click **Hunt Zombies** in the menu bar. It starts a deep review of process, worktree and disk evidence with your selected harness. **Hunting Zombies →** opens the live hunt: a side-scrolling patrol, suspicious figures under the scanner, and a flamethrower send-off when a cleanup is verified. A worktree burn gets the same treatment.
+
+The activity log below the scene carries the actual findings, safety decisions and reclaimed-resource totals. **Detected** means a candidate was found; **eradicated** means its cleanup was verified.
+
+Automatic hunts run **every 4 hours** by default. Change the frequency or turn them off under **Settings → Zombie hunts**. Manual hunts stay available. Scheduled hunts never open a window or interrupt your screen.
+
+<p align="center">
+  <img src="docs/media/hunt-zombies.png" width="948" alt="Hunt Zombies with a side-scrolling night patrol, a figure under the scanner, cleanup counters and the activity feed.">
+</p>
 
 <details>
 <summary><strong>See the full Impact view</strong></summary>
@@ -70,7 +82,7 @@ Everything that matters in one small panel: **zombies burned, memory released, d
 - **Find the big pockets.** **Settings → Disk cleanup** follows storage across your Mac, including folders outside agent worktrees. Your AI investigates what created it, groups repeated outputs and gives you a practical next step. Cards start at 10 GB of measured unshared storage; APFS copies don't inflate the number. Scanning uses no AI tokens. Already use Mole? Its storage analysis adds context to the same bounded review. [Disk discovery & cleanup →](docs/DISK-CLEANUP.md) · [Mole integration →](docs/MOLE-INTEGRATION.md)
 - **Keep the good stuff alive.** Exact identities, protected harnesses, graceful stops and verified receipts. Uncertain work stays running.
 - **See the payoff.** Zombies burned, memory released, disk reclaimed, worktrees cleaned and a concrete cleanup benefit in a quiet menu bar app.
-- **Spends tokens on useful work.** Reviews get a small, focused evidence batch and only the tools it needs. Completed work stays quiet, unfinished investigations stay queued, and reviews run at most hourly. No daily token cutoff strands useful work. Failures pause instead of retrying. No windows open when reviews start.
+- **Spends tokens on useful work.** Reviews get a small, focused evidence batch and only the tools it needs. Completed work stays quiet, unfinished investigations stay queued, and automatic hunts default to every four hours. Change the schedule or hunt manually whenever you need it. No daily token cutoff strands useful work. Failures pause instead of retrying. No windows open when reviews start.
 
 Storage inspection returns immediately with available facts while optional Mole analysis continues in the background. Slow analysis cannot monopolize the request queue.
 

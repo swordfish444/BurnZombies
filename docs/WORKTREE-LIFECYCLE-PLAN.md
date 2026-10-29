@@ -1,6 +1,6 @@
 # Worktree lifecycle management: implementation plan
 
-Date: October 29, 2026. Status: implementation reference; local delivery and remaining acceptance limits are recorded in [validation](VALIDATION.md#worktree-lifecycle-011). This document itself grants no cleanup authority.
+Date: October 29, 2026. Status: implementation reference; local delivery and remaining acceptance limits are recorded in [validation](VALIDATION.md#worktree-lifecycle-012). This document itself grants no cleanup authority.
 
 Source baseline: remote `main` at `562cba5eec2ee45ca9d78dac40e528da630c67b0`, verified during planning. The original local `main` was at `2a56d04`; this plan includes the subsequent disk-discovery, owner-maintenance, review-transport and Full Disk Access changes through PR #18. Reconcile later changes to the affected files before implementation.
 
