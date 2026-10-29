@@ -172,7 +172,9 @@ public final class WorktreeScanRunner: @unchecked Sendable {
     }
     let capture = WorktreeScanCapture(fd: fd, run: run, publish: publish, keepGoing: keepGoing)
     var words =
-      ([executable.path] + prefix + [run, String(inspectOffset)] + roots).map { strdup($0) } + [nil]
+      ([executable.path] + prefix + [run, String(inspectOffset)] + roots).map { (value: String) in
+        value.withCString { strdup($0) }
+      } + [nil]
     var environment =
       ["PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "BURNZOMBIES_HOME=" + root.path].map {
         strdup($0)

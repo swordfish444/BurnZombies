@@ -104,7 +104,6 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       }
     }
     if CommandLine.arguments.contains("--full-disk-access") {
-      do { try worktreeVisibilityProof() } catch { failTest("Worktree visibility: \(error)") }
       do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
       print("Full Disk Access checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)

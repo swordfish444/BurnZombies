@@ -67,7 +67,7 @@ Local candidate: 0.11.0, build 23, on `codex/worktree-lifecycle`, integrated wit
 
 | Check | Observed result |
 | --- | --- |
-| Full `scripts/test.sh --integration` | **PASS, 0 failures**, 241.98 seconds. Includes three real disposable process cleanups, 120-second recurrence watches, durable accounting, existing process/disk/owner/transport regressions, and worktree lifecycle fixtures. |
+| Full `scripts/test.sh --integration` | **PASS, 0 failures**, 280.16 seconds. Includes three real disposable process cleanups, 120-second recurrence watches, durable accounting, existing process/disk/owner/transport regressions, and worktree lifecycle fixtures. |
 | Latest `.build/debug/BurnProof --worktrees` | **PASS, 0 failures**, 56.68 seconds. Includes final advice-readiness invalidation and legacy compatibility checks. |
 | `.build/debug/BurnProof --worktree-scale` | **PASS, 0 failures**, 209.88 seconds total: 100 repositories, 1,000 linked worktrees and 100 main anchors. Setup 34.07 seconds; streamed scan 174.56 seconds; all 1,100 unique registrations reconciled, early results and bounded cancellation verified. Native coverage gaps remain explicit. |
 | Native descriptor regression | **PASS**, 0.13 seconds. Opens 5,000 real descriptors and detects a held file beyond the previous 4,096-entry limit. |

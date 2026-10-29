@@ -111,10 +111,10 @@ public enum WorktreeOwner {
           executable, "api", "graphql", "--hostname", "github.com", "--raw-field", "query=" + query,
           "--raw-field", "owner=" + owner, "--raw-field", "name=" + name, "--raw-field",
           "oid=" + head,
-        ].map { strdup($0) } + [nil]
+        ].map { (value: String) in value.withCString { strdup($0) } } + [nil]
       var env =
         ["PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "GH_PROMPT_DISABLED=1"].map {
-          strdup($0)
+          (value: String) in value.withCString { strdup($0) }
         } + [nil]
       defer {
         argv.forEach { free($0) }

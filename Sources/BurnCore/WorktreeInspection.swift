@@ -24,13 +24,13 @@ public enum WorktreeGit {
         "/usr/bin/git", "--no-pager", "-c", "core.hooksPath=/dev/null", "-c",
         "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "protocol.allow=never",
         "-C", path,
-      ] + args).map { strdup($0) } + [nil]
+      ] + args).map { (value: String) in value.withCString { strdup($0) } } + [nil]
     var env =
       [
         "PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "GIT_CONFIG_NOSYSTEM=1",
         "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0",
         "GIT_NO_LAZY_FETCH=1", "LC_ALL=C",
-      ].map { strdup($0) } + [nil]
+      ].map { (value: String) in value.withCString { strdup($0) } } + [nil]
     defer {
       words.forEach { free($0) }
       env.forEach { free($0) }
