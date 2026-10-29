@@ -115,6 +115,7 @@ public actor Monitor {
     state.catalog = loaded
     state.fullDiskAccess = self.accessCheck()
   }
+  public func accessStatus() -> FullDiskAccessStatus { state.fullDiskAccess }
   public func snapshot() async -> ViewState {
     var projected = state
     if let service = worktreeService {

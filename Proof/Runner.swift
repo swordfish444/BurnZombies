@@ -38,6 +38,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.contains("--recovery-responsiveness") {
+      do { try await recoveryResponsivenessProof() } catch {
+        failTest("Recovery responsiveness: \(error)")
+      }
+      print("Recovery responsiveness checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--worktree-hunt-refresh") {
       do { try await worktreeHuntRefreshProof() } catch {
         failTest("Worktree Hunt refresh: \(error)")
@@ -182,6 +189,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     }
     if CommandLine.arguments.contains("--transport") {
       do { try await transportProof() } catch { failTest("Transport: \(error)") }
+      do { try await recoveryResponsivenessProof() } catch {
+        failTest("Recovery responsiveness: \(error)")
+      }
       print("Transport checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
@@ -348,6 +358,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     } catch { failTest("Worktree lifecycle: \(error)") }
     do { try await worktreeHuntRefreshProof() } catch {
       failTest("Worktree Hunt refresh: \(error)")
+    }
+    do { try await recoveryResponsivenessProof() } catch {
+      failTest("Recovery responsiveness: \(error)")
     }
     do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
     do {

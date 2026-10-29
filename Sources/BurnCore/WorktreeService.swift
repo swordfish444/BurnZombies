@@ -363,7 +363,9 @@ public actor WorktreeService {
       reply.detail = text
       return reply
     case "check_key":
-      _ = try captureKey(interactive: true)
+      executing = true
+      defer { executing = false }
+      _ = try await captureKey(interactive: true)
       var reply = try snapshot()
       reply.detail =
         "Recovery key is available. Each archive still requires its own integrity and restore verification."

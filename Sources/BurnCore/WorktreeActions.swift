@@ -142,8 +142,10 @@ extension WorktreeService {
     try save(op)
     do {
       op.phase = "preserving"
+      op.detail =
+        "Waiting for recovery-key access. Original content is retained; no cleanup credit."
       try save(op)
-      let key = try captureKey(interactive: plan.interactive == true)
+      let key = try await captureKey(interactive: plan.interactive == true)
       let captured = op
       let proof = try await runWork {
         try WorktreeRecovery.capture(r, operation: captured, key: key)
@@ -157,7 +159,7 @@ extension WorktreeService {
       // Preservation may outlast a preview's issue window. Its initial consumption was
       // time-bound; current authority, identity and content are checked independently.
       try requireAccess()
-      let fresh = WorktreeInspection.inspect(r, visibility: visibility)
+      let fresh = WorktreeInspection.inspect(try record(r.id), visibility: visibility)
       guard fresh.identity == plan.identity, fresh.revision == plan.revision,
         try claimRevision(r.id) == plan.claimRevision, try policy().revision == plan.policyRevision
       else { throw StoreError.message("Work changed during preservation; original retained.") }
@@ -251,7 +253,7 @@ extension WorktreeService {
     var op = try operation(r, kind: "rescue")
     try save(op)
     do {
-      let key = try captureKey(interactive: true)
+      let key = try await captureKey(interactive: true)
       let captured = op
       let result = try await runWork {
         try WorktreeRecovery.capture(r, operation: captured, key: key)
@@ -279,7 +281,7 @@ extension WorktreeService {
     }
     executing = true
     defer { executing = false }
-    let key = try interactiveExistingKey()
+    let key = try await readRecoveryKey(interactiveExistingKey)
     let captured = op
     var attempt = WorktreeRestoreAttempt(
       id: UUID().uuidString, recoveryID: op.id, destination: path,
@@ -342,7 +344,7 @@ extension WorktreeService {
     let repositoryLock = try InstanceLock(
       url: URL(fileURLWithPath: op.repository).appendingPathComponent("burnzombies-worktree.lock"))
     defer { withExtendedLifetime(repositoryLock) {} }
-    let key = try interactiveExistingKey()
+    let key = try await readRecoveryKey(interactiveExistingKey)
     let captured = op
     let row = r
     try await runWork { try WorktreeRecovery.verifySource(row, operation: captured, key: key) }

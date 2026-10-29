@@ -42,6 +42,8 @@ On restart, incomplete operations become **uncertain**; they are never replayed 
 
 ## Automatic policy and model access
 
+Recovery-key authorization can require a macOS Keychain prompt. While it waits, status/access queries and observation remain responsive, the original checkout stays protected, and another recovery action cannot open a duplicate prompt. Keep and owner retain decisions remain effective during the wait. Only macOS and the operator authorize key access; the app never bypasses the prompt or replaces a key needed by existing archives.
+
 Automatic clean retirement requires an explicitly managed repository with automatic retirement enabled, every exact owner released for at least 24 hours, complete checks, verified independent recovery, and the shared disk settings in Automatic mode below their free-space goal. It respects the shared daily disk allowance and a default maximum of three worktree retirements per day. Dirty retirement, adoption, human confirmation, quarantine finalization, restoration and archive purge stay manual. Legacy BurnZombies-created disposable workspaces keep their original stricter clean/remote-reachability contract and private owner tokens through migration.
 
 MCP exposes bounded inventory, inspection, claims, release/retain, recommendations and guarded automatic clean retirement. Review sessions receive only their supplied IDs. Background reviewers cannot adopt, invent human confirmation, change policy, release owners, force removal or purge archives. No private file contents or owner-token hashes enter model inventory responses. **View local changes** is a separate explicit native-only view; it never opens ignored/untracked file contents or invokes external diff/text-conversion drivers.

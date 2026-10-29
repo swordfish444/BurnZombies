@@ -2,13 +2,15 @@ import CryptoKit
 import Foundation
 
 extension WorktreeService {
-  func captureKey(interactive: Bool) throws -> SymmetricKey {
+  func captureKey(interactive: Bool) async throws -> SymmetricKey {
     // Never silently replace a missing key while known archives still depend on it.
     let needsExisting = try store.values(WorktreeOperation.self, kind: "operation").contains {
       !$0.purged && $0.archiveDigest != nil
     }
-    if needsExisting { return try interactive ? interactiveExistingKey() : existingRecoveryKey() }
-    return try interactive ? interactiveRecoveryKey() : recoveryKey()
+    if needsExisting {
+      return try await readRecoveryKey(interactive ? interactiveExistingKey : existingRecoveryKey)
+    }
+    return try await readRecoveryKey(interactive ? interactiveRecoveryKey : recoveryKey)
   }
   func reconcile(_ q: WorktreeRequest) async throws -> WorktreeOperation {
     guard q.evidence == "RECONCILE RECOVERY", let id = q.id,
@@ -25,7 +27,7 @@ extension WorktreeService {
     defer { withExtendedLifetime(repositoryLock) {} }
     let exists = FileManager.default.fileExists(atPath: op.originalPath)
     if let digest = op.archiveDigest, !op.purged {
-      let key = try interactiveExistingKey()
+      let key = try await readRecoveryKey(interactiveExistingKey)
       let captured = op
       let check = URL(fileURLWithPath: op.recoveryPath).appendingPathComponent(
         "reconcile-" + UUID().uuidString

@@ -175,12 +175,12 @@ public actor AgentService {
     }
     previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
     workspacePreviews = workspacePreviews.filter { Date().timeIntervalSince($0.value.created) < 60 }
-    var state = await monitor.snapshot()
     if request.operation == "access_check" {
       guard case .found = Native().probe(request.callerPID) else {
         return AgentReply(
           ok: false, message: "An authenticated native caller is required to recheck access.")
       }
+      let state: ViewState
       do { state = try await monitor.recheckFullDiskAccess() } catch {
         return AgentReply(ok: false, message: error.localizedDescription)
       }
@@ -189,10 +189,12 @@ public actor AgentService {
       return reply
     }
     if request.operation == "access_status" {
-      var reply = AgentReply(message: state.fullDiskAccess.detail)
-      reply.fullDiskAccess = state.fullDiskAccess
+      let access = await monitor.accessStatus()
+      var reply = AgentReply(message: access.detail)
+      reply.fullDiskAccess = access
       return reply
     }
+    var state = await monitor.snapshot()
     if request.operation != "status" {
       do { try await monitor.requireFullDiskAccess() } catch {
         var reply = AgentReply(ok: false, message: error.localizedDescription)
