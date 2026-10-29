@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="bz-install-") as temp:
 from pathlib import Path
 args=sys.argv[1:]
 url=next(a for a in args if a.startswith('https://'))
-assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.10.0/')
+assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.10.1/')
 name=url.rsplit('/',1)[1]
 assert name in ('SHA256SUMS','BurnZombies-macOS-universal.tar.gz')
 shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1])
@@ -45,13 +45,15 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
                                 env=env, capture_output=True, text=True, timeout=60)
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         return result
-    install("none")
+    first = install("none")
+    assert 'Required setup:' in first.stdout and 'Full Disk Access' in first.stdout
     app = destination / "BurnZombies.app"
     install("none")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
     original_binary = (app / "Contents/MacOS/BurnZombiesApp").read_bytes()
     install("auto")
     configured = json.loads((root / "observer-state/machine-review.json").read_text())
+    assert not (root / 'observer-state/full-disk-access.json').exists(), 'Installer must never claim a user granted disk access'
     assert configured['harness'] == 'codex' and configured['enabled']
     assert configured['server'] == str(app / 'Contents/MacOS/burnzombies-mcp')
     assert not (root/'skill-home/.codex/config.toml').exists(), 'Default installer added global MCP overhead'

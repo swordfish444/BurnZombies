@@ -201,6 +201,13 @@ public final class MoleAnalyzer: @unchecked Sendable {
       }
     }
   }
+  /// A permission pause drops queued work without permanently stopping this analyzer.
+  public func discardPending() {
+    lock.withLock {
+      for job in queue { results.removeValue(forKey: job.key) }
+      queue = []
+    }
+  }
   public func cancelPending() {
     lock.withLock {
       stopped = true

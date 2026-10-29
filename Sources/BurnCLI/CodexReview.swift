@@ -98,7 +98,7 @@ enum CodexReview {
         try event(object)
       }
     }
-    _ = try rpc("initialize", ["clientInfo": ["name": "burnzombies", "version": "0.10.0"], "capabilities": ["experimentalApi": true]])
+    _ = try rpc("initialize", ["clientInfo": ["name": "burnzombies", "version": "0.10.1"], "capabilities": ["experimentalApi": true]])
     try send(["method": "initialized"])
     var start: [String: Any] = ["cwd": planURL.deletingLastPathComponent().path, "ephemeral": true,
       "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "sandbox": "workspace-write",

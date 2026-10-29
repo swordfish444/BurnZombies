@@ -38,7 +38,7 @@ func machineReviewProof() async throws {
   let hook = try HarnessHook.response(client: "codex", event: "PostToolUse", input: ["tool_name": "Bash"], root: root)
   check(hook.isEmpty, "Legacy hooks stay inert when machine reviewer owns scheduling")
   check(FileManager.default.fileExists(atPath: root.appendingPathComponent("review-request").path))
-  let reviewer = try MachineReviewer(root: root)
+  let reviewer = try MachineReviewer(root: root, accessCheck: fixtureAccess)
   await reviewer.tick(now: now)
   let queued = await reviewer.snapshot()
   check(queued.lastStarted == nil, "New releases are batched for two minutes")
@@ -63,20 +63,20 @@ func machineReviewProof() async throws {
   try Data("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"bz.tool\",\"name\":\"burnzombies_status\",\"status\":\"failed\"}'\n".utf8).write(to: toolFailure)
   try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: toolFailure.path)
   var failingToolConfig = config; failingToolConfig.executable = toolFailure.path
-  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture"))
+  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", accessCheck: fixtureAccess))
   let deferredAttempt = UUID()
   try ReviewProgress(attempt: deferredAttempt, selected: ["space:fixture"]).save(store)
   try ReviewProgress.record(store: store, attempt: deferredAttempt, operation: "disk_recommend", id: "space:fixture", succeeded: false)
   try Data("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"bz.tool\",\"name\":\"burnzombies_disk_recommend\",\"status\":\"failed\"}'\n".utf8).write(to: toolFailure)
-  try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: deferredAttempt)
+  try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: deferredAttempt, accessCheck: fixtureAccess)
   let rejectedProgress = try ReviewProgress.load(store)
   check(rejectedProgress.completed.isEmpty, "A rejected recommendation never acknowledges work")
-  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: UUID()))
+  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: UUID(), accessCheck: fixtureAccess))
   let refusalLine = "{\"type\":\"bz.tool\",\"name\":\"burnzombies_disk_recommend\",\"status\":\"failed\"}"
   try Data("#!/bin/sh\nprintf '%s\\n' '\(refusalLine)' '\(refusalLine)'\n".utf8).write(to: toolFailure)
-  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: deferredAttempt))
+  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: deferredAttempt, accessCheck: fixtureAccess))
   try Data("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"error\",\"error\":\"quota fixture\"}'\n".utf8).write(to: toolFailure)
-  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: deferredAttempt))
+  throwsError(try MachineReviewer.execute(failingToolConfig, root: root, prompt: "fixture", lane: .discovery, attempt: deferredAttempt, accessCheck: fixtureAccess))
   let slowRoot = URL(fileURLWithPath: "/private/tmp/bz-slow-" + UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: slowRoot) }
   let slow = try AgentListener(root: slowRoot) { _ in
@@ -114,7 +114,7 @@ func machineReviewProof() async throws {
   try store.write(JSONEncoder().encode(fresh), to: root.appendingPathComponent("machine-review-state.json"), limit: 65536)
   try HarnessHook.publish(.init(observedAt: now, processCount: 1, residentBytes: 1, pressure: "Low",
     reviewEvidence: [.init(id: "above-old-cap", revision: "new")]), store: store)
-  let uncapped = try MachineReviewer(root: root)
+  let uncapped = try MachineReviewer(root: root, accessCheck: fixtureAccess)
   await uncapped.tick(now: now)
   let uncappedState = await uncapped.snapshot()
   equal(uncappedState.phase, "observing")
@@ -218,7 +218,7 @@ func machineReviewProof() async throws {
   let outside = Process(); outside.executableURL = URL(fileURLWithPath: "/bin/sleep")
   outside.arguments = ["30"]; outside.currentDirectoryURL = URL(fileURLWithPath: "/tmp")
   try outside.run(); defer { if outside.isRunning { outside.terminate() }; outside.waitUntilExit() }
-  let monitor = try Monitor(root: root.appendingPathComponent("observation"))
+  let monitor = try Monitor(root: root.appendingPathComponent("observation"), accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
   let observed = await monitor.refresh()
   check(observed.catalog.records.values.contains { $0.latest.identity.pid == outside.processIdentifier })
   check(observed.processCount >= scan.observations.count - 100, "Observation is computer-wide, not restricted to reviewer descendants")

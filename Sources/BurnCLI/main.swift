@@ -66,6 +66,7 @@ do {
   case "setup":
     try MachineSetup.run(Array(args.dropFirst()))
   case "review-once":
+    try FullDiskAccess.requireAccess()
     let reviewer = try MachineReviewer()
     try await reviewer.resume()
     try HarnessHook.requestCleanup()
@@ -74,7 +75,7 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.10.0
+      BurnZombies 0.10.1
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
@@ -90,6 +91,7 @@ do {
         noninteractive helpers. Standard streams pass through. Arguments are not saved.
       scan     Aggregate visibility and scanner timing; no private process list.
       status   Aggregate saved catalog totals; does not start a monitor.
+      access-status   Read the running app's disk-access setup status; never opens settings or requests access.
       measure PID SECONDS   Aggregate CPU, footprint, wakeups, and writes (10–3600s).
       fixture-tree orphan|detached|hung
         Sacrificial 48 MiB helper, hard lifetime 20 minutes. Tests only.
@@ -148,6 +150,14 @@ do {
       "diskWrittenBytes": Double(last[4] - first[4]),
       "logicalWrittenBytes": Double(last[5] - first[5]),
     ])
+  case "access-status":
+    let raw = try await AgentConnection.callAsync(AgentRequest("access_status"))
+    guard let reply = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+      reply["ok"] as? Bool == true, let access = reply["fullDiskAccess"] else {
+      fail("The observer has no disk-access status. Update and start BurnZombies, then check Settings.")
+    }
+    let data = try JSONSerialization.data(withJSONObject: access, options: [.prettyPrinted, .sortedKeys])
+    print(String(decoding: data, as: UTF8.self))
   case "status":
     let c = try Store().load()
     try json([

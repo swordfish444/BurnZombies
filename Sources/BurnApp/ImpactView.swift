@@ -159,6 +159,7 @@ struct BurnStatus: View {
   @ObservedObject var model: AppModel
   var compact = false
   var status: String {
+    if !model.accessReady { return "Setup required" }
     if model.state.error != nil { return "Needs attention" }
     if model.machineReview.phase == "paused" { return "Review paused" }
     if compact {
@@ -172,13 +173,15 @@ struct BurnStatus: View {
       Circle().fill(model.state.error != nil ? .red : BurnTheme.orange)
         .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
       Text(status).font(.system(size: compact ? 13 : 18)).foregroundStyle(Color(white: 0.82))
-      Button { model.requestAgentCleanup() } label: {
-        Text(model.cleanupQueued ? "Queued" : "Safe cleanup")
+      Button {
+        if model.accessReady { model.requestAgentCleanup() } else { model.openSettings?() }
+      } label: {
+        Text(!model.accessReady ? "Finish setup" : model.cleanupQueued ? "Queued" : "Safe cleanup")
           .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
           .padding(.horizontal, 9).padding(.vertical, compact ? 4 : 6)
           .background(BurnTheme.orange.opacity(0.08), in: Capsule()).contentShape(Capsule())
-      }.clickPointer().disabled(!model.demo && !model.machineReviewEnabled)
-        .help("Review buildup across this Mac now. No active chat or reboot needed.")
+      }.clickPointer().disabled(model.accessReady && !model.demo && !model.machineReviewEnabled)
+        .help(model.accessReady ? "Review buildup across this Mac now. No active chat or reboot needed." : "Enable Full Disk Access in Settings to begin.")
     }
   }
 }
@@ -210,6 +213,7 @@ struct MiniImpactView: View {
   var lastBurn: String {
     let history = ImpactNumbers.make(model, period: .all)
     if history.last != nil { return "Last burn \(history.age)" }
+    if !model.accessReady { return "Waiting for Full Disk Access" }
     return history.count + history.worktrees == 0 ? "Ready for your first burn" : "No burns yet today"
   }
   var body: some View {
@@ -240,7 +244,9 @@ struct MiniImpactView: View {
           miniMetric("\(numbers.worktrees)", "Worktrees cleaned")
         }
       }.frame(height: 120).padding(.top, 6)
-      speedCard.padding(.top, 25)
+      Group {
+        if model.accessReady { speedCard } else { accessCard }
+      }.padding(.top, 25)
       line.padding(.top, 16)
       MemoryPressureRow(model: model, compact: true).frame(height: 18).padding(.top, 12)
       Text(lastBurn).font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
@@ -268,6 +274,27 @@ struct MiniImpactView: View {
       .frame(width: Self.size.width, height: Self.size.height)
       .foregroundStyle(BurnTheme.cream).buttonStyle(.plain).ignoresSafeArea()
       .background(BurnBackdrop()).preferredColorScheme(.dark)
+  }
+  var accessCard: some View {
+    Button { model.openSettings?() } label: {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("FINISH SETUP").font(.system(size: 10.5, weight: .bold)).tracking(0.3)
+          .foregroundStyle(BurnTheme.orange)
+        HStack(spacing: 10) {
+          Image(systemName: "lock.shield").font(.system(size: 25)).foregroundStyle(BurnTheme.orange)
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Allow Full Disk Access").font(.system(size: 13, weight: .semibold))
+            Text("One permission. Whole-Mac discovery.")
+              .font(.system(size: 10.5)).foregroundStyle(BurnTheme.muted)
+          }
+          Spacer(minLength: 0)
+          Image(systemName: "chevron.right").font(.system(size: 12, weight: .medium))
+        }
+      }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14)
+        .frame(height: 84).contentShape(RoundedRectangle(cornerRadius: 7))
+        .background(BurnTheme.orange.opacity(0.085), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.75)))
+    }.clickPointer().help("Finish setup")
   }
   var speedCard: some View {
     Button { model.openImpact?() } label: {
@@ -412,7 +439,7 @@ struct ImpactWindowView: View {
             BrandHeading(text: "TAME THE", size: 98).frame(height: 85)
             BrandHeading(text: "HORDE", size: 98).frame(height: 85)
           }.frame(height: 178)
-          Text("Your agents have room to run.").font(.system(size: 29, weight: .medium))
+          Text(model.accessReady ? "Your agents have room to run." : "One permission. Then we watch.").font(.system(size: 29, weight: .medium))
             .foregroundStyle(BurnTheme.muted).padding(.top, 13)
         }.frame(maxWidth: .infinity, alignment: .leading)
         Skull(size: 272, celebration: model.burnPulse).padding(.trailing, 125)

@@ -206,12 +206,14 @@ public final class DiskWalkRunner: @unchecked Sendable {
 
 public enum DiskWalkWorker {
   /// Internal CLI entry point. No observer, harness, UI, or child processes are created.
-  public static func run(arguments: [String]) -> Int32 {
+  public static func run(arguments: [String], accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) -> Int32 {
     guard arguments.count == 3 else { return 64 }
     let root = arguments[0], runID = arguments[1], directory = URL(fileURLWithPath: arguments[2])
     guard UUID(uuidString: runID) != nil, DiskWalkRunner.validPath(root),
       directory.lastPathComponent == "disk-worker-" + runID,
       DiskWalkRunner.validPath(directory.path) else { return 64 }
+    let checkAccess = accessCheck ?? { FullDiskAccess.status(root: directory.deletingLastPathComponent()) }
+    guard checkAccess().canScan else { return 77 }
     var metadata = stat()
     guard lstat(directory.path, &metadata) == 0, metadata.st_uid == getuid(),
       metadata.st_mode & S_IFMT == S_IFDIR, metadata.st_mode & 0o077 == 0 else { return 64 }
@@ -224,6 +226,7 @@ public enum DiskWalkWorker {
       while true {
         Thread.sleep(forTimeInterval: 1)
         if getppid() != parent || ProcessInfo.processInfo.systemUptime - started > 1810 { _exit(124) }
+        if !checkAccess().canScan { _exit(77) }
       }
     }
     do {

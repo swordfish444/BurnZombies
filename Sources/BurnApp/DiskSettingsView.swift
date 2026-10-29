@@ -65,7 +65,10 @@ import SwiftUI
 struct DiskSettingsView: View {
   @StateObject var settings: DiskSettingsModel
   @State private var confirm: DiskCandidate?
-  init(root: URL = Store.defaultRoot) { _settings = StateObject(wrappedValue: DiskSettingsModel(root: root)) }
+  var accessReady: Bool = true
+  init(root: URL = Store.defaultRoot, accessReady: Bool = true) {
+    _settings = StateObject(wrappedValue: DiskSettingsModel(root: root)); self.accessReady = accessReady
+  }
   init(model: DiskSettingsModel) { _settings = StateObject(wrappedValue: model) }
   private let orange = Color(red: 1, green: 0.34, blue: 0.12)
   var body: some View {
@@ -84,9 +87,10 @@ struct DiskSettingsView: View {
         }
         Text("Your AI follows the largest storage pockets across your Mac and recommends the next step. Only opportunities of 10 GB or more appear here.")
           .font(.caption).foregroundStyle(.secondary)
-        if settings.policy.mode == "off" { Text("Disk review is off. Enable it in Advanced.").font(.callout) }
+        if !accessReady { Text("Discovery waits for Full Disk Access. Saved findings remain below.").font(.callout).foregroundStyle(orange) }
+        else if settings.policy.mode == "off" { Text("Disk review is off. Enable it in Advanced.").font(.callout) }
         else if !settings.reviewStatus.isEmpty { Text(settings.reviewStatus).font(.caption).foregroundStyle(.orange) }
-        if settings.discovery.running != nil || !settings.discovery.queue.isEmpty {
+        if accessReady && (settings.discovery.running != nil || !settings.discovery.queue.isEmpty) {
           Label("Mapping your Mac · no AI tokens used for scanning", systemImage: "externaldrive.badge.magnifyingglass")
             .font(.caption).foregroundStyle(.secondary)
         }
@@ -117,7 +121,7 @@ struct DiskSettingsView: View {
         }
         let opportunities = settings.discovery.opportunities.filter { $0.unshared >= DiskCandidate.minimumReviewBytes }
         if opportunities.isEmpty && settings.candidates.isEmpty && (settings.managedCache?.eligibleBytes ?? 0) < DiskCandidate.minimumReviewBytes {
-          Label(settings.discovery.updated == .distantPast || settings.discovery.running != nil ? "Looking for the biggest opportunities…" : "No measured opportunities over 10 GB yet.", systemImage: "magnifyingglass")
+          Label(!accessReady ? "Complete setup to discover cleanup opportunities." : settings.discovery.updated == .distantPast || settings.discovery.running != nil ? "Looking for the biggest opportunities…" : "No measured opportunities over 10 GB yet.", systemImage: "magnifyingglass")
             .font(.callout).foregroundStyle(.secondary).padding(.vertical, 10)
         }
         ForEach(opportunities.prefix(5)) { node in discoveryCard(node) }

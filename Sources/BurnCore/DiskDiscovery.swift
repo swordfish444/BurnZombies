@@ -173,13 +173,20 @@ public final class DiskDiscovery: @unchecked Sendable {
   private var walkTeardownFailed = false
   private let walker: DiskWalkRunner
   private var enabled = true
+  private var accessAllowed = false
+  private let accessCheck: @Sendable () -> FullDiskAccessStatus
   private var protected: [String] = []
   private let moleAnalyzer: MoleAnalyzer
   private let useMole: Bool
   public init(store: Store, roots: [String]? = nil, moleAnalyzer: MoleAnalyzer? = nil,
-    walker: DiskWalkRunner? = nil) throws {
+    walker: DiskWalkRunner? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) throws {
+    self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: store.root) }
     self.walker = walker ?? DiskWalkRunner()
-    self.moleAnalyzer = moleAnalyzer ?? MoleAnalyzer()
+    let capability = self.accessCheck
+    self.moleAnalyzer = moleAnalyzer ?? MoleAnalyzer { path, store, protected in
+      guard capability().canScan else { return nil }
+      return MoleEvidence.analyze(path, store: store, protected: protected)
+    }
     useMole = moleAnalyzer != nil || (store.root == Store.defaultRoot && ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil)
     self.store = store
     self.roots = roots ?? [NSHomeDirectory(), "/Applications", "/Library", "/private/var"]
@@ -194,6 +201,10 @@ public final class DiskDiscovery: @unchecked Sendable {
   }
   deinit { moleAnalyzer.cancelPending() }
   public func snapshot() -> DiskDiscoveryState { mutex.withLock { state } }
+  public func setAccessAllowed(_ allowed: Bool) {
+    mutex.withLock { accessAllowed = allowed }
+    if !allowed { moleAnalyzer.discardPending() }
+  }
   public func stopSupplementary() async { await moleAnalyzer.stop() }
   private func supplementalReady(_ id: String, policyRevision: String?, revision: String) {
     mutex.withLock {
@@ -207,7 +218,9 @@ public final class DiskDiscovery: @unchecked Sendable {
     }
   }
   public func tick(policy: DiskPolicy, now: Date = Date()) {
+    let allowed = accessCheck().canScan
     mutex.withLock {
+      accessAllowed = allowed
       enabled = policy.mode != "off"
       protected = policy.protectedPaths
       let revision = policy.revision
@@ -217,7 +230,7 @@ public final class DiskDiscovery: @unchecked Sendable {
         for i in state.nodes.indices { state.nodes[i].reviewPolicyRevision = revision }
         guard saveLocked() else { return }
       }
-      guard enabled else { return }
+      guard enabled && accessAllowed else { return }
       if state.queue.isEmpty && !worker
         && now.timeIntervalSince(state.lastCycle) >= Double(policy.scanHours * 3600)
       {
@@ -231,7 +244,7 @@ public final class DiskDiscovery: @unchecked Sendable {
     }
   }
   private func startLocked() {
-    guard enabled, !worker, !walkTeardownFailed, !state.queue.isEmpty else { return }
+    guard enabled, accessAllowed, !worker, !walkTeardownFailed, !state.queue.isEmpty else { return }
     worker = true
     DispatchQueue.global(qos: .background).async { [self] in run() }
   }
@@ -248,7 +261,7 @@ public final class DiskDiscovery: @unchecked Sendable {
   }
   private func run() {
     while let path = mutex.withLock({ () -> String? in
-      guard enabled, !state.queue.isEmpty else {
+      guard enabled, accessAllowed, !state.queue.isEmpty else {
         worker = false
         return nil
       }
@@ -320,7 +333,7 @@ public final class DiskDiscovery: @unchecked Sendable {
       }
       let result = walker.run(root: path, temporaryParent: store.root,
         shouldContinue: { self.mutex.withLock {
-          self.enabled && self.state.policyRevision == revision
+          self.enabled && self.accessAllowed && self.state.policyRevision == revision
         } }, publish: { values, done in
           if done || Date().timeIntervalSince(lastPublish) >= 15 { publish(values, done) }
         })
@@ -404,7 +417,8 @@ public final class DiskDiscovery: @unchecked Sendable {
     return node
   }
   public func explore(_ id: String, allowed: [String]? = nil) throws -> String {
-    try mutex.withLock {
+    guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
+    return try mutex.withLock {
       let node = try resolved(id, allowed: allowed)
       guard node.members == nil, roots.contains(where: { WorkspaceSafety.contains($0, node.path) }),
         DiskWalkRunner.validPath(node.path),
@@ -425,6 +439,7 @@ public final class DiskDiscovery: @unchecked Sendable {
   public func inspect(
     _ id: String, allowed: [String]? = nil, visibility: ((String) -> Int32)? = nil
   ) throws -> DiskInspection {
+    guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
     let (node, children, groups) = try mutex.withLock {
       () -> (DiskSpaceNode, [DiskSpaceNode], [DiskSpaceNode]) in
       let node = try resolved(id, allowed: allowed)
@@ -560,6 +575,7 @@ public final class DiskDiscovery: @unchecked Sendable {
   public func readEvidence(_ id: String, relativePath: String, allowed: [String]? = nil) throws
     -> [String: String]
   {
+    guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
     let node = try mutex.withLock { try resolved(id, allowed: allowed) }
     let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
     let extensions: Set<String> = [
@@ -605,7 +621,8 @@ public final class DiskDiscovery: @unchecked Sendable {
     _ id: String, disposition: String, title: String, summary: String, nextStep: String,
     allowed: [String]? = nil
   ) throws -> String {
-    try mutex.withLock {
+    guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
+    return try mutex.withLock {
       let node = try resolved(id, allowed: allowed)
       guard ["keep", "investigate", "owner-cleanup", "rebuildable"].contains(disposition),
         (3...80).contains(title.count), (20...500).contains(summary.count),

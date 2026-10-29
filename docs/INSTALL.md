@@ -6,7 +6,27 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 macOS 14+, Apple Silicon or Intel. The installer checks the release checksum and signature, installs `~/Applications/BurnZombies.app`, selects an available harness CLI, and starts the menu bar observer in the background. No active chat, special job wrapper or computer reboot is required.
 
-The observer scans visible processes owned by your macOS user across every project and session. New supported lifecycle evidence queues batched, usage-limited reviews from the selected harness. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
+Complete the required Full Disk Access step below before protected-folder inspection and automatic reviews begin. The observer then scans visible processes owned by your macOS user across every project and session. New supported lifecycle evidence queues batched reviews from the selected harness. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
+
+## Required Full Disk Access
+
+1. Open **BurnZombies Settings → Full Disk Access → Open Full Disk Access**. This opens **System Settings → Privacy & Security → Full Disk Access** only when you click it.
+2. Add and enable **BurnZombies.app**. The standard installer puts it in `~/Applications`; use **+**, then **Command–Shift–G** and enter `~/Applications/BurnZombies.app` if it is not listed.
+3. Return to BurnZombies Settings and click **I enabled access — check again**. If macOS asks you to quit and reopen the app, do that first; no computer reboot is needed.
+
+Until the access check succeeds, BurnZombies shows **Setup required**, preserves your existing cleanup history, and does not start protected-folder inspection or AI reviews. It never opens System Settings, a Finder window or an onboarding window automatically. An agent can install and configure the app with the single command above, but macOS requires a person to grant this permission.
+
+The app verifies access capability without reading messages or mail: it checks directory access, then immediately closes the directory handle without enumerating its contents. macOS has no supported API that reports an authoritative Full Disk Access Boolean. Missing or inconclusive evidence keeps setup blocked. The check is performed by the running app; access inherited by a shell or Codex is not proof that BurnZombies has access.
+
+Check setup from an agent without opening a window:
+
+```sh
+~/Applications/BurnZombies.app/Contents/MacOS/burnzombies access-status
+```
+
+**After an update:** current releases are ad-hoc signed, so macOS may not recognize the updated executable as the app you previously approved. BurnZombies requires a fresh access check for a changed build. If the switch is already on but access fails, remove the old BurnZombies entry, add the installed app again and enable it, then reopen the app and check again. Stable Developer ID signing is still needed for reliable permission continuity between releases.
+
+Full Disk Access enables inspection; it does not approve deletion, bypass ownership or retention checks, or remove all macOS restrictions. Incomplete visibility still blocks raw worktree and folder cleanup. See [Apple's access controls](https://support.apple.com/en-ca/guide/security/secddd1d86a6/web) and [Apple's explanation of access verification](https://developer.apple.com/forums/thread/835851).
 
 ## Existing harness, existing login
 

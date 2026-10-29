@@ -130,10 +130,12 @@ public struct MachineReviewState: Codable, Sendable {
 /// is owned, bounded, and uses the selected harness's existing authentication.
 public actor MachineReviewer {
   private let root: URL
+  private let accessCheck: @Sendable () -> FullDiskAccessStatus
   private let store: Store
   private var running = false
   private var state = MachineReviewState()
-  public init(root: URL = Store.defaultRoot) throws {
+  public init(root: URL = Store.defaultRoot, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) throws {
+    self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: root) }
     self.root = root; store = try Store(root: root)
     let url = root.appendingPathComponent("machine-review-state.json")
     if FileManager.default.fileExists(atPath: url.path) {
@@ -155,6 +157,9 @@ public actor MachineReviewer {
   }
   public func tick(now: Date = Date()) async {
     guard !running else { return }
+    // Missing setup is not a failed AI attempt and consumes no tokens. Existing
+    // account/transport pauses remain untouched; grants never resume those pauses.
+    guard accessCheck().canScan else { return }
     do {
       guard let config = try MachineReviewConfiguration.load(root: root), config.enabled else { return }
       guard let data = try? store.read(root.appendingPathComponent("review-signal"), limit: 65536),
@@ -196,7 +201,7 @@ public actor MachineReviewer {
       let lane = ReviewLane.lane(for: pending[0])
       let result = await Task.detached { try Self.execute(config, root: self.root,
         prompt: "Review the supplied \(lane.rawValue) queue now. Follow the service instructions; finish without polling.",
-        reviewIDs: pending.map(\.id), lane: lane, attempt: attempt) }.result
+        reviewIDs: pending.map(\.id), lane: lane, attempt: attempt, accessCheck: self.accessCheck) }.result
       state.lastFinished = Date()
       if let index = ledger.entries.firstIndex(where: { $0.id == attempt }) {
         ledger.entries[index].finished = state.lastFinished
@@ -356,7 +361,9 @@ public actor MachineReviewer {
   /// Testable without starting an app. The launcher creates a private process group;
   /// only that owned group is terminated on timeout, cancellation or completion.
   public static func execute(_ c: MachineReviewConfiguration, root: URL, prompt: String = prompt,
-    timeout: TimeInterval = 180, reviewIDs: [String]? = nil, lane: ReviewLane? = nil, attempt: UUID? = nil) throws {
+    timeout: TimeInterval = 180, reviewIDs: [String]? = nil, lane: ReviewLane? = nil, attempt: UUID? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) throws {
+    let access = (accessCheck ?? { FullDiskAccess.status(root: root) })()
+    guard access.canScan else { throw StoreError.message(access.detail) }
     let store = try Store(root: root)
     let directory = root.appendingPathComponent("review-" + UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])

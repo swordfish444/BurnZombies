@@ -110,7 +110,7 @@ private func supplementaryInspectionProof(root: URL) async throws {
     let output: [String: Any] = ["path": path, "scan_status": "partial", "entries": []]
     return try? MoleEvidence.decode(JSONSerialization.data(withJSONObject: output), root: path)
   }
-  let discovery = try DiskDiscovery(store: store, roots: [source.path], moleAnalyzer: analyzer)
+  let discovery = try DiskDiscovery(store: store, roots: [source.path], moleAnalyzer: analyzer, walker: fixtureWalker(), accessCheck: fixtureAccess)
   let started = Date()
   let first = try discovery.inspect(node.id, allowed: [node.id])
   check(Date().timeIntervalSince(started) < 0.4, "Inspection returns native facts without waiting for supplementary analysis")
@@ -143,7 +143,7 @@ private func concurrentServiceProof(root: URL) async throws {
     unshared: 15_000_000_000, files: 1, complete: true, measured: Date())
   var saved = DiskDiscoveryState(); saved.nodes = [node]; try saved.save(store)
   // No refresh/scan: test saved discovery through the actual service and Monitor routing.
-  let monitor = try Monitor(root: root, discoveryRoots: [source.path])
+  let monitor = try Monitor(root: root, discoveryRoots: [source.path], accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
   let service = AgentService(monitor: monitor)
   let gate = TransportGate()
   let listener = try AgentListener(root: root) { request in

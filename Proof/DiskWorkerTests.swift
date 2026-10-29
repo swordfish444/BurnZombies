@@ -138,7 +138,7 @@ func diskWorkerProof() async throws {
   missingGroup.members = [hang.path + "/unseen-a", hang.path + "/unseen-b"]
   var oldState = DiskDiscoveryState(); oldState.nodes = [oldGroup, missingGroup]
   try oldState.save(discoveryStore)
-  let discovery = try DiskDiscovery(store: discoveryStore, roots: [hang.path, healthy.path], walker: runner)
+  let discovery = try DiskDiscovery(store: discoveryStore, roots: [hang.path, healthy.path], walker: runner, accessCheck: fixtureAccess)
   var policy = DiskPolicy(); policy.mode = "recommend"
   discovery.tick(policy: policy)
   try await diskWorkerWait({
@@ -153,7 +153,7 @@ func diskWorkerProof() async throws {
   check(control.isRunning)
 
   let cancelStore = try Store(root: base.appendingPathComponent("cancel-state"))
-  let cancelDiscovery = try DiskDiscovery(store: cancelStore, roots: [hang.path], walker: runner)
+  let cancelDiscovery = try DiskDiscovery(store: cancelStore, roots: [hang.path], walker: runner, accessCheck: fixtureAccess)
   cancelDiscovery.tick(policy: policy)
   try await diskWorkerWait({ cancelDiscovery.snapshot().nodes.contains { $0.path == hang.path } }, "Cancellation fixture never published its partial progress")
   policy.mode = "off"

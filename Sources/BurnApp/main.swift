@@ -31,9 +31,33 @@ import UserNotifications
   @Published var cleanupQueued = false
   @Published var machineReview = MachineReviewState()
   @Published var machineReviewEnabled = false
+  var accessReady: Bool { state.fullDiskAccess.canScan }
+
+  /// System Settings opens only in response to this explicit user action.
+  func openFullDiskAccessSettings() {
+    guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
+      NSWorkspace.shared.open(url) else {
+      message = "Open System Settings → Privacy & Security → Full Disk Access and enable BurnZombies."
+      return
+    }
+  }
+  func recheckFullDiskAccess() {
+    guard !demo, !working, let monitor else { return }
+    working = true
+    Task {
+      do {
+        state = try await monitor.recheckFullDiskAccess()
+        message = accessReady ? "Access is available. Observation continues on its normal schedule." : state.fullDiskAccess.detail
+      } catch { message = error.localizedDescription }
+      working = false
+      onUpdate?()
+      schedule()
+    }
+  }
 
   func requestAgentCleanup() {
     guard !demo else { previewBurn(); return }
+    guard accessReady else { message = state.fullDiskAccess.detail; return }
     do {
       try HarnessHook.requestCleanup()
       cleanupQueued = true
@@ -61,6 +85,7 @@ import UserNotifications
     self.demo = demo
     if demo {
       state = Demo.state()
+      state.fullDiskAccess = .init(state: .granted, detail: "Preview access state.")
       pressure = "Low"
       return
     }
@@ -115,7 +140,7 @@ import UserNotifications
       onUpdate?()
       schedule()
       // Observation continues on its own timer while a bounded review runs.
-      if state.error == nil && !state.partial { Task { await reviewer?.tick(); await receiveReviewState() } }
+      if accessReady && state.error == nil && !state.partial { Task { await reviewer?.tick(); await receiveReviewState() } }
     }
   }
   private func receiveReviewState() async {
@@ -213,6 +238,7 @@ import UserNotifications
     }
   }
   func setAutomatic(_ enabled: Bool) {
+    guard !enabled || accessReady else { message = state.fullDiskAccess.detail; return }
     do {
       guard var config = try MachineReviewConfiguration.load(root: Store.defaultRoot) else {
         message = "Run BurnZombies setup to select an installed harness."; return
@@ -365,7 +391,7 @@ struct Dashboard: View {
         Label(
           model.demo
             ? "Preview mode"
-            : "Agent-led cleanup",
+            : model.accessReady ? "Agent-led cleanup" : "Setup required",
           systemImage: "lock.shield"
         ).font(.caption).foregroundStyle(.secondary)
         Spacer()
@@ -375,13 +401,14 @@ struct Dashboard: View {
   }
   var overview: some View {
     Group {
+      if !model.accessReady { FullDiskAccessView(model: model) }
       VStack(alignment: .leading, spacing: 8) {
         Text(
-          attention == 0
+          !model.accessReady ? "One step before cleanup." : attention == 0
             ? "Room to keep going." : eligible > 0 ? "A few loose ends." : "Worth a closer look."
         ).font(.system(size: 25, weight: .semibold, design: .rounded))
         Text(
-          attention == 0
+          !model.accessReady ? "Grant Full Disk Access to begin whole-Mac discovery and background reviews." : attention == 0
             ? "Your connected agent reviews live evidence and decides what is safe to stop."
             : "\(attention) activities need a look. \(eligible) have enough ownership evidence to review for cleanup."
         ).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -398,7 +425,7 @@ struct Dashboard: View {
         Text("\(model.state.processCount) processes observed").font(.caption).foregroundStyle(
           .secondary)
       }
-      if model.state.findings.isEmpty {
+      if model.state.findings.isEmpty && model.accessReady {
         VStack(alignment: .leading, spacing: 10) {
           Label("Your agent takes it from here", systemImage: "leaf").font(.headline)
           Text(
@@ -540,18 +567,19 @@ struct Dashboard: View {
   }
   var settings: some View {
     Group {
+      FullDiskAccessView(model: model)
       Text("Quiet by default.").font(.title2.weight(.semibold))
       Text("Your whole Mac. One observer.").font(.headline)
       Text("BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running.")
         .font(.caption).foregroundStyle(.secondary)
-      Toggle("Background reviews", isOn: Binding(get: { model.machineReviewEnabled }, set: model.setAutomatic)).clickPointer()
-      Text(model.machineReview.detail).font(.caption).foregroundStyle(.secondary)
-      if model.machineReview.phase == "paused" {
+      Toggle("Background reviews", isOn: Binding(get: { model.machineReviewEnabled }, set: model.setAutomatic)).clickPointer().disabled(!model.accessReady)
+      Text(model.accessReady ? model.machineReview.detail : "Background reviews wait until Full Disk Access is available.").font(.caption).foregroundStyle(.secondary)
+      if model.accessReady && model.machineReview.phase == "paused" {
         Button("Resume reviews") { model.setAutomatic(true) }.clickPointer()
       }
       ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
       UsageHistoryView().disabled(model.demo)
-      DiskSettingsView().disabled(model.demo)
+      DiskSettingsView(accessReady: model.accessReady).disabled(model.demo)
       Toggle(
         "Grouped notifications",
         isOn: Binding(

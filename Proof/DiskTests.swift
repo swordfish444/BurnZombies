@@ -64,7 +64,7 @@ func diskProof() async throws {
   try FileManager.default.removeItem(at: build.appendingPathComponent(".env.production"))
   try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: build.path)
   try policy.save(store)
-  let monitor = try Monitor(root: state, workspaceVisibility: { _ in 0 }), service = AgentService(monitor: monitor)
+  let monitor = try Monitor(root: state, workspaceVisibility: { _ in 0 }, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker()), service = AgentService(monitor: monitor)
   func call(_ request: AgentRequest) async -> AgentReply { var r = request; r.callerPID = getpid(); return await service.call(r) }
   func awaitInventory(revision: String) async throws -> DiskSnapshot {
     let deadline = Date().addingTimeInterval(5)
@@ -146,7 +146,7 @@ private func diskAdviceProof(_ seed: DiskCandidate, root: URL, policy original: 
   equal(MachineReviewState().pending(signal).map(\.id), ["cleanup"], "One cleanup does not mix with advice batches")
   var snapshot = DiskSnapshot(); snapshot.date = Date(); snapshot.policyRevision = policy.revision
   snapshot.freeBytes = 1; snapshot.candidates = [candidate]; try snapshot.save(store)
-  let monitor = try Monitor(root: store.root, workspaceVisibility: { _ in -1 })
+  let monitor = try Monitor(root: store.root, workspaceVisibility: { _ in -1 }, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
   _ = await monitor.refresh()
   let service = AgentService(monitor: monitor)
   func call(_ request: AgentRequest) async -> AgentReply { var r = request; r.callerPID = getpid(); return await service.call(r) }

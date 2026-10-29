@@ -27,7 +27,7 @@ func workspaceProof() async throws {
     guard path.hasPrefix(prefix) else { return -1 }
     let result = bz_path_in_use(path)
     return result == 1 ? 1 : 0
-  }), service = AgentService(monitor: monitor)
+  }, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker()), service = AgentService(monitor: monitor)
   let store = try Store(root: root)
   func call(_ request: AgentRequest) async -> AgentReply {
     var r = request; r.callerPID = getpid(); return await service.call(r)
@@ -147,7 +147,7 @@ func workspaceProof() async throws {
   pending.outcome = "prepared"; pending.verifiedAt = nil; pending.diskReclaimedBytes = 0
   interrupted.workspaceReceipts = [pending]
   try interruptedStore.save(interrupted)
-  let recovered = try Monitor(root: interruptedRoot)
+  let recovered = try Monitor(root: interruptedRoot, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
   let recoveredState = await recovered.refresh()
   equal(recoveredState.catalog.workspaceReceipts?.first?.outcome, "unverified")
   equal(ImpactNumbers.make(catalog: recoveredState.catalog, period: .all).worktrees, 0)

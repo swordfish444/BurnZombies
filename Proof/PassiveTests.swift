@@ -45,7 +45,7 @@ func passiveProof() async throws {
   check(evidence[0].canReview(), "Passive completion should queue a review without working-chat tool calls")
   var catalog = Catalog(); catalog.records = records; catalog.passiveEvidence = evidence
   equal(ReviewEvidence.pending(in: catalog).count, 1)
-  let monitor = try Monitor(root: state, passiveHome: home)
+  let monitor = try Monitor(root: state, passiveHome: home, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
   let preview = try await monitor.previewTargets([child.identity.key], callerPID: getpid())
   equal(preview.count, 1)
   let append = try FileHandle(forWritingTo: file); try append.seekToEnd(); try append.write(contentsOf: line("task_started", UUID().uuidString)); try append.close()

@@ -29,7 +29,7 @@ func runOwnerHarnessFixture(root: URL) async throws {
   try store.write(JSONEncoder().encode(owners), to: root.appendingPathComponent("owner-fixture-evidence.json"), limit: 16384)
   let ids = owners.map(\.id)
   try store.write(JSONEncoder().encode(ids), to: root.appendingPathComponent("owner-review-ids.json"), limit: 2048)
-  let monitor = try Monitor(root: root, passiveHome: root.appendingPathComponent("empty-passive-home"))
+  let monitor = try Monitor(root: root, passiveHome: root.appendingPathComponent("empty-passive-home"), accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
   _ = await monitor.refresh()
   let service = AgentService(monitor: monitor)
   let listener = try AgentListener(root: root) { request in
@@ -71,5 +71,5 @@ func runOwnerHarnessReview(root: URL) throws {
   }
   try MachineReviewer.execute(configuration, root: root,
     prompt: "Review the supplied ownerProcess queue now. Follow the service instructions; finish without polling.",
-    reviewIDs: ids, lane: .ownerProcess, attempt: attempt)
+    reviewIDs: ids, lane: .ownerProcess, attempt: attempt, accessCheck: fixtureAccess)
 }
