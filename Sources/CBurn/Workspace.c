@@ -54,7 +54,9 @@ static int mapped_paths(int pid, void (*visit)(void *, const char *), void *cont
 }
 
 // The old fixed 4,096-entry descriptor array truncated ordinary large app
-// processes. Query the kernel's size and retry growth, retaining a hard 1 MiB cap.
+// processes. The kernel's size hint reflects table capacity, which can exceed
+// the actual inventory for sparse/high descriptors. Cap the allocation, then
+// require the returned inventory to fit completely inside the hard 1 MiB bound.
 static int collect_pid(int pid, void (*visit)(void *, const char *), void *context,
                        char *gap, size_t capacity, uint64_t deadline) {
     if (pid <= 0 || !visit || !context || !gap || capacity < 2) return -1;
@@ -81,10 +83,8 @@ static int collect_pid(int pid, void (*visit)(void *, const char *), void *conte
         return unknown ? -1 : 0;
     }
     const int maximum = 1048576;
-    if (required > maximum - (int)(64 * sizeof(struct proc_fdinfo))) {
-        GAP("descriptor inventory exceeds bounded 1 MiB support"); return -1;
-    }
-    int bytes = required + (int)(64 * sizeof(struct proc_fdinfo)), n = -1;
+    int margin = (int)(64 * sizeof(struct proc_fdinfo));
+    int bytes = required > maximum - margin ? maximum : required + margin, n = -1;
     struct proc_fdinfo *fds = NULL;
     for (int attempt = 0; attempt < 3; attempt++) {
         free(fds); fds = calloc(1, (size_t)bytes);

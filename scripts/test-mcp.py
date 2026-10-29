@@ -54,11 +54,11 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         burn = next(t for t in tools if t["name"] == "burnzombies_burn")
         assert burn["annotations"]["destructiveHint"] is True
         def call(name, args):
-            # Verified preservation and repeated native consumer checks can exceed
-            # the ordinary frame bound. The product uses its operation deadline;
-            # only this real retirement fixture gets a longer response wait.
+            # Native preview performs two complete consumer passes; preservation
+            # can take longer. Wait beyond their bounded product deadlines while
+            # retaining the ordinary frame bound for cheap status calls.
             return send("tools/call", {"name": name, "arguments": args},
-                        timeout=60 if name == "burnzombies_workspace_clean" else 10)
+                        timeout=60 if name in {"burnzombies_workspace_preview", "burnzombies_workspace_clean"} else 10)
         status = call("burnzombies_status", {})["result"]
         assert not status.get("isError")
         actual = json.loads(status["content"][0]["text"])
@@ -131,6 +131,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
             "evidence": "All protocol checks completed; fixture commits are saved and no consumer uses this worktree."})["result"]
         assert not released.get("isError"), released
         workspace_preview = call("burnzombies_workspace_preview", preview_args)["result"]
+        assert workspace_preview["content"][0]["text"].lstrip().startswith("{"), workspace_preview
         response = json.loads(workspace_preview["content"][0]["text"])
         if response["ok"]:
             cleaned = call("burnzombies_workspace_clean", {"preview_token": response["previewToken"]})["result"]

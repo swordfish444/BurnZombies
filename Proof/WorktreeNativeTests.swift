@@ -62,9 +62,51 @@ func worktreeNativeProof(descriptorOnly: Bool = false) async throws {
     }, Unmanaged.passUnretained(match).toOpaque(), &gap, gap.count)
   equal(coverage, 0, String(cString: gap))
   check(match.matched, "An open file above descriptor 4,096 was missed")
+  // A sparse high-numbered descriptor expands the kernel table's size hint
+  // beyond 1 MiB while the actual inventory still fits comfortably inside it.
+  var ceiling: Int32 = 0
+  var ceilingSize = MemoryLayout<Int32>.size
+  guard sysctlbyname("kern.maxfilesperproc", &ceiling, &ceilingSize, nil, 0) == 0 else {
+    throw StoreError.message("Cannot inspect the kernel descriptor ceiling for the sparse fixture.")
+  }
+  if ceiling >= 65_664 && limit.rlim_max >= 65_664 {
+    var sparseLimit = limit
+    sparseLimit.rlim_cur = max(sparseLimit.rlim_cur, 65_664)
+    guard setrlimit(RLIMIT_NOFILE, &sparseLimit) == 0 else {
+      throw StoreError.message("Cannot reserve the sparse descriptor fixture allowance.")
+    }
+    let sparse = fcntl(held, F_DUPFD_CLOEXEC, 65_536)
+    guard sparse >= 65_536 else {
+      throw StoreError.message(
+        "Cannot allocate sparse fixture (kernel ceiling \(ceiling), errno \(errno)).")
+    }
+    descriptors.append(sparse)
+    let sparseMatch = NativePathMatch(target.path)
+    var sparseGap = [CChar](repeating: 0, count: 256)
+    let sparseCoverage = bz_worktree_pid_paths(
+      getpid(),
+      { context, path in
+        guard let context, let path else { return }
+        let value = Unmanaged<NativePathMatch>.fromOpaque(context).takeUnretainedValue()
+        if String(cString: path) == value.target { value.matched = true }
+      }, Unmanaged.passUnretained(sparseMatch).toOpaque(), &sparseGap, sparseGap.count)
+    equal(sparseCoverage, 0, String(cString: sparseGap))
+    check(
+      sparseMatch.matched, "A complete sparse descriptor inventory was refused on its size estimate"
+    )
+    if sparseCoverage == 0 && sparseMatch.matched {
+      print("PASS native sparse descriptor at slot \(sparse)")
+    }
+  } else {
+    print(
+      "SKIP sparse high-slot fixture: kernel descriptor ceiling \(ceiling), hard limit \(limit.rlim_max); required 65,664"
+    )
+  }
   descriptors.forEach { close($0) }
   descriptors = []
-  print("PASS real 5,000-descriptor native coverage and high-descriptor open-file control")
+  if coverage == 0 && match.matched {
+    print("PASS real 5,000-open-descriptor coverage and high-descriptor file control")
+  }
   if descriptorOnly { return }
 
   let repository = base.appendingPathComponent("repository")

@@ -251,6 +251,7 @@ import UserNotifications
   let demo: Bool
   private var monitor: Monitor?
   private var agentListener: AgentListener?
+  private var agentSnapshotTask: Task<Void, Never>?
   private var reviewer: MachineReviewer?
   private var timer: Timer?
   var onUpdate: (() -> Void)?
@@ -295,8 +296,7 @@ import UserNotifications
       do {
         agentListener = try AgentListener { [weak self] request in
           let reply = await service.call(request)
-          let snapshot = await monitor.snapshot()
-          await self?.receiveAgentSnapshot(snapshot)
+          await self?.requestAgentSnapshot()
           return reply
         }
       } catch { message = error.localizedDescription }
@@ -310,6 +310,16 @@ import UserNotifications
     let reply = try await monitor.worktreeRequest(request, caller: "native-operator")
     if !["list", "operations"].contains(request.action) { state = await monitor.snapshot() }
     return reply
+  }
+  deinit { agentSnapshotTask?.cancel() }
+  private func requestAgentSnapshot() {
+    guard agentSnapshotTask == nil, let monitor else { return }
+    agentSnapshotTask = Task { [weak self] in
+      let snapshot = await monitor.snapshot()
+      guard let self else { return }
+      self.agentSnapshotTask = nil
+      if !Task.isCancelled { self.receiveAgentSnapshot(snapshot) }
+    }
   }
   private func receiveAgentSnapshot(_ snapshot: ViewState) {
     state = snapshot

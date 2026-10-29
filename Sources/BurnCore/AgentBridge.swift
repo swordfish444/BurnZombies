@@ -175,12 +175,12 @@ public actor AgentService {
     }
     previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
     workspacePreviews = workspacePreviews.filter { Date().timeIntervalSince($0.value.created) < 60 }
-    var state = await monitor.snapshot()
     if request.operation == "access_check" {
       guard case .found = Native().probe(request.callerPID) else {
         return AgentReply(
           ok: false, message: "An authenticated native caller is required to recheck access.")
       }
+      let state: ViewState
       do { state = try await monitor.recheckFullDiskAccess() } catch {
         return AgentReply(ok: false, message: error.localizedDescription)
       }
@@ -189,10 +189,12 @@ public actor AgentService {
       return reply
     }
     if request.operation == "access_status" {
-      var reply = AgentReply(message: state.fullDiskAccess.detail)
-      reply.fullDiskAccess = state.fullDiskAccess
+      let access = await monitor.accessStatus()
+      var reply = AgentReply(message: access.detail)
+      reply.fullDiskAccess = access
       return reply
     }
+    var state = await monitor.snapshot()
     if request.operation != "status" {
       do { try await monitor.requireFullDiskAccess() } catch {
         var reply = AgentReply(ok: false, message: error.localizedDescription)
@@ -807,9 +809,19 @@ public enum AgentConnection {
     // Preserve the existing bounded wire deadline for storage callers. Cached
     // inspection returns promptly; optional analysis runs outside the request.
     let worktree = ["worktrees", "worktrees_read", "workspace_clean"].contains(request.operation)
-    let deadline = worktree ? 900000 : request.operation == "disk_inspect" ? 15000 : 5000
+    // Legacy preview performs two complete native consumer passes. Its read-only
+    // budget must not inherit the fast status deadline or outlast preservation.
+    let workspacePreview = request.operation == "workspace_preview"
+    let deadline =
+      worktree
+      ? 900000 : workspacePreview ? 30000 : request.operation == "disk_inspect" ? 15000 : 5000
     let count = bz_agent_read_timeout(fd, &buffer, Int32(buffer.count), Int32(deadline))
     guard count > 0 else {
+      if workspacePreview {
+        throw StoreError.message(
+          "Worktree preview is still unavailable. Leave the checkout intact while observation completes."
+        )
+      }
       throw StoreError.message(
         worktree
           ? "Worktree response unavailable. Inspect operation history before any new action; do not replay retirement."
