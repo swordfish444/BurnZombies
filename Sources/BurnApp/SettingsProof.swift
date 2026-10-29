@@ -125,7 +125,7 @@ import Vision
       detail: accessState == .unknown ? "Access could not be verified. Enable BurnZombies in System Settings, then check again." : "Full Disk Access is required before discovery.")
     let accessHost = NSHostingView(rootView: FullDiskAccessView(model: accessModel).padding(20)
       .frame(width: 440).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
-    accessHost.frame = NSRect(x: 0, y: 0, width: 440, height: 580)
+    accessHost.frame = NSRect(x: 0, y: 0, width: 440, height: accessState == .granted ? 120 : 580)
     accessHost.layoutSubtreeIfNeeded()
     guard let bitmap = accessHost.bitmapImageRepForCachingDisplay(in: accessHost.bounds) else {
       throw StoreError.message("Access setup render unavailable")
@@ -135,20 +135,20 @@ import Vision
       let png = bitmap.representation(using: .png, properties: [:]) else {
       throw StoreError.message("Access setup PNG unavailable")
     }
-    let label = accessState == .granted ? "available" : accessState == .required ? "required" : "unknown"
+    let label = accessState == .granted ? "completed" : accessState == .required ? "required" : "unknown"
     try png.write(to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension("access-" + label + ".png"))
     let recognition = VNRecognizeTextRequest()
     recognition.recognitionLevel = .accurate; recognition.recognitionLanguages = ["en-US"]
     try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([recognition])
     let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-    guard visible.contains("Full Disk Access"), visible.contains("Open Full Disk Access") else {
+    guard visible.contains("Full Disk Access"), visible.contains(accessState == .granted ? "Manage access" : "Open Full Disk Access") else {
       throw StoreError.message("Required access controls clipped: \(visible)")
     }
     if accessState != .granted {
-      guard visible.contains("Required"), visible.contains("I enabled access"), visible.contains("whole-Mac") || visible.contains("Whole-Mac") else {
+      guard visible.contains("Required"), visible.contains("Check access"), visible.contains("whole-Mac") || visible.contains("Whole-Mac") else {
         throw StoreError.message("Setup requirement or explicit confirmation missing: \(visible)")
       }
-    } else if !visible.contains("Available") { throw StoreError.message("Granted access state missing") }
+    } else if !visible.contains("Complete") { throw StoreError.message("Granted access state missing") }
     guard NSApp.windows.allSatisfy({ !$0.isVisible && !$0.isKeyWindow }) else {
       throw StoreError.message("Access setup proof showed a window")
     }

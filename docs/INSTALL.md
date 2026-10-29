@@ -10,9 +10,11 @@ Complete the required Full Disk Access step below before protected-folder inspec
 
 ## Required Full Disk Access
 
-1. Open **BurnZombies Settings → Full Disk Access → Open Full Disk Access**. This opens **System Settings → Privacy & Security → Full Disk Access** only when you click it.
-2. Add and enable **BurnZombies.app**. The standard installer puts it in `~/Applications`; use **+**, then **Command–Shift–G** and enter `~/Applications/BurnZombies.app` if it is not listed.
-3. Return to BurnZombies Settings and click **I enabled access — check again**. If macOS asks you to quit and reopen the app, do that first; no computer reboot is needed.
+1. Click **Allow Full Disk Access** in the small menu-bar banner. It opens **System Settings → Privacy & Security → Full Disk Access** directly. The same link is always available under **Settings cog → Full Disk Access**.
+2. Add and enable **BurnZombies.app**. If it is not listed, use **Copy app path** in BurnZombies Settings, then **+**, **Command–Shift–G** and paste the path into the macOS chooser. The standard installer puts the app in `~/Applications`.
+3. Return to BurnZombies. After that explicit settings visit it checks access once automatically. If macOS asks you to quit and reopen the app, do that first, then use **Check access** in BurnZombies Settings. No computer reboot is needed.
+
+The banner's **×** dismisses the reminder and remembers your choice across launches; it does not grant permission or enable scanning. You can finish setup at any time using the Settings cog. Verified access removes the banner and changes the Settings section to a muted **Complete** row with a green checkmark and a **Manage access** link. If previously verified access is lost, the reminder becomes available again. Opening the permission pane never marks setup complete by itself.
 
 Until the access check succeeds, BurnZombies shows **Setup required**, preserves your existing cleanup history, and does not start protected-folder inspection or AI reviews. It never opens System Settings, a Finder window or an onboarding window automatically. An agent can install and configure the app with the single command above, but macOS requires a person to grant this permission.
 
