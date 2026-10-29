@@ -9,7 +9,7 @@ func agentBridgeProof() async throws {
   _ = await monitor.refresh() // The observer samples; cheap status must not trigger a scan.
   let service = AgentService(monitor: monitor)
   let listener = try AgentListener(root: root) { await service.call($0) }
-  let status = try await Task.detached { try AgentConnection.call(AgentRequest("status"), root: root) }.value
+  let status = try await AgentConnection.callAsync(AgentRequest("status"), root: root)
   let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
   let reply = try decoder.decode(AgentReply.self, from: Data(status.utf8))
   check(reply.ok && reply.observedProcesses > 0, "agent did not reach the live monitor")
@@ -22,7 +22,7 @@ func agentBridgeProof() async throws {
   let unknown = await service.call(AgentRequest("delete"))
   checkFalse(unknown.ok)
   func call(_ request: AgentRequest) async throws -> AgentReply {
-    let raw = try await Task.detached { try AgentConnection.call(request, root: root) }.value
+    let raw = try await AgentConnection.callAsync(request, root: root)
     return try decoder.decode(AgentReply.self, from: Data(raw.utf8))
   }
   let inspected = try await call(AgentRequest("inspect", pids: [getpid()]))

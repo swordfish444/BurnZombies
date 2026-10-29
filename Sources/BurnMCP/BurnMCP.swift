@@ -266,7 +266,7 @@ import MCP
       default: throw MCPError.invalidParams("Unknown tool.")
       }
       do {
-        var text = try await Task.detached { try AgentConnection.call(request) }.value
+        var text = try await AgentConnection.callAsync(request)
         var object = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
         if reviewMode, let succeeded = object?["ok"] as? Bool, let attempt,
           succeeded || (request.operation == "disk_recommend" && object?["failureKind"] as? String == "recommendation_rejected") {

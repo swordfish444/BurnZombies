@@ -83,7 +83,7 @@ func machineReviewProof() async throws {
     try? await Task.sleep(nanoseconds: 6_000_000_000)
     return AgentReply(message: "Bounded inspection completed.")
   }
-  let slowResult = try await Task.detached { try AgentConnection.call(AgentRequest("disk_inspect"), root: slowRoot) }.value
+  let slowResult = try await AgentConnection.callAsync(AgentRequest("disk_inspect"), root: slowRoot)
   check(slowResult.contains("Bounded inspection completed"), "An inspection longer than the ordinary five-second frame deadline completes")
   await slow.stop()
   for harness in MachineReviewConfiguration.harnesses {

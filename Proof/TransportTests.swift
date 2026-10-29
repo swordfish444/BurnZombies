@@ -20,6 +20,33 @@ private final class AnalysisCounter: @unchecked Sendable {
 func transportProof() async throws {
   let root = URL(fileURLWithPath: "/private/tmp/bz-transport-" + UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: root) }
+  print("Transport cooperative-pool strict mode: " + (ProcessInfo.processInfo.environment["LIBDISPATCH_COOPERATIVE_POOL_STRICT"] ?? "unset"))
+  try await transportStage("parallel-storage-status", root: root) { try await independentRequestsProof(root: root) }
+  let idle = root.appendingPathComponent("idle")
+  try await transportStage("idle-client-shutdown", root: idle) { try await idleTransportProof(root: idle) }
+  let supplementary = root.appendingPathComponent("supplement")
+  try await transportStage("supplementary-inspection", root: supplementary) { try await supplementaryInspectionProof(root: supplementary) }
+  let service = root.appendingPathComponent("service")
+  try await transportStage("production-service-routing", root: service) { try await concurrentServiceProof(root: service) }
+  let bounded = root.appendingPathComponent("bounded")
+  try await transportStage("bounded-clients-and-overflow", root: bounded) { try await boundedTransportProof(root: bounded) }
+  let analysis = root.appendingPathComponent("analysis-limit")
+  try await transportStage("bounded-analysis", root: analysis) { try await boundedAnalysisProof(root: analysis) }
+}
+
+private func transportStage(_ name: String, root: URL, operation: () async throws -> Void) async throws {
+  print("Transport stage: " + name)
+  do { try await operation() }
+  catch {
+    // Operation names/timings only; never dump request arguments or file contents.
+    let receipts = (try? JSONDecoder().decode([AgentTransportReceipt].self,
+      from: Data(contentsOf: root.appendingPathComponent("agent-transport.json")))) ?? []
+    let timing = receipts.suffix(8).map { "\($0.operation):\($0.status):frame=\($0.frameMilliseconds)ms:handler=\($0.handlerMilliseconds)ms:total=\($0.totalMilliseconds)ms" }.joined(separator: "; ")
+    throw StoreError.message("Transport stage \(name): \(error.localizedDescription). Receipts: \(timing.isEmpty ? "none" : timing)")
+  }
+}
+
+private func independentRequestsProof(root: URL) async throws {
   let gate = TransportGate()
   let listener = try AgentListener(root: root) { request in
     if request.operation == "disk_inspect" {
@@ -29,14 +56,12 @@ func transportProof() async throws {
     return AgentReply(message: "fixture " + request.operation)
   }
   let slow = Task.detached {
-    try AgentConnection.call(AgentRequest("disk_inspect"), root: root)
+    try await AgentConnection.callAsync(AgentRequest("disk_inspect"), root: root)
   }
   for _ in 0..<100 where !gate.ready { try await Task.sleep(nanoseconds: 10_000_000) }
   check(gate.ready, "Storage fixture entered the request handler")
   let start = Date()
-  let fast = try await Task.detached {
-    try AgentConnection.call(AgentRequest("status"), root: root)
-  }.value
+  let fast = try await AgentConnection.callAsync(AgentRequest("status"), root: root)
   check(fast.contains("fixture status"))
   check(Date().timeIntervalSince(start) < 0.4,
     "An unrelated status request must not wait behind storage inspection")
@@ -48,28 +73,22 @@ func transportProof() async throws {
   check(records.contains { $0.operation == "disk_inspect" && $0.handlerMilliseconds >= 800 })
   check(records.contains { $0.operation == "status" && $0.handlerMilliseconds < 400 })
   check(records.allSatisfy { $0.status == "ok" })
+}
 
+private func idleTransportProof(root idleRoot: URL) async throws {
   // An idle/trickling connection must neither block others nor delay shutdown.
-  let idleRoot = root.appendingPathComponent("idle")
   let idleListener = try AgentListener(root: idleRoot) { _ in AgentReply(message: "responsive") }
   let idle = bz_agent_connect(AgentListener.socketPath(idleRoot))
   check(idle >= 0)
   defer { if idle >= 0 { close(idle) } }
   let began = Date()
-  let response = try await Task.detached {
-    try AgentConnection.call(AgentRequest("status"), root: idleRoot)
-  }.value
+  let response = try await AgentConnection.callAsync(AgentRequest("status"), root: idleRoot)
   check(response.contains("responsive"))
   check(Date().timeIntervalSince(began) < 0.4, "An idle client cannot monopolize the listener")
   let stopping = Date()
   await idleListener.stop()
   check(Date().timeIntervalSince(stopping) < 0.4, "Shutdown interrupts a waiting request frame")
   checkFalse(AgentConnection.isAvailable(root: idleRoot))
-
-  try await supplementaryInspectionProof(root: root.appendingPathComponent("supplement"))
-  try await concurrentServiceProof(root: root.appendingPathComponent("service"))
-  try await boundedTransportProof(root: root.appendingPathComponent("bounded"))
-  try await boundedAnalysisProof(root: root.appendingPathComponent("analysis-limit"))
 }
 
 private func supplementaryInspectionProof(root: URL) async throws {
@@ -135,14 +154,12 @@ private func concurrentServiceProof(root: URL) async throws {
     return await service.call(request)
   }
   let slow = Task.detached {
-    try AgentConnection.call(.init("disk_inspect", findingID: node.id, reviewIDs: [node.id]), root: root)
+    try await AgentConnection.callAsync(.init("disk_inspect", findingID: node.id, reviewIDs: [node.id]), root: root)
   }
   for _ in 0..<100 where !gate.ready { try await Task.sleep(nanoseconds: 10_000_000) }
   let start = Date()
-  let retained = try await Task.detached {
-    try AgentConnection.call(.init("disk_evidence", findingID: node.id,
-      reviewIDs: [node.id], workspacePath: "retention.md"), root: root)
-  }.value
+  let retained = try await AgentConnection.callAsync(.init("disk_evidence", findingID: node.id,
+    reviewIDs: [node.id], workspacePath: "retention.md"), root: root)
   check(Date().timeIntervalSince(start) < 0.4, "Production evidence route remains responsive during unrelated storage work")
   check(retained.contains("accepted result"))
   let reply = try JSONDecoder().decode(AgentReply.self, from: Data(try await slow.value.utf8))
@@ -164,13 +181,11 @@ private func boundedTransportProof(root: URL) async throws {
     return AgentReply(message: "fixture")
   }
   let pending = (0..<8).map { _ in Task.detached {
-    try? AgentConnection.call(AgentRequest("disk_inspect"), root: root)
+    try? await AgentConnection.callAsync(AgentRequest("disk_inspect"), root: root)
   } }
   for _ in 0..<150 where count.count < 8 { try await Task.sleep(nanoseconds: 10_000_000) }
   equal(count.count, 8)
-  let overflow = try await Task.detached {
-    try AgentConnection.call(AgentRequest("private argument must not enter receipt"), root: root)
-  }.value
+  let overflow = try await AgentConnection.callAsync(AgentRequest("private argument must not enter receipt"), root: root)
   check(overflow.contains("capacity reached"), "Connection pressure is rejected instead of creating unbounded workers")
   let idleOverflow = bz_agent_connect(AgentListener.socketPath(root))
   guard idleOverflow >= 0 else { throw StoreError.message("Idle overflow fixture could not connect") }

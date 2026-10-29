@@ -558,6 +558,17 @@ public enum AgentConnection {
     close(fd)
     return true
   }
+  /// Task.detached still uses Swift's cooperative pool. Blocking socket reads
+  /// there can prevent the same pool from resuming the listener or MCP handlers.
+  public static func callAsync(_ request: AgentRequest, root: URL = Store.defaultRoot) async throws -> String {
+    try Task.checkCancellation()
+    return try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global(qos: .utility).async {
+        continuation.resume(with: Result { try call(request, root: root) })
+      }
+    }
+  }
+  @available(*, noasync, message: "Use callAsync to keep socket I/O off the cooperative executor.")
   public static func call(_ request: AgentRequest, root: URL = Store.defaultRoot) throws -> String {
     _ = try Store(root: root)
     let fd = bz_agent_connect(AgentListener.socketPath(root))
