@@ -141,10 +141,19 @@ public actor Monitor {
   }
   public func worktreeTick() async {
     guard !busy, accessCheck().canScan, let service = worktreeService else { return }
+    await updateWorktreeEvidence(service)
+  }
+  private func updateWorktreeEvidence(_ service: WorktreeService, huntTimeout: TimeInterval? = nil)
+    async
+  {
     do {
       let roots = (try? DiskPolicy.load(store).roots) ?? []
       try await service.suggestRoots(roots + (catalog.diskCandidates ?? []).map(\.repository))
-      catalog.worktreeEvidence = try await service.tick()
+      if let huntTimeout {
+        catalog.worktreeEvidence = try await service.refreshForHunt(timeout: huntTimeout)
+      } else {
+        catalog.worktreeEvidence = try await service.tick()
+      }
       state.worktreeError = nil
     } catch {
       catalog.worktreeEvidence = []
@@ -193,9 +202,14 @@ public actor Monitor {
   /// Native-only preparation. Wait locally for the bounded map; no AI polling.
   public func prepareHunt(timeout: TimeInterval = 120) async throws -> ViewState {
     try requireFullDiskAccess()
-    await worktreeTick()
+    let deadline = ProcessInfo.processInfo.systemUptime + max(0, timeout)
     if let discovery { discovery.requestCycle(policy: try DiskPolicy.load(store)) }
-    return try await settleHuntDiscovery(timeout: timeout)
+    if let service = worktreeService {
+      await updateWorktreeEvidence(
+        service, huntTimeout: max(0, deadline - ProcessInfo.processInfo.systemUptime))
+    }
+    return try await settleHuntDiscovery(
+      timeout: max(0, deadline - ProcessInfo.processInfo.systemUptime))
   }
   /// Wait for work already requested by a discovery tool, without starting a new map.
   public func settleHuntDiscovery(timeout: TimeInterval = 120) async throws -> ViewState {

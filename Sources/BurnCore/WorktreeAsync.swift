@@ -23,6 +23,7 @@ extension WorktreeService {
     closing = true
     generation += 1
     scanControl?.cancel()
+    scanFlight?.task.cancel()
     for cancel in workJobs.values { cancel() }
     while scanning || executing || !workJobs.isEmpty {
       try? await Task.sleep(nanoseconds: 20_000_000)

@@ -17,7 +17,12 @@ public actor WorktreeService {
   var plans: [String: WorktreePlan] = [:]
   var batches: [String: (String, [WorktreePlan])] = [:]
   var generation = 0
-  var scanning = false
+  struct ScanFlight {
+    let id: UUID
+    let task: Task<WorktreeReply, Error>
+  }
+  var scanFlight: ScanFlight?
+  var scanning: Bool { scanFlight != nil }
   var executing = false
   var lastScan = Date.distantPast
   var scanGaps: [String] = []
@@ -161,12 +166,31 @@ public actor WorktreeService {
     return try publish(fresh)
   }
   public func scan() async throws -> WorktreeReply {
-    try requireAccess()
+    try Task.checkCancellation()
     guard !scanning else { throw StoreError.message("A worktree scan is already running.") }
-    scanning = true
+    let result = try await startScan().task.value
+    try Task.checkCancellation()
+    return result
+  }
+  /// The service owns the flight, so a timed-out Hunt cannot cancel another caller's scan.
+  func startScan() throws -> ScanFlight {
+    try requireAccess()
+    guard !closing else { throw StoreError.message("Worktree service is closing.") }
     generation += 1
     let current = generation
-    defer { scanning = false }
+    let flight = ScanFlight(
+      id: UUID(),
+      task: Task {
+        defer {
+          scanControl = nil
+          scanFlight = nil
+        }
+        return try await performScan(generation: current)
+      })
+    scanFlight = flight
+    return flight
+  }
+  private func performScan(generation current: Int) async throws -> WorktreeReply {
     var roots = try policy().roots
     let privateRoot = store.root.appendingPathComponent("workspaces").path
     if FileManager.default.fileExists(atPath: privateRoot),
@@ -187,7 +211,6 @@ public actor WorktreeService {
           publish: { row in Task { await self.acceptScan(row, generation: current) } },
           keepGoing: { control.active })
       }
-      scanControl = nil
     } else {
       result = try await runWork { WorktreeDiscovery.scan(roots: roots, visibility: visibility) }
     }

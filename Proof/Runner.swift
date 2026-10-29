@@ -38,6 +38,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.contains("--worktree-hunt-refresh") {
+      do { try await worktreeHuntRefreshProof() } catch {
+        failTest("Worktree Hunt refresh: \(error)")
+      }
+      print("Worktree Hunt refresh checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--worktree-visibility") {
       do { try worktreeVisibilityProof() } catch { failTest("Worktree visibility: \(error)") }
       print("Worktree visibility checks: \(failures) failures")
@@ -339,6 +346,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       try await worktreeLifecycleProof()
       try await worktreeSafetyProof()
     } catch { failTest("Worktree lifecycle: \(error)") }
+    do { try await worktreeHuntRefreshProof() } catch {
+      failTest("Worktree Hunt refresh: \(error)")
+    }
     do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
     do {
       try usageProof()
