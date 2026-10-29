@@ -2,8 +2,10 @@ import Foundation
 
 /// Routing uses typed queue identity, never a folder-name guess about disposability.
 public enum ReviewLane: String, Codable, Sendable {
-  case process, workspace, disk, discovery
+  case process, ownerProcess, managedCache, workspace, disk, discovery
   public static func lane(for evidence: ReviewEvidence) -> Self {
+    if evidence.id.hasPrefix("owner-process:") { return .ownerProcess }
+    if evidence.id.hasPrefix("cache:") { return .managedCache }
     if evidence.processCount > 0 { return .process }
     if evidence.id.hasPrefix("space:") { return .discovery }
     if evidence.id.hasPrefix("disk:") { return .disk }
@@ -12,6 +14,8 @@ public enum ReviewLane: String, Codable, Sendable {
   public var tools: Set<String> {
     let names: [String]
     switch self {
+    case .ownerProcess: names = ["owner_preview", "owner_stop"]
+    case .managedCache: names = ["cache_preview", "cache_clean"]
     case .process: names = ["inspect", "preview", "burn"]
     case .workspace: names = ["workspace_preview", "workspace_clean"]
     case .disk: names = ["disk_decide", "disk_preview", "disk_clean"]
@@ -33,6 +37,30 @@ public enum ReviewLane: String, Codable, Sendable {
       """
     let task: String
     switch self {
+    case .ownerProcess:
+      task = """
+        Review status.ownerProcesses: cached supported producer facts with their original checkedAt and exact
+        native identities. requiresRevalidation means these are candidates, not current authorization. Preview
+        checks current native identity and protections; the background operation must freshly revalidate the
+        producer, activity and exact owner facts before sending any stop request. Changed or unknown facts refuse.
+        An idle reusable build daemon is safe to retire only through its authenticated owner stop-when-idle
+        protocol, which finishes a build that races the request. This is cache/resource retirement, not proof
+        that every quiet process is abandoned. Preserve busy daemons, active claims, live children and unknown
+        ownership. Select at most one supported idle owner with factual rationale, use owner_preview then
+        owner_stop. No generic signaling. Operation runs in the background with durable receipts; finish without
+        polling. Acknowledgment is not an exit or reclaimed memory; only later verification earns credit.
+        """
+    case .managedCache:
+      task = """
+        Review status.managedCache and diskPolicy. These are exact local BuildKit cache records; never source,
+        images, containers, volumes or worktrees. The owner reports whether each is unused, unshared and immutable;
+        native checks enforce retention, newest-cache preservation and daily allowance. In automatic mode, select
+        a useful eligible set within managedCacheAllowanceBytes and maximumGBPerDay and use cache_preview then cache_clean with exact record IDs.
+        In recommend mode, report the measured opportunity without executing. Never change settings or broaden
+        an ID filter. The native owner rechecks live references under its locks and refuses unsafe races.
+        Finish without polling. Receipts distinguish released cache capacity inside Docker from physical macOS
+        disk recovery; never equate inventory bytes or an acknowledged request with recovered host space.
+        """
     case .discovery:
       task = """
         Investigate the supplied large storage branches, across all projects. Apply diskPolicy as constraints,

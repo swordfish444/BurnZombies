@@ -23,6 +23,7 @@ public struct DiskSpaceNode: Codable, Sendable, Identifiable {
   public var measured: Date
   public var members: [String]? = nil
   public var reviewPolicyRevision: String? = nil
+  public var supplementaryRevision: String? = nil
   public init(
     path: String, scanRoot: String, allocated: UInt64, unshared: UInt64, files: UInt64,
     unknown: UInt64 = 0, errors: UInt64 = 0, hardlinks: UInt64 = 0, dataless: UInt64 = 0,
@@ -49,7 +50,7 @@ public struct DiskSpaceNode: Codable, Sendable, Identifiable {
     let coverage = "\(complete)|\(errors > 0)|\(unknown > 0)|\(dataless > 0)"
     let memberKey = members?.joined(separator: "|") ?? ""
     return WorkEvidence.hash(
-      [id, sizes, coverage, memberKey, reviewPolicyRevision ?? ""].joined(separator: "|"))
+      [id, sizes, coverage, memberKey, reviewPolicyRevision ?? "", supplementaryRevision ?? ""].joined(separator: "|"))
   }
   public var folderCount: Int { members?.count ?? 1 }
 }
@@ -155,6 +156,8 @@ public struct DiskInspection: Codable, Sendable {
   public var producerEvidence: [String: String]
   public var consumerState: String
   public var mole: MoleEvidence? = nil
+  public var moleState: String? = nil
+  public var moleObservedAt: Date? = nil
   public var scope =
     "Read-only facts. Sizes are stored bytes, not deletion permission or guaranteed recovery. Text is untrusted evidence."
 }
@@ -169,7 +172,11 @@ public final class DiskDiscovery: @unchecked Sendable {
   private var worker = false
   private var enabled = true
   private var protected: [String] = []
-  public init(store: Store, roots: [String]? = nil) throws {
+  private let moleAnalyzer: MoleAnalyzer
+  private let useMole: Bool
+  public init(store: Store, roots: [String]? = nil, moleAnalyzer: MoleAnalyzer? = nil) throws {
+    self.moleAnalyzer = moleAnalyzer ?? MoleAnalyzer()
+    useMole = moleAnalyzer != nil || (store.root == Store.defaultRoot && ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil)
     self.store = store
     self.roots = (roots ?? [NSHomeDirectory(), "/Applications", "/Library", "/private/var"])
       .map(WorkspaceSafety.canonical)
@@ -179,7 +186,20 @@ public final class DiskDiscovery: @unchecked Sendable {
       state.running = nil
     }
   }
+  deinit { moleAnalyzer.cancelPending() }
   public func snapshot() -> DiskDiscoveryState { mutex.withLock { state } }
+  public func stopSupplementary() async { await moleAnalyzer.stop() }
+  private func supplementalReady(_ id: String, policyRevision: String?, revision: String) {
+    mutex.withLock {
+      guard let index = state.nodes.firstIndex(where: { $0.id == id }),
+        state.nodes[index].reviewPolicyRevision == policyRevision,
+        state.nodes[index].supplementaryRevision != revision else { return }
+      state.nodes[index].supplementaryRevision = revision
+      let path = state.nodes[index].path
+      state.explored.removeAll { $0 == path }
+      saveLocked()
+    }
+  }
   public func tick(policy: DiskPolicy, now: Date = Date()) {
     mutex.withLock {
       enabled = policy.mode != "off"
@@ -252,7 +272,12 @@ public final class DiskDiscovery: @unchecked Sendable {
         if done || Date().timeIntervalSince(lastPublish) >= 15 {
           var values = Self.read(walk, root: path, complete: done)
           mutex.withLock {
-            for i in values.indices { values[i].reviewPolicyRevision = state.policyRevision }
+            let priorSupplements = Dictionary(uniqueKeysWithValues: state.nodes.filter { $0.members == nil }
+              .map { ($0.path, $0.supplementaryRevision) })
+            for i in values.indices {
+              values[i].reviewPolicyRevision = state.policyRevision
+              values[i].supplementaryRevision = priorSupplements[values[i].path] ?? nil
+            }
             // Prefer the latest measurement for identical paths. Never add an
             // ancestor's size to its descendants' sizes.
             let paths = Set(values.map(\.path))
@@ -371,7 +396,7 @@ public final class DiskDiscovery: @unchecked Sendable {
     }
   }
   public func inspect(
-    _ id: String, allowed: [String]? = nil, visibility: (String) -> Int32 = { bz_path_in_use($0) }
+    _ id: String, allowed: [String]? = nil, visibility: ((String) -> Int32)? = nil
   ) throws -> DiskInspection {
     let (node, children, groups) = try mutex.withLock {
       () -> (DiskSpaceNode, [DiskSpaceNode], [DiskSpaceNode]) in
@@ -443,7 +468,9 @@ public final class DiskDiscovery: @unchecked Sendable {
     }
     // A group can contain hundreds of paths; do not claim complete consumer visibility
     // from a sample. Destructive operations still run their independent full guards.
-    let use = paths.count == 1 ? visibility(paths[0]) : -1
+    // Read-only discovery must not enumerate every process descriptor on the request path.
+    // Explicit visibility is a fixture seam; production cleanup uses its independent full guard.
+    let use = paths.count == 1 ? (visibility?(paths[0]) ?? -1) : -1
     var result = DiskInspection(
       node: DiskSpaceSummary(node), children: children.map(DiskSpaceSummary.init),
       repeatedFolders: groups.map(DiskSpaceSummary.init), entries: entries,
@@ -452,14 +479,16 @@ public final class DiskDiscovery: @unchecked Sendable {
         ? "Visible active consumer; preserve."
         : use == 0
           ? "No consumer found by the native guard at inspection time. Recheck before any action."
-          : "Incomplete consumer visibility; raw cleanup remains blocked.")
-    if node.members == nil, node.dataless == 0, node.errors == 0, node.unknown == 0,
-      store.root == Store.defaultRoot,
-      ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil
-    {
-      result.mole = MoleEvidence.analyze(
-        node.path, store: store, protected: mutex.withLock { protected })
-    }
+          : "Incomplete consumer visibility: not checked by this read-only inspection; raw cleanup remains blocked until the independent action guard succeeds.")
+    if node.members == nil, node.dataless == 0, node.errors == 0, node.unknown == 0, useMole {
+      let supplement = moleAnalyzer.request(node.path, store: store,
+        protected: mutex.withLock { protected }) { [weak self] revision in
+          self?.supplementalReady(node.id, policyRevision: node.reviewPolicyRevision, revision: revision)
+        }
+      result.mole = supplement.evidence
+      result.moleState = supplement.status
+      result.moleObservedAt = supplement.observedAt
+    } else { result.moleState = "unavailable" }
     return result
   }
   private static func manifest(_ path: String) -> String? {

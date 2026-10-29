@@ -5,6 +5,8 @@ import SwiftUI
   @Published var policy = DiskPolicy()
   @Published var inventory = DiskSnapshot()
   @Published var discovery = DiskDiscoveryState()
+  @Published var managedCache: ManagedCacheSummary?
+  @Published var managedReceipts: [BuildKitCache.Receipt] = []
   @Published var expanded = false
   @Published var advanced = false
   @Published var reviewStatus = ""
@@ -37,6 +39,9 @@ import SwiftUI
     do {
       let store = try Store(root: root); inventory = try DiskSnapshot.load(store)
       discovery = try DiskDiscoveryState.load(store)
+      let catalog = try store.load()
+      managedCache = catalog.managedCache.map { ManagedCacheSummary($0, blocked: ManagedCacheAttempt.blockedIDs(catalog.managedCacheAttempts ?? [], inventory: $0)) }
+      managedReceipts = (catalog.managedCacheAttempts ?? []).compactMap(\.receipt).filter { $0.cacheReleasedBytes > 0 }
       if let data = try? store.read(root.appendingPathComponent("machine-review-state.json"), limit: 65536),
         let state = try? JSONDecoder().decode(MachineReviewState.self, from: data) {
         reviewStatus = state.phase == "paused" ? state.detail : ""
@@ -88,8 +93,30 @@ struct DiskSettingsView: View {
         if !(settings.discovery.unavailable ?? []).isEmpty || settings.discovery.nodes.contains(where: { $0.errors > 0 }) {
           Text("Some locations could not be read. Missing visibility is kept protected.").font(.caption).foregroundStyle(.secondary)
         }
+        if let cache = settings.managedCache, cache.eligibleBytes >= DiskCandidate.minimumReviewBytes {
+          VStack(alignment: .leading, spacing: 8) {
+            Text("\(ImpactNumbers.bytes(cache.eligibleBytes)) · Docker build cache").font(.headline).foregroundStyle(orange)
+            Text("Unused, unshared cache beyond your retention period. Active builds, images, containers and volumes stay protected.")
+              .font(.caption).foregroundStyle(.secondary)
+            if settings.policy.mode == "recommend" {
+              Button("Enable automatic cleanup") { settings.policy.mode = "automatic"; settings.save() }.clickPointer()
+            } else {
+              Text("Your AI reviews eligible cache when free space is below your \(settings.policy.targetFreeGB) GB goal.")
+                .font(.caption).foregroundStyle(.secondary)
+            }
+          }.padding(12).background(orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        }
+        if !settings.managedReceipts.isEmpty {
+          DisclosureGroup("Build cache released") {
+            ForEach(Array(settings.managedReceipts.suffix(5)), id: \.planID) { receipt in
+              Text("\(ImpactNumbers.bytes(receipt.cacheReleasedBytes)) in Docker · \(receipt.removedIDs.count) cache records")
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("Available inside Docker. Host disk recovery is counted separately.").font(.caption2).foregroundStyle(.secondary)
+          }.disclosureGroupStyle(ClickDisclosureStyle())
+        }
         let opportunities = settings.discovery.opportunities.filter { $0.unshared >= DiskCandidate.minimumReviewBytes }
-        if opportunities.isEmpty && settings.candidates.isEmpty {
+        if opportunities.isEmpty && settings.candidates.isEmpty && (settings.managedCache?.eligibleBytes ?? 0) < DiskCandidate.minimumReviewBytes {
           Label(settings.discovery.updated == .distantPast || settings.discovery.running != nil ? "Looking for the biggest opportunities…" : "No measured opportunities over 10 GB yet.", systemImage: "magnifyingglass")
             .font(.callout).foregroundStyle(.secondary).padding(.vertical, 10)
         }

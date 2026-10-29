@@ -95,7 +95,9 @@ public final class PassiveCollector {
   private var paths: [String: URL] = [:]
   private var lastDiscovery = Date.distantPast
   private var lastPoll = Date.distantPast
-  private var checkedProcesses = Set<String>()
+  // A missing ancestor/session is temporary evidence, not a lifetime exclusion.
+  // Oldest-first retries are bounded and do not reread unrelated chat contents.
+  private var checkedProcesses: [String: Date] = [:]
   public private(set) var coverage = "Waiting for passive harness evidence."
   public init(store: Store, home: URL = FileManager.default.homeDirectoryForCurrentUser) throws {
     self.store = store; self.home = home
@@ -189,12 +191,20 @@ public final class PassiveCollector {
     var pending: [(Observation, Observation, String, String)] = []
     if now.timeIntervalSince(lastPoll) >= 55 {
       lastPoll = now
-      checkedProcesses.formIntersection(Set(records.keys))
+      checkedProcesses = checkedProcesses.filter { records[$0.key]?.missingSince == nil && records[$0.key] != nil }
       let owners = claudeOwners()
-      for process in live where !checkedProcesses.contains(process.identity.key) {
+      let unchecked = live.filter { saved.bindings[$0.identity.key] == nil &&
+        now.timeIntervalSince(checkedProcesses[$0.identity.key] ?? .distantPast) >= 300 }
+        .sorted {
+          let left = checkedProcesses[$0.identity.key] ?? .distantPast, right = checkedProcesses[$1.identity.key] ?? .distantPast
+          return left == right ? $0.identity.key < $1.identity.key : left < right
+        }
+      for process in unchecked.prefix(256) {
         guard pending.count < 64 else { break }
-        checkedProcesses.insert(process.identity.key)
-        guard !process.executable.contains(".app/Contents/"), !["codex", "claude", "burnzombies", "burnzombies-mcp"].contains(process.name) else { continue }
+        checkedProcesses[process.identity.key] = now
+        // Bundled runtimes are valid evidence subjects. Application protection is
+        // enforced separately at action time; observing one grants no stop authority.
+        guard !["codex", "claude", "burnzombies", "burnzombies-mcp"].contains(process.name) else { continue }
         var parent = process.parent, seen = Set<Int32>()
         for _ in 0..<64 {
           guard parent > 1, seen.insert(parent).inserted, let owner = byPID[parent] else { break }
@@ -213,7 +223,7 @@ public final class PassiveCollector {
       guard saved.bindings[process.identity.key] == nil, saved.bindings.count < 256,
         let session = sessions[provider + ":" + id], session.completeRead, let turn = session.turnID, let started = session.started,
         Double(process.identity.seconds) + Double(process.identity.micros) / 1_000_000 >= started.timeIntervalSince1970 else {
-        checkedProcesses.remove(process.identity.key); continue
+        checkedProcesses.removeValue(forKey: process.identity.key); continue
       }
       saved.bindings[process.identity.key] = PassiveEvidence(member: Member(process), owner: Member(owner), provider: provider,
         sessionID: id, turnID: turn, started: started, observed: now, checked: now, completed: nil,

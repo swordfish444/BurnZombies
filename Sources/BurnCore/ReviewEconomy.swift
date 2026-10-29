@@ -33,6 +33,24 @@ public struct ReviewEvidence: Codable, Equatable, Sendable {
         Member(record.latest) == evidence.member, !WorkEvidence.blockingTree(claims, record: record, records: catalog.records) else { continue }
       result.append(.init(id: evidence.id, revision: evidence.revision))
     }
+    // Cached owner facts select work for review; only fresh native owner
+    // revalidation in the actuator can authorize an operation.
+    for owner in catalog.ownerDaemons ?? [] where owner.eligible {
+      guard let record = catalog.records[owner.member.identity.key], record.missingSince == nil,
+        Member(record.latest) == owner.member, !WorkEvidence.blockingTree(claims, record: record, records: catalog.records),
+        !catalog.records.values.contains(where: { $0.missingSince == nil && $0.latest.parent == record.latest.identity.pid }),
+        !(catalog.events.contains { ["prepared", "verifying", "unverified"].contains($0.outcome) && $0.targets.contains(owner.member) }) else { continue }
+      result.append(.init(id: owner.id, revision: owner.revision))
+    }
+    if let cache = catalog.managedCache, catalog.managedCacheReviewAllowed != false,
+      catalog.managedCacheAllowanceBytes.map({ $0 >= DiskCandidate.minimumReviewBytes }) ?? true,
+      (0...600).contains(Date().timeIntervalSince(cache.date)) {
+      let blocked = ManagedCacheAttempt.blockedIDs(catalog.managedCacheAttempts ?? [], inventory: cache)
+      let summary = ManagedCacheSummary(cache, blocked: blocked, allowance: catalog.managedCacheAllowanceBytes)
+      if summary.eligibleBytes >= DiskCandidate.minimumReviewBytes {
+        result.append(.init(id: summary.id, revision: summary.revision, processCount: 0))
+      }
+    }
     for candidate in catalog.diskCandidates ?? [] where candidate.pendingReview {
       result.append(.init(id: candidate.id, revision: candidate.queueRevision, processCount: 0, recommendationOnly: !candidate.reviewable))
     }
@@ -72,22 +90,45 @@ public struct ReviewUsage: Codable, Sendable {
         let input = number(u, ["input_tokens", "inputTokens"]), output = number(u, ["output_tokens", "outputTokens"])
         let cache = number(u, ["cached_input_tokens", "cache_read_input_tokens", "cacheReadInputTokens"])
         let write = number(u, ["cache_creation_input_tokens", "cacheCreationInputTokens"])
-        let long = (u["cache_creation"] as? [String: Any])?["ephemeral_1h_input_tokens"] as? Int ?? 0
+        let durations = u["cache_creation"] as? [String: Any]
+        let long = durations?["ephemeral_1h_input_tokens"] as? Int ?? 0
+        let short = durations?["ephemeral_5m_input_tokens"] as? Int
         guard [input, output, cache, write, long].allSatisfy({ (0...100_000_000).contains($0) }) else { return }
         let total = input + (claude ? cache + write : 0)
         guard [input, output, cache, write, long].allSatisfy({ (0...100_000_000).contains($0) }), cache + write <= total, long <= write else { return }
+        let cacheDurationKnown = (durations?["ephemeral_1h_input_tokens"] as? Int) != nil
+          && short.map { $0 == write - long } == true
         var value = ModelUsage(model: model, input: total, cached: cache, output: output, cacheWrite: write,
           cacheWriteLong: long, maximumContext: u["context_tokens"] as? Int, tier: u["service_tier"] as? String)
-        value.price()
+        // A missing duration is not evidence that Claude's cache writes used the
+        // cheaper five-minute tier. Keep the tokens, but leave that cost unknown.
+        if !claude || write == 0 || cacheDurationKnown { value.price() }
         if var prior = models[model] {
           prior.input += value.input; prior.cached += value.cached; prior.output += value.output
           prior.cacheWrite += value.cacheWrite; prior.cacheWriteLong += value.cacheWriteLong
           prior.estimatedUSD = prior.estimatedUSD.flatMap { a in value.estimatedUSD.map { a + $0 } }
+          if prior.estimatedUSD == nil { prior.rateDate = nil }
           models[model] = prior
         } else { models[model] = value }
       }
       if type == "result", let perModel = object["modelUsage"] as? [String: [String: Any]], !perModel.isEmpty {
-        for (model, usage) in perModel { add(usage, model: model, claude: true) }
+        for (reportedModel, reportedUsage) in perModel {
+          var usage = reportedUsage
+          // Claude may expose cache duration only in the result-wide usage.
+          // It belongs to a model only when the entire result has one model and
+          // all token totals agree; never distribute it across multiple models.
+          if perModel.count == 1, usage["cache_creation"] == nil,
+            let aggregate = object["usage"] as? [String: Any],
+            let durations = aggregate["cache_creation"] as? [String: Any],
+            [ ["input_tokens", "inputTokens"], ["output_tokens", "outputTokens"],
+              ["cache_read_input_tokens", "cacheReadInputTokens"],
+              ["cache_creation_input_tokens", "cacheCreationInputTokens"] ]
+              .allSatisfy({ number(aggregate, $0) == number(usage, $0) }) {
+            usage["cache_creation"] = durations
+          }
+          let canonical = (usage["canonicalModel"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+          add(usage, model: canonical.flatMap { $0.isEmpty ? nil : $0 } ?? reportedModel, claude: true)
+        }
       } else if ["turn.completed", "result", "bz.usage"].contains(type), let usage = object["usage"] as? [String: Any],
         usage["input_tokens"] != nil && usage["output_tokens"] != nil {
         add(usage, model: object["model"] as? String ?? fallback, claude: type == "result")

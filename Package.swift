@@ -16,7 +16,7 @@ let package = Package(
   ],
   targets: [
     .target(name: "CBurn"),
-    .target(name: "BurnCore", dependencies: ["CBurn"]),
+    .target(name: "BurnCore", dependencies: ["CBurn"], resources: [.copy("Resources/BZGradleDaemon.java")]),
     .executableTarget(
       name: "BurnApp", dependencies: ["BurnCore"], resources: [.process("Resources")]),
     .executableTarget(name: "BurnCLI", dependencies: ["BurnCore", "CBurn", .product(name: "TOMLKit", package: "TOMLKit")]),

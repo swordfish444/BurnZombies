@@ -141,6 +141,8 @@ public struct CleanupEvent: Codable, Identifiable, Sendable {
   public var detail: String
   public var verifiedCount: Int = 0
   public var verificationDate: Date?
+  public var ownerProtocol: Bool?
+  public var ownerExitObservedAt: Date?
   public var cpuSecondsSavedEstimate: Double?
   public var cpuSavingsRate: Double?
   public var cpuObservedSeconds: Double?
@@ -184,6 +186,12 @@ public struct Catalog: Codable, Sendable {
   public var diskCandidates: [DiskCandidate]?
   public var diskDiscovery: [DiskSpaceNode]?
   public var diskReceipts: [DiskReceipt]?
+  public var ownerDaemons: [GradleDaemonEvidence]?
+  public var managedCache: BuildKitCache.Inventory?
+  public var managedCacheReviewAllowed: Bool?
+  public var managedCacheAllowanceBytes: UInt64?
+  public var managedCacheAttempts: [ManagedCacheAttempt]?
+  public var ownerEvidenceGaps: [String]?
   public var workspaces: [WorkspaceClaim]?
   public var workspaceReceipts: [WorkspaceReceipt]?
   public var lifetimeWorktreesCleaned: Int?
@@ -215,6 +223,10 @@ public struct Catalog: Codable, Sendable {
     if records.count > 4096 {
       let keep = records.values.sorted { $0.latest.time > $1.latest.time }.prefix(4096)
       records = Dictionary(uniqueKeysWithValues: keep.map { ($0.id, $0) })
+    }
+    if let attempts = managedCacheAttempts {
+      managedCacheAttempts = attempts.filter { ["prepared", "uncertain"].contains($0.outcome) }
+        + Array(attempts.filter { !["prepared", "uncertain"].contains($0.outcome) }.suffix(500))
     }
     if let receipts = diskReceipts { diskReceipts = Array(receipts.suffix(500)) }
     if let receipts = workspaceReceipts {

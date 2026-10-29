@@ -49,15 +49,20 @@ public struct MachineReviewState: Codable, Sendable {
   public var pendingSince: Date?
   public var progressVersion: Int?
   public var attempts: [String: ReviewAttempt]?
+  public var laneLastStarted: [String: Date]?
   public init() {}
   public func pending(_ current: HarnessHook.Signal, now: Date = Date()) -> [ReviewEvidence] {
     var processCount = 0, workspaces = 0, recommendations = 0, selected = [ReviewEvidence]()
     var lane: ReviewLane?
     let candidates = (current.reviewEvidence ?? []).enumerated().sorted { a, b in
-      // Finished-owner claims first; within each lane, untouched work precedes deferred work.
+      // Give each waiting lane a turn even while another lane keeps discovering
+      // new work. Initial ties favor process relief; later starts rotate fairly.
       func order(_ e: ReviewEvidence) -> Int {
-        switch ReviewLane.lane(for: e) { case .process: return 0; case .workspace: return 1; case .disk: return 2; case .discovery: return 3 }
+        switch ReviewLane.lane(for: e) { case .process, .ownerProcess: return 0; case .managedCache: return 1; case .workspace: return 2; case .disk: return 3; case .discovery: return 4 }
       }
+      let al = ReviewLane.lane(for: a.element), bl = ReviewLane.lane(for: b.element)
+      let at = laneLastStarted?[al.rawValue] ?? .distantPast, bt = laneLastStarted?[bl.rawValue] ?? .distantPast
+      if at != bt { return at < bt }
       if order(a.element) != order(b.element) { return order(a.element) < order(b.element) }
       let aa = attempts?[a.element.id], bb = attempts?[b.element.id]
       let ad = aa?.revision == a.element.revision ? aa!.date : .distantPast
@@ -71,6 +76,7 @@ public struct MachineReviewState: Codable, Sendable {
         guard now.timeIntervalSince(attempt.date) >= delay else { continue }
       }
       if let lane, itemLane != lane { continue }
+      if itemLane == .ownerProcess && !selected.isEmpty { continue } // One owner action per invocation; never acknowledge unvisited owners.
       if item.processCount == 0 {
         if item.recommendationOnly == true {
           guard workspaces == 0, recommendations < (itemLane == .discovery ? 2 : 3) else { continue }; recommendations += 1
@@ -102,6 +108,10 @@ public struct MachineReviewState: Codable, Sendable {
   }
   public mutating func begin(_ selected: [ReviewEvidence], now: Date) {
     attempts = attempts ?? [:]; reviewedEvidence = reviewedEvidence ?? [:]
+    if let first = selected.first {
+      laneLastStarted = laneLastStarted ?? [:]
+      laneLastStarted?[ReviewLane.lane(for: first).rawValue] = now
+    }
     for evidence in selected {
       let prior = attempts?[evidence.id]
       attempts?[evidence.id] = .init(revision: evidence.revision, date: now,

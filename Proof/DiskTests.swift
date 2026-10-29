@@ -66,10 +66,23 @@ func diskProof() async throws {
   try policy.save(store)
   let monitor = try Monitor(root: state, workspaceVisibility: { _ in 0 }), service = AgentService(monitor: monitor)
   func call(_ request: AgentRequest) async -> AgentReply { var r = request; r.callerPID = getpid(); return await service.call(r) }
+  func awaitInventory(revision: String) async throws -> DiskSnapshot {
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline {
+      let snapshot = try DiskSnapshot.load(store)
+      if snapshot.policyRevision == revision,
+        snapshot.candidates.contains(where: { $0.path == build.path }) { return snapshot }
+      // Wait for the actual saved result of the one owned-root scan. Status no
+      // longer performs blocking filesystem work, and polling must not start more scans.
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    throw StoreError.message("Owned asynchronous disk inventory did not complete within its test deadline")
+  }
   _ = await monitor.refresh()
+  let completedInventory = try await awaitInventory(revision: policy.revision)
   let listed = await call(AgentRequest("status"))
   check(listed.disk.isEmpty, "Disk review must hide items smaller than 10 GB")
-  guard let id = try DiskSnapshot.load(store).candidates.first(where: { $0.path == build.path })?.id else { throw StoreError.message("Private fixture missing from native inventory") }
+  guard let id = completedInventory.candidates.first(where: { $0.path == build.path })?.id else { throw StoreError.message("Private fixture missing from completed inventory") }
   let rationale = "The test created this exact disposable build output, preserved source, completed the build and has no remaining consumer."
   let preview = await call(AgentRequest("disk_preview", findingID: id, rationale: rationale))
   guard let token = preview.previewToken else { throw StoreError.message(preview.message) }
@@ -79,6 +92,7 @@ func diskProof() async throws {
   check(FileManager.default.fileExists(atPath: output.path))
   policy.rules[0].disposition = "regenerable"; try policy.save(store)
   _ = await monitor.refresh()
+  _ = try await awaitInventory(revision: policy.revision)
   let fresh = await call(AgentRequest("disk_preview", findingID: id, rationale: rationale))
   guard let next = fresh.previewToken else { throw StoreError.message(fresh.message) }
   let removed = await call(AgentRequest("disk_clean", previewToken: next))
