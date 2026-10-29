@@ -183,6 +183,32 @@ func workspaceProof() async throws {
   let repeated = await call(.init("workspace_clean", previewToken: cleanupToken))
   checkFalse(repeated.ok, "preview reused")
   let saved = (await monitor.snapshot()).catalog
+  // The raw process catalog intentionally does not dual-write SQLite receipts.
+  // Feed the same monitor projection used by the native Hunt view instead.
+  try HuntSnapshot(startedAt: claim.created.addingTimeInterval(-1)).save(store)
+  var hunt = try HuntSnapshot.load(root: root)
+  equal(hunt.worktreesCleaned, 0)
+  let prior = Set(hunt.log.map(\.id))
+  let projected = await monitor.snapshot()
+  hunt.includeMonitorReceipts(projected)
+  equal(hunt.worktreesCleaned, 1)
+  equal(
+    hunt.newCelebrations(since: prior).filter { $0.kind == "burn" }.count, 1,
+    "Verified SQLite receipt must animate once")
+  let seen = Set(hunt.log.map(\.id))
+  hunt.includeMonitorReceipts(projected)
+  equal(hunt.worktreesCleaned, 1)
+  check(hunt.newCelebrations(since: seen).isEmpty, "Repeated projections replayed a burn")
+  var unavailable = projected
+  unavailable.worktreeError = "Synthetic unavailable worktree evidence"
+  hunt.includeMonitorReceipts(unavailable)
+  equal(hunt.receiptEvidenceAvailable, false)
+  equal(hunt.worktreesCleaned, 1, "Unknown coverage erased known history")
+  check(hunt.newCelebrations(since: []).isEmpty, "Unknown receipts triggered a burn")
+  hunt.includeMonitorReceipts(projected)
+  equal(hunt.receiptEvidenceAvailable, true)
+  equal(hunt.worktreesCleaned, 1)
+  print("PASS SQLite-backed Hunt retirement counts and animates once; unknown coverage preserves history and suppresses burns")
   guard let receipt = saved.workspaceReceipts?.last else {
     throw StoreError.message("Missing verified worktree receipt")
   }

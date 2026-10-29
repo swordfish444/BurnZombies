@@ -353,7 +353,7 @@ import UserNotifications
     if let reviewer { machineReview = await reviewer.snapshot() }
     if !demo && includeHunt {
       huntSnapshot = try? HuntSnapshot.load(root: Store.defaultRoot)
-      if let monitor { huntSnapshot?.includeReceipts((await monitor.snapshot()).catalog) }
+      if let monitor { huntSnapshot?.includeMonitorReceipts(await monitor.snapshot()) }
     }
     cleanupQueued = FileManager.default.fileExists(
       atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
