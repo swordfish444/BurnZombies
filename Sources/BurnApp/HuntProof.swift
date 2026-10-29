@@ -48,8 +48,11 @@ import Vision
     let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate; recognition.recognitionLanguages = ["en-US"]
     do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([recognition]) }
     catch { throw StoreError.message("Hunt \(name) OCR failed: \(error.localizedDescription)") }
-    let text = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-    try text.write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
+    let recognized = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    try recognized.write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
+    // Vision may split tracked labels into separate observations on macOS 15.
+    // Preserve its raw output, but compare words independently of OCR line breaks.
+    let text = recognized.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
     guard text.contains("HUNT ZOMBIES"), text.contains("HUNT FEED"), text.contains("Processes seen"), text.contains("Worktrees cleaned") else { throw StoreError.message("Hunt interface clipped: \(text)") }
     if name == "running" { guard text.contains("842"), text.contains("Active development server preserved") else { throw StoreError.message("Actual hunt evidence not displayed") } }
     if name == "completed" { guard text.contains("18.4 GB"), text.contains("Removal verified") else { throw StoreError.message("Verified cleanup stats missing") } }
