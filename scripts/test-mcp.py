@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         server = subprocess.Popen([str(server_binary)], env=env,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         sequence = 0
-        def send(method, params=None, notification=False):
+        def send(method, params=None, notification=False, timeout=10):
             global sequence
             sequence += 1
             payload = {"jsonrpc": "2.0", "method": method}
@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
             if not notification: payload["id"] = sequence
             server.stdin.write(json.dumps(payload).encode() + b"\n"); server.stdin.flush()
             if notification: return
-            result = json.loads(line(server))
+            result = json.loads(line(server, timeout=timeout))
             assert result["id"] == sequence, result
             return result
         initialized = send("initialize", {"protocolVersion": "2025-11-25", "capabilities": {"experimental": {"codex/auth-change": {}}},
@@ -53,7 +53,12 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint", "burnzombies_work", "burnzombies_lifecycle", "burnzombies_workspace", "burnzombies_workspace_preview", "burnzombies_workspace_clean", "burnzombies_worktrees", "burnzombies_disk_decide", "burnzombies_disk_preview", "burnzombies_disk_clean", "burnzombies_disk_inspect", "burnzombies_disk_explore", "burnzombies_disk_evidence", "burnzombies_disk_recommend", "burnzombies_owner_preview", "burnzombies_owner_stop", "burnzombies_cache_preview", "burnzombies_cache_clean"}
         burn = next(t for t in tools if t["name"] == "burnzombies_burn")
         assert burn["annotations"]["destructiveHint"] is True
-        def call(name, args): return send("tools/call", {"name": name, "arguments": args})
+        def call(name, args):
+            # Verified preservation and repeated native consumer checks can exceed
+            # the ordinary frame bound. The product uses its operation deadline;
+            # only this real retirement fixture gets a longer response wait.
+            return send("tools/call", {"name": name, "arguments": args},
+                        timeout=60 if name == "burnzombies_workspace_clean" else 10)
         status = call("burnzombies_status", {})["result"]
         assert not status.get("isError")
         actual = json.loads(status["content"][0]["text"])
@@ -175,6 +180,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         activity = json.loads(Path(root, 'review-progress.json').read_text())['activity']
         assert len(activity) == 1 and activity[0]['tool'] == 'worktrees_read'
         assert activity[0]['action'] == 'list' and activity[0]['succeeded']
+        print("PASS actual worktree MCP sub-action survives into bounded Hunt activity")
         server.stdin.close(); assert server.wait(timeout=10)==0
         print("PASS MCP lifecycle, protected working claims, redacted readback, strict arguments, reviewer capability restrictions and call budget")
     finally:
