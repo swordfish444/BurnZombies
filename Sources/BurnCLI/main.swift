@@ -14,6 +14,29 @@ func json<T: Encodable>(_ value: T) throws {
   e.outputFormatting = [.prettyPrinted, .sortedKeys]
   print(String(decoding: try e.encode(value), as: UTF8.self))
 }
+@MainActor func stopObserver(at app: URL) async throws {
+  guard app.pathExtension == "app", Bundle(url: app)?.bundleIdentifier == "io.burnzombies.app"
+  else {
+    throw StoreError.message("Only an exact BurnZombies app bundle can be stopped for an update.")
+  }
+  let previous = NSWorkspace.shared.runningApplications.filter {
+    $0.bundleIdentifier == "io.burnzombies.app"
+      && $0.bundleURL?.standardizedFileURL == app.standardizedFileURL
+  }
+  for running in previous {
+    guard running.terminate() else {
+      throw StoreError.message(
+        "The previous observer did not accept graceful shutdown. No update or force stop performed."
+      )
+    }
+  }
+  for _ in 0..<300 {
+    if previous.allSatisfy({ $0.isTerminated }) { return }
+    try await Task.sleep(nanoseconds: 100_000_000)
+  }
+  throw StoreError.message(
+    "The previous observer is still closing. Its existing app bundle is preserved.")
+}
 let args = Array(CommandLine.arguments.dropFirst())
 do {
   switch args.first ?? "help" {
@@ -70,28 +93,16 @@ do {
     }
   case "--disk-walk-worker":
     exit(DiskWalkWorker.run(arguments: Array(args.dropFirst())))
+  case "stop-observer":
+    guard args.count == 2, args[1].hasPrefix("/"), args[1] == WorkspaceSafety.canonical(args[1])
+    else { fail("Use stop-observer with the exact canonical BurnZombies.app path.") }
+    try await stopObserver(at: URL(fileURLWithPath: args[1]))
   case "start-observer":
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     let app = executable.deletingLastPathComponent().deletingLastPathComponent()
       .deletingLastPathComponent()
     guard app.pathExtension == "app" else { fail("Start observer from the installed app bundle.") }
-    let previous = NSWorkspace.shared.runningApplications.filter {
-      $0.bundleURL?.standardizedFileURL == app.standardizedFileURL
-    }
-    for running in previous {
-      guard running.terminate() else {
-        fail(
-          "Could not close the previous BurnZombies observer. Quit it and reopen BurnZombies to finish upgrading."
-        )
-      }
-    }
-    for _ in 0..<50 {
-      if previous.allSatisfy({ $0.isTerminated }) { break }
-      try await Task.sleep(nanoseconds: 100_000_000)
-    }
-    guard previous.allSatisfy({ $0.isTerminated }) else {
-      fail("Previous observer is still closing. No force stop or reopen event was sent.")
-    }
+    try await stopObserver(at: app)
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = false
     configuration.hides = true
