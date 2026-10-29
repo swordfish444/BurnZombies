@@ -38,6 +38,15 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.contains("--workspace-preview-deadline") {
+      let root = URL(fileURLWithPath: "/private/tmp/bz-preview-" + UUID().uuidString.prefix(8))
+      defer { try? FileManager.default.removeItem(at: root) }
+      do { try await worktreePreviewDeadlineProof(root: root) } catch {
+        failTest("Worktree preview deadline: \(error)")
+      }
+      print("Worktree preview deadline checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--recovery-responsiveness") {
       do { try await recoveryResponsivenessProof() } catch {
         failTest("Recovery responsiveness: \(error)")

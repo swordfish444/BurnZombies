@@ -809,9 +809,19 @@ public enum AgentConnection {
     // Preserve the existing bounded wire deadline for storage callers. Cached
     // inspection returns promptly; optional analysis runs outside the request.
     let worktree = ["worktrees", "worktrees_read", "workspace_clean"].contains(request.operation)
-    let deadline = worktree ? 900000 : request.operation == "disk_inspect" ? 15000 : 5000
+    // Legacy preview performs two complete native consumer passes. Its read-only
+    // budget must not inherit the fast status deadline or outlast preservation.
+    let workspacePreview = request.operation == "workspace_preview"
+    let deadline =
+      worktree
+      ? 900000 : workspacePreview ? 30000 : request.operation == "disk_inspect" ? 15000 : 5000
     let count = bz_agent_read_timeout(fd, &buffer, Int32(buffer.count), Int32(deadline))
     guard count > 0 else {
+      if workspacePreview {
+        throw StoreError.message(
+          "Worktree preview is still unavailable. Leave the checkout intact while observation completes."
+        )
+      }
       throw StoreError.message(
         worktree
           ? "Worktree response unavailable. Inspect operation history before any new action; do not replay retirement."
