@@ -36,6 +36,35 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.contains("--process-integration") {
+      do { try await integration() } catch { failTest("Process integration: \(error)") }
+      print("Process integration checks: \(failures) failures"); exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-native-status") {
+      let snapshot = WorktreeConsumerSnapshot(); print("Native consumer paths: \(snapshot.paths.count); coverage: \(snapshot.gap ?? "complete")"); return
+    }
+    if CommandLine.arguments.contains("--worktree-native-descriptors") {
+      do { try await worktreeNativeProof(descriptorOnly: true) } catch { failTest("Native descriptor coverage: \(error)") }
+      print("Native descriptor checks: \(failures) failures"); exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-native") {
+      do { try await worktreeNativeProof() } catch { failTest("Native worktrees: \(error)") }
+      print("Native worktree checks: \(failures) failures"); exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-keychain") {
+      do { try worktreeKeychainProof() } catch { failTest("Worktree Keychain: \(error)") }
+      print("Worktree Keychain checks: \(failures) failures"); exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-scale") {
+      do { try worktreeScaleProof() } catch { failTest("Worktree scale: \(error)") }
+      print("Worktree scale checks: \(failures) failures"); exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.firstIndex(of: "--worktree-scan-worker") == 1 { exit(WorktreeScanWorker.run(arguments: Array(CommandLine.arguments.dropFirst(2)), access: fixtureAccess)) }
+    if CommandLine.arguments.contains("--worktree-lifecycle") {
+      do { try await worktreeLifecycleProof(); try await worktreeSafetyProof() } catch { failTest("Worktree lifecycle: \(error)") }
+      print("Worktree lifecycle checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.firstIndex(of: "--disk-walk-worker") == 1 {
       exit(DiskWalkWorker.run(arguments: Array(CommandLine.arguments.dropFirst(2)), accessCheck: fixtureAccess))
     }
@@ -150,7 +179,8 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--worktrees") {
-      do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
+      do { try await worktreeLifecycleProof(); try await worktreeSafetyProof() } catch { failTest("Worktree lifecycle: \(error)") }
+    do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
       print("Worktree checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
@@ -210,6 +240,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
     do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
     do { try await gradleDaemonProof() } catch { failTest("Gradle daemon: \(error)") }
+    do { try await worktreeLifecycleProof(); try await worktreeSafetyProof() } catch { failTest("Worktree lifecycle: \(error)") }
     do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
     do { try usageProof(); try await passiveProof(); try await diskProof() } catch { failTest("Passive/usage: \(error)") }
     let beforeLifecycle = failures
@@ -226,7 +257,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     if CommandLine.arguments.contains("--integration") {
       do { try await integration() } catch { failTest("Integration: \(error)") }
     }
-    print("\(tests.count + 4) checks; \(failures) failures")
+    print("All proof groups completed; \(failures) failures")
     exit(failures == 0 ? 0 : 1)
   }
   static func integration() async throws {
@@ -272,7 +303,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         if case .found(let o) = Native().probe(member.identity.pid), o.identity == member.identity, !o.zombie { return o }
         return nil
       }
-      equal(targets.count, 1)
+      equal(targets.count, 1, "Expected one detached fixture target, found \(targets.count)")
       var request = AgentRequest("preview", processIDs: targets.map { $0.identity.key },
         label: "Controlled detached fixture", rationale: "The test created these exact helpers; the owning job finished and its recorded descendants are disposable.")
       request.callerPID = getpid()
@@ -289,6 +320,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     while Date() < deadline {
       try await Task.sleep(nanoseconds: 15_000_000_000)
       let state = await monitor.refresh()
+      if state.catalog.events.contains(where: { $0.outcome != "verifying" && $0.outcome != "verified" }) {
+        throw StoreError.message("Verification stopped without credit: " + state.catalog.events.map { $0.outcome + ": " + $0.detail }.joined(separator: " "))
+      }
       if state.catalog.events.count == workerCount
         && state.catalog.events.allSatisfy({ $0.outcome != "verifying" })
       {

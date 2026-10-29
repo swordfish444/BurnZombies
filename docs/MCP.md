@@ -12,7 +12,8 @@ A small native coordinator requests a bounded review from one selected, installe
 | `burnzombies_burn` | Revalidate and request SIGTERM; native observer independently verifies exits |
 | `burnzombies_workspace` | Create a private disposable task worktree; release/retain its owner token without deleting |
 | `burnzombies_workspace_preview` | Revalidate a released worktree and return a one-use 60-second token |
-| `burnzombies_workspace_clean` | Preserve HEAD, remove without force, verify and record worktree/disk impact |
+| `burnzombies_workspace_clean` | Legacy clean-only contract, independent recovery and verified impact |
+| `burnzombies_worktrees` | Bounded existing-worktree inventory/inspection, own claims, recommendations and guarded automatic clean retirement |
 | `burnzombies_disk_inspect` | Compact sizes, repeated-folder groups, producer manifests and consumer evidence for a measured branch |
 | `burnzombies_disk_explore` | Queue deeper native metadata mapping; finish the AI turn while it runs locally |
 | `burnzombies_disk_evidence` | Bounded source/build/retention evidence inside the measured branch; no credentials, transcripts or execution |
@@ -57,7 +58,7 @@ The private background reviewer cannot call lifecycle mutations. It gets at most
 
 ## Disposable worktrees (0.7)
 
-The working agent can create and release a disposable worktree through the same MCP connection or native `workspace` JSON command. Existing worktrees are never adopted. Reviewers cannot create, release or retain claims. They can preview and clean one released worktree within the existing eight-call budget. Incomplete file-handle visibility blocks removal, including when macOS protects unrelated services; no permission bypass or unsupported clean-machine verdict. Disk/worktree counters require a completed verified receipt. [Safety rules, recovery and measurement](WORKTREE-CLEANUP.md).
+The working agent can still create and release a private disposable worktree through the legacy MCP/CLI interface. Its tokens migrate to the transactional worktree service; an old release without content binding needs a fresh owner release. Existing linked checkouts can be explicitly adopted through the native UI/CLI; MCP cannot adopt, confirm human intent, change policy, perform dirty retirement, restore or purge. `burnzombies_worktrees` supports `list`, `operations`, `inspect`, `claim`, `release`, `retain`, `advise`, `preview` and `retire`. Inventory pages contain at most 100 entries and return continuation offsets. Review connections receive only their exact queued IDs and cannot mutate owners. Automatic retirement additionally requires repository opt-in, released owners past grace and the shared automatic disk policy. Inspection or native visibility uncertainty blocks removal. See [the complete worktree contract](WORKTREE-CLEANUP.md).
 
 ## Passive lifecycle evidence and usage (0.8)
 

@@ -75,6 +75,7 @@ import UserNotifications
   var openLog: (() -> Void)?
   var openSettings: (() -> Void)?
   var openAudit: (() -> Void)?
+  var openWorktrees: (() -> Void)?
   let demo: Bool
   private var monitor: Monitor?
   private var agentListener: AgentListener?
@@ -109,6 +110,13 @@ import UserNotifications
     }
     refresh()
   }
+  func worktree(_ request: WorktreeRequest) async throws -> WorktreeReply {
+    if demo { return WorktreeExamples.snapshot() }
+    guard let monitor else { return WorktreeReply() }
+    let reply = try await monitor.worktreeRequest(request, caller: "native-operator")
+    if !["list", "operations"].contains(request.action) { state = await monitor.snapshot() }
+    return reply
+  }
   private func receiveAgentSnapshot(_ snapshot: ViewState) {
     state = snapshot
     cleanupQueued = FileManager.default.fileExists(atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
@@ -120,7 +128,8 @@ import UserNotifications
     guard !working, let monitor else { return }
     working = true
     Task {
-      state = await monitor.refresh()
+      _ = await monitor.refresh()
+      state = await monitor.snapshot()
       cleanupQueued = FileManager.default.fileExists(atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
       pressure = Native().memoryPressure()
       working = false
@@ -139,6 +148,7 @@ import UserNotifications
       }
       onUpdate?()
       schedule()
+      Task { await monitor.worktreeTick() }
       // Observation continues on its own timer while a bounded review runs.
       if accessReady && state.error == nil && !state.partial { Task { await reviewer?.tick(); await receiveReviewState() } }
     }
@@ -158,6 +168,7 @@ import UserNotifications
     RunLoop.main.add(next, forMode: .common)
     timer = next
   }
+  func shutdownWorktrees() async { timer?.invalidate(); await monitor?.shutdownWorktrees() }
   func suspend() {
     timer?.invalidate()
     Task { try? await monitor?.checkpoint() }
@@ -632,6 +643,7 @@ struct Dashboard: View {
   var item: NSStatusItem!
   var popover: NSPopover!
   var window: NSWindow?
+  var worktreeWindow: NSWindow?
   var auditWindow: NSWindow?
   var menuPreviewWindow: NSWindow?
   var model: AppModel!
@@ -647,6 +659,7 @@ struct Dashboard: View {
       self?.model.tab = "Settings"
       self?.showAudit()
     }
+    model.openWorktrees = { [weak self] in self?.showWorktrees() }
     model.openAudit = { [weak self] in self?.showAudit() }
     item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let icon = NSImage(
@@ -665,6 +678,7 @@ struct Dashboard: View {
       self, selector: #selector(sleeping), name: NSWorkspace.willSleepNotification, object: nil)
     NSWorkspace.shared.notificationCenter.addObserver(
       self, selector: #selector(waking), name: NSWorkspace.didWakeNotification, object: nil)
+    if CommandLine.arguments.contains("--show-worktrees") { showWorktrees() }
     if CommandLine.arguments.contains("--show-window") { showImpact("Impact") }
     if CommandLine.arguments.contains("--show-popover") { toggle() }
     if CommandLine.arguments.contains("--show-mini-window") {
@@ -709,6 +723,16 @@ struct Dashboard: View {
     window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
+  func showWorktrees() {
+    popover?.performClose(nil)
+    if worktreeWindow == nil {
+      let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+      w.title = "BurnZombies — Worktrees"; w.isReleasedWhenClosed = false
+      w.contentView = NSHostingView(rootView: WorktreesView(model: model)); w.center(); worktreeWindow = w
+    }
+    worktreeWindow?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+  }
   func showAudit() {
     popover.performClose(nil)
     if auditWindow == nil {
@@ -740,11 +764,19 @@ struct Dashboard: View {
     // menu-bar click or window action may present UI and take keyboard focus.
     return false
   }
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    Task { await model.shutdownWorktrees(); sender.reply(toApplicationShouldTerminate: true) }
+    return .terminateLater
+  }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 MainActor.assumeIsolated {
   let app = NSApplication.shared
   #if DEBUG
+  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--worktree-view-proof" {
+    do { try worktreeViewProof(output: CommandLine.arguments[2]); exit(0) }
+    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
+  }
   if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--settings-proof" {
     do { try settingsProof(output: CommandLine.arguments[2]); exit(0) }
     catch { print("FAIL \(error.localizedDescription)"); exit(1) }

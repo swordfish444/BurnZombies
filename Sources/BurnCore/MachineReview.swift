@@ -58,7 +58,7 @@ public struct MachineReviewState: Codable, Sendable {
       // Give each waiting lane a turn even while another lane keeps discovering
       // new work. Initial ties favor process relief; later starts rotate fairly.
       func order(_ e: ReviewEvidence) -> Int {
-        switch ReviewLane.lane(for: e) { case .process, .ownerProcess: return 0; case .managedCache: return 1; case .workspace: return 2; case .disk: return 3; case .discovery: return 4 }
+        switch ReviewLane.lane(for: e) { case .process, .ownerProcess: return 0; case .managedCache: return 1; case .workspace, .worktree: return 2; case .worktreeAdvice: return 4; case .unsupported: return 5; case .disk: return 3; case .discovery: return 4 }
       }
       let al = ReviewLane.lane(for: a.element), bl = ReviewLane.lane(for: b.element)
       let at = laneLastStarted?[al.rawValue] ?? .distantPast, bt = laneLastStarted?[bl.rawValue] ?? .distantPast
@@ -71,6 +71,7 @@ public struct MachineReviewState: Codable, Sendable {
     }.map(\.element)
     for item in candidates where reviewedEvidence?[item.id] != item.revision {
       let itemLane = ReviewLane.lane(for: item)
+      guard itemLane != .unsupported else { continue }
       if let attempt = attempts?[item.id], itemLane == .discovery, attempt.revision == item.revision {
         let delay = min(21600, 3600 * pow(2, Double(min(3, max(0, attempt.count - 1)))))
         guard now.timeIntervalSince(attempt.date) >= delay else { continue }

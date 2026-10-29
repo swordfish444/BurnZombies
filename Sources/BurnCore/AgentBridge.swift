@@ -18,21 +18,23 @@ public struct AgentRequest: Codable, Sendable {
   public let workspaceID: String?
   public let reviewIDs: [String]?
   public let recordIDs: [String]?
+  public let worktreeRequest: WorktreeRequest?
   // Populated from the authenticated Unix peer, never from request JSON.
   public var callerPID: Int32 = -1
   enum CodingKeys: String, CodingKey {
-    case operation, findingID, previewToken, processIDs, pids, offset, label, rationale, action, workToken, completionCondition, workspacePath, workspaceID, reviewIDs, recordIDs
+    case operation, findingID, previewToken, processIDs, pids, offset, label, rationale, action, workToken, completionCondition, workspacePath, workspaceID, reviewIDs, recordIDs, worktreeRequest
   }
   public init(_ operation: String, findingID: String? = nil, previewToken: String? = nil,
     processIDs: [String]? = nil, pids: [Int32]? = nil, offset: Int? = nil,
     label: String? = nil, rationale: String? = nil, action: String? = nil, reviewIDs: [String]? = nil,
-    workToken: String? = nil, completionCondition: String? = nil, workspacePath: String? = nil, workspaceID: String? = nil, recordIDs: [String]? = nil) {
+    workToken: String? = nil, completionCondition: String? = nil, workspacePath: String? = nil, workspaceID: String? = nil, recordIDs: [String]? = nil, worktreeRequest: WorktreeRequest? = nil) {
     self.operation = operation; self.findingID = findingID; self.previewToken = previewToken
     self.processIDs = processIDs; self.pids = pids; self.offset = offset
     self.label = label; self.rationale = rationale
     self.action = action; self.workToken = workToken; self.completionCondition = completionCondition
     self.workspacePath = workspacePath; self.workspaceID = workspaceID
     self.reviewIDs = reviewIDs; self.recordIDs = recordIDs
+    self.worktreeRequest = worktreeRequest
   }
 }
 
@@ -96,6 +98,7 @@ public struct AgentReply: Codable, Sendable {
   public var workspaces: [WorkspaceSummary] = []
   public var worktreeReceipts: [WorkspaceReceipt] = []
   public var worktreesCleaned: Int = 0
+  public var worktreeInventory: WorktreeReply?
   public var diskReclaimedBytes: UInt64 = 0
   public init(ok: Bool = true, message: String) { self.ok = ok; self.message = message }
   public func json() throws -> String {
@@ -139,7 +142,7 @@ public actor AgentService {
   private var previews: [String: Preview] = [:]
   public init(monitor: Monitor) { self.monitor = monitor }
   public func call(_ request: AgentRequest) async -> AgentReply {
-    guard ["status", "access_status", "inspect", "preview", "burn", "lifecycle", "work", "workspace", "workspace_preview", "workspace_clean", "disk_decide", "disk_preview", "disk_clean", "disk_inspect", "disk_explore", "disk_recommend", "disk_evidence", "owner_preview", "owner_stop", "cache_preview", "cache_clean"].contains(request.operation) else {
+    guard ["status", "access_status", "inspect", "preview", "burn", "lifecycle", "work", "workspace", "workspace_preview", "workspace_clean", "worktrees", "worktrees_read", "disk_decide", "disk_preview", "disk_clean", "disk_inspect", "disk_explore", "disk_recommend", "disk_evidence", "owner_preview", "owner_stop", "cache_preview", "cache_clean"].contains(request.operation) else {
       return AgentReply(ok: false, message: "Unknown operation.")
     }
     previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
@@ -165,7 +168,35 @@ public actor AgentService {
     if let error = state.error { return AgentReply(ok: false, message: error) }
     var reply = AgentReply(message: "Computer-wide observation across all projects and sessions for this macOS user. Inspect live ownership evidence to distinguish abandoned helpers from active work. No active chat, wrapper or reboot required.")
     do {
-      if ["owner_preview", "cache_preview"].contains(request.operation) {
+      if request.operation == "worktrees" || request.operation == "worktrees_read" {
+        guard var query = request.worktreeRequest, case .found(let peer) = Native().probe(request.callerPID) else { throw StoreError.message("Worktree request and authenticated caller required.") }
+        if let ids = request.reviewIDs, query.action == "list" {
+          query.ids = ids.compactMap { id in
+            if id.hasPrefix("worktree:") { return String(id.dropFirst(9)) }
+            if id.hasPrefix("worktree-advice:") { return String(id.dropFirst(16)) }
+            return nil
+          }
+        }
+        if let ids = request.reviewIDs, !["list", "operations"].contains(query.action) {
+          guard let id = query.id, (ids.contains("worktree:" + id) || ids.contains("worktree-advice:" + id)) else { throw StoreError.message("Worktree is outside this review queue.") }
+        }
+        reply.worktreeInventory = try await monitor.worktreeRequest(query, caller: peer.identity.key, management: request.operation == "worktrees")
+        if let ids = request.reviewIDs {
+          reply.worktreeInventory?.records.removeAll { !ids.contains("worktree:" + $0.id) && !ids.contains("worktree-advice:" + $0.id) }
+          let allowed = Set(reply.worktreeInventory?.records.map(\.id) ?? [])
+          reply.worktreeInventory?.owners.removeAll { !allowed.contains($0.worktreeID) }
+          reply.worktreeInventory?.operations.removeAll { !allowed.contains($0.worktreeID) }
+          reply.worktreeInventory?.advice.removeAll { !allowed.contains($0.id) }
+          reply.worktreeInventory?.delivery.removeAll { !allowed.contains($0.id) }
+          reply.worktreeInventory?.restores = []
+          reply.worktreeInventory?.suggestedRoots = []
+          reply.worktreeInventory?.policy.roots = []
+          let repositories = Set(reply.worktreeInventory?.records.map(\.repository) ?? [])
+          reply.worktreeInventory?.policy.automaticRepositories.removeAll { !repositories.contains($0) }
+        }
+        reply.message = reply.worktreeInventory?.detail ?? "Worktree request complete."
+        return reply
+      } else if ["owner_preview", "cache_preview"].contains(request.operation) {
         ownerPreviews = ownerPreviews.filter { Date().timeIntervalSince($0.value.2) < 60 }
         cachePreviews = cachePreviews.filter { Date().timeIntervalSince($0.value.2) < 60 }
         guard let id = request.findingID, let rationale = request.rationale, (20...1200).contains(rationale.count),
@@ -515,7 +546,7 @@ public final class AgentListener: @unchecked Sendable {
             var request = try JSONDecoder().decode(AgentRequest.self, from: data)
             // The operation field is untrusted too. Persist only known wire operation names.
             let known = ["status", "inspect", "preview", "burn", "lifecycle", "work", "workspace",
-              "workspace_preview", "workspace_clean", "disk_decide", "disk_preview", "disk_clean",
+              "workspace_preview", "workspace_clean", "worktrees", "worktrees_read", "disk_decide", "disk_preview", "disk_clean",
               "disk_inspect", "disk_explore", "disk_recommend", "disk_evidence",
               "owner_preview", "owner_stop", "cache_preview", "cache_clean"]
             if known.contains(request.operation) { receipt.operation = request.operation }
@@ -601,8 +632,12 @@ public enum AgentConnection {
     var buffer = [CChar](repeating: 0, count: 262_144)
     // Preserve the existing bounded wire deadline for storage callers. Cached
     // inspection returns promptly; optional analysis runs outside the request.
-    let count = bz_agent_read_timeout(fd, &buffer, Int32(buffer.count), request.operation == "disk_inspect" ? 15000 : 5000)
-    guard count > 0 else { throw StoreError.message("BurnZombies did not respond. Check the app and try again.") }
+    let worktree = ["worktrees", "worktrees_read", "workspace_clean"].contains(request.operation)
+    let deadline = worktree ? 900000 : request.operation == "disk_inspect" ? 15000 : 5000
+    let count = bz_agent_read_timeout(fd, &buffer, Int32(buffer.count), Int32(deadline))
+    guard count > 0 else { throw StoreError.message(worktree
+      ? "Worktree response unavailable. Inspect operation history before any new action; do not replay retirement."
+      : "BurnZombies did not respond. Check the app and try again.") }
     return buffer.withUnsafeBytes { String(decoding: $0.prefix(Int(count)), as: UTF8.self) }
   }
 }

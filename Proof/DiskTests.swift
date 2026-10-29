@@ -140,10 +140,11 @@ private func diskAdviceProof(_ seed: DiskCandidate, root: URL, policy original: 
   var signal = HarnessHook.Signal(observedAt: Date(), processCount: 0, residentBytes: 0, pressure: "Low")
   signal.reviewEvidence = (0..<5).map { .init(id: "disk:\($0)", revision: "advice", processCount: 0, recommendationOnly: true) }
   equal(MachineReviewState().pending(signal).count, 3, "Read-only advice batches at most three folders")
-  signal.reviewEvidence?.append(.init(id: "worktree", revision: "release", processCount: 0))
-  equal(MachineReviewState().pending(signal).map(\.id), ["worktree"], "Released work takes priority without mixing in advice")
-  signal.reviewEvidence?.insert(.init(id: "cleanup", revision: "ready", processCount: 0), at: 0)
-  equal(MachineReviewState().pending(signal).map(\.id), ["cleanup"], "One cleanup does not mix with advice batches")
+  signal.reviewEvidence?.append(.init(id: "worktree:fixture", revision: "release", processCount: 0))
+  equal(MachineReviewState().pending(signal).map(\.id), ["worktree:fixture"], "Released work takes priority without mixing in advice")
+  signal.reviewEvidence?.insert(.init(id: "worktree:cleanup", revision: "ready", processCount: 0), at: 0)
+  equal(MachineReviewState().pending(signal).map(\.id), ["worktree:cleanup"], "One cleanup does not mix with advice batches")
+  equal(ReviewLane.lane(for: .init(id: "unknown-queue-type", revision: "ready", processCount: 0)), .unsupported)
   var snapshot = DiskSnapshot(); snapshot.date = Date(); snapshot.policyRevision = policy.revision
   snapshot.freeBytes = 1; snapshot.candidates = [candidate]; try snapshot.save(store)
   let monitor = try Monitor(root: store.root, workspaceVisibility: { _ in -1 }, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())

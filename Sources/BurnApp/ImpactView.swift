@@ -241,7 +241,7 @@ struct MiniImpactView: View {
         HStack(spacing: 18) {
           miniMetric(ImpactNumbers.bytes(numbers.disk), "Disk reclaimed")
           Rectangle().fill(BurnTheme.line).frame(width: 1, height: 50)
-          miniMetric("\(numbers.worktrees)", "Worktrees cleaned")
+          Button { model.openWorktrees?() } label: { miniMetric("\(numbers.worktrees)", "Worktrees cleaned") }.clickPointer().help("Open worktree inventory and recovery")
         }
       }.frame(height: 120).padding(.top, 6)
       Group {

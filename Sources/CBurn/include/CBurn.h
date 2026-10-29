@@ -19,6 +19,12 @@ uint64_t bz_continuous_ns(void);
 uint64_t bz_awake_ns(void);
 int bz_fd_summary(int32_t pid, int *sockets, int *files);
 int bz_path_in_use(const char *root);
+int bz_worktree_pid_paths(int pid, void (*visit)(void *, const char *), void *context, char *gap, size_t gap_size);
+int bz_worktree_paths(void (*visit)(void *, const char *), void *context, char *gap, size_t gap_size);
+int bz_capture_worktree_git(char *const argv[], char *const env[], int output, int milliseconds,
+                           int (*progress)(void *, uint64_t), void *context, int *unreaped);
+int bz_capture_worktree_worker(char *const argv[], char *const env[], int output,
+                              int (*progress)(void *, uint64_t), void *context, int *unreaped);
 int bz_codex_session(int32_t pid, char *out, int capacity);
 int bz_cwd(int32_t pid, char *path, int capacity);
 int bz_lock(const char *path);

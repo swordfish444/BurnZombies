@@ -193,6 +193,7 @@ public struct Catalog: Codable, Sendable {
   public var managedCacheAttempts: [ManagedCacheAttempt]?
   public var ownerEvidenceGaps: [String]?
   public var workspaces: [WorkspaceClaim]?
+  public var worktreeEvidence: [ReviewEvidence]?
   public var workspaceReceipts: [WorkspaceReceipt]?
   public var lifetimeWorktreesCleaned: Int?
   public var lifetimeDiskReclaimedBytes: UInt64?

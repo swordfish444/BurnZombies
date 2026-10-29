@@ -57,10 +57,12 @@ public struct ReviewEvidence: Codable, Equatable, Sendable {
     for node in catalog.diskDiscovery ?? [] {
       result.append(.init(id: node.id, revision: node.revision, processCount: 0, recommendationOnly: true))
     }
-    for workspace in catalog.workspaces ?? [] where workspace.state == "released" {
+    let worktreeIDs = Set((catalog.worktreeEvidence ?? []).map(\.id))
+    for workspace in catalog.workspaces ?? [] where workspace.state == "released" && !worktreeIDs.contains(workspace.id) {
       result.append(.init(id: workspace.id, revision: digest(workspace.id + "|" + String(workspace.updated.timeIntervalSinceReferenceDate)), processCount: 0))
     }
     // Preserve the producer's measured opportunity order instead of sorting opaque hashes.
+    result += catalog.worktreeEvidence ?? []
     return result
   }
   private static func digest(_ value: String) -> String {

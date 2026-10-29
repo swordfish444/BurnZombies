@@ -46,3 +46,13 @@ Verification distinguishes unknown, partial, possible recurrence and verified ex
 - `Proof`: native fixtures, real OS zombies, active controls, pressure simulations and protocol tests.
 
 The app and monitor have no third-party runtime dependencies. The MCP executable links the official SDK and its Swift dependencies. End users need neither Node nor Python. Legacy lease records remain readable for migration; they no longer authorize or block cleanup.
+
+## Worktree service (0.11)
+
+`WorktreeService` is the sole UI/CLI/MCP mutation authority. A private system-SQLite document store holds versioned inventory, identities, claims, policy, decisions, advice, operation journals and recovery dependencies. Transactions protect store updates; external Git/filesystem steps have explicit uncertain states and reconciliation. Legacy claims migrate once, retaining capabilities and IDs while clearing action-capable copies from the process catalog. Verified operations project into existing Impact counters without dual-writing receipts.
+
+`WorktreeDiscovery` inventories Git registrations before deeper inspections. An owned subprocess publishes incremental JSONL observations, a rotating inspection cursor and explicit gaps under cancellation/deadline/output limits. One native consumer-path snapshot serves the scan; every action rechecks fresh coverage. `WorktreeInspection` binds the directory/common/admin identities, backlink, HEAD/branch, files/index and unsupported Git features. Readiness and content revisions are separate. Git subprocesses disable hooks/fsmonitor/network/lazy fetching and own their bounded process groups.
+
+`WorktreeActions` consumes caller-bound previews, serializes per repository, journals intent, preserves independently encrypted recovery, verifies restoration/source content, rechecks authority and invokes exact Git operations. `WorktreeRecovery` preserves reachable/staged objects, index and supported working files in authenticated chunks; it restores to a new standalone repository without original configuration or hooks. Keychain key failure preserves the source. `WorktreeReconciliation` never replays an interrupted action or attributes an unexplained absence. `WorktreeBatch`, `WorktreeScheduling`, `WorktreeOwner` and `WorktreeRegistration` provide reviewed batches, explicit automatic policy, advisory exact-commit GitHub metadata and exact moved-checkout repair. Owner-managed archives and broad metadata prune remain handoffs.
+
+The Worktrees window and Recovery tab use paginated bounded projections. The MCP worktree lane receives only queued IDs and a narrow tool; it cannot adopt, make human decisions, force dirty removal or purge recovery. Source content is restricted to local encrypted archives, outside model inventory.

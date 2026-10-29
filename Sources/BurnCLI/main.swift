@@ -17,6 +17,35 @@ func json<T: Encodable>(_ value: T) throws {
 let args = Array(CommandLine.arguments.dropFirst())
 do {
   switch args.first ?? "help" {
+  case "--worktree-scan-worker":
+    exit(WorktreeScanWorker.run(arguments: Array(args.dropFirst())))
+  case "worktrees":
+    guard args.count >= 2 else { fail("Use worktrees list|scan|operations or worktrees request with a JSON object on stdin.") }
+    if ["retire", "archive-retire", "quarantine"].contains(args[1]) {
+      guard args.count == 6, args[4] == "--evidence", (20...1200).contains(args[5].count) else { fail("Use worktrees retire|archive-retire|quarantine ID REVISION --evidence 'Observed completion and no remaining use'. Manage the exact checkout first.") }
+      func sendWorktree(_ q: WorktreeRequest) async throws -> (String, [String: Any]) {
+        let raw = try await AgentConnection.callAsync(.init("worktrees", worktreeRequest: q))
+        guard let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], object["ok"] as? Bool == true,
+          let body = object["worktreeInventory"] as? [String: Any] else { fail(raw) }
+        return (raw, body)
+      }
+      _ = try await sendWorktree(.init("confirm", id: args[2], revision: args[3], evidence: args[5]))
+      let (_, preview) = try await sendWorktree(.init(args[1] == "retire" ? "preview" : "preview_dirty", id: args[2], revision: args[3]))
+      guard let token = preview["token"] as? String else { fail("No guarded preview was issued.") }
+      let (result, _) = try await sendWorktree(.init(args[1] == "retire" ? "retire" : (args[1] == "quarantine" ? "quarantine" : "retire_dirty"), token: token))
+      print(result, terminator: ""); break
+    }
+    let query: WorktreeRequest
+    if args[1] == "request" {
+      guard args.count == 2, let data = try FileHandle.standardInput.read(upToCount: 16385), data.count <= 16384 else { fail("Pass one bounded worktree JSON request on stdin.") }
+      query = try JSONDecoder().decode(WorktreeRequest.self, from: data)
+    } else {
+      guard args.count == 2, ["list", "scan", "operations"].contains(args[1]) else { fail("Use worktrees request for exact ID/revision actions; see docs/WORKTREE-CLEANUP.md.") }
+      query = WorktreeRequest(args[1])
+    }
+    let raw = try await AgentConnection.callAsync(AgentRequest("worktrees", worktreeRequest: query))
+    print(raw, terminator: "")
+    if let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], object["ok"] as? Bool != true { exit(1) }
   case "--disk-walk-worker":
     exit(DiskWalkWorker.run(arguments: Array(args.dropFirst())))
   case "start-observer":
@@ -75,7 +104,7 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.10.1
+      BurnZombies 0.11.0
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.

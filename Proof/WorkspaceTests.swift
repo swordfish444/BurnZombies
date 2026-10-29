@@ -1,5 +1,6 @@
 import BurnCore
 import CBurn
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -27,7 +28,7 @@ func workspaceProof() async throws {
     guard path.hasPrefix(prefix) else { return -1 }
     let result = bz_path_in_use(path)
     return result == 1 ? 1 : 0
-  }, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker()), service = AgentService(monitor: monitor)
+  }, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker(), worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 42, count: 32)) }), service = AgentService(monitor: monitor)
   let store = try Store(root: root)
   func call(_ request: AgentRequest) async -> AgentReply {
     var r = request; r.callerPID = getpid(); return await service.call(r)
@@ -37,7 +38,7 @@ func workspaceProof() async throws {
       rationale: "This task needs an isolated disposable worktree to run its fixture operation.", action: "create",
       completionCondition: "Fixture checks finish, all output is preserved and no process uses the checkout.", workspacePath: repo.path))
     guard response.ok, let token = response.workToken, let id = response.workspaces.first?.id,
-      let claim = try store.load().workspaces?.first(where: { $0.id == id }) else { throw StoreError.message(response.message) }
+      let claim = try await monitor.workspaceClaims().first(where: { $0.id == id }) else { throw StoreError.message(response.message) }
     let responseJSON = try response.json(); checkFalse(responseJSON.contains("tokenHash"))
     return (claim, token)
   }
@@ -93,7 +94,7 @@ func workspaceProof() async throws {
   let transition2 = await change(token, "release"); check(transition2.ok, transition2.message)
   let unpushed = await preview(claim.id); checkFalse(unpushed.ok, "unpushed commit accepted")
   _ = try git(path, ["update-ref", "refs/remotes/origin/fixture", "HEAD"])
-  if let released = try store.load().workspaces?.first(where: { $0.id == claim.id }) {
+  if let released = try await monitor.workspaceClaims().first(where: { $0.id == claim.id }) {
     throwsError(try WorkspaceSafety.check(released, root: root, visibility: { _ in -1 }))
     if bz_path_in_use(path) == -1 {
       throwsError(try WorkspaceSafety.check(released, root: root))
@@ -113,6 +114,7 @@ func workspaceProof() async throws {
   checkFalse(lateFile.ok, "ignored file appearing after preview was deleted")
   check(fm.fileExists(atPath: path + "/secret.env"))
   try fm.removeItem(atPath: path + "/secret.env")
+  let renewed = await change(token, "release"); check(renewed.ok, renewed.message)
   let third = await preview(claim.id)
   guard let cleanupToken = third.previewToken else { throw StoreError.message(third.message) }
   // Different authenticated peer cannot spend the owner's preview.
@@ -121,7 +123,7 @@ func workspaceProof() async throws {
   check(cleaned.ok, cleaned.message); checkFalse(fm.fileExists(atPath: path))
   equal(cleaned.worktreesCleaned, 1); equal(cleaned.verifiedHelpers, 0)
   let repeated = await call(.init("workspace_clean", previewToken: cleanupToken)); checkFalse(repeated.ok, "preview reused")
-  let saved = try store.load()
+  let saved = (await monitor.snapshot()).catalog
   guard let receipt = saved.workspaceReceipts?.last else { throw StoreError.message("Missing verified worktree receipt") }
   equal(receipt.outcome, "verified"); check(WorkspaceSafety.removed(receipt))
   equal(saved.lifetimeDiskReclaimedBytes, receipt.diskReclaimedBytes)
@@ -147,7 +149,7 @@ func workspaceProof() async throws {
   pending.outcome = "prepared"; pending.verifiedAt = nil; pending.diskReclaimedBytes = 0
   interrupted.workspaceReceipts = [pending]
   try interruptedStore.save(interrupted)
-  let recovered = try Monitor(root: interruptedRoot, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+  let recovered = try Monitor(root: interruptedRoot, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker(), worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 42, count: 32)) })
   let recoveredState = await recovered.refresh()
   equal(recoveredState.catalog.workspaceReceipts?.first?.outcome, "unverified")
   equal(ImpactNumbers.make(catalog: recoveredState.catalog, period: .all).worktrees, 0)

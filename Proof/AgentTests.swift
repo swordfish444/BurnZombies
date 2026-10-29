@@ -1,11 +1,12 @@
 import BurnCore
+import CryptoKit
 import Darwin
 import Foundation
 
 func agentBridgeProof() async throws {
   let root = URL(fileURLWithPath: "/tmp/bz-" + UUID().uuidString.prefix(8))
   defer { try? FileManager.default.removeItem(at: root) }
-  let monitor = try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+  let monitor = try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker(), worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 91, count: 32)) })
   _ = await monitor.refresh() // The observer samples; cheap status must not trigger a scan.
   let service = AgentService(monitor: monitor)
   let listener = try AgentListener(root: root) { await service.call($0) }
@@ -40,8 +41,7 @@ func agentBridgeProof() async throws {
   }
   defer {
     for process in [disposable, active] {
-      if process.isRunning { process.terminate() }
-      process.waitUntilExit()
+      if kill(process.processIdentifier, 0) == 0 { process.terminate() }
     }
   }
   _ = await monitor.refresh()
@@ -77,7 +77,15 @@ func agentBridgeProof() async throws {
   let burned = try await call(AgentRequest("burn", previewToken: token))
   check(burned.ok, burned.message)
   equal(burned.verifiedHelpers, 0, "pending request credited as verified")
-  disposable.waitUntilExit()
+  // Foundation waitUntilExit can stall when an async test resumes on a different
+  // cooperative thread. Observe the exact sacrificial child with a bounded wait.
+  for _ in 0..<250 {
+    if case .absent = Native().probe(disposable.processIdentifier) { break }
+    try await Task.sleep(nanoseconds: 20_000_000)
+  }
+  if case .absent = Native().probe(disposable.processIdentifier) {} else {
+    throw StoreError.message("Sacrificial process exit was not observed within five seconds.")
+  }
   check(active.isRunning, "active control was killed")
   let replay = try await call(AgentRequest("burn", previewToken: token))
   checkFalse(replay.ok, "single-use token replay accepted")
@@ -143,7 +151,7 @@ func runAgentFixture(root: URL) async throws {
   guard discoveryRoots?.allSatisfy({ WorkspaceSafety.contains(WorkspaceSafety.canonical(root.path), WorkspaceSafety.canonical($0)) }) != false else {
     throw StoreError.message("Fixture discovery must stay inside the test-owned directory.")
   }
-  let monitor = try Monitor(root: root, discoveryRoots: discoveryRoots, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+  let monitor = try Monitor(root: root, discoveryRoots: discoveryRoots, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker(), worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 91, count: 32)) })
   // Like the resident observer, finish the first bounded inventory before a model
   // connects; a cold filesystem scan must not consume the MCP request timeout.
   _ = await monitor.refresh()

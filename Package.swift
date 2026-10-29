@@ -15,13 +15,14 @@ let package = Package(
     .package(url: "https://github.com/LebJe/TOMLKit.git", exact: "0.5.0")
   ],
   targets: [
+    .systemLibrary(name: "CSQLite"),
     .target(name: "CBurn"),
-    .target(name: "BurnCore", dependencies: ["CBurn"], resources: [.copy("Resources/BZGradleDaemon.java")]),
+    .target(name: "BurnCore", dependencies: ["CBurn", "CSQLite"], resources: [.copy("Resources/BZGradleDaemon.java")]),
     .executableTarget(
       name: "BurnApp", dependencies: ["BurnCore"], resources: [.process("Resources")]),
     .executableTarget(name: "BurnCLI", dependencies: ["BurnCore", "CBurn", .product(name: "TOMLKit", package: "TOMLKit")]),
     .executableTarget(name: "BurnMCP", dependencies: ["BurnCore", .product(name: "MCP", package: "swift-sdk")]),
-    .executableTarget(name: "BurnProof", dependencies: ["BurnCore", "CBurn"], path: "Proof"),
+    .executableTarget(name: "BurnProof", dependencies: ["BurnCore", "CBurn", "CSQLite"], path: "Proof"),
   ],
   swiftLanguageModes: [.v5]
 )

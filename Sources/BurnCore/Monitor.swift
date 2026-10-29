@@ -1,8 +1,11 @@
 import CBurn
+import CryptoKit
 import Darwin
 import Foundation
 
 public struct ViewState: Sendable {
+  public var worktrees: WorktreeReply?
+  public var worktreeError: String?
   public var fullDiskAccess = FullDiskAccessStatus()
   public var findings: [Finding] = []
   public var catalog = Catalog()
@@ -19,6 +22,7 @@ public struct ViewState: Sendable {
 public actor Monitor {
   private let accessCheck: @Sendable () -> FullDiskAccessStatus
   private let store: Store
+  private var worktreeService: WorktreeService?
   private let lock: InstanceLock
   private let native = Native()
   private let passive: PassiveCollector?
@@ -36,8 +40,8 @@ public actor Monitor {
   private var lastMonotonic: Double?
   private var lastWall: Date?
   private var lastAwake: Double?
-  public init(root: URL = Store.defaultRoot, passiveHome: URL? = nil, discoveryRoots: [String]? = nil, workspaceVisibility: @escaping @Sendable (String) -> Int32 = { bz_path_in_use($0) }, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil, discoveryWalker: DiskWalkRunner? = nil) throws {
-    self.workspaceVisibility = workspaceVisibility
+  public init(root: URL = Store.defaultRoot, passiveHome: URL? = nil, discoveryRoots: [String]? = nil, workspaceVisibility: (@Sendable (String) -> Int32)? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil, discoveryWalker: DiskWalkRunner? = nil, worktreeRecoveryKey: (@Sendable () throws -> SymmetricKey)? = nil) throws {
+    self.workspaceVisibility = workspaceVisibility ?? { bz_path_in_use($0) }
     self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: root) }
     store = try Store(root: root)
     ownerMaintenance = root.standardizedFileURL == Store.defaultRoot.standardizedFileURL && ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil ? OwnerMaintenance(store: store, accessCheck: self.accessCheck) : nil
@@ -75,11 +79,55 @@ public actor Monitor {
     for i in loaded.events.indices where loaded.events[i].outcome == "prepared" { loaded.events[i].outcome = "unverified" }
     ImpactAccounting.migrate(&loaded)
     loaded.resetContinuity()
+    do {
+      let service = try WorktreeService(root: root, visibility: workspaceVisibility, access: self.accessCheck,
+        recoveryKey: worktreeRecoveryKey, legacy: loaded.workspaces ?? [])
+      if !(loaded.workspaces ?? []).isEmpty {
+        loaded.workspaces = []
+        try store.save(loaded)
+      }
+      try service.finishMigration()
+      worktreeService = service
+    } catch { state.worktreeError = "Worktree management paused: " + error.localizedDescription }
     catalog = loaded
     state.catalog = loaded
     state.fullDiskAccess = self.accessCheck()
   }
-  public func snapshot() -> ViewState { state }
+  public func snapshot() async -> ViewState {
+    var projected = state
+    if let service = worktreeService {
+      do {
+        projected.worktrees = try await service.snapshot()
+        let added = try await service.projectedReceipts()
+        projected.catalog.workspaces = try await service.legacyClaims()
+        projected.catalog.workspaceReceipts = (catalog.workspaceReceipts ?? []) + added
+        projected.catalog.lifetimeWorktreesCleaned = (catalog.lifetimeWorktreesCleaned ?? 0) + added.count
+        projected.catalog.lifetimeDiskReclaimedBytes = (catalog.lifetimeDiskReclaimedBytes ?? 0) + added.reduce(0) { $0 + $1.diskReclaimedBytes }
+      } catch { projected.worktreeError = "Worktree evidence unavailable: " + error.localizedDescription }
+    }
+    return projected
+  }
+  public func workspaceClaims() async throws -> [WorkspaceClaim] {
+    guard let service = worktreeService else { throw StoreError.message("Worktree store unavailable.") }
+    return try await service.legacyClaims()
+  }
+  public func worktreeTick() async {
+    guard !busy, accessCheck().canScan, let service = worktreeService else { return }
+    do {
+      let roots = (try? DiskPolicy.load(store).roots) ?? []
+      try await service.suggestRoots(roots + (catalog.diskCandidates ?? []).map(\.repository))
+      catalog.worktreeEvidence = try await service.tick(); state.worktreeError = nil
+    }
+    catch { catalog.worktreeEvidence = []; state.worktreeError = "Worktree observation: " + error.localizedDescription }
+  }
+  public func shutdownWorktrees() async { await worktreeService?.shutdown() }
+  public func worktreeRequest(_ request: WorktreeRequest, caller: String, management: Bool = true) async throws -> WorktreeReply {
+    try requireFullDiskAccess()
+    let destructive = ["retire", "retire_dirty", "quarantine", "finish_quarantine", "batch_retire", "repair", "reconcile", "rescue", "restore", "purge"].contains(request.action)
+    guard let service = worktreeService, !busy || ["list", "operations", "keep", "retain"].contains(request.action) else { throw StoreError.message("Cleanup is busy or worktree store unavailable.") }
+    if destructive { busy = true }; defer { if destructive { busy = false } }
+    return try await service.request(request, caller: caller, management: management)
+  }
   public func recheckFullDiskAccess() throws -> ViewState {
     state.fullDiskAccess = try FullDiskAccess.confirmSetup(root: store.root)
     return state
@@ -356,113 +404,23 @@ public actor Monitor {
     throw StoreError.message("Cleanup is agent-led. Ask your connected harness to tame the horde.")
   }
 
-  public func recordWorkspace(_ request: AgentRequest) throws -> (String?, String, WorkspaceClaim?) {
+  public func recordWorkspace(_ request: AgentRequest) async throws -> (String?, String, WorkspaceClaim?) {
     try requireFullDiskAccess()
-    guard case .found = native.probe(request.callerPID), let action = request.action,
-      let evidence = request.rationale, (20...1200).contains(evidence.count) else {
-      throw StoreError.message("Authenticated caller and factual workspace evidence are required.")
+    guard case .found = native.probe(request.callerPID), let service = worktreeService, !busy || request.action == "retain" else {
+      throw StoreError.message("Authenticated caller and available worktree service required.")
     }
-    var next = catalog
-    var claims = (next.workspaces ?? []).filter { $0.state != "cleaned" }
-    if action == "create" {
-      guard claims.count < 64, let repository = request.workspacePath, repository.hasPrefix("/"),
-        let label = request.label, (1...80).contains(label.count),
-        let condition = request.completionCondition, (10...500).contains(condition.count) else {
-        throw StoreError.message("Create requires repository, label and completion condition. Maximum 64 tracked workspaces.")
-      }
-      let repo = WorkspaceSafety.canonical(repository)
-      // Git checkout can execute repository-defined filters. Refuse them instead of running arbitrary commands.
-      let configuration = try WorkspaceSafety.git(repo, ["config", "--null", "--name-only", "--list"])
-      guard !configuration.split(separator: "\0").contains(where: { $0.hasPrefix("filter.") }) else {
-        throw StoreError.message("Repositories with checkout filters require their owning harness; no worktree created.")
-      }
-      let directory = URL(fileURLWithPath: WorkspaceSafety.canonical(store.root.path)).appendingPathComponent("workspaces", isDirectory: true)
-      if !FileManager.default.fileExists(atPath: directory.path) {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-      }
-      _ = try WorkspaceSafety.statAt(directory.path)
-      let id = UUID().uuidString, path = WorkspaceSafety.canonical(directory.path) + "/" + id
-      let head = WorkspaceSafety.line(try WorkspaceSafety.git(repo, ["rev-parse", "--verify", "HEAD^{commit}"]))
-      try WorkspaceSafety.git(repo, ["worktree", "add", "--detach", "--", path, head])
-      let identity = try WorkspaceSafety.identity(path, root: store.root)
-      let token = UUID().uuidString + UUID().uuidString
-      let claim = WorkspaceClaim(id: id, tokenHash: WorkEvidence.hash(token), identity: identity,
-        label: label, purpose: evidence, completionCondition: condition, state: "active", evidence: evidence,
-        head: nil, created: Date(), updated: Date())
-      claims.append(claim); next.workspaces = claims
-      do { try store.save(next) } catch {
-        throw StoreError.message("Workspace created at \(path), but ownership could not be saved. It will not be cleaned automatically. Preserve it.")
-      }
-      catalog = next; state.catalog = next
-      return (token, "Disposable detached worktree created. Work in the returned path, create a branch if needed, and keep workToken private. Release only after outputs are preserved and all consumers finish.", claim)
-    }
-    guard ["release", "retain"].contains(action), let token = request.workToken, token.count == 72,
-      let index = claims.firstIndex(where: { $0.tokenHash == WorkEvidence.hash(token) }),
-      try WorkspaceSafety.identity(claims[index].identity.path, root: store.root) == claims[index].identity else {
-      throw StoreError.message("Exact workspace and owning task's token required. No claim changed.")
-    }
-    claims[index].state = action == "release" ? "released" : "active"
-    claims[index].head = action == "release" ? WorkspaceSafety.line(try WorkspaceSafety.git(claims[index].identity.path, ["rev-parse", "--verify", "HEAD^{commit}"])) : nil
-    claims[index].evidence = evidence; claims[index].updated = Date()
-    next.workspaces = claims
-    try store.save(next); catalog = next; state.catalog = next
-    if action == "release" { try HarnessHook.requestCleanup(root: store.root) }
-    return (nil, action == "release" ? "Workspace release saved for independent review. Nothing deleted or credited." : "Workspace retained. Cleanup is blocked before you resume work.", claims[index])
+    return try await service.legacyRequest(request)
   }
-
-  public func previewWorkspace(_ id: String) throws -> WorkspaceClaim {
+  public func previewWorkspace(_ id: String) async throws -> WorkspaceClaim {
     try requireFullDiskAccess()
-    guard let claim = catalog.workspaces?.first(where: { $0.id == id }) else {
-      throw StoreError.message("Unknown disposable workspace; existing worktrees cannot be adopted.")
-    }
-    _ = try WorkspaceSafety.check(claim, root: store.root, visibility: workspaceVisibility)
-    return claim
+    guard let service = worktreeService else { throw StoreError.message("Worktree service unavailable.") }
+    return try await service.legacyPreview(id)
   }
-
-  public func cleanWorkspace(_ preview: WorkspaceClaim) throws -> String {
+  public func cleanWorkspace(_ preview: WorkspaceClaim) async throws -> String {
     try requireFullDiskAccess()
-    guard !busy else { throw StoreError.message("A cleanup is already in progress.") }; busy = true; defer { busy = false }
-    guard let current = catalog.workspaces?.first(where: { $0.id == preview.id }),
-      current.updated == preview.updated, current.head == preview.head, current.state == "released",
-      !(catalog.workspaceReceipts ?? []).contains(where: { $0.workspaceID == current.id }) else {
-      throw StoreError.message("Workspace claim changed or a cleanup was already attempted. Preserve it.")
-    }
-    let check = try WorkspaceSafety.check(current, root: store.root, visibility: workspaceVisibility)
-    let id = UUID(), ref = "refs/burnzombies/worktrees/" + id.uuidString.lowercased()
-    // Atomic compare-and-create: keep the exact commit reachable even if remote refs or branches later move.
-    try WorkspaceSafety.git(check.identity.common, ["update-ref", ref, check.head, String(repeating: "0", count: check.head.count)])
-    var receipt = WorkspaceReceipt(id: id, workspaceID: current.id, identity: check.identity,
-      label: current.label, head: check.head, recoveryRef: ref, date: Date(), verifiedAt: nil,
-      outcome: "prepared", diskReclaimedBytes: 0, detail: "Prepared native removal; recovery ref preserves HEAD. No benefit yet.")
-    var next = catalog; next.workspaceReceipts = (next.workspaceReceipts ?? []) + [receipt]
-    try store.save(next); catalog = next; state.catalog = next
-    do {
-      // Recheck after durable preparation, including fresh use and all Git protections. Never --force.
-      _ = try WorkspaceSafety.check(current, root: store.root, visibility: workspaceVisibility)
-      let before = try WorkspaceSafety.freeBytes(store.root.path)
-      try WorkspaceSafety.git(check.identity.common, ["worktree", "remove", "--", check.identity.path])
-      guard WorkspaceSafety.removed(receipt) else { throw StoreError.message("Worktree removal was not verified. No benefit credited.") }
-      let after = try WorkspaceSafety.freeBytes(store.root.path)
-      receipt.diskReclaimedBytes = min(check.allocated, after > before ? after - before : 0)
-      receipt.outcome = "verified"; receipt.verifiedAt = Date()
-      receipt.detail = "Exact worktree removal verified. HEAD retained at \(ref). Disk credit is observed free-space gain capped by the removed allocated files; APFS sharing and concurrent activity can reduce attribution."
-      let receiptIndex = (next.workspaceReceipts?.count ?? 1) - 1
-      next.workspaceReceipts?[receiptIndex] = receipt
-      next.lifetimeWorktreesCleaned = (next.lifetimeWorktreesCleaned ?? 0) + 1
-      next.lifetimeDiskReclaimedBytes = (next.lifetimeDiskReclaimedBytes ?? 0) + receipt.diskReclaimedBytes
-      if let index = next.workspaces?.firstIndex(where: { $0.id == current.id }) { next.workspaces?[index].state = "cleaned" }
-      try store.save(next); catalog = next; state.catalog = next
-      return "One worktree removal verified. \(receipt.diskReclaimedBytes) disk bytes credited; commits preserved at \(ref)."
-    } catch {
-      // Never turn an uncertain or interrupted removal into a positive benefit.
-      var failed = catalog
-      if let i = failed.workspaceReceipts?.firstIndex(where: { $0.id == id }) {
-        failed.workspaceReceipts?[i].outcome = "unverified"
-        failed.workspaceReceipts?[i].detail = "Removal failed or could not be recorded: " + error.localizedDescription
-      }
-      if (try? store.save(failed)) != nil { catalog = failed; state.catalog = failed }
-      throw error
-    }
+    guard !busy, let service = worktreeService else { throw StoreError.message("Cleanup is already in progress or unavailable.") }
+    busy = true; defer { busy = false }
+    return try await service.legacyClean(preview).detail
   }
 
   public func diskPolicy() throws -> DiskPolicy { try DiskPolicy.load(store) }
