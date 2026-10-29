@@ -323,11 +323,14 @@ func managedCacheInspectionCLI() throws {
     report["eligibleRecordCount"] = eligible.count
     report["eligibleBytes"] = inventory.eligibleBytes
     report["above10GBOpportunity"] = inventory.eligibleBytes >= DiskCandidate.minimumReviewBytes
-    report["overlappingProtectionCounts"] = ["shared": inventory.records.filter(\.shared).count,
-      "active": inventory.records.filter { !$0.reclaimable }.count, "mutable": inventory.records.filter(\.mutable).count,
-      "unknownLastUse": inventory.records.filter { $0.lastUsed == nil }.count,
-      "usedWithinRetention": inventory.records.filter { ($0.lastUsed ?? .distantPast) > cutoff }.count,
-      "nonRegularType": inventory.records.filter { $0.type != "regular" }.count]
+    var protectionCounts: [String: Int] = [:]
+    protectionCounts["shared"] = inventory.records.filter { $0.shared }.count
+    protectionCounts["active"] = inventory.records.filter { !$0.reclaimable }.count
+    protectionCounts["mutable"] = inventory.records.filter { $0.mutable }.count
+    protectionCounts["unknownLastUse"] = inventory.records.filter { $0.lastUsed == nil }.count
+    protectionCounts["usedWithinRetention"] = inventory.records.filter { ($0.lastUsed ?? .distantPast) > cutoff }.count
+    protectionCounts["nonRegularType"] = inventory.records.filter { $0.type != "regular" }.count
+    report["overlappingProtectionCounts"] = protectionCounts
     report["eligibleRecords"] = eligible.prefix(32).map { ["id": $0.id, "cacheBytes": $0.bytes,
       "lastUsed": ISO8601DateFormatter().string(from: $0.lastUsed!), "type": $0.type] as [String: Any] }
     report["omittedEligibleRecords"] = max(0, eligible.count - 32)
