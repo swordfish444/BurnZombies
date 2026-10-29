@@ -110,6 +110,57 @@ import Vision
     throw StoreError.message("Revocation failed to restore setup or changed cleanup history")
   }
   _ = try render("revoked")
+  // macOS may terminate the old process before it returns from System Settings.
+  // Recreate the model using only durable preferences, as Quit & Reopen does.
+  let restartSuite = suite + ".restart"
+  guard let restartPreferences = UserDefaults(suiteName: restartSuite) else { throw StoreError.message("Restart preferences unavailable") }
+  defer { restartPreferences.removePersistentDomain(forName: restartSuite) }
+  var restartChecks = 0
+  var restartResult = FullDiskAccessStatus(state: .granted)
+  func launch() -> AppModel {
+    let next = AppModel(demo: true, accessPreferences: restartPreferences,
+      accessOpener: { _ in true }, accessChecker: { restartChecks += 1; return restartResult })
+    next.state.fullDiskAccess = .init()
+    return next
+  }
+  func finishRestart(_ next: AppModel, _ expected: Int) throws {
+    let deadline = Date().addingTimeInterval(3)
+    while (restartChecks != expected || next.working) && Date() < deadline { settle() }
+    guard restartChecks == expected, !next.working else { throw StoreError.message("Quit & Reopen lost the pending access verification") }
+  }
+  var prior: AppModel? = launch()
+  prior!.openFullDiskAccessSettings()
+  prior = nil
+  let afterQuit = launch()
+  try finishRestart(afterQuit, 1)
+  guard afterQuit.accessReady, !afterQuit.showsAccessBanner else { throw StoreError.message("Relaunch failed to show verified access") }
+  let ordinaryLaunch = launch(); settle()
+  guard restartChecks == 1, !ordinaryLaunch.accessReady else { throw StoreError.message("Ordinary launch probed or assumed access") }
+  restartResult = .init(state: .required)
+  prior = launch(); prior!.openFullDiskAccessSettings()
+  prior!.accessSetupDidResignActive(); prior!.accessSetupDidBecomeActive()
+  try finishRestart(prior!, 2)
+  guard !prior!.accessReady else { throw StoreError.message("Old process assumed permission before restart") }
+  prior = nil
+  restartResult = .init(state: .granted)
+  let afterEarlyDenial = launch(); try finishRestart(afterEarlyDenial, 3)
+  guard afterEarlyDenial.accessReady else { throw StoreError.message("Early denial discarded relaunch verification") }
+  for unresolved in [FullDiskAccessState.required, .unknown] {
+    afterEarlyDenial.openFullDiskAccessSettings()
+    restartResult = .init(state: unresolved)
+    let expected = restartChecks + 1
+    let denied = launch(); try finishRestart(denied, expected)
+    guard !denied.accessReady else { throw StoreError.message("Unverified restart granted access") }
+    let again = launch(); again.accessSetupDidBecomeActive(); settle()
+    guard restartChecks == expected else { throw StoreError.message("Denied relaunch created a retry loop") }
+  }
+  let failedOpen = AppModel(demo: true, accessPreferences: restartPreferences,
+    accessOpener: { _ in false }, accessChecker: { restartChecks += 1; return restartResult })
+  failedOpen.openFullDiskAccessSettings()
+  let beforeFailedRestart = restartChecks
+  _ = launch(); settle()
+  guard restartChecks == beforeFailedRestart else { throw StoreError.message("Failed settings launch left a restart probe armed") }
   print("PASS native direct-pane/dismiss hits, isolated persistent dismissal, one-shot return check, busy deferral, denied/failed-open refusal, verified completion and revocation; no windows or live permission changes")
+  print("PASS Quit & Reopen verification, denied pre-restart return recovery, and denied/unknown restart consumption without loops")
 }
 #endif

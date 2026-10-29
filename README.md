@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 Apple Silicon or Intel, macOS 14+. The installer selects an available **Codex, Claude Code, Cursor CLI, GitHub Copilot CLI or Gemini CLI**, starts the menu bar observer, and configures one background reviewer. The reviewer connects privately when needed; everyday chats get no hooks or always-loaded MCP connection. Use your existing harness login. No BurnZombies account, API key or package manager.
 
-**One required macOS step:** click **Allow Full Disk Access** in the menu-bar banner to open the right System Settings pane, then enable **BurnZombies**. Return to the app and it checks access automatically. If macOS asks you to relaunch, use **Check access** afterward. macOS requires you to grant the permission yourself; your agent handles the installation.
+**One required macOS step:** click **Allow Full Disk Access** in the menu-bar banner to open the right System Settings pane, then enable **BurnZombies**. Return to the app and it checks access automatically. If macOS asks, choose **Quit & Reopen**; the access check continues automatically after relaunch. macOS requires you to grant the permission yourself; your agent handles the installation.
 
 Dismiss the banner with **×** whenever you like; setup remains under the **Settings cog → Full Disk Access**. Once verified, the banner disappears and Settings shows a muted completed section with a green checkmark. BurnZombies waits quietly for access—dismissing the reminder never enables scanning. [Access setup →](docs/INSTALL.md#required-full-disk-access)
 
