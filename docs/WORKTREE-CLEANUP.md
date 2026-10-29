@@ -18,6 +18,8 @@ Before removing anything, BurnZombies writes a durable operation journal, retain
 
 The app rechecks the complete source file set, hashes, identity, claims, policy and native consumers before removal. Clean removal uses `git worktree remove` without force. Explicit manual dirty retirement uses a single `--force` only after independent recovery verification. There is no double force, branch deletion, broad `git clean`, garbage collection or automatic metadata prune. Git documents these separate [worktree operations](https://git-scm.com/docs/git-worktree); independent commit preservation uses [Git bundles](https://git-scm.com/docs/git-bundle).
 
+Normal verification uses a private temporary plaintext checkout and removes it after checking. A crash or failed user restoration can leave private staging/partial files for inspection; the journal preserves this uncertainty.
+
 Recovery files use chunked AES-GCM authenticated encryption with a random key stored in this Mac's Keychain. Archive integrity is bound to the operation, file and chunk. Losing the key can make independent recovery impossible. **Check recovery key** allows an explicit access/unlock prompt after an app upgrade; background work never prompts. A missing key is not silently replaced while unpurged archives depend on it. Keep the private state directory and Keychain together in your backup strategy.
 
 **Archive and quarantine** first verifies recovery, then uses Git's move operation to put the checkout in a private directory on the same volume. Moving reclaims no disk space. Final retirement recommends seven days of grace, or requires an explicit **Retire now** choice. Files added or changed during quarantine block final removal. The independent archive remains after final retirement.
@@ -42,7 +44,7 @@ On restart, incomplete operations become **uncertain**; they are never replayed 
 
 Automatic clean retirement requires an explicitly managed repository with automatic retirement enabled, every exact owner released for at least 24 hours, complete checks, verified independent recovery, and the shared disk settings in Automatic mode below their free-space goal. It respects the shared daily disk allowance and a default maximum of three worktree retirements per day. Dirty retirement, adoption, human confirmation, quarantine finalization, restoration and archive purge stay manual. Legacy BurnZombies-created disposable workspaces keep their original stricter clean/remote-reachability contract and private owner tokens through migration.
 
-MCP exposes bounded inventory, inspection, claims, release/retain, recommendations and guarded automatic clean retirement. Review sessions receive only their supplied IDs. Background reviewers cannot adopt, invent human confirmation, change policy, release owners, force removal or purge archives. No private file contents or owner-token hashes enter inventory responses.
+MCP exposes bounded inventory, inspection, claims, release/retain, recommendations and guarded automatic clean retirement. Review sessions receive only their supplied IDs. Background reviewers cannot adopt, invent human confirmation, change policy, release owners, force removal or purge archives. No private file contents or owner-token hashes enter model inventory responses. **View local changes** is a separate explicit native-only view; it never opens ignored/untracked file contents or invokes external diff/text-conversion drivers.
 
 ## CLI
 

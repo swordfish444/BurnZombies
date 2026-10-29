@@ -11,7 +11,10 @@ public struct MachineReviewConfiguration: Codable, Sendable {
   public var reasoningEffort: String?
   public static let harnesses = ["codex", "claude", "cursor", "copilot", "gemini"]
   public init(harness: String, executable: String, launcher: String, server: String) {
-    self.harness = harness; self.executable = executable; self.launcher = launcher; self.server = server
+    self.harness = harness
+    self.executable = executable
+    self.launcher = launcher
+    self.server = server
   }
   public static func load(root: URL) throws -> Self? {
     let url = root.appendingPathComponent("machine-review.json")
@@ -20,21 +23,31 @@ public struct MachineReviewConfiguration: Codable, Sendable {
   }
   public func save(root: URL) throws {
     try validateSelection()
-    guard Self.harnesses.contains(harness), [executable, launcher, server].allSatisfy({ $0.hasPrefix("/") }) else {
+    guard Self.harnesses.contains(harness),
+      [executable, launcher, server].allSatisfy({ $0.hasPrefix("/") })
+    else {
       throw StoreError.message("Choose an installed harness and absolute executable paths.")
     }
-    let store = try Store(root: root), url = root.appendingPathComponent("machine-review.json")
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+    let store = try Store(root: root)
+    let url = root.appendingPathComponent("machine-review.json")
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
     let data = try encoder.encode(self)
     if (try? store.read(url, limit: 8192)) != data { try store.write(data, to: url, limit: 8192) }
   }
   public static func detect(_ harness: String) -> String? {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+    let paths =
+      (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
       + [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
     let names = harness == "cursor" ? ["agent", "cursor-agent"] : [harness]
     var candidates = paths.flatMap { dir in names.map { dir + "/" + $0 } }
-    if harness == "codex" { candidates += ["/Applications/Codex.app/Contents/Resources/codex", home + "/Applications/Codex.app/Contents/Resources/codex"] }
+    if harness == "codex" {
+      candidates += [
+        "/Applications/Codex.app/Contents/Resources/codex",
+        home + "/Applications/Codex.app/Contents/Resources/codex",
+      ]
+    }
     return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
   }
 }
@@ -52,19 +65,33 @@ public struct MachineReviewState: Codable, Sendable {
   public var laneLastStarted: [String: Date]?
   public init() {}
   public func pending(_ current: HarnessHook.Signal, now: Date = Date()) -> [ReviewEvidence] {
-    var processCount = 0, workspaces = 0, recommendations = 0, selected = [ReviewEvidence]()
+    var processCount = 0
+    var workspaces = 0
+    var recommendations = 0
+    var selected = [ReviewEvidence]()
     var lane: ReviewLane?
     let candidates = (current.reviewEvidence ?? []).enumerated().sorted { a, b in
       // Give each waiting lane a turn even while another lane keeps discovering
       // new work. Initial ties favor process relief; later starts rotate fairly.
       func order(_ e: ReviewEvidence) -> Int {
-        switch ReviewLane.lane(for: e) { case .process, .ownerProcess: return 0; case .managedCache: return 1; case .workspace, .worktree: return 2; case .worktreeAdvice: return 4; case .unsupported: return 5; case .disk: return 3; case .discovery: return 4 }
+        switch ReviewLane.lane(for: e) {
+        case .process, .ownerProcess: return 0
+        case .managedCache: return 1
+        case .workspace, .worktree: return 2
+        case .worktreeAdvice: return 4
+        case .unsupported: return 5
+        case .disk: return 3
+        case .discovery: return 4
+        }
       }
-      let al = ReviewLane.lane(for: a.element), bl = ReviewLane.lane(for: b.element)
-      let at = laneLastStarted?[al.rawValue] ?? .distantPast, bt = laneLastStarted?[bl.rawValue] ?? .distantPast
+      let al = ReviewLane.lane(for: a.element)
+      let bl = ReviewLane.lane(for: b.element)
+      let at = laneLastStarted?[al.rawValue] ?? .distantPast
+      let bt = laneLastStarted?[bl.rawValue] ?? .distantPast
       if at != bt { return at < bt }
       if order(a.element) != order(b.element) { return order(a.element) < order(b.element) }
-      let aa = attempts?[a.element.id], bb = attempts?[b.element.id]
+      let aa = attempts?[a.element.id]
+      let bb = attempts?[b.element.id]
       let ad = aa?.revision == a.element.revision ? aa!.date : .distantPast
       let bd = bb?.revision == b.element.revision ? bb!.date : .distantPast
       return ad == bd ? a.offset < b.offset : ad < bd
@@ -72,20 +99,27 @@ public struct MachineReviewState: Codable, Sendable {
     for item in candidates where reviewedEvidence?[item.id] != item.revision {
       let itemLane = ReviewLane.lane(for: item)
       guard itemLane != .unsupported else { continue }
-      if let attempt = attempts?[item.id], itemLane == .discovery, attempt.revision == item.revision {
+      if let attempt = attempts?[item.id], itemLane == .discovery, attempt.revision == item.revision
+      {
         let delay = min(21600, 3600 * pow(2, Double(min(3, max(0, attempt.count - 1)))))
         guard now.timeIntervalSince(attempt.date) >= delay else { continue }
       }
       if let lane, itemLane != lane { continue }
-      if itemLane == .ownerProcess && !selected.isEmpty { continue } // One owner action per invocation; never acknowledge unvisited owners.
+      if itemLane == .ownerProcess && !selected.isEmpty { continue }  // One owner action per invocation; never acknowledge unvisited owners.
       if item.processCount == 0 {
         if item.recommendationOnly == true {
-          guard workspaces == 0, recommendations < (itemLane == .discovery ? 2 : 3) else { continue }; recommendations += 1
+          guard workspaces == 0, recommendations < (itemLane == .discovery ? 2 : 3) else {
+            continue
+          }
+          recommendations += 1
         } else {
-          guard workspaces == 0, recommendations == 0 else { continue }; workspaces += 1
+          guard workspaces == 0, recommendations == 0 else { continue }
+          workspaces += 1
         }
       } else {
-        guard processCount + item.processCount <= 16, selected.filter({ $0.processCount > 0 }).count < 8 else { continue }
+        guard processCount + item.processCount <= 16,
+          selected.filter({ $0.processCount > 0 }).count < 8
+        else { continue }
         processCount += item.processCount
       }
       lane = itemLane
@@ -94,7 +128,9 @@ public struct MachineReviewState: Codable, Sendable {
     return selected
   }
   public func due(_ current: HarnessHook.Signal, requested: Bool, now: Date) -> Bool {
-    guard phase != "paused", phase != "reviewing", (0...180).contains(now.timeIntervalSince(current.observedAt)) else { return false }
+    guard phase != "paused", phase != "reviewing",
+      (0...180).contains(now.timeIntervalSince(current.observedAt))
+    else { return false }
     guard !pending(current, now: now).isEmpty else { return false }
     let elapsed = lastStarted.map { now.timeIntervalSince($0) } ?? .infinity
     // Requests coalesce into the same bounded queue; they never bypass the cooldown.
@@ -108,20 +144,25 @@ public struct MachineReviewState: Codable, Sendable {
     progressVersion = 1
   }
   public mutating func begin(_ selected: [ReviewEvidence], now: Date) {
-    attempts = attempts ?? [:]; reviewedEvidence = reviewedEvidence ?? [:]
+    attempts = attempts ?? [:]
+    reviewedEvidence = reviewedEvidence ?? [:]
     if let first = selected.first {
       laneLastStarted = laneLastStarted ?? [:]
       laneLastStarted?[ReviewLane.lane(for: first).rawValue] = now
     }
     for evidence in selected {
       let prior = attempts?[evidence.id]
-      attempts?[evidence.id] = .init(revision: evidence.revision, date: now,
+      attempts?[evidence.id] = .init(
+        revision: evidence.revision, date: now,
         count: prior?.revision == evidence.revision ? min(16, (prior?.count ?? 0) + 1) : 1)
-      if ReviewLane.lane(for: evidence) != .discovery { reviewedEvidence?[evidence.id] = evidence.revision }
+      if ReviewLane.lane(for: evidence) != .discovery {
+        reviewedEvidence?[evidence.id] = evidence.revision
+      }
     }
   }
   public mutating func complete(_ selected: [ReviewEvidence], progress: ReviewProgress) {
-    for evidence in selected where ReviewLane.lane(for: evidence) == .discovery && progress.completed.contains(evidence.id) {
+    for evidence in selected
+    where ReviewLane.lane(for: evidence) == .discovery && progress.completed.contains(evidence.id) {
       reviewedEvidence?[evidence.id] = evidence.revision
     }
   }
@@ -135,14 +176,18 @@ public actor MachineReviewer {
   private let store: Store
   private var running = false
   private var state = MachineReviewState()
-  public init(root: URL = Store.defaultRoot, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) throws {
+  public init(
+    root: URL = Store.defaultRoot, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil
+  ) throws {
     self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: root) }
-    self.root = root; store = try Store(root: root)
+    self.root = root
+    store = try Store(root: root)
     let url = root.appendingPathComponent("machine-review-state.json")
     if FileManager.default.fileExists(atPath: url.path) {
       state = try JSONDecoder().decode(MachineReviewState.self, from: store.read(url, limit: 65536))
       if state.phase == "reviewing" {
-        state.phase = "paused"; state.detail = "The previous review was interrupted. Resume reviews when ready."
+        state.phase = "paused"
+        state.detail = "The previous review was interrupted. Resume reviews when ready."
       }
     }
     state.migrateProgress()
@@ -150,11 +195,14 @@ public actor MachineReviewer {
   public func snapshot() -> MachineReviewState { state }
   public func resume() throws {
     guard !running else { return }
-    state.phase = "observing"; state.detail = "Watching this Mac across all projects and sessions."
+    state.phase = "observing"
+    state.detail = "Watching this Mac across all projects and sessions."
     try save()
   }
   private func save() throws {
-    try store.write(JSONEncoder().encode(state), to: root.appendingPathComponent("machine-review-state.json"), limit: 65536)
+    try store.write(
+      JSONEncoder().encode(state), to: root.appendingPathComponent("machine-review-state.json"),
+      limit: 65536)
   }
   public func tick(now: Date = Date()) async {
     guard !running else { return }
@@ -162,51 +210,75 @@ public actor MachineReviewer {
     // account/transport pauses remain untouched; grants never resume those pauses.
     guard accessCheck().canScan else { return }
     do {
-      guard let config = try MachineReviewConfiguration.load(root: root), config.enabled else { return }
+      guard let config = try MachineReviewConfiguration.load(root: root), config.enabled else {
+        return
+      }
       guard let data = try? store.read(root.appendingPathComponent("review-signal"), limit: 65536),
-        let signal = try? JSONDecoder().decode(HarnessHook.Signal.self, from: data) else { return }
+        let signal = try? JSONDecoder().decode(HarnessHook.Signal.self, from: data)
+      else { return }
       let pending = state.pending(signal, now: now)
       if pending.isEmpty {
         state.pendingSince = nil
-        let deferred = (signal.reviewEvidence ?? []).contains { state.reviewedEvidence?[$0.id] != $0.revision }
-        let detail = deferred ? "Unfinished investigations are queued. Waiting for fresh evidence or their next review interval."
+        let deferred = (signal.reviewEvidence ?? []).contains {
+          state.reviewedEvidence?[$0.id] != $0.revision
+        }
+        let detail =
+          deferred
+          ? "Unfinished investigations are queued. Waiting for fresh evidence or their next review interval."
           : "Watching this Mac. No new cleanup or storage evidence to review."
         if state.phase != "paused" && state.detail != detail {
-          state.detail = detail; try save()
+          state.detail = detail
+          try save()
         }
         return
       }
-      if state.pendingSince == nil { state.pendingSince = now; try save() }
+      if state.pendingSince == nil {
+        state.pendingSince = now
+        try save()
+      }
       let request = root.appendingPathComponent("review-request")
-      guard state.due(signal, requested: FileManager.default.fileExists(atPath: request.path), now: now) else { return }
+      guard
+        state.due(signal, requested: FileManager.default.fileExists(atPath: request.path), now: now)
+      else { return }
       // The monitor lock guarantees one observer; this lock also excludes manual CLI reviews.
       let lock = try InstanceLock(url: root.appendingPathComponent("machine-review.lock"))
       defer { withExtendedLifetime(lock) {} }
       var ledger = try ReviewLedger.load(store: store)
-      let attempt = ledger.reserve(harness: config.harness, evidenceCount: pending.count, now: now, model: config.model)
-      try ledger.save(store: store) // Reserve before spawning; crashes cannot erase usage attempts.
-      state.phase = "reviewing"; state.detail = "Reviewing this Mac with \(config.harness)."
-      state.lastStarted = now; state.signal = signal
-      state.signal?.reviewEvidence = nil // Revisions already live in the compact deduplication map.
+      let attempt = ledger.reserve(
+        harness: config.harness, evidenceCount: pending.count, now: now, model: config.model)
+      try ledger.save(store: store)  // Reserve before spawning; crashes cannot erase usage attempts.
+      state.phase = "reviewing"
+      state.detail = "Reviewing this Mac with \(config.harness)."
+      state.lastStarted = now
+      state.signal = signal
+      state.signal?.reviewEvidence = nil  // Revisions already live in the compact deduplication map.
       let liveIDs = Set(signal.reviewEvidence?.map(\.id) ?? [])
       state.reviewedEvidence = (state.reviewedEvidence ?? [:]).filter { liveIDs.contains($0.key) }
       state.attempts = (state.attempts ?? [:]).filter { liveIDs.contains($0.key) }
       state.begin(pending, now: now)
       try ReviewProgress(attempt: attempt, selected: pending.map(\.id)).save(store)
       state.pendingSince = nil
-      try save() // A crash cannot cause an automatic retry of uncertain work.
+      try save()  // A crash cannot cause an automatic retry of uncertain work.
       try store.write(Data(), to: root.appendingPathComponent("last-review.log"), limit: 1_048_576)
-      if FileManager.default.fileExists(atPath: request.path) { try FileManager.default.removeItem(at: request) }
+      if FileManager.default.fileExists(atPath: request.path) {
+        try FileManager.default.removeItem(at: request)
+      }
       running = true
       defer { running = false }
       let lane = ReviewLane.lane(for: pending[0])
-      let result = await Task.detached { try Self.execute(config, root: self.root,
-        prompt: "Review the supplied \(lane.rawValue) queue now. Follow the service instructions; finish without polling.",
-        reviewIDs: pending.map(\.id), lane: lane, attempt: attempt, accessCheck: self.accessCheck) }.result
+      let result = await Task.detached {
+        try Self.execute(
+          config, root: self.root,
+          prompt:
+            "Review the supplied \(lane.rawValue) queue now. Follow the service instructions; finish without polling.",
+          reviewIDs: pending.map(\.id), lane: lane, attempt: attempt, accessCheck: self.accessCheck)
+      }.result
       state.lastFinished = Date()
       if let index = ledger.entries.firstIndex(where: { $0.id == attempt }) {
         ledger.entries[index].finished = state.lastFinished
-        ledger.entries[index].usage = (try? store.read(root.appendingPathComponent("last-review.log"), limit: 1_048_576)).flatMap { ReviewUsage.parse($0, requestedModel: config.model) }
+        ledger.entries[index].usage =
+          (try? store.read(root.appendingPathComponent("last-review.log"), limit: 1_048_576))
+          .flatMap { ReviewUsage.parse($0, requestedModel: config.model) }
         ledger.entries[index].outcome = (try? result.get()) != nil ? "completed" : "failed"
         try ledger.save(store: store)
       }
@@ -216,15 +288,18 @@ public actor MachineReviewer {
           state.complete(pending, progress: progress)
         }
         state.phase = "observing"
-        state.detail = pending.contains { state.reviewedEvidence?[$0.id] != $0.revision }
+        state.detail =
+          pending.contains { state.reviewedEvidence?[$0.id] != $0.revision }
           ? "Review complete. Unfinished investigations remain queued."
           : "Review complete. Watching this Mac."
       case .failure(let error):
-        state.phase = "paused"; state.detail = error.localizedDescription
+        state.phase = "paused"
+        state.detail = error.localizedDescription
       }
       try save()
     } catch {
-      state.phase = "paused"; state.detail = error.localizedDescription
+      state.phase = "paused"
+      state.detail = error.localizedDescription
       try? save()
     }
   }
@@ -307,22 +382,33 @@ public actor MachineReviewer {
     accurately; only verified receipts demonstrate recovered resources. More confident wording is never more evidence.
     """
 
-  public static func arguments(_ c: MachineReviewConfiguration, directory: URL, root: URL, prompt: String, reviewIDs: [String]? = nil,
-    lane: ReviewLane? = nil, attempt: UUID? = nil) throws -> [String] {
+  public static func arguments(
+    _ c: MachineReviewConfiguration, directory: URL, root: URL, prompt: String,
+    reviewIDs: [String]? = nil,
+    lane: ReviewLane? = nil, attempt: UUID? = nil
+  ) throws -> [String] {
     try c.validateSelection()
     let selection = c.selectionArguments
     var serverEnvironment = ["BURNZOMBIES_HOME": root.path, "BURNZOMBIES_REVIEW_MODE": "1"]
-    if let reviewIDs { serverEnvironment["BURNZOMBIES_REVIEW_IDS"] = String(decoding: try JSONEncoder().encode(reviewIDs), as: UTF8.self) }
+    if let reviewIDs {
+      serverEnvironment["BURNZOMBIES_REVIEW_IDS"] = String(
+        decoding: try JSONEncoder().encode(reviewIDs), as: UTF8.self)
+    }
     if let lane { serverEnvironment["BURNZOMBIES_REVIEW_LANE"] = lane.rawValue }
     if let attempt { serverEnvironment["BURNZOMBIES_REVIEW_ATTEMPT"] = attempt.uuidString }
     let instructionsText = lane?.instructions ?? Self.prompt
-    let userPrompt = c.harness == "codex" || lane == nil ? prompt : instructionsText + "\n\n" + prompt
+    let userPrompt =
+      c.harness == "codex" || lane == nil ? prompt : instructionsText + "\n\n" + prompt
     let server: [String: Any] = ["command": c.server, "args": [String](), "env": serverEnvironment]
     let config = ["mcpServers": ["burnzombies": server]]
-    let data = try JSONSerialization.data(withJSONObject: config, options: [.sortedKeys, .withoutEscapingSlashes])
+    let data = try JSONSerialization.data(
+      withJSONObject: config, options: [.sortedKeys, .withoutEscapingSlashes])
     let json = String(decoding: data, as: UTF8.self)
     func quoted(_ text: String) -> String {
-      String(decoding: try! JSONSerialization.data(withJSONObject: [text], options: .withoutEscapingSlashes), as: UTF8.self).dropFirst().dropLast().description
+      String(
+        decoding: try! JSONSerialization.data(
+          withJSONObject: [text], options: .withoutEscapingSlashes), as: UTF8.self
+      ).dropFirst().dropLast().description
     }
     switch c.harness {
     case "codex":
@@ -331,29 +417,55 @@ public actor MachineReviewer {
       // remain under Codex's control, and authentication stays in CODEX_HOME.
       let instructions = directory.appendingPathComponent("reviewer-instructions.md")
       try Store(root: root).write(Data(instructionsText.utf8), to: instructions, limit: 16384)
-      let isolated = ["features.apps=false", "features.plugins=false", "features.memories=false",
-        "memories.use_memories=false", "memories.generate_memories=false", "features.skip_host_skill_discovery=true",
+      let isolated = [
+        "features.apps=false", "features.plugins=false", "features.memories=false",
+        "memories.use_memories=false", "memories.generate_memories=false",
+        "features.skip_host_skill_discovery=true",
         "skills.max_context_tokens=1", "features.multi_agent=false", "features.shell_tool=false",
         "features.browser_use=false", "features.computer_use=false", "web_search=\"disabled\"",
-        "model_instructions_file=" + quoted(instructions.path)]
-      let scope = reviewIDs.map { ["-c", "mcp_servers.burnzombies.env.BURNZOMBIES_REVIEW_IDS=" + quoted(String(decoding: try! JSONEncoder().encode($0), as: UTF8.self))] } ?? []
-      let scoped = ["BURNZOMBIES_REVIEW_LANE", "BURNZOMBIES_REVIEW_ATTEMPT"].flatMap { key -> [String] in
-        serverEnvironment[key].map { ["-c", "mcp_servers.burnzombies.env.\(key)=" + quoted($0)] } ?? []
+        "model_instructions_file=" + quoted(instructions.path),
+      ]
+      let scope =
+        reviewIDs.map {
+          [
+            "-c",
+            "mcp_servers.burnzombies.env.BURNZOMBIES_REVIEW_IDS="
+              + quoted(String(decoding: try! JSONEncoder().encode($0), as: UTF8.self)),
+          ]
+        } ?? []
+      let scoped = ["BURNZOMBIES_REVIEW_LANE", "BURNZOMBIES_REVIEW_ATTEMPT"].flatMap {
+        key -> [String] in
+        serverEnvironment[key].map { ["-c", "mcp_servers.burnzombies.env.\(key)=" + quoted($0)] }
+          ?? []
       }
-      return ["exec"] + selection + isolated.flatMap { ["-c", $0] } + scope + scoped + ["--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--approve-for-me", "--json",
-        "-C", directory.path, "-c", "features.hooks=false", "-c", "mcp_servers.burnzombies.command=" + quoted(c.server),
+      return ["exec"] + selection + isolated.flatMap { ["-c", $0] } + scope + scoped + [
+        "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--approve-for-me",
+        "--json",
+        "-C", directory.path, "-c", "features.hooks=false", "-c",
+        "mcp_servers.burnzombies.command=" + quoted(c.server),
         "-c", "mcp_servers.burnzombies.env.BURNZOMBIES_HOME=" + quoted(root.path),
-        "-c", "mcp_servers.burnzombies.env.BURNZOMBIES_REVIEW_MODE=\"1\"", prompt]
+        "-c", "mcp_servers.burnzombies.env.BURNZOMBIES_REVIEW_MODE=\"1\"", prompt,
+      ]
     case "claude":
-      return selection + ["-p", userPrompt, "--output-format", "json", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", json,
+      return selection + [
+        "-p", userPrompt, "--output-format", "json", "--no-session-persistence",
+        "--strict-mcp-config", "--mcp-config", json,
         "--settings", "{\"disableAllHooks\":true}", "--permission-prompts", "none",
-        "--allowedTools", "mcp__burnzombies__*", "--tools", "", "--max-turns", "8"]
+        "--allowedTools", "mcp__burnzombies__*", "--tools", "", "--max-turns", "8",
+      ]
     case "copilot":
-      return selection + ["-p", userPrompt, "--no-ask-user", "--additional-mcp-config", json, "--allow-tool", "burnzombies", "--disable-builtin-mcps"]
+      return selection + [
+        "-p", userPrompt, "--no-ask-user", "--additional-mcp-config", json, "--allow-tool",
+        "burnzombies", "--disable-builtin-mcps",
+      ]
     case "cursor", "gemini":
       let folder = directory.appendingPathComponent(c.harness == "cursor" ? ".cursor" : ".gemini")
-      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-      try Store(root: root).write(data, to: folder.appendingPathComponent(c.harness == "cursor" ? "mcp.json" : "settings.json"), limit: 8192)
+      try FileManager.default.createDirectory(
+        at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+      try Store(root: root).write(
+        data,
+        to: folder.appendingPathComponent(c.harness == "cursor" ? "mcp.json" : "settings.json"),
+        limit: 8192)
       return selection + ["-p", userPrompt, "--output-format", "json"]
     default: throw StoreError.message("Unsupported review harness.")
     }
@@ -361,41 +473,66 @@ public actor MachineReviewer {
 
   /// Testable without starting an app. The launcher creates a private process group;
   /// only that owned group is terminated on timeout, cancellation or completion.
-  public static func execute(_ c: MachineReviewConfiguration, root: URL, prompt: String = prompt,
-    timeout: TimeInterval = 180, reviewIDs: [String]? = nil, lane: ReviewLane? = nil, attempt: UUID? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) throws {
+  public static func execute(
+    _ c: MachineReviewConfiguration, root: URL, prompt: String = prompt,
+    timeout: TimeInterval = 180, reviewIDs: [String]? = nil, lane: ReviewLane? = nil,
+    attempt: UUID? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil
+  ) throws {
     let access = (accessCheck ?? { FullDiskAccess.status(root: root) })()
     guard access.canScan else { throw StoreError.message(access.detail) }
     let store = try Store(root: root)
     let directory = root.appendingPathComponent("review-" + UUID().uuidString, isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
-    let args = try arguments(c, directory: directory, root: root, prompt: prompt, reviewIDs: reviewIDs, lane: lane, attempt: attempt)
-    let process = Process(); process.executableURL = URL(fileURLWithPath: c.launcher)
+    let args = try arguments(
+      c, directory: directory, root: root, prompt: prompt, reviewIDs: reviewIDs, lane: lane,
+      attempt: attempt)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: c.launcher)
     if c.harness == "codex" {
       // Reuse the same isolated configuration, while the app-server reports the
       // actual resolved model and cache-aware usage rather than guessing defaults.
       var overrides = [String]()
-      for i in args.indices where args[i] == "-c" && i + 1 < args.count { overrides.append(args[i + 1]) }
+      for i in args.indices where args[i] == "-c" && i + 1 < args.count {
+        overrides.append(args[i + 1])
+      }
       overrides += ["mcp_servers.burnzombies.enabled=true"]
-      let plan = CodexReviewPlan(executable: c.executable, model: c.model, effort: c.reasoningEffort, prompt: prompt, overrides: overrides,
+      let plan = CodexReviewPlan(
+        executable: c.executable, model: c.model, effort: c.reasoningEffort, prompt: prompt,
+        overrides: overrides,
         instructions: lane?.instructions ?? Self.prompt)
       let url = directory.appendingPathComponent("codex-review.json")
       try store.write(JSONEncoder().encode(plan), to: url, limit: 32768)
       process.arguments = ["review-worker", "--", c.launcher, "review-codex", url.path]
-    } else { process.arguments = ["review-worker", "--", c.executable] + args }
+    } else {
+      process.arguments = ["review-worker", "--", c.executable] + args
+    }
     process.currentDirectoryURL = directory
     var env = ProcessInfo.processInfo.environment
     env["BURNZOMBIES_HOME"] = root.path
-    env["PATH"] = (env["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/bin:" + FileManager.default.homeDirectoryForCurrentUser.path + "/.local/bin"
+    env["PATH"] =
+      (env["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/bin:"
+      + FileManager.default.homeDirectoryForCurrentUser.path + "/.local/bin"
     process.environment = env
     process.standardInput = FileHandle.nullDevice
-    let output = Pipe(); process.standardOutput = output; process.standardError = output
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = output
     let capture = ReviewOutput()
     output.fileHandleForReading.readabilityHandler = { handle in
       let data = handle.availableData
-      if data.isEmpty { handle.readabilityHandler = nil; capture.finish() } else { capture.append(data) }
+      if data.isEmpty {
+        handle.readabilityHandler = nil
+        capture.finish()
+      } else {
+        capture.append(data)
+      }
     }
-    defer { output.fileHandleForReading.readabilityHandler = nil; try? output.fileHandleForReading.close() }
+    defer {
+      output.fileHandleForReading.readabilityHandler = nil
+      try? output.fileHandleForReading.close()
+    }
     try process.run()
     let start = ProcessInfo.processInfo.systemUptime
     var exceeded = false
@@ -404,7 +541,9 @@ public actor MachineReviewer {
       if ProcessInfo.processInfo.systemUptime - lastConfigCheck >= 1 {
         lastConfigCheck = ProcessInfo.processInfo.systemUptime
         if (try? MachineReviewConfiguration.load(root: root))?.enabled == false {
-          process.terminate(); exceeded = true; break
+          process.terminate()
+          exceeded = true
+          break
         }
       }
       if ProcessInfo.processInfo.systemUptime - start >= timeout || capture.overflow {
@@ -421,30 +560,46 @@ public actor MachineReviewer {
     let drained = capture.waitForEnd()
     let bytes = capture.data
     try store.write(bytes, to: root.appendingPathComponent("last-review.log"), limit: 1_048_576)
-    if exceeded { throw StoreError.message("Review reached its time or output limit. Reviews paused; observation continues.") }
-    guard drained else { throw StoreError.message("Review output did not finish. Reviews paused; preserve incomplete usage evidence.") }
+    if exceeded {
+      throw StoreError.message(
+        "Review reached its time or output limit. Reviews paused; observation continues.")
+    }
+    guard drained else {
+      throw StoreError.message(
+        "Review output did not finish. Reviews paused; preserve incomplete usage evidence.")
+    }
     guard process.terminationStatus == 0 else {
-      throw StoreError.message("\(c.harness) could not complete the review (exit \(process.terminationStatus)). Check its login, permissions or usage limits, then resume. No automatic retry or provider switch.")
+      throw StoreError.message(
+        "\(c.harness) could not complete the review (exit \(process.terminationStatus)). Check its login, permissions or usage limits, then resume. No automatic retry or provider switch."
+      )
     }
     // A native read-only refusal is useful evidence, not an account failure.
     // Accept only exact-attempt receipts; transport, permission, harness and
     // destructive-operation failures still pause instead of being retried.
     let progress = try? ReviewProgress.load(store)
-    var deferred = lane == .discovery && progress?.attempt == attempt
-      ? (progress?.refusals ?? []).filter { $0.tool == "disk_recommend" && progress?.selected.contains($0.id) == true }
-        .map { "burnzombies_" + $0.tool } : []
+    var deferred =
+      lane == .discovery && progress?.attempt == attempt
+      ? (progress?.refusals ?? []).filter {
+        $0.tool == "disk_recommend" && progress?.selected.contains($0.id) == true
+      }
+      .map { "burnzombies_" + $0.tool } : []
     for line in String(decoding: bytes, as: UTF8.self).split(separator: "\n") {
       if let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
         object["type"] as? String == "bz.tool", object["status"] as? String == "failed",
         object["error"] == nil, object["is_error"] as? Bool != true,
-        let name = object["name"] as? String, let i = deferred.firstIndex(of: name) {
+        let name = object["name"] as? String, let i = deferred.firstIndex(of: name)
+      {
         deferred.remove(at: i)
         continue
       }
       if let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-        object["is_error"] as? Bool == true || object["type"] as? String == "error" || object["error"] != nil ||
-          (object["type"] as? String == "bz.tool" && object["status"] as? String == "failed") {
-        throw StoreError.message("The harness reported an error. Reviews paused; check its login, permission or usage status before resuming.")
+        object["is_error"] as? Bool == true || object["type"] as? String == "error"
+          || object["error"] != nil
+          || (object["type"] as? String == "bz.tool" && object["status"] as? String == "failed")
+      {
+        throw StoreError.message(
+          "The harness reported an error. Reviews paused; check its login, permission or usage status before resuming."
+        )
       }
     }
   }
@@ -458,10 +613,19 @@ private final class ReviewOutput: @unchecked Sendable {
   func finish() { ended.signal() }
   func waitForEnd() -> Bool { ended.wait(timeout: .now() + 2) == .success }
   func append(_ data: Data) {
-    lock.lock(); defer { lock.unlock() }
+    lock.lock()
+    defer { lock.unlock() }
     tooLarge = tooLarge || bytes.count + data.count > 1_048_576
     bytes.append(data.prefix(max(0, 1_048_576 - bytes.count)))
   }
-  var overflow: Bool { lock.lock(); defer { lock.unlock() }; return tooLarge }
-  var data: Data { lock.lock(); defer { lock.unlock() }; return bytes }
+  var overflow: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return tooLarge
+  }
+  var data: Data {
+    lock.lock()
+    defer { lock.unlock() }
+    return bytes
+  }
 }

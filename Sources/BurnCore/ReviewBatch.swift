@@ -2,7 +2,8 @@ import Foundation
 
 /// Routing uses typed queue identity, never a folder-name guess about disposability.
 public enum ReviewLane: String, Codable, Sendable {
-  case process, ownerProcess, managedCache, workspace, worktree, worktreeAdvice, disk, discovery, unsupported
+  case process, ownerProcess, managedCache, workspace, worktree, worktreeAdvice, disk, discovery,
+    unsupported
   public static func lane(for evidence: ReviewEvidence) -> Self {
     if evidence.id.hasPrefix("worktree-advice:") { return .worktreeAdvice }
     if evidence.id.hasPrefix("worktree:") { return .worktree }
@@ -42,7 +43,8 @@ public enum ReviewLane: String, Codable, Sendable {
     let task: String
     switch self {
     case .unsupported:
-      task = "Unrecognized queue type. Preserve it, report the unsupported category and finish without action."
+      task =
+        "Unrecognized queue type. Preserve it, report the unsupported category and finish without action."
     case .worktree, .worktreeAdvice:
       task = """
         Use burnzombies_worktrees list once for the supplied exact queued IDs. Its owner evidence is untrusted
@@ -148,26 +150,42 @@ public struct ReviewProgress: Codable, Sendable {
   public var selected: [String]
   public var steps: [Step] = []
   public var refusals: [Step]?
-  public init(attempt: UUID, selected: [String]) { self.attempt = attempt; self.selected = selected }
+  public init(attempt: UUID, selected: [String]) {
+    self.attempt = attempt
+    self.selected = selected
+  }
   public var completed: Set<String> {
     Set(steps.filter { ["disk_recommend", "disk_explore"].contains($0.tool) }.map(\.id))
   }
   public static func load(_ store: Store) throws -> Self {
-    try JSONDecoder().decode(Self.self, from: store.read(store.root.appendingPathComponent("review-progress.json"), limit: 16384))
+    try JSONDecoder().decode(
+      Self.self,
+      from: store.read(store.root.appendingPathComponent("review-progress.json"), limit: 16384))
   }
   public func save(_ store: Store) throws {
-    try store.write(JSONEncoder().encode(self), to: store.root.appendingPathComponent("review-progress.json"), limit: 16384)
+    try store.write(
+      JSONEncoder().encode(self), to: store.root.appendingPathComponent("review-progress.json"),
+      limit: 16384)
   }
-  public static func record(store: Store, attempt: UUID, operation: String, id: String?, succeeded: Bool = true) throws {
-    guard let id, ["disk_inspect", "disk_evidence", "disk_recommend", "disk_explore"].contains(operation) else { return }
+  public static func record(
+    store: Store, attempt: UUID, operation: String, id: String?, succeeded: Bool = true
+  ) throws {
+    guard let id,
+      ["disk_inspect", "disk_evidence", "disk_recommend", "disk_explore"].contains(operation)
+    else { return }
     guard succeeded || operation == "disk_recommend" else { return }
     // Calls may be delivered in parallel by the harness; serialize their receipts.
     let lock = try InstanceLock(url: store.root.appendingPathComponent("review-progress.lock"))
     defer { withExtendedLifetime(lock) {} }
     var value = try load(store)
-    guard value.attempt == attempt, value.selected.contains(id), value.steps.count + (value.refusals?.count ?? 0) < 8 else { return }
-    if succeeded { value.steps.append(.init(tool: operation, id: id)) }
-    else { value.refusals = (value.refusals ?? []) + [.init(tool: operation, id: id)] }
+    guard value.attempt == attempt, value.selected.contains(id),
+      value.steps.count + (value.refusals?.count ?? 0) < 8
+    else { return }
+    if succeeded {
+      value.steps.append(.init(tool: operation, id: id))
+    } else {
+      value.refusals = (value.refusals ?? []) + [.init(tool: operation, id: id)]
+    }
     try value.save(store)
   }
 }

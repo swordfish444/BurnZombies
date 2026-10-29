@@ -1,5 +1,5 @@
-import BurnCore
 import AppKit
+import BurnCore
 import CBurn
 import Darwin
 import Foundation
@@ -20,59 +20,101 @@ do {
   case "--worktree-scan-worker":
     exit(WorktreeScanWorker.run(arguments: Array(args.dropFirst())))
   case "worktrees":
-    guard args.count >= 2 else { fail("Use worktrees list|scan|operations or worktrees request with a JSON object on stdin.") }
+    guard args.count >= 2 else {
+      fail("Use worktrees list|scan|operations or worktrees request with a JSON object on stdin.")
+    }
     if ["retire", "archive-retire", "quarantine"].contains(args[1]) {
-      guard args.count == 6, args[4] == "--evidence", (20...1200).contains(args[5].count) else { fail("Use worktrees retire|archive-retire|quarantine ID REVISION --evidence 'Observed completion and no remaining use'. Manage the exact checkout first.") }
+      guard args.count == 6, args[4] == "--evidence", (20...1200).contains(args[5].count) else {
+        fail(
+          "Use worktrees retire|archive-retire|quarantine ID REVISION --evidence 'Observed completion and no remaining use'. Manage the exact checkout first."
+        )
+      }
       func sendWorktree(_ q: WorktreeRequest) async throws -> (String, [String: Any]) {
         let raw = try await AgentConnection.callAsync(.init("worktrees", worktreeRequest: q))
-        guard let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], object["ok"] as? Bool == true,
-          let body = object["worktreeInventory"] as? [String: Any] else { fail(raw) }
+        guard let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+          object["ok"] as? Bool == true,
+          let body = object["worktreeInventory"] as? [String: Any]
+        else { fail(raw) }
         return (raw, body)
       }
-      _ = try await sendWorktree(.init("confirm", id: args[2], revision: args[3], evidence: args[5]))
-      let (_, preview) = try await sendWorktree(.init(args[1] == "retire" ? "preview" : "preview_dirty", id: args[2], revision: args[3]))
+      _ = try await sendWorktree(
+        .init("confirm", id: args[2], revision: args[3], evidence: args[5]))
+      let (_, preview) = try await sendWorktree(
+        .init(args[1] == "retire" ? "preview" : "preview_dirty", id: args[2], revision: args[3]))
       guard let token = preview["token"] as? String else { fail("No guarded preview was issued.") }
-      let (result, _) = try await sendWorktree(.init(args[1] == "retire" ? "retire" : (args[1] == "quarantine" ? "quarantine" : "retire_dirty"), token: token))
-      print(result, terminator: ""); break
+      let (result, _) = try await sendWorktree(
+        .init(
+          args[1] == "retire"
+            ? "retire" : (args[1] == "quarantine" ? "quarantine" : "retire_dirty"), token: token))
+      print(result, terminator: "")
+      break
     }
     let query: WorktreeRequest
     if args[1] == "request" {
-      guard args.count == 2, let data = try FileHandle.standardInput.read(upToCount: 16385), data.count <= 16384 else { fail("Pass one bounded worktree JSON request on stdin.") }
+      guard args.count == 2, let data = try FileHandle.standardInput.read(upToCount: 16385),
+        data.count <= 16384
+      else { fail("Pass one bounded worktree JSON request on stdin.") }
       query = try JSONDecoder().decode(WorktreeRequest.self, from: data)
     } else {
-      guard args.count == 2, ["list", "scan", "operations"].contains(args[1]) else { fail("Use worktrees request for exact ID/revision actions; see docs/WORKTREE-CLEANUP.md.") }
+      guard args.count == 2, ["list", "scan", "operations"].contains(args[1]) else {
+        fail("Use worktrees request for exact ID/revision actions; see docs/WORKTREE-CLEANUP.md.")
+      }
       query = WorktreeRequest(args[1])
     }
     let raw = try await AgentConnection.callAsync(AgentRequest("worktrees", worktreeRequest: query))
     print(raw, terminator: "")
-    if let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], object["ok"] as? Bool != true { exit(1) }
+    if let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+      object["ok"] as? Bool != true
+    {
+      exit(1)
+    }
   case "--disk-walk-worker":
     exit(DiskWalkWorker.run(arguments: Array(args.dropFirst())))
   case "start-observer":
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-    let app = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let app = executable.deletingLastPathComponent().deletingLastPathComponent()
+      .deletingLastPathComponent()
     guard app.pathExtension == "app" else { fail("Start observer from the installed app bundle.") }
-    let previous = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.standardizedFileURL == app.standardizedFileURL }
+    let previous = NSWorkspace.shared.runningApplications.filter {
+      $0.bundleURL?.standardizedFileURL == app.standardizedFileURL
+    }
     for running in previous {
-      guard running.terminate() else { fail("Could not close the previous BurnZombies observer. Quit it and reopen BurnZombies to finish upgrading.") }
+      guard running.terminate() else {
+        fail(
+          "Could not close the previous BurnZombies observer. Quit it and reopen BurnZombies to finish upgrading."
+        )
+      }
     }
     for _ in 0..<50 {
       if previous.allSatisfy({ $0.isTerminated }) { break }
       try await Task.sleep(nanoseconds: 100_000_000)
     }
-    guard previous.allSatisfy({ $0.isTerminated }) else { fail("Previous observer is still closing. No force stop or reopen event was sent.") }
-    let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = false; configuration.hides = true
+    guard previous.allSatisfy({ $0.isTerminated }) else {
+      fail("Previous observer is still closing. No force stop or reopen event was sent.")
+    }
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.activates = false
+    configuration.hides = true
     let _: NSRunningApplication = try await withCheckedThrowingContinuation { continuation in
-      NSWorkspace.shared.openApplication(at: app, configuration: configuration) { application, error in
-        if let application { continuation.resume(returning: application) }
-        else { continuation.resume(throwing: error ?? StoreError.message("Could not start the background observer.")) }
+      NSWorkspace.shared.openApplication(at: app, configuration: configuration) {
+        application, error in
+        if let application {
+          continuation.resume(returning: application)
+        } else {
+          continuation.resume(
+            throwing: error ?? StoreError.message("Could not start the background observer."))
+        }
       }
     }
   case "review-codex":
-    guard args.count == 2 || (args.count == 3 && args[2] == "--probe") else { fail("Internal Codex review requires a private plan.") }
+    guard args.count == 2 || (args.count == 3 && args[2] == "--probe") else {
+      fail("Internal Codex review requires a private plan.")
+    }
     try CodexReview.run(URL(fileURLWithPath: args[1]), probeOnly: args.count == 3)
   case "review-worker":
-    guard args.count >= 3, args[1] == "--", args[2].hasPrefix("/") else { fail("Internal worker requires an absolute harness executable.") }
+    guard args.count >= 3, args[1] == "--", args[2].hasPrefix("/") else {
+      fail("Internal worker requires an absolute harness executable.")
+    }
     let words = args.dropFirst(2).map { strdup($0) }
     defer { words.forEach { free($0) } }
     var pointers = words + [nil]
@@ -81,13 +123,21 @@ do {
     guard args.count == 1, let data = try FileHandle.standardInput.read(upToCount: 16385) else {
       fail("Pass one lifecycle JSON object on stdin.")
     }
-    let raw = try await AgentConnection.callAsync(args[0] == "workspace" ? WorkspaceInput.request(data) : LifecycleInput.request(data))
+    let raw = try await AgentConnection.callAsync(
+      args[0] == "workspace" ? WorkspaceInput.request(data) : LifecycleInput.request(data))
     print(raw, terminator: "")
-    if let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], result["ok"] as? Bool != true { exit(1) }
+    if let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+      result["ok"] as? Bool != true
+    {
+      exit(1)
+    }
   case "evidence":
     guard args.count >= 2, args.count <= 17,
-      args.dropFirst().allSatisfy({ Int32($0).map { $0 > 0 } ?? false }) else { fail("Use evidence PID [PID ...], up to 16 exact helper PIDs.") }
-    print(try await AgentConnection.callAsync(AgentRequest("inspect", pids: args.dropFirst().compactMap(Int32.init))), terminator: "")
+      args.dropFirst().allSatisfy({ Int32($0).map { $0 > 0 } ?? false })
+    else { fail("Use evidence PID [PID ...], up to 16 exact helper PIDs.") }
+    print(
+      try await AgentConnection.callAsync(
+        AgentRequest("inspect", pids: args.dropFirst().compactMap(Int32.init))), terminator: "")
   case "retire-skill":
     try LifecycleSkillInstall.retire(Array(args.dropFirst()))
   case "install-skill":
@@ -135,7 +185,10 @@ do {
         let ei = args.firstIndex(of: "--event"), ei + 1 < args.count,
         let data = try FileHandle.standardInput.read(upToCount: 1_048_576),
         let input = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-      else { print("{}"); exit(0) }
+      else {
+        print("{}")
+        exit(0)
+      }
       let output = try HarnessHook.response(client: args[ci + 1], event: args[ei + 1], input: input)
       let encoded = try JSONSerialization.data(withJSONObject: output, options: .sortedKeys)
       print(String(decoding: encoded, as: UTF8.self))
@@ -182,10 +235,14 @@ do {
   case "access-status":
     let raw = try await AgentConnection.callAsync(AgentRequest("access_status"))
     guard let reply = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
-      reply["ok"] as? Bool == true, let access = reply["fullDiskAccess"] else {
-      fail("The observer has no disk-access status. Update and start BurnZombies, then check Settings.")
+      reply["ok"] as? Bool == true, let access = reply["fullDiskAccess"]
+    else {
+      fail(
+        "The observer has no disk-access status. Update and start BurnZombies, then check Settings."
+      )
     }
-    let data = try JSONSerialization.data(withJSONObject: access, options: [.prettyPrinted, .sortedKeys])
+    let data = try JSONSerialization.data(
+      withJSONObject: access, options: [.prettyPrinted, .sortedKeys])
     print(String(decoding: data, as: UTF8.self))
   case "status":
     let c = try Store().load()

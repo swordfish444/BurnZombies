@@ -169,7 +169,10 @@ public struct CleanupEvent: Codable, Identifiable, Sendable {
 public struct RecurrenceScope: Codable, Sendable {
   public var executable: String
   public var parent: Member
-  public init(executable: String, parent: Member) { self.executable = executable; self.parent = parent }
+  public init(executable: String, parent: Member) {
+    self.executable = executable
+    self.parent = parent
+  }
 }
 
 public struct Preferences: Codable, Sendable {
@@ -226,12 +229,18 @@ public struct Catalog: Codable, Sendable {
       records = Dictionary(uniqueKeysWithValues: keep.map { ($0.id, $0) })
     }
     if let attempts = managedCacheAttempts {
-      managedCacheAttempts = attempts.filter { ["prepared", "uncertain"].contains($0.outcome) }
+      managedCacheAttempts =
+        attempts.filter { ["prepared", "uncertain"].contains($0.outcome) }
         + Array(attempts.filter { !["prepared", "uncertain"].contains($0.outcome) }.suffix(500))
     }
     if let receipts = diskReceipts { diskReceipts = Array(receipts.suffix(500)) }
     if let receipts = workspaceReceipts {
-      workspaceReceipts = receipts.filter { $0.outcome == "prepared" } + Array(receipts.filter { $0.outcome != "prepared" && now.timeIntervalSince($0.verifiedAt ?? $0.date) < 30 * 86400 }.suffix(500))
+      workspaceReceipts =
+        receipts.filter { $0.outcome == "prepared" }
+        + Array(
+          receipts.filter {
+            $0.outcome != "prepared" && now.timeIntervalSince($0.verifiedAt ?? $0.date) < 30 * 86400
+          }.suffix(500))
     }
     events = Array(events.filter { now.timeIntervalSince($0.date) < 30 * 86400 }.suffix(500))
   }

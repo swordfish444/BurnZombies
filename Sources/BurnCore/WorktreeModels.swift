@@ -2,7 +2,9 @@ import Foundation
 
 enum WorktreeEncoding {
   static func data<T: Encodable>(_ value: T) throws -> Data {
-    let e = JSONEncoder(); e.outputFormatting = [.sortedKeys]; return try e.encode(value)
+    let e = JSONEncoder()
+    e.outputFormatting = [.sortedKeys]
+    return try e.encode(value)
   }
 }
 
@@ -14,7 +16,9 @@ public struct WorktreeIdentity: Codable, Equatable, Sendable {
   public var inode: UInt64
   public var commonInode: UInt64
   public var administrationInode: UInt64
-  public var id: String { WorkEvidence.hash("\(common)|\(device)|\(commonInode)|\(administration)|\(inode)") }
+  public var id: String {
+    WorkEvidence.hash("\(common)|\(device)|\(commonInode)|\(administration)|\(inode)")
+  }
 }
 
 public struct WorktreeRecord: Codable, Identifiable, Sendable {
@@ -54,7 +58,10 @@ public struct WorktreeRecord: Codable, Identifiable, Sendable {
     return Int(Date().timeIntervalSince(latest) / 86400)
   }
   public init(id: String, path: String, repository: String, identity: WorktreeIdentity? = nil) {
-    self.id = id; self.path = path; self.repository = repository; self.identity = identity
+    self.id = id
+    self.path = path
+    self.repository = repository
+    self.identity = identity
   }
   public var state: String {
     if retired { return "Retired / recoverable" }
@@ -90,11 +97,18 @@ public struct WorktreePolicy: Codable, Sendable {
   public init() {}
   public func validate() throws {
     guard roots.count <= 32, automaticRepositories.count <= 1000, (1...365).contains(staleDays),
-      (0...168).contains(releaseGraceHours), (1...20).contains(maximumPerDay), (30...3650).contains(archiveRetentionDays),
-      roots.allSatisfy({ $0.hasPrefix("/") && $0.utf8.count < 4096 && $0 != "/" && $0 != NSHomeDirectory() }),
-      Set(roots).count == roots.count, Set(automaticRepositories).count == automaticRepositories.count else { throw StoreError.message("Invalid worktree policy; operations paused.") }
+      (0...168).contains(releaseGraceHours), (1...20).contains(maximumPerDay),
+      (30...3650).contains(archiveRetentionDays),
+      roots.allSatisfy({
+        $0.hasPrefix("/") && $0.utf8.count < 4096 && $0 != "/" && $0 != NSHomeDirectory()
+      }),
+      Set(roots).count == roots.count,
+      Set(automaticRepositories).count == automaticRepositories.count
+    else { throw StoreError.message("Invalid worktree policy; operations paused.") }
   }
-  public var revision: String { WorkEvidence.hash(String(decoding: (try? WorktreeEncoding.data(self)) ?? Data(), as: UTF8.self)) }
+  public var revision: String {
+    WorkEvidence.hash(String(decoding: (try? WorktreeEncoding.data(self)) ?? Data(), as: UTF8.self))
+  }
 }
 
 public struct WorktreeOperation: Codable, Identifiable, Sendable {
@@ -119,10 +133,21 @@ public struct WorktreeOperation: Codable, Identifiable, Sendable {
   public var quarantineIdentity: WorktreeIdentity?
   public var purgePending: Bool?
   public var interruptedPhase: String?
-  public init(id: String, worktreeID: String, originalPath: String, repository: String, head: String,
-    phase: String, kind: String, date: Date, recoveryPath: String, detail: String, allocated: UInt64) {
-    self.id = id; self.worktreeID = worktreeID; self.originalPath = originalPath; self.repository = repository; self.head = head
-    self.phase = phase; self.kind = kind; self.date = date; self.recoveryPath = recoveryPath; self.detail = detail; self.allocated = allocated
+  public init(
+    id: String, worktreeID: String, originalPath: String, repository: String, head: String,
+    phase: String, kind: String, date: Date, recoveryPath: String, detail: String, allocated: UInt64
+  ) {
+    self.id = id
+    self.worktreeID = worktreeID
+    self.originalPath = originalPath
+    self.repository = repository
+    self.head = head
+    self.phase = phase
+    self.kind = kind
+    self.date = date
+    self.recoveryPath = recoveryPath
+    self.detail = detail
+    self.allocated = allocated
   }
 }
 
@@ -151,12 +176,23 @@ public struct WorktreeRequest: Codable, Sendable {
   public var enabled: Bool?
   public var ids: [String]?
   public var revisions: [String: String]?
-  public init(_ action: String, id: String? = nil, revision: String? = nil, path: String? = nil,
-    token: String? = nil, evidence: String? = nil, condition: String? = nil, offset: Int? = nil, enabled: Bool? = nil,
-    ids: [String]? = nil, revisions: [String: String]? = nil) {
-    self.action = action; self.id = id; self.revision = revision; self.path = path
-    self.token = token; self.evidence = evidence; self.condition = condition; self.offset = offset; self.enabled = enabled
-    self.ids = ids; self.revisions = revisions
+  public init(
+    _ action: String, id: String? = nil, revision: String? = nil, path: String? = nil,
+    token: String? = nil, evidence: String? = nil, condition: String? = nil, offset: Int? = nil,
+    enabled: Bool? = nil,
+    ids: [String]? = nil, revisions: [String: String]? = nil
+  ) {
+    self.action = action
+    self.id = id
+    self.revision = revision
+    self.path = path
+    self.token = token
+    self.evidence = evidence
+    self.condition = condition
+    self.offset = offset
+    self.enabled = enabled
+    self.ids = ids
+    self.revisions = revisions
   }
 }
 
@@ -211,4 +247,5 @@ public struct WorktreeAdvice: Codable, Identifiable, Sendable {
   public var summary: String
   public var nextStep: String
   public var date: Date
+  public var readinessRevision: String?
 }

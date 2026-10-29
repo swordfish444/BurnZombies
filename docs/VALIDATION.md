@@ -60,3 +60,41 @@ An actual Codex app-server review at the existing default model with Low thinkin
 Disk fixtures exercise exact regenerable permission, ignored versus tracked scope, protected descendants, Git locks, newest-run retention, sensitive/special-file refusal, active/unknown visibility, policy changes between preview and removal, single-use tokens, untouched source, verified bytes and separate worktree counts. Successful generated-output deletion uses an isolated complete-visibility fixture. Production native visibility still refuses disk removal on the development Mac; real folders were not deleted to obtain a passing test.
 
 Offscreen native Settings rendering verifies collapsed defaults, range/model selection, hourly/daily charts, durable cost snapshots, disk presets and policy persistence. It neither activates the app nor invokes a model. Foreground pointer interaction is not claimed. The shared reviewer admits only new evidence, has a one-hour minimum interval and preserves its existing daily bounds. Installer-owned global lifecycle instructions are retired by verified hash; customized files are preserved.
+
+## Worktree lifecycle (0.11)
+
+Local candidate: 0.11.0, build 22, on `codex/worktree-lifecycle`, integrated with upstream `main` through `a6f9619` (permission-banner and relaunch verification fixes). Platform: macOS 27.0.1 (26A434), Apple Silicon arm64. This is local implementation and package evidence; no release was published or installed over the operator's app.
+
+| Check | Observed result |
+| --- | --- |
+| Full `scripts/test.sh --integration` | **PASS, 0 failures**, 241.98 seconds. Includes three real disposable process cleanups, 120-second recurrence watches, durable accounting, existing process/disk/owner/transport regressions, and worktree lifecycle fixtures. |
+| Latest `.build/debug/BurnProof --worktrees` | **PASS, 0 failures**, 56.68 seconds. Includes final advice-readiness invalidation and legacy compatibility checks. |
+| `.build/debug/BurnProof --worktree-scale` | **PASS, 0 failures**, 209.88 seconds total: 100 repositories, 1,000 linked worktrees and 100 main anchors. Setup 34.07 seconds; streamed scan 174.56 seconds; all 1,100 unique registrations reconciled, early results and bounded cancellation verified. Native coverage gaps remain explicit. |
+| Native descriptor regression | **PASS**, 0.13 seconds. Opens 5,000 real descriptors and detects a held file beyond the previous 4,096-entry limit. |
+| Temporary native Keychain lifecycle | **PASS**, 0.04 seconds. Creates/reads a unique test key, encrypts/decrypts, deletes it and refuses missing-key restoration. No production key was read or modified. |
+| Worktrees native UI | **PASS**, 39.72 seconds. Four synthetic inventory/local-work/recovery/blocked states rendered and OCR checked without opening a window; inventory layout visually inspected. |
+| Upstream access-banner/relaunch proof | **PASS**, 2.02 seconds. Preserves the integrated Full Disk Access return/relaunch behavior. |
+| MCP and installation configuration | **PASS**: strict tool arguments, caller/role restrictions, token redaction, unchanged-evidence quiet behavior, five-provider setup, preserved unrelated settings/hooks, portable skill installation and bounded owned cancellation. |
+| Universal local app and MCPB | Built for arm64 and x86_64 with local ad-hoc signatures; installer and MCPB checks cover signature verification, paths/spaces, repeat installation, corrupt-download/traversal refusal, version agreement and the actual packaged MCP executable. Intel execution and notarization are not claimed. |
+
+Worktree positives use real sacrificial Git repositories and actual filesystem/removal/recovery operations with explicitly injected complete consumer visibility. They cover multiple owners, release/retain and Keep revocation, single-use/caller-bound tokens, same-commit branch changes, new content after preview, independent restoration after original-repository loss, staged versus unstaged content, binary and ignored files, ciphertext corruption, wrong/missing keys, changed quarantine contents, grace/final removal, batch item drift, reused paths, moved-registration repair, rollback and usable SQLite backup, legacy cutover/token continuity, unsupported nested repositories, and corrupt/symlink/future database refusal. Interrupted operations become uncertain; reconciliation verifies intact sources or unexplained absence without replay or attribution. Local diff contents remain on the native endpoint; MCP cannot request them. Material consumer/coverage changes invalidate stale advice without timestamp-only churn.
+
+**Live native cleanup remains blocked on this development Mac.** The unmodified kernel path reader reports an existing browser extension helper whose executable has no kernel-resolvable pathname (`ENOENT`). The positive native worker → retirement → restore test therefore refuses before removal. Its sacrificial checkout remains intact. The descriptor-table defect was repaired and independently proven; the unresolved executable is a separate live-host condition. No visibility override, allowlist exception or unrelated browser-process stop was added. Successful simulated-boundary fixtures do not establish successful live native worktree removal on this host. Relaunching that helper through its owner and rerunning `--worktree-native` is the remaining host acceptance step.
+
+Additional boundaries: GitHub PR metadata is advisory and tested with exact-head/truncation/mismatch fixtures; no new live GitHub/auth proof is claimed. Recognized owner-managed locations are handed back to their applications; custom owner layouts without a supported lifecycle API require explicit review. Unsupported LFS/submodule/partial/shallow/sparse/ACL/special-file recovery remains protected. Metadata pruning stays read-only because Git's repository-wide prune cannot prove an exact bounded mutation. Recovery archives have no automatic expiry; purge is a separate human decision. Temporary plaintext verification copies are private and removed on normal success/failure; a crash can leave private staging or partial restoration for reconciliation. Losing this Mac's Keychain key can prevent archive recovery.
+
+Reproduce the additional checks on sacrificial data only:
+
+```sh
+scripts/test.sh --integration
+.build/debug/BurnProof --worktrees
+.build/debug/BurnProof --worktree-scale
+.build/debug/BurnProof --worktree-native-descriptors
+.build/debug/BurnProof --worktree-keychain
+.build/debug/BurnProof --worktree-native  # succeeds only with complete real native coverage
+.build/debug/BurnZombiesApp --worktree-view-proof /tmp/bz-worktrees
+.build/debug/BurnZombiesApp --access-banner-proof /tmp/bz-access
+scripts/build-app.sh --universal
+```
+
+The earlier 0.7 adoption and descriptor-limit statements above describe historical behavior. For the current authority, supported preservation and recovery contract, use [Worktree lifecycle](WORKTREE-CLEANUP.md).
