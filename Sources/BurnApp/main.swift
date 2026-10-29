@@ -351,7 +351,10 @@ import UserNotifications
   }
   private func receiveReviewState(includeHunt: Bool = true) async {
     if let reviewer { machineReview = await reviewer.snapshot() }
-    if !demo && includeHunt { huntSnapshot = try? HuntSnapshot.load(root: Store.defaultRoot) }
+    if !demo && includeHunt {
+      huntSnapshot = try? HuntSnapshot.load(root: Store.defaultRoot)
+      if let monitor { huntSnapshot?.includeReceipts((await monitor.snapshot()).catalog) }
+    }
     cleanupQueued = FileManager.default.fileExists(
       atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
   }
