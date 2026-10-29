@@ -145,6 +145,7 @@ public actor MachineReviewer {
     huntState = try? HuntSnapshot.load(root: root)
     if huntState?.phase == "hunting" {
       huntState?.phase = "paused"; huntState?.detail = "The previous hunt was interrupted. Start a new hunt when ready."
+      huntState?.finishedAt = Date(); huntState?.activeAttempt = nil
       try huntState?.save(store)
     }
     let url = root.appendingPathComponent("machine-review-state.json")

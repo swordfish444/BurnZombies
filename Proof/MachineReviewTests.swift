@@ -212,6 +212,18 @@ func machineReviewProof() async throws {
   equal(verifiedHunt.worktreesCleaned, 1); equal(verifiedHunt.diskReclaimed, 1234)
   check(verifiedHunt.log.contains { $0.kind == "burn" && $0.message.contains("Worktree") }, "Verified worktree removals animate the same burn sequence")
 
+  let interruptedRoot = root.appendingPathComponent("interrupted-hunt")
+  let interruptedStore = try Store(root: interruptedRoot)
+  try HuntSnapshot(startedAt: now).save(interruptedStore)
+  _ = try MachineReviewer(root: interruptedRoot, accessCheck: fixtureAccess)
+  var interrupted = try HuntSnapshot.load(root: interruptedRoot)
+  equal(interrupted.phase, "paused"); check(interrupted.finishedAt != nil)
+  var laterReceipt = burnReceipt
+  laterReceipt.date = (interrupted.finishedAt ?? Date()).addingTimeInterval(1)
+  var laterCatalog = Catalog(); laterCatalog.events = [laterReceipt]
+  interrupted.includeReceipts(laterCatalog)
+  equal(interrupted.burned, 0, "An interrupted hunt cannot claim cleanups from later activity")
+
   // Follow one requested native frontier in the same hunt, with no AI polling.
   let frontierRoot = root.appendingPathComponent("frontier"), frontierStore = try Store(root: root.appendingPathComponent("frontier"))
   let explorer = root.appendingPathComponent("explorer-fixture")
