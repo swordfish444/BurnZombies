@@ -11,11 +11,16 @@ import Vision
   BurnTheme.registerFonts()
   let directory = URL(fileURLWithPath: output, isDirectory: true)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  let cases = catalog == nil ? ["empty", "populated", "paused", "quiet-day", "pruned", "unmeasured", "zero-memory", "legacy-negative", "slower", "noisy", "disk", "worktrees"] : ["receipt-replay"]
+  let cases = catalog == nil ? ["empty", "populated", "paused", "quiet-day", "pruned", "unmeasured", "zero-memory", "legacy-negative", "slower", "noisy", "disk", "worktrees", "access-required", "access-unknown", "access-required-history"] : ["receipt-replay"]
   for name in cases {
     let model = AppModel(demo: true)
     if let catalog { model.state.catalog = catalog }
-    if name == "empty" || name == "paused" { model.state.catalog = Catalog() }
+    if name == "empty" || name == "paused" || name == "access-required" || name == "access-unknown" { model.state.catalog = Catalog() }
+    if name.hasPrefix("access-") {
+      model.state.fullDiskAccess = .init(state: name == "access-unknown" ? .unknown : .required,
+        detail: "Enable Full Disk Access in System Settings, then check again.")
+    }
+
     if name == "paused" { model.machineReview.phase = "paused" }
     if name == "quiet-day" {
       let today = Calendar.current.startOfDay(for: Date())
@@ -88,7 +93,20 @@ import Vision
       visible.contains("Memory pressure"), visible.contains("Disk reclaimed"), visible.contains("Worktrees cleaned") else {
       throw StoreError.message("Compact labels or footer clipped: \(visible)")
     }
-    if name == "receipt-replay" {
+    if name.hasPrefix("access-") {
+      guard visible.contains("Setup required"), visible.contains("FINISH SETUP"),
+        visible.contains("Allow Full Disk Access"), !visible.contains("Agent-led cleanup"),
+        !visible.contains("Still warming up"), !visible.contains("Ready for your first burn") else {
+        throw StoreError.message("Access prerequisite missing or presented as active cleanup: \(visible)")
+      }
+      if name == "access-required-history" {
+        guard view.numbers.count == 128, visible.contains("Last burn") else {
+          throw StoreError.message("Requiring access erased verified history")
+        }
+      } else if !visible.contains("Waiting for Full Disk Access") {
+        throw StoreError.message("New install claimed it was ready before access")
+      }
+    } else if name == "receipt-replay" {
       guard !view.numbers.boost.contains("-"), visible.contains(String(view.numbers.count)) else {
         throw StoreError.message("Receipt replay failed: \(visible)")
       }
@@ -125,7 +143,9 @@ import Vision
         throw StoreError.message("Verified cleanup presented as no benefit: \(visible)")
       }
     }
-    if name == "empty" || name == "paused" {
+    if name == "access-required" || name == "access-unknown" {
+      guard view.numbers.count == 0 else { throw StoreError.message("Access state changed totals") }
+    } else if name == "empty" || name == "paused" {
       guard view.numbers.count == 0, visible.contains("Ready for your first burn") else {
         throw StoreError.message("First-burn empty state not displayed")
       }

@@ -5,7 +5,7 @@ import Foundation
 func agentBridgeProof() async throws {
   let root = URL(fileURLWithPath: "/tmp/bz-" + UUID().uuidString.prefix(8))
   defer { try? FileManager.default.removeItem(at: root) }
-  let monitor = try Monitor(root: root)
+  let monitor = try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
   _ = await monitor.refresh() // The observer samples; cheap status must not trigger a scan.
   let service = AgentService(monitor: monitor)
   let listener = try AgentListener(root: root) { await service.call($0) }
@@ -143,7 +143,7 @@ func runAgentFixture(root: URL) async throws {
   guard discoveryRoots?.allSatisfy({ WorkspaceSafety.contains(WorkspaceSafety.canonical(root.path), WorkspaceSafety.canonical($0)) }) != false else {
     throw StoreError.message("Fixture discovery must stay inside the test-owned directory.")
   }
-  let monitor = try Monitor(root: root, discoveryRoots: discoveryRoots)
+  let monitor = try Monitor(root: root, discoveryRoots: discoveryRoots, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
   // Like the resident observer, finish the first bounded inventory before a model
   // connects; a cold filesystem scan must not consume the MCP request timeout.
   _ = await monitor.refresh()

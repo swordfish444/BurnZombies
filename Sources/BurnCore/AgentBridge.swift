@@ -72,6 +72,7 @@ public struct AgentReply: Codable, Sendable {
   public var verifiedHelpers = 0
   public var memoryReleasedBytes: UInt64 = 0
   public var cpuSecondsSaved: Double?
+  public var fullDiskAccess: FullDiskAccessStatus?
   public var memoryPressure: String?
   public var observedProcesses = 0
   public var observedAt: Date?
@@ -138,12 +139,26 @@ public actor AgentService {
   private var previews: [String: Preview] = [:]
   public init(monitor: Monitor) { self.monitor = monitor }
   public func call(_ request: AgentRequest) async -> AgentReply {
-    guard ["status", "inspect", "preview", "burn", "lifecycle", "work", "workspace", "workspace_preview", "workspace_clean", "disk_decide", "disk_preview", "disk_clean", "disk_inspect", "disk_explore", "disk_recommend", "disk_evidence", "owner_preview", "owner_stop", "cache_preview", "cache_clean"].contains(request.operation) else {
+    guard ["status", "access_status", "inspect", "preview", "burn", "lifecycle", "work", "workspace", "workspace_preview", "workspace_clean", "disk_decide", "disk_preview", "disk_clean", "disk_inspect", "disk_explore", "disk_recommend", "disk_evidence", "owner_preview", "owner_stop", "cache_preview", "cache_clean"].contains(request.operation) else {
       return AgentReply(ok: false, message: "Unknown operation.")
     }
     previews = previews.filter { Date().timeIntervalSince($0.value.created) < 60 }
     workspacePreviews = workspacePreviews.filter { Date().timeIntervalSince($0.value.created) < 60 }
     var state = await monitor.snapshot()
+    if request.operation == "access_status" {
+      var reply = AgentReply(message: state.fullDiskAccess.detail)
+      reply.fullDiskAccess = state.fullDiskAccess
+      return reply
+    }
+    if request.operation != "status" {
+      do { try await monitor.requireFullDiskAccess() }
+      catch {
+        var reply = AgentReply(ok: false, message: error.localizedDescription)
+        reply.fullDiskAccess = (await monitor.snapshot()).fullDiskAccess
+        reply.failureKind = "full_disk_access_required"
+        return reply
+      }
+    }
     if ["inspect", "preview", "burn", "lifecycle"].contains(request.operation) {
       state = await monitor.refresh()
     }
@@ -284,10 +299,11 @@ public actor AgentService {
       reply.failureKind = "recommendation_rejected"
       return reply
     } catch { return AgentReply(ok: false, message: error.localizedDescription) }
+    reply.fullDiskAccess = state.fullDiskAccess
     reply.worktreesCleaned = state.catalog.lifetimeWorktreesCleaned ?? 0
     reply.diskReclaimedBytes = state.catalog.lifetimeDiskReclaimedBytes ?? 0
     reply.worktreeReceipts = Array((state.catalog.workspaceReceipts ?? []).suffix(8))
-    if request.operation == "status" {
+    if request.operation == "status" && state.fullDiskAccess.canScan {
       reply.ownerProcesses = (state.catalog.ownerDaemons ?? []).filter { evidence in
         evidence.eligible && (request.reviewIDs == nil || request.reviewIDs!.contains(evidence.id))
       }.map(OwnerProcessSummary.init)
@@ -306,8 +322,8 @@ public actor AgentService {
     reply.observedProcesses = state.processCount
     reply.observedAt = state.catalog.lastSample
     reply.partial = state.partial
-    reply.disk = Array((state.catalog.diskCandidates ?? []).filter { $0.bytes >= DiskCandidate.minimumReviewBytes && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id)) }.prefix(3))
-    reply.diskDiscovery = (state.catalog.diskDiscovery ?? []).filter { request.reviewIDs == nil || request.reviewIDs!.contains($0.id) }.prefix(3).map(DiskSpaceSummary.init)
+    reply.disk = Array((state.fullDiskAccess.canScan ? state.catalog.diskCandidates ?? [] : []).filter { $0.bytes >= DiskCandidate.minimumReviewBytes && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id)) }.prefix(3))
+    reply.diskDiscovery = (state.fullDiskAccess.canScan ? state.catalog.diskDiscovery ?? [] : []).filter { request.reviewIDs == nil || request.reviewIDs!.contains($0.id) }.prefix(3).map(DiskSpaceSummary.init)
     if !reply.disk.isEmpty || !reply.diskDiscovery.isEmpty || reply.managedCache != nil { reply.diskPolicy = (try? await monitor.diskPolicy()).map(DiskReviewPolicy.init) }
     let work = await monitor.workSummaries()
     reply.activeWorkCount = work.filter { $0.state == "active" && !$0.livePIDs.isEmpty }.count

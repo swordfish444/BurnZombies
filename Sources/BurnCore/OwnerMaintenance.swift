@@ -12,6 +12,7 @@ public final class OwnerMaintenance: @unchecked Sendable {
   public typealias ProcessCollector = @Sendable ([Record], [String: Record], Bool) -> ([GradleDaemonEvidence], [String])
   public typealias CacheCollector = @Sendable (DiskPolicy) throws -> BuildKitCache.Inventory
   private let lock = NSLock()
+  private let accessCheck: @Sendable () -> FullDiskAccessStatus
   private let processCollector: ProcessCollector
   private let cacheCollector: CacheCollector
   private var value = Snapshot()
@@ -22,7 +23,8 @@ public final class OwnerMaintenance: @unchecked Sendable {
   private var cacheGeneration: UInt64 = 0
   private var processProbeRound: UInt64 = 0
   private var lastProcessProbe: [String: UInt64] = [:]
-  public init(store: Store, processCollector: ProcessCollector? = nil, cacheCollector: CacheCollector? = nil) {
+  public init(store: Store, processCollector: ProcessCollector? = nil, cacheCollector: CacheCollector? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) {
+    self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: store.root) }
     self.processCollector = processCollector ?? { selected, records, complete in
       var daemons: [GradleDaemonEvidence] = [], gaps: [String] = []
       if records.values.filter({ $0.missingSince == nil && $0.latest.name == "java" }).count > selected.count {
@@ -50,6 +52,7 @@ public final class OwnerMaintenance: @unchecked Sendable {
   }
   public func snapshot() -> Snapshot { lock.withLock { value } }
   public func tick(records: [String: Record], policy: DiskPolicy, complete: Bool, now: Date = Date()) {
+    guard accessCheck().canScan else { return }
     let job = lock.withLock { () -> (process: Bool, probes: [Record], cache: Bool, generation: UInt64)? in
       value.daemons.removeAll { owner in
         guard let live = records[owner.member.identity.key], live.missingSince == nil else { return true }
@@ -86,10 +89,11 @@ public final class OwnerMaintenance: @unchecked Sendable {
     guard let job else { return }
     // Producer probes are blocking local I/O; never occupy a cooperative actor worker.
     DispatchQueue.global(qos: .utility).async { [self] in
+      guard accessCheck().canScan else { lock.withLock { running = false }; return }
       // Keep the full process map for child/ownership checks; only owner probes rotate.
       let processResult = job.process ? processCollector(job.probes, records, complete) : nil
       var cache: BuildKitCache.Inventory?, cacheGap: String?
-      if job.cache, lock.withLock({ cacheGeneration == job.generation }) {
+      if job.cache, accessCheck().canScan, lock.withLock({ cacheGeneration == job.generation }) {
         do { cache = try cacheCollector(policy) }
         catch { cacheGap = "Local BuildKit inventory unavailable: " + error.localizedDescription.prefix(180) }
       }

@@ -5,7 +5,7 @@ import Foundation
 func lifecycleProof() async throws {
   let root = URL(fileURLWithPath: "/tmp/bz-work-" + UUID().uuidString.prefix(8))
   defer { try? FileManager.default.removeItem(at: root) }
-  let monitor = try Monitor(root: root), worker = Process()
+  let monitor = try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker()), worker = Process()
   worker.executableURL = URL(fileURLWithPath: "/bin/sleep"); worker.arguments = ["120"]
   try worker.run()
   defer { if worker.isRunning { worker.terminate() }; worker.waitUntilExit() }

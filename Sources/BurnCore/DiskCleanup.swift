@@ -122,6 +122,7 @@ public enum DiskInventory {
   public static func manifest(_ path: String, seconds: Double = 5) throws -> DiskManifest {
     let root = try WorkspaceSafety.statAt(path)
     guard root.st_mode & S_IFMT == S_IFDIR else { throw StoreError.message("Expected a real directory.") }
+    guard access(path, R_OK | X_OK) == 0 else { throw StoreError.message("Directory access is blocked; preserved.") }
     var result = DiskManifest(), digest = SHA256()
     result.newest = Date(timeIntervalSince1970: Double(root.st_mtimespec.tv_sec) + Double(root.st_mtimespec.tv_nsec)/1e9)
     let deadline = Date().addingTimeInterval(seconds)
@@ -132,6 +133,9 @@ public enum DiskInventory {
       guard result.count < 250_000, Date() < deadline else { result.complete = false; break }
       result.count += 1
       guard let s = try? WorkspaceSafety.statAt(url.path), s.st_dev == root.st_dev else { result.complete = false; iterator.skipDescendants(); continue }
+      if s.st_mode & S_IFMT == S_IFDIR && access(url.path, R_OK | X_OK) != 0 {
+        result.complete = false; iterator.skipDescendants(); continue
+      }
       let name = url.lastPathComponent.lowercased()
       if [".git", "credentials", "keychain", "cookies", "login data"].contains(name) || name.hasPrefix(".env") || name.hasSuffix(".pem") || name.hasSuffix(".key") || name.hasSuffix(".sqlite") || name.hasSuffix(".db") {
         result.unsafe = true
@@ -151,7 +155,7 @@ public enum DiskInventory {
       var queue = [(root, 0)]
       while !queue.isEmpty && visited < 10_000 && Date() < deadline {
         let (path, depth) = queue.removeFirst(); visited += 1
-        guard let s = try? WorkspaceSafety.statAt(path), s.st_mode & S_IFMT == S_IFDIR,
+        guard access(path, R_OK | X_OK) == 0, let s = try? WorkspaceSafety.statAt(path), s.st_mode & S_IFMT == S_IFDIR,
           !policy.protectedPaths.contains(where: { WorkspaceSafety.contains($0, path) }) else { continue }
         if FileManager.default.fileExists(atPath: path + "/.git") { found.insert(path); continue }
         guard depth < 4, let children = try? FileManager.default.contentsOfDirectory(atPath: path) else { continue }
@@ -186,6 +190,7 @@ public enum DiskInventory {
       now.timeIntervalSince(manifest.newest) >= Double(policy.minimumAgeDays) * 86400 else { throw StoreError.message("Changed, recent, special or sensitive files are protected.") }
     if c.kind == "evidence" {
       let parent = URL(fileURLWithPath: c.path).deletingLastPathComponent()
+      guard access(parent.path, R_OK | X_OK) == 0 else { throw StoreError.message("Evidence retention visibility is incomplete; preserved.") }
       let entries = try FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)
       guard entries.count <= 200 else { throw StoreError.message("Evidence retention set exceeds inspection bound.") }
       var newest: [(String, Date)] = []
@@ -217,7 +222,7 @@ public enum DiskInventory {
     for repo in ordered where Date() < deadline {
       scanned.insert(repo)
       var paths: [(String, String)] = generatedNames.sorted().map { (repo + "/" + $0, "generated") }
-      if let children = try? FileManager.default.contentsOfDirectory(atPath: repo + "/artifacts") {
+      if access(repo + "/artifacts", R_OK | X_OK) == 0, let children = try? FileManager.default.contentsOfDirectory(atPath: repo + "/artifacts") {
         paths += children.sorted().prefix(100).map { (repo + "/artifacts/" + $0, "evidence") }
       }
       for (path, kind) in paths where Date() < deadline {

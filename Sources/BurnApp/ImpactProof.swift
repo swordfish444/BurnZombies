@@ -99,6 +99,7 @@ import Vision
   // Capture all fallback states through the same native layout as the shipped window.
   for name in ["reclaimed", "helpers", "quiet-day", "empty", "disk", "worktrees"] {
     model.state = Demo.state()
+    model.state.fullDiskAccess = .init(state: .granted, detail: "Preview access state.")
     for i in model.state.catalog.events.indices {
       model.state.catalog.events[i].responseBeforeMS = nil
       model.state.catalog.events[i].responseAfterMS = nil

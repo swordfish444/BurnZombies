@@ -38,5 +38,7 @@ enum MachineSetup {
     print("No active chat, chat hooks, computer restart or edits to harness configuration required.")
     print("Reviews use your existing harness login and usage allowance. One provider; no automatic fallback.")
     print("Model: \(config.model ?? "harness default") · Thinking: \(config.reasoningEffort ?? "harness default"). Change these in Settings.")
+    print("Setup requires Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add and enable BurnZombies.app.")
+    print("Then open BurnZombies Settings and choose I enabled access — check again. Inspection and reviews wait until access is verified.")
   }
 }

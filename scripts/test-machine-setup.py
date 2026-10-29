@@ -13,7 +13,9 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
     for harness in ['codex', 'claude', 'cursor', 'copilot', 'gemini']:
         state = root/harness
         command = [str(cli), 'setup', '--harness', harness, '--root', str(state)]
-        subprocess.run(command, env=env, check=True, capture_output=True)
+        setup = subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+        assert "Full Disk Access" in setup.stdout
+        assert not (state/"full-disk-access.json").exists(), "CLI setup must not grant access"
         config = json.loads((state/'machine-review.json').read_text())
         assert config['harness'] == harness and config['enabled']
         assert config['launcher'] == str(cli.resolve())

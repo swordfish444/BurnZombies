@@ -2,6 +2,7 @@
 import AppKit
 import BurnCore
 import SwiftUI
+import Vision
 
 /// Exercises the shipped view/controller without starting an observer or showing a window.
 @MainActor func settingsProof(output: String) throws {
@@ -118,6 +119,41 @@ import SwiftUI
     throw StoreError.message("Exact-folder approval changed scope or dispatched a model")
   }
   print("PASS simplified AI recommendations, 10 GB floor, collapsed advanced controls, exact-folder approval and durable preferences without model dispatch")
+  let accessModel = AppModel(demo: true)
+  for accessState in [FullDiskAccessState.required, .unknown, .granted] {
+    accessModel.state.fullDiskAccess = .init(state: accessState,
+      detail: accessState == .unknown ? "Access could not be verified. Enable BurnZombies in System Settings, then check again." : "Full Disk Access is required before discovery.")
+    let accessHost = NSHostingView(rootView: FullDiskAccessView(model: accessModel).padding(20)
+      .frame(width: 440).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
+    accessHost.frame = NSRect(x: 0, y: 0, width: 440, height: 580)
+    accessHost.layoutSubtreeIfNeeded()
+    guard let bitmap = accessHost.bitmapImageRepForCachingDisplay(in: accessHost.bounds) else {
+      throw StoreError.message("Access setup render unavailable")
+    }
+    accessHost.cacheDisplay(in: accessHost.bounds, to: bitmap)
+    guard let cgImage = bitmap.cgImage,
+      let png = bitmap.representation(using: .png, properties: [:]) else {
+      throw StoreError.message("Access setup PNG unavailable")
+    }
+    let label = accessState == .granted ? "available" : accessState == .required ? "required" : "unknown"
+    try png.write(to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension("access-" + label + ".png"))
+    let recognition = VNRecognizeTextRequest()
+    recognition.recognitionLevel = .accurate; recognition.recognitionLanguages = ["en-US"]
+    try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([recognition])
+    let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    guard visible.contains("Full Disk Access"), visible.contains("Open Full Disk Access") else {
+      throw StoreError.message("Required access controls clipped: \(visible)")
+    }
+    if accessState != .granted {
+      guard visible.contains("Required"), visible.contains("I enabled access"), visible.contains("whole-Mac") || visible.contains("Whole-Mac") else {
+        throw StoreError.message("Setup requirement or explicit confirmation missing: \(visible)")
+      }
+    } else if !visible.contains("Available") { throw StoreError.message("Granted access state missing") }
+    guard NSApp.windows.allSatisfy({ !$0.isVisible && !$0.isKeyWindow }) else {
+      throw StoreError.message("Access setup proof showed a window")
+    }
+  }
+  print("PASS inline required/unknown/available access setup renders without opening System Settings or showing a window")
   print("PASS offscreen native Settings render, draft/save/reopen, disabled-state preservation, invalid-input refusal and default reset")
 }
 #endif

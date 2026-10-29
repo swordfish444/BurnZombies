@@ -99,8 +99,8 @@ final class StorageNativeTests: TestSuite {
   func testOnlyOneMonitorOwnsCatalog() throws {
     let root = temp()
     defer { try? FileManager.default.removeItem(at: root) }
-    let a = try Monitor(root: root)
-    throwsError(try Monitor(root: root))
+    let a = try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+    throwsError(try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker()))
     withExtendedLifetime(a) {}
   }
   func testRetentionCapsRecordsAndEvents() {

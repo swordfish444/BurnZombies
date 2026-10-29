@@ -2,6 +2,12 @@ import BurnCore
 import Darwin
 import Foundation
 
+// Explicit capability injection belongs only to the isolated proof executable.
+func fixtureAccess() -> FullDiskAccessStatus { .init(state: .granted, detail: "Isolated fixture") }
+func fixtureWalker() -> DiskWalkRunner {
+  DiskWalkRunner(executable: URL(fileURLWithPath: CommandLine.arguments[0]), argumentPrefix: ["--disk-walk-worker"])
+}
+
 // A dependency-free test runner: also works with Apple's Command Line Tools alone.
 class TestSuite {}
 var failures = 0
@@ -31,10 +37,15 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
   static func main() async {
     setbuf(stdout, nil)
     if CommandLine.arguments.firstIndex(of: "--disk-walk-worker") == 1 {
-      exit(DiskWalkWorker.run(arguments: Array(CommandLine.arguments.dropFirst(2))))
+      exit(DiskWalkWorker.run(arguments: Array(CommandLine.arguments.dropFirst(2)), accessCheck: fixtureAccess))
     }
     if CommandLine.arguments.firstIndex(of: "--disk-walk-fixture") == 1 {
       do { try diskWalkFixture() } catch { print("Disk worker fixture: \(error)"); exit(1) }
+    }
+    if CommandLine.arguments.contains("--full-disk-access") {
+      do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
+      print("Full Disk Access checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--disk-worker") {
       do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
@@ -156,7 +167,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
           : try String(contentsOfFile: CommandLine.arguments[4], encoding: .utf8)
         let ids = CommandLine.arguments.count == 6
           ? try JSONDecoder().decode([String].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[5]))) : nil
-        try MachineReviewer.execute(config, root: root, prompt: prompt, reviewIDs: ids)
+        try MachineReviewer.execute(config, root: root, prompt: prompt, reviewIDs: ids, accessCheck: fixtureAccess)
       } catch { print("FAIL: \(error)"); exit(1) }
       return
     }
@@ -196,6 +207,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try test() } catch { failTest("\(name): \(error)") }
       if failures == before { print("PASS \(name)") }
     }
+    do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
     do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
     do { try await gradleDaemonProof() } catch { failTest("Gradle daemon: \(error)") }
     do { try await workspaceProof() } catch { failTest("Worktree cleanup: \(error)") }
@@ -252,7 +264,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         }
       }
     }
-    let monitor = try Monitor(root: root)
+    let monitor = try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
     let service = AgentService(monitor: monitor)
     let start = Date()
     for lease in leases {

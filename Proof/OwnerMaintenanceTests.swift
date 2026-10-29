@@ -194,7 +194,7 @@ private func ownerProbeFairnessProof(store: Store) async throws {
   missing.missingSince = Date(); records[missing.id] = missing
   let probes = OwnerProbeRounds()
   let collector = OwnerMaintenance(store: store, processCollector: { probes.collect($0, $1, $2) },
-    cacheCollector: { _ in throw StoreError.message("Off policy must not collect cache") })
+    cacheCollector: { _ in throw StoreError.message("Off policy must not collect cache") }, accessCheck: fixtureAccess)
   var policy = DiskPolicy(); policy.mode = "off"
   let now = Date()
   for round in 0..<3 {
@@ -245,7 +245,7 @@ private func ownerBacklogFairnessProof(store: Store, evidence: GradleDaemonEvide
   var records = Dictionary(uniqueKeysWithValues: owners.map { ($0.id, $0) })
   let probe = OwnerBacklogProbe(evidence)
   let collector = OwnerMaintenance(store: store, processCollector: { probe.collect($0, $1, $2) },
-    cacheCollector: { _ in throw StoreError.message("Off policy must not collect cache") })
+    cacheCollector: { _ in throw StoreError.message("Off policy must not collect cache") }, accessCheck: fixtureAccess)
   var policy = DiskPolicy(); policy.mode = "off"
   let now = Date()
   for round in 0..<3 {
@@ -278,7 +278,7 @@ private func ownerBacklogFairnessProof(store: Store, evidence: GradleDaemonEvide
   catalog.managedCache = try ownerInventory(policy, now: now)
   try store.save(catalog)
   let restarted = OwnerMaintenance(store: store, processCollector: { probe.collect($0, $1, $2) },
-    cacheCollector: { _ in throw StoreError.message("Off policy must not collect cache") })
+    cacheCollector: { _ in throw StoreError.message("Off policy must not collect cache") }, accessCheck: fixtureAccess)
   equal(restarted.snapshot().daemons.count, 48, "An observer restart must retain the saved owner review backlog")
   equal(restarted.snapshot().daemons.first?.checkedAt, now.addingTimeInterval(-3600), "Restoring facts must not freshen their timestamps")
   check(restarted.snapshot().cache == nil, "A persisted managed-cache route must not be restored as fresh owner evidence")
@@ -407,7 +407,7 @@ private func collectorGenerationProof(store: Store) async throws {
   let first = CollectorGate()
   defer { first.unblock() }
   let collector = OwnerMaintenance(store: store, processCollector: { _, _, _ in ([], []) },
-    cacheCollector: { try first.collect($0) })
+    cacheCollector: { try first.collect($0) }, accessCheck: fixtureAccess)
   let now = Date()
   collector.tick(records: [:], policy: policy, complete: true, now: now)
   try await waitForOwner({ first.count == 1 }, "Initial owned cache collection did not start")
@@ -427,7 +427,7 @@ private func collectorGenerationProof(store: Store) async throws {
   policy.mode = "recommend"
   let second = CollectorGate(); defer { second.unblock() }
   let invalidated = OwnerMaintenance(store: store, processCollector: { _, _, _ in ([], []) },
-    cacheCollector: { try second.collect($0) })
+    cacheCollector: { try second.collect($0) }, accessCheck: fixtureAccess)
   invalidated.tick(records: [:], policy: policy, complete: true, now: now)
   try await waitForOwner({ second.count == 1 }, "Invalidation fixture did not start")
   invalidated.invalidateCache(); second.unblock()

@@ -39,7 +39,8 @@ static int node_for(disk_walk *w, const char *path) {
 }
 void *bz_disk_open(const char *path, int depth) {
     struct stat s;
-    if(!path || strlen(path)>=4096 || lstat(path,&s) || !S_ISDIR(s.st_mode) || (s.st_flags & SF_DATALESS))return NULL;
+    if(!path || strlen(path)>=4096 || lstat(path,&s) || !S_ISDIR(s.st_mode) || (s.st_flags & SF_DATALESS)
+        || access(path,R_OK|X_OK))return NULL;
     disk_walk *w=calloc(1,sizeof(*w));
     if(!w)return NULL;
     w->nodes=calloc(DISK_NODES,sizeof(bz_disk_node));
@@ -75,6 +76,15 @@ int bz_disk_step(void *handle,int entries) {
         }
         if(e->fts_info==FTS_ERR || e->fts_info==FTS_DNR || e->fts_info==FTS_NS) {
             for(int j=0;j<n;j++)w->nodes[indices[j]].errors++;
+            continue;
+        }
+        // Check permission before FTS descends into a directory. This does not
+        // open its contents or ask for access; lack of visibility is an error,
+        // never proof that the subtree is empty. The app-level FDA gate is
+        // separate, and permissions may still change after this preflight.
+        if(e->fts_info==FTS_D && access(e->fts_path,R_OK|X_OK)) {
+            for(int j=0;j<n;j++)w->nodes[indices[j]].errors++;
+            fts_set(w->tree,e,FTS_SKIP);
             continue;
         }
         const struct stat *s=e->fts_statp;

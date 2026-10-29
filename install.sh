@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.10.0"
+version="0.10.1"
 client="auto"
 launch=true
 while [[ $# -gt 0 ]]; do
@@ -69,3 +69,6 @@ if [[ "$client" != none ]]; then
 fi
 if $launch; then "$app/Contents/MacOS/burnzombies" start-observer; fi
 echo "Installed BurnZombies $version. Your work can keep running."
+echo 'Required setup: System Settings → Privacy & Security → Full Disk Access.'
+echo "Add and enable $app, then choose I enabled access — check again in BurnZombies Settings."
+echo 'BurnZombies waits quietly until setup is complete. No computer restart is needed.'

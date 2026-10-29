@@ -5,6 +5,7 @@ import Foundation
 
 func diskDiscoveryProof() throws {
   try toolCaptureProof()
+  try diskPermissionPreflightProof()
   let base = URL(
     fileURLWithPath: WorkspaceSafety.canonical(FileManager.default.temporaryDirectory.path)
   ).appendingPathComponent("bz-discovery-" + UUID().uuidString)
@@ -77,7 +78,10 @@ func diskDiscoveryProof() throws {
   var saved = DiskDiscoveryState()
   saved.nodes = measured
   try saved.save(store)
-  let discovery = try DiskDiscovery(store: store, roots: [home.path])
+  let discovery = try DiskDiscovery(store: store, roots: [home.path],
+    walker: DiskWalkRunner(executable: URL(fileURLWithPath: CommandLine.arguments[0]),
+      argumentPrefix: ["--disk-walk-worker"]),
+    accessCheck: { .init(state: .granted, detail: "Isolated fixture") })
   equal(
     discovery.snapshot().pending.map(\.id), [root.id],
     "Small siblings must remain discoverable as a large aggregate")
@@ -187,6 +191,41 @@ func diskDiscoveryProof() throws {
   equal(evidence.count, 1)
   equal(evidence[0].recommendationOnly, true)
   equal(ReviewLane.lane(for: evidence[0]), .discovery, "Discovery gets a focused read-only toolset")
+}
+
+private func diskPermissionPreflightProof() throws {
+  let root = URL(fileURLWithPath: WorkspaceSafety.canonical(FileManager.default.temporaryDirectory.path))
+    .appendingPathComponent("bz-permission-walk-" + UUID().uuidString)
+  let denied = root.appendingPathComponent("denied")
+  let visible = root.appendingPathComponent("visible")
+  try FileManager.default.createDirectory(at: denied, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: visible, withIntermediateDirectories: true)
+  defer {
+    _ = chmod(denied.path, 0o700)
+    try? FileManager.default.removeItem(at: root)
+  }
+  try Data(repeating: 65, count: 4096).write(to: denied.appendingPathComponent("preserve.bin"))
+  try Data(repeating: 66, count: 4096).write(to: visible.appendingPathComponent("visible.bin"))
+  equal(chmod(denied.path, 0), 0)
+  guard access(denied.path, R_OK | X_OK) != 0 else {
+    return failTest("Permission regression requires an unprivileged test user")
+  }
+  // Direct roots are rejected before traversal, and inaccessible descendants
+  // cannot hide the accessible sibling or be represented as empty clean space.
+  throwsError(try DiskDiscovery.measure(denied.path))
+  let nodes = try DiskDiscovery.measure(root.path)
+  let parent = nodes.first { $0.path == root.path }
+  let blocked = nodes.first { $0.path == denied.path }
+  equal(parent?.files, 1)
+  check((parent?.errors ?? 0) > 0, "Ancestor must retain incomplete-visibility evidence")
+  equal(blocked?.files, 0)
+  check((blocked?.errors ?? 0) > 0, "Skipped directory must retain the access failure")
+  equal(nodes.first { $0.path == visible.path }?.files, 1)
+  // Restoring fixture access must make the same directory traversable again.
+  equal(chmod(denied.path, 0o700), 0)
+  let restored = try DiskDiscovery.measure(root.path).first { $0.path == root.path }
+  equal(restored?.files, 2)
+  equal(restored?.errors, 0)
 }
 
 func toolCaptureProof() throws {
