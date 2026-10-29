@@ -10,6 +10,41 @@ extension WorktreeService {
     {
       _ = try await scan()
     }
+    guard !scanning else {
+      throw StoreError.message("Worktree refresh is still pending; worktree evidence is not ready.")
+    }
+    return try reviewEvidence()
+  }
+  /// Bypass only the observer cadence. Reuse a scan in flight and wait natively,
+  /// leaving it owned by the service if the caller cancels or exhausts its budget.
+  public func refreshForHunt(timeout: TimeInterval) async throws -> [ReviewEvidence] {
+    try requireAccess()
+    let deadline = ProcessInfo.processInfo.systemUptime + max(0, timeout)
+    func waitForReadiness() async throws {
+      try Task.checkCancellation()
+      let remaining = deadline - ProcessInfo.processInfo.systemUptime
+      guard remaining > 0 else {
+        throw StoreError.message(
+          "Worktree refresh is still pending; this Hunt has no ready worktree evidence.")
+      }
+      try await Task.sleep(nanoseconds: UInt64(min(0.05, remaining) * 1e9))
+    }
+    while executing { try await waitForReadiness() }
+    try Task.checkCancellation()
+    guard ProcessInfo.processInfo.systemUptime < deadline else {
+      throw StoreError.message("Worktree refresh preparation deadline reached.")
+    }
+    let flight = try scanFlight ?? startScan()
+    let current = generation
+    while scanFlight?.id == flight.id { try await waitForReadiness() }
+    _ = try await flight.task.value
+    guard current == generation else {
+      throw StoreError.message(
+        "Worktree discovery changed during Hunt preparation; evidence is not ready.")
+    }
+    return try reviewEvidence()
+  }
+  private func reviewEvidence() throws -> [ReviewEvidence] {
     let p = try policy()
     let now = Date()
     let advice = try store.values(WorktreeAdvice.self, kind: "advice")
