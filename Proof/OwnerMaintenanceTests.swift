@@ -264,7 +264,7 @@ private func ownerBacklogFairnessProof(store: Store, evidence: GradleDaemonEvide
     let signal = HarnessHook.Signal(observedAt: date, processCount: 48, residentBytes: 0, pressure: "Low",
       reviewEvidence: ReviewEvidence.pending(in: catalog))
     reviewer.pendingSince = date.addingTimeInterval(-120)
-    check(reviewer.due(signal, requested: false, now: date), "An unvisited owner must stay dispatchable at hourly cadence")
+    check(reviewer.due(signal, requested: false, now: date, intervalHours: 1), "An unvisited owner must stay dispatchable at hourly cadence")
     let selected = reviewer.pending(signal, now: date)
     equal(selected.count, 1)
     let liveIDs = Set(signal.reviewEvidence!.map(\.id))

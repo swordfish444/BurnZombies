@@ -39,6 +39,16 @@ import UserNotifications
   @Published var cleanupQueued = false
   @Published var machineReview = MachineReviewState()
   @Published var machineReviewEnabled = false
+  @Published var harnessConfigured = false
+  @Published var huntSnapshot: HuntSnapshot?
+  @Published private(set) var huntLaunching = false
+  var huntRunning: Bool { huntLaunching || huntSnapshot?.isRunning == true || machineReview.phase == "reviewing" }
+  private var reviewTaskActive = false
+  private var pendingManualHunt = false
+  private var huntProgressTimer: Timer?
+  @Published private(set) var huntProgressVisible = false
+  private var huntPollBusy = false
+  private let huntAction: (() async -> Void)?
   static let accessBannerDismissedKey = "fullDiskAccessBannerDismissed"
   static let accessVerificationPendingKey = "fullDiskAccessVerificationPending"
   @Published private(set) var accessBannerDismissed = false
@@ -112,14 +122,71 @@ import UserNotifications
   }
 
   func requestAgentCleanup() {
-    guard !demo else { previewBurn(); return }
     guard accessReady else { message = state.fullDiskAccess.detail; return }
+    if huntRunning { openHunt?(); return }
+    guard demo || harnessConfigured else { message = "Choose a harness in Settings before hunting."; return }
+    openHunt?()
+    guard !demo || huntAction != nil else { return }
+    huntLaunching = true
+    runHunt(manual: true)
+  }
+  func reloadReviewConfiguration() {
+    guard !demo else { return }
     do {
-      try HarnessHook.requestCleanup()
-      cleanupQueued = true
-      message = "Computer-wide cleanup queued. No active chat needed."
-      Task { try? await reviewer?.resume(); await reviewer?.tick(); await receiveReviewState() }
+      let config = try MachineReviewConfiguration.load(root: Store.defaultRoot)
+      harnessConfigured = config != nil; machineReviewEnabled = config?.enabled ?? false
     } catch { message = error.localizedDescription }
+  }
+  func runScheduledHunt() { runHunt(manual: false) }
+  private func runHunt(manual: Bool) {
+    guard !demo || huntAction != nil else { return }
+    if reviewTaskActive {
+      if manual { pendingManualHunt = true }
+      return
+    }
+    reviewTaskActive = true
+    startHuntProgressTimer()
+    Task {
+      let previousReview = await reviewer?.snapshot()
+      if let huntAction { await huntAction() }
+      else if manual { await reviewer?.hunt() }
+      else { await reviewer?.tick() }
+      await receiveReviewState()
+      if let monitor { state = await monitor.snapshot() }
+      let beganHunt = machineReview.lastStarted != previousReview?.lastStarted
+      let followUp = pendingManualHunt && !beganHunt
+      pendingManualHunt = false
+      huntLaunching = followUp; reviewTaskActive = false
+      if followUp { runHunt(manual: true) }
+      if !huntProgressVisible && !reviewTaskActive { huntProgressTimer?.invalidate(); huntProgressTimer = nil }
+      onUpdate?()
+    }
+  }
+  func setHuntProgressVisible(_ visible: Bool) {
+    huntProgressVisible = visible
+    if visible { startHuntProgressTimer(); pollHuntProgress() }
+    else if !reviewTaskActive { huntProgressTimer?.invalidate(); huntProgressTimer = nil }
+    else { startHuntProgressTimer() }
+  }
+  private func startHuntProgressTimer() {
+    guard !demo else { return }
+    let interval: TimeInterval = huntProgressVisible ? 1 : 5
+    guard huntProgressTimer?.timeInterval != interval else { return }
+    huntProgressTimer?.invalidate()
+    let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+      Task { @MainActor in self?.pollHuntProgress() }
+    }
+    timer.tolerance = 0.2
+    RunLoop.main.add(timer, forMode: .common)
+    huntProgressTimer = timer
+  }
+  private func pollHuntProgress() {
+    guard !huntPollBusy, !demo else { return }
+    huntPollBusy = true
+    Task {
+      await receiveReviewState(includeHunt: huntProgressVisible)
+      huntPollBusy = false
+    }
   }
   @Published var working = false {
     didSet { if oldValue && !working { checkAccessAfterReturnIfReady() } }
@@ -133,6 +200,7 @@ import UserNotifications
   var openLog: (() -> Void)?
   var openSettings: (() -> Void)?
   var openAudit: (() -> Void)?
+  var openHunt: (() -> Void)?
   let demo: Bool
   private var monitor: Monitor?
   private var agentListener: AgentListener?
@@ -140,16 +208,19 @@ import UserNotifications
   private var timer: Timer?
   var onUpdate: (() -> Void)?
   init(demo: Bool = CommandLine.arguments.contains("--demo"), accessPreferences: UserDefaults? = nil,
-    accessOpener: ((URL) -> Bool)? = nil, accessChecker: (() async throws -> FullDiskAccessStatus)? = nil) {
+    accessOpener: ((URL) -> Bool)? = nil, accessChecker: (() async throws -> FullDiskAccessStatus)? = nil,
+    huntAction: (() async -> Void)? = nil) {
     self.demo = demo
     self.accessPreferences = accessPreferences ?? (demo ? nil : .standard)
     self.accessOpener = accessOpener ?? { NSWorkspace.shared.open($0) }
     self.accessChecker = accessChecker
+    self.huntAction = huntAction
     accessBannerDismissed = self.accessPreferences?.bool(forKey: Self.accessBannerDismissedKey) ?? false
     if demo {
       state = Demo.state()
       state.fullDiskAccess = .init(state: .granted, detail: "Preview access state.")
       pressure = "Low"
+      harnessConfigured = true; machineReviewEnabled = true
       restoringAccessPresentation = false
       restoreAccessVerificationAfterRelaunch()
       checkAccessAfterReturnIfReady()
@@ -157,8 +228,10 @@ import UserNotifications
     }
     restoringAccessPresentation = false
     do {
-      monitor = try Monitor(); reviewer = try MachineReviewer()
-      machineReviewEnabled = try MachineReviewConfiguration.load(root: Store.defaultRoot)?.enabled ?? false
+      let observer = try Monitor(); monitor = observer
+      reviewer = try MachineReviewer(prepareHunt: { _ = try await observer.prepareHunt() },
+        settleHunt: { _ = try await observer.settleHuntDiscovery() })
+      reloadReviewConfiguration()
     } catch {
       state.error = error.localizedDescription
       return
@@ -208,11 +281,12 @@ import UserNotifications
       onUpdate?()
       schedule()
       // Observation continues on its own timer while a bounded review runs.
-      if accessReady && state.error == nil && !state.partial { Task { await reviewer?.tick(); await receiveReviewState() } }
+      if accessReady && state.error == nil && !state.partial { runScheduledHunt() }
     }
   }
-  private func receiveReviewState() async {
+  private func receiveReviewState(includeHunt: Bool = true) async {
     if let reviewer { machineReview = await reviewer.snapshot() }
+    if !demo && includeHunt { huntSnapshot = try? HuntSnapshot.load(root: Store.defaultRoot) }
     cleanupQueued = FileManager.default.fileExists(atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
   }
   private func schedule() {
@@ -313,7 +387,7 @@ import UserNotifications
       }
       config.enabled = enabled; try config.save(root: Store.defaultRoot)
       machineReviewEnabled = enabled
-      if enabled { Task { try? await reviewer?.resume(); await reviewer?.tick(); await receiveReviewState() } }
+      if enabled { Task { try? await reviewer?.resume(); await receiveReviewState(); runHunt(manual: false) } }
     } catch { message = error.localizedDescription }
   }
   func setNotifications(_ enabled: Bool) {
@@ -400,6 +474,7 @@ private func status(_ d: Disposition) -> String {
 
 struct Dashboard: View {
   @StateObject private var reviewerSettings = ReviewSettingsModel()
+  @StateObject private var huntSettings = HuntSettingsModel()
   @ObservedObject var model: AppModel
   var eligible: Int { model.state.findings.filter { $0.disposition == .eligible }.count }
   var attention: Int {
@@ -500,7 +575,7 @@ struct Dashboard: View {
             "BurnZombies watches this Mac across every project and session. Background reviews use your selected harness while the app records verified impact."
           ).font(.callout).foregroundStyle(.secondary)
           Text(
-            "Ask your agent to tame the horde, or use Safe cleanup to queue a review. No wrapper or reboot needed."
+            "Use Hunt Zombies for a deep review now. Scheduled hunts keep watch between runs."
           ).font(.caption).foregroundStyle(.secondary)
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(
           .quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
@@ -640,11 +715,11 @@ struct Dashboard: View {
       Text("Your whole Mac. One observer.").font(.headline)
       Text("BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running.")
         .font(.caption).foregroundStyle(.secondary)
-      Toggle("Background reviews", isOn: Binding(get: { model.machineReviewEnabled }, set: model.setAutomatic)).clickPointer().disabled(!model.accessReady)
       Text(model.accessReady ? model.machineReview.detail : "Background reviews wait until Full Disk Access is available.").font(.caption).foregroundStyle(.secondary)
       if model.accessReady && model.machineReview.phase == "paused" {
-        Button("Resume reviews") { model.setAutomatic(true) }.clickPointer()
+        Button("Resume scheduled hunts") { model.setAutomatic(true) }.clickPointer()
       }
+      HuntSettingsView(settings: huntSettings, onSaved: model.reloadReviewConfiguration).disabled(model.demo)
       ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
       UsageHistoryView().disabled(model.demo)
       DiskSettingsView(accessReady: model.accessReady).disabled(model.demo)
@@ -696,12 +771,13 @@ struct Dashboard: View {
   }
 }
 
-@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   var item: NSStatusItem!
   var popover: NSPopover!
   var window: NSWindow?
   var auditWindow: NSWindow?
   var menuPreviewWindow: NSWindow?
+  var huntWindow: NSWindow?
   var model: AppModel!
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
@@ -716,6 +792,7 @@ struct Dashboard: View {
       self?.showAudit()
     }
     model.openAudit = { [weak self] in self?.showAudit() }
+    model.openHunt = { [weak self] in self?.showHunt() }
     item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let icon = NSImage(
       contentsOf: Bundle.module.url(forResource: "EmberSkull", withExtension: "png")!)!
@@ -792,6 +869,35 @@ struct Dashboard: View {
     auditWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
+  func showHunt() {
+    popover?.performClose(nil)
+    if huntWindow == nil {
+      let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 948, height: 780),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+      window.title = "BurnZombies — Hunt Zombies"
+      window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
+      window.isReleasedWhenClosed = false; window.delegate = self
+      window.contentMinSize = NSSize(width: 800, height: 740)
+      let hosting = NSHostingView(rootView: HuntView(model: model)); hosting.sizingOptions = []
+      window.contentView = hosting
+      window.center(); huntWindow = window
+    }
+    model.setHuntProgressVisible(true)
+    huntWindow?.deminiaturize(nil)
+    huntWindow?.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+  func windowWillClose(_ notification: Notification) {
+    if let window = notification.object as? NSWindow, window === huntWindow { model.setHuntProgressVisible(false) }
+  }
+  func windowDidMiniaturize(_ notification: Notification) {
+    if let window = notification.object as? NSWindow, window === huntWindow { model.setHuntProgressVisible(false) }
+  }
+  func windowDidChangeOcclusionState(_ notification: Notification) {
+    if let window = notification.object as? NSWindow, window === huntWindow {
+      model.setHuntProgressVisible(window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible))
+    }
+  }
   @objc func toggle() {
     if popover.isShown {
       popover.performClose(nil)
@@ -815,6 +921,14 @@ struct Dashboard: View {
 MainActor.assumeIsolated {
   let app = NSApplication.shared
   #if DEBUG
+  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--hunt-proof" {
+    do { try huntProof(output: CommandLine.arguments[2]); exit(0) }
+    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
+  }
+  if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--hunt-scene-proof" {
+    do { try huntSceneProof(output: CommandLine.arguments[2]); exit(0) }
+    catch { print("FAIL \(error.localizedDescription)"); exit(1) }
+  }
   if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--access-banner-proof" {
     do { try accessBannerProof(output: CommandLine.arguments[2]); exit(0) }
     catch { print("FAIL \(error.localizedDescription)"); exit(1) }

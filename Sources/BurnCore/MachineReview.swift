@@ -9,6 +9,9 @@ public struct MachineReviewConfiguration: Codable, Sendable {
   public var enabled = true
   public var model: String?
   public var reasoningEffort: String?
+  public var huntIntervalHours: Int?
+  public static let huntIntervals = [1, 2, 4, 8, 12, 24]
+  public var effectiveHuntIntervalHours: Int { huntIntervalHours ?? 4 }
   public static let harnesses = ["codex", "claude", "cursor", "copilot", "gemini"]
   public init(harness: String, executable: String, launcher: String, server: String) {
     self.harness = harness; self.executable = executable; self.launcher = launcher; self.server = server
@@ -20,6 +23,7 @@ public struct MachineReviewConfiguration: Codable, Sendable {
   }
   public func save(root: URL) throws {
     try validateSelection()
+    guard Self.huntIntervals.contains(effectiveHuntIntervalHours) else { throw StoreError.message("Choose a supported hunt interval.") }
     guard Self.harnesses.contains(harness), [executable, launcher, server].allSatisfy({ $0.hasPrefix("/") }) else {
       throw StoreError.message("Choose an installed harness and absolute executable paths.")
     }
@@ -92,12 +96,10 @@ public struct MachineReviewState: Codable, Sendable {
     }
     return selected
   }
-  public func due(_ current: HarnessHook.Signal, requested: Bool, now: Date) -> Bool {
-    guard phase != "paused", phase != "reviewing", (0...180).contains(now.timeIntervalSince(current.observedAt)) else { return false }
-    guard !pending(current, now: now).isEmpty else { return false }
-    let elapsed = lastStarted.map { now.timeIntervalSince($0) } ?? .infinity
-    // Requests coalesce into the same bounded queue; they never bypass the cooldown.
-    return elapsed >= 3600 && pendingSince.map { now.timeIntervalSince($0) >= 120 } == true
+  public func due(_ current: HarnessHook.Signal, requested: Bool, now: Date, intervalHours: Int = 4) -> Bool {
+    guard phase != "paused", phase != "reviewing", (0...180).contains(now.timeIntervalSince(current.observedAt)),
+      !pending(current, now: now).isEmpty else { return false }
+    return requested || lastStarted.map { now.timeIntervalSince($0) >= Double(intervalHours * 3600) } ?? true
   }
   public mutating func migrateProgress() {
     guard progressVersion != 1 else { return }
@@ -134,9 +136,17 @@ public actor MachineReviewer {
   private let store: Store
   private var running = false
   private var state = MachineReviewState()
-  public init(root: URL = Store.defaultRoot, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) throws {
+  private let prepareHunt: (@Sendable () async throws -> Void)?
+  private let settleHunt: (@Sendable () async throws -> Void)?
+  private var huntState: HuntSnapshot?
+  public init(root: URL = Store.defaultRoot, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil, prepareHunt: (@Sendable () async throws -> Void)? = nil, settleHunt: (@Sendable () async throws -> Void)? = nil) throws {
     self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: root) }
-    self.root = root; store = try Store(root: root)
+    self.root = root; store = try Store(root: root); self.prepareHunt = prepareHunt; self.settleHunt = settleHunt
+    huntState = try? HuntSnapshot.load(root: root)
+    if huntState?.phase == "hunting" {
+      huntState?.phase = "paused"; huntState?.detail = "The previous hunt was interrupted. Start a new hunt when ready."
+      try huntState?.save(store)
+    }
     let url = root.appendingPathComponent("machine-review-state.json")
     if FileManager.default.fileExists(atPath: url.path) {
       state = try JSONDecoder().decode(MachineReviewState.self, from: store.read(url, limit: 65536))
@@ -155,77 +165,127 @@ public actor MachineReviewer {
   private func save() throws {
     try store.write(JSONEncoder().encode(state), to: root.appendingPathComponent("machine-review-state.json"), limit: 65536)
   }
-  public func tick(now: Date = Date()) async {
-    guard !running else { return }
-    // Missing setup is not a failed AI attempt and consumes no tokens. Existing
-    // account/transport pauses remain untouched; grants never resume those pauses.
-    guard accessCheck().canScan else { return }
+  public func huntSnapshot() -> HuntSnapshot? { try? HuntSnapshot.load(root: root) }
+  public func hunt(now: Date = Date()) async { await runHunt(manual: true, now: now) }
+  public func tick(now: Date = Date()) async { await runHunt(manual: false, now: now) }
+  private func runHunt(manual: Bool, now: Date) async {
+    guard !running, accessCheck().canScan else { return }
     do {
-      guard let config = try MachineReviewConfiguration.load(root: root), config.enabled else { return }
-      guard let data = try? store.read(root.appendingPathComponent("review-signal"), limit: 65536),
-        let signal = try? JSONDecoder().decode(HarnessHook.Signal.self, from: data) else { return }
-      let pending = state.pending(signal, now: now)
-      if pending.isEmpty {
-        state.pendingSince = nil
-        let deferred = (signal.reviewEvidence ?? []).contains { state.reviewedEvidence?[$0.id] != $0.revision }
-        let detail = deferred ? "Unfinished investigations are queued. Waiting for fresh evidence or their next review interval."
-          : "Watching this Mac. No new cleanup or storage evidence to review."
-        if state.phase != "paused" && state.detail != detail {
-          state.detail = detail; try save()
-        }
-        return
-      }
-      if state.pendingSince == nil { state.pendingSince = now; try save() }
-      let request = root.appendingPathComponent("review-request")
-      guard state.due(signal, requested: FileManager.default.fileExists(atPath: request.path), now: now) else { return }
-      // The monitor lock guarantees one observer; this lock also excludes manual CLI reviews.
+      guard let config = try MachineReviewConfiguration.load(root: root) else { return }
+      guard manual || (config.enabled && state.phase != "paused") else { return }
+      guard manual || state.lastStarted.map({ now.timeIntervalSince($0) >= Double(config.effectiveHuntIntervalHours * 3600) }) ?? true else { return }
+      // One lock spans native preparation and every lane; manual clicks coalesce.
       let lock = try InstanceLock(url: root.appendingPathComponent("machine-review.lock"))
       defer { withExtendedLifetime(lock) {} }
-      var ledger = try ReviewLedger.load(store: store)
-      let attempt = ledger.reserve(harness: config.harness, evidenceCount: pending.count, now: now, model: config.model)
-      try ledger.save(store: store) // Reserve before spawning; crashes cannot erase usage attempts.
-      state.phase = "reviewing"; state.detail = "Reviewing this Mac with \(config.harness)."
-      state.lastStarted = now; state.signal = signal
-      state.signal?.reviewEvidence = nil // Revisions already live in the compact deduplication map.
-      let liveIDs = Set(signal.reviewEvidence?.map(\.id) ?? [])
+      running = true; defer { running = false }
+      state.phase = "reviewing"; state.lastStarted = now
+      state.detail = "Hunting zombies across this Mac."
+      huntState = HuntSnapshot(startedAt: now)
+      huntState?.append("info", manual ? "Manual hunt started." : "Scheduled hunt started.", date: now)
+      try save(); try huntState?.save(store)
+      try await prepareHunt?()
+      guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
+      guard let signal = readSignal(), isFresh(signal, now: now) else {
+        throw StoreError.message("Fresh machine observations are unavailable. Hunt paused without starting a model.")
+      }
+      huntState?.processCount = signal.processCount
+      huntState?.append("info", "Observed \(signal.processCount) processes. Reviewing fresh process, worktree and storage evidence.")
+      if let discovery = try? DiskDiscoveryState.load(store), discovery.running != nil || !discovery.queue.isEmpty {
+        huntState?.append("warning", "Storage measurement is still running. Ready evidence is included; unfinished branches remain queued.")
+      }
+      // Each ready ID is offered at most once. A tool-requested deeper native walk
+      // may add new discovery IDs after it finishes; models never poll that walk.
+      var pass = signal
+      var offered = Set((signal.reviewEvidence ?? []).map(\.id))
+      let liveIDs = offered
       state.reviewedEvidence = (state.reviewedEvidence ?? [:]).filter { liveIDs.contains($0.key) }
       state.attempts = (state.attempts ?? [:]).filter { liveIDs.contains($0.key) }
-      state.begin(pending, now: now)
-      try ReviewProgress(attempt: attempt, selected: pending.map(\.id)).save(store)
-      state.pendingSince = nil
-      try save() // A crash cannot cause an automatic retry of uncertain work.
-      try store.write(Data(), to: root.appendingPathComponent("last-review.log"), limit: 1_048_576)
-      if FileManager.default.fileExists(atPath: request.path) { try FileManager.default.removeItem(at: request) }
-      running = true
-      defer { running = false }
-      let lane = ReviewLane.lane(for: pending[0])
-      let result = await Task.detached { try Self.execute(config, root: self.root,
-        prompt: "Review the supplied \(lane.rawValue) queue now. Follow the service instructions; finish without polling.",
-        reviewIDs: pending.map(\.id), lane: lane, attempt: attempt, accessCheck: self.accessCheck) }.result
-      state.lastFinished = Date()
-      if let index = ledger.entries.firstIndex(where: { $0.id == attempt }) {
-        ledger.entries[index].finished = state.lastFinished
-        ledger.entries[index].usage = (try? store.read(root.appendingPathComponent("last-review.log"), limit: 1_048_576)).flatMap { ReviewUsage.parse($0, requestedModel: config.model) }
-        ledger.entries[index].outcome = (try? result.get()) != nil ? "completed" : "failed"
-        try ledger.save(store: store)
-      }
-      switch result {
-      case .success:
-        if let progress = try? ReviewProgress.load(store), progress.attempt == attempt {
-          state.complete(pending, progress: progress)
+      var visited = Set<String>()
+      var settledDiscovery = false
+      var automaticDisabled = false
+      while true {
+        guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
+        if !manual, (try MachineReviewConfiguration.load(root: root))?.enabled == false {
+          automaticDisabled = true
+          huntState?.append("info", "Automatic hunts were turned off. The active review finished; remaining candidates are deferred.")
+          break
         }
-        state.phase = "observing"
-        state.detail = pending.contains { state.reviewedEvidence?[$0.id] != $0.revision }
-          ? "Review complete. Unfinished investigations remain queued."
-          : "Review complete. Watching this Mac."
-      case .failure(let error):
-        state.phase = "paused"; state.detail = error.localizedDescription
+        guard let fresh = readSignal(), isFresh(fresh, now: now) else {
+          huntState?.append("warning", "Observation evidence became stale. Remaining candidates are deferred, not assumed safe.")
+          break
+        }
+        pass = fresh
+        pass.reviewEvidence = (pass.reviewEvidence ?? []).filter { offered.contains($0.id) && !visited.contains($0.id) }
+        let pending = state.pending(pass, now: now)
+        guard !pending.isEmpty else { break }
+        visited.formUnion(pending.map(\.id))
+        let lane = ReviewLane.lane(for: pending[0])
+        var ledger = try ReviewLedger.load(store: store)
+        let attempt = ledger.reserve(harness: config.harness, evidenceCount: pending.count, now: Date(), model: config.model)
+        try ledger.save(store: store)
+        state.begin(pending, now: now); state.signal = pass; state.signal?.reviewEvidence = nil
+        state.detail = "Hunting: \(lane.rawValue)."
+        try ReviewProgress(attempt: attempt, selected: pending.map(\.id)).save(store)
+        try store.write(Data(), to: root.appendingPathComponent("last-review.log"), limit: 1_048_576)
+        huntState?.lane = lane.rawValue; huntState?.activeAttempt = attempt
+        huntState?.attempts += 1
+        huntState?.append("scanning", "Reviewing \(pending.count) \(lane.rawValue) candidate\(pending.count == 1 ? "" : "s") with \(config.harnessName).")
+        try save(); try huntState?.save(store)
+        let result = await Task.detached { try Self.execute(config, root: self.root,
+          prompt: "Review the supplied \(lane.rawValue) queue now. Follow the service instructions; finish without polling.",
+          reviewIDs: pending.map(\.id), lane: lane, attempt: attempt, manual: manual, accessCheck: self.accessCheck) }.result
+        if let index = ledger.entries.firstIndex(where: { $0.id == attempt }) {
+          ledger.entries[index].finished = Date()
+          ledger.entries[index].usage = (try? store.read(root.appendingPathComponent("last-review.log"), limit: 1_048_576)).flatMap { ReviewUsage.parse($0, requestedModel: config.model) }
+          ledger.entries[index].outcome = (try? result.get()) != nil ? "completed" : "failed"
+          try ledger.save(store: store)
+        }
+        var requestedExploration = false
+        if let progress = try? ReviewProgress.load(store), progress.attempt == attempt {
+          huntState?.include(progress)
+          state.complete(pending, progress: progress)
+          requestedExploration = progress.steps.contains { $0.tool == "disk_explore" }
+        }
+        try result.get()
+        if requestedExploration, !settledDiscovery, let settleHunt {
+          settledDiscovery = true
+          huntState?.append("scanning", "Measuring the deeper storage branches requested by this review. No model is running while measurement finishes.")
+          try huntState?.save(store)
+          try await settleHunt()
+          if let measured = readSignal() {
+            offered.formUnion((measured.reviewEvidence ?? []).filter { ReviewLane.lane(for: $0) == .discovery }.map(\.id))
+          }
+          if let discovery = try? DiskDiscoveryState.load(store), discovery.running != nil || !discovery.queue.isEmpty {
+            huntState?.append("warning", "Some deeper measurements are unfinished and remain queued for a later hunt.")
+          }
+        } else if requestedExploration {
+          huntState?.append("info", "Further native exploration remains queued. This hunt has completed its deeper frontier; a later hunt will review new evidence.")
+        }
+        huntState?.evidenceReviewed += pending.count
+        huntState?.append("info", "\(lane.rawValue.capitalized) review finished.")
+        try save(); try huntState?.save(store)
       }
-      try save()
+      state.lastFinished = Date(); state.phase = "observing"
+      state.detail = automaticDisabled ? "Active review finished. Further automatic work is off." : "Hunt complete. Watching this Mac until the next hunt."
+      huntState?.phase = "completed"; huntState?.finishedAt = state.lastFinished
+      huntState?.activeAttempt = nil; huntState?.detail = state.detail
+      huntState?.append("complete", visited.isEmpty ? "No new eligible evidence required an AI review. Protected and unchanged work was preserved." : "Hunt finished. Cleanup counts update only from verified receipts.")
+      let request = root.appendingPathComponent("review-request")
+      if FileManager.default.fileExists(atPath: request.path) { try FileManager.default.removeItem(at: request) }
+      try save(); try huntState?.save(store)
     } catch {
-      state.phase = "paused"; state.detail = error.localizedDescription
-      try? save()
+      state.phase = "paused"; state.detail = error.localizedDescription; state.lastFinished = Date()
+      huntState?.phase = "paused"; huntState?.finishedAt = state.lastFinished; huntState?.detail = state.detail
+      huntState?.append("paused", state.detail)
+      try? save(); try? huntState?.save(store)
     }
+  }
+  private func isFresh(_ signal: HarnessHook.Signal, now: Date) -> Bool {
+    (-5...180).contains(max(now, Date()).timeIntervalSince(signal.observedAt))
+  }
+  private func readSignal() -> HarnessHook.Signal? {
+    guard let data = try? store.read(root.appendingPathComponent("review-signal"), limit: 65536) else { return nil }
+    return try? JSONDecoder().decode(HarnessHook.Signal.self, from: data)
   }
 
   public static let prompt = """
@@ -361,7 +421,7 @@ public actor MachineReviewer {
   /// Testable without starting an app. The launcher creates a private process group;
   /// only that owned group is terminated on timeout, cancellation or completion.
   public static func execute(_ c: MachineReviewConfiguration, root: URL, prompt: String = prompt,
-    timeout: TimeInterval = 180, reviewIDs: [String]? = nil, lane: ReviewLane? = nil, attempt: UUID? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) throws {
+    timeout: TimeInterval = 180, reviewIDs: [String]? = nil, lane: ReviewLane? = nil, attempt: UUID? = nil, manual: Bool = false, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) throws {
     let access = (accessCheck ?? { FullDiskAccess.status(root: root) })()
     guard access.canScan else { throw StoreError.message(access.detail) }
     let store = try Store(root: root)
@@ -402,9 +462,7 @@ public actor MachineReviewer {
     while process.isRunning {
       if ProcessInfo.processInfo.systemUptime - lastConfigCheck >= 1 {
         lastConfigCheck = ProcessInfo.processInfo.systemUptime
-        if (try? MachineReviewConfiguration.load(root: root))?.enabled == false {
-          process.terminate(); exceeded = true; break
-        }
+        try? store.write(capture.data, to: root.appendingPathComponent("last-review.log"), limit: 1_048_576)
       }
       if ProcessInfo.processInfo.systemUptime - start >= timeout || capture.overflow {
         exceeded = true

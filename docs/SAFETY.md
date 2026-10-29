@@ -12,7 +12,7 @@ Generic signal previews require positive completion evidence: a released native-
 
 ## Continuous operation and impact
 
-The resident observer schedules reviews independently of chats. Only a fresh complete scan can dispatch a review. A single selected harness supplies reasoning; calls are bounded, coalesced and supervised. Failure or account limits pause review until explicit resume, with no model/provider/account fallback. Default setup installs no chat hooks and modifies no persistent harness permissions. Legacy hooks are inert once machine review is configured.
+The resident observer schedules deep hunts independently of chats, every four hours by default. The user can configure that interval or start **Hunt Zombies** manually. Manual requests bypass schedule timing, never Full Disk Access, fresh complete evidence, ownership or cleanup safeguards. One hunt runs at a time. A single selected harness supplies reasoning through focused, bounded and supervised invocations. Failure or account limits pause review until explicit resume, with no model/provider/account fallback. Default setup installs no chat hooks and modifies no persistent harness permissions. Legacy hooks are inert once machine review is configured.
 
 Supported owner operations are distinct from generic SIGTERM: an exact Gradle 8.14.6 daemon receives authenticated StopWhenIdle, and local embedded BuildKit uses exact anchored record IDs with engine reference locks. Both use fresh single-use plans, durable prepared receipts and final authorization checks. Unknown versions, remote builders, active/shared cache and incomplete raw filesystem visibility remain protected. A request acknowledgment is never a cleanup receipt.
 
@@ -21,6 +21,8 @@ An idle Gradle preview is revalidated against exact daemon UID, launch identity,
  The dedicated reviewer supervisor may terminate its own process group after the grace period to prevent orphaned inference/MCP workers. This ownership boundary does not include user jobs or unrelated harnesses.
 
 The app verifies exact exits and watches for new same-executable children under the same verified parent identity for 120 seconds. Existing siblings and unrelated parents do not count as recurrence. Reparented replacements cannot be reliably attributed. Pending, interrupted, unknown and partial results earn no verified credit. Sleep/restart or large sample gaps invalidate pending continuity. Older-boot identities never authorize a current PID. The app does not need a restart to clean up.
+
+The live hunt scene is presentation, not evidence. Scanner animations do not authorize actions or measure overall completion. A detected candidate is not an eradication; burn celebrations and impact counters follow independently verified process, worktree or disk cleanup receipts.
 
 Memory release uses pre-stop resident footprints; shared pages may overlap. CPU savings accumulate a measured rate during observed awake intervals, capped at 24 observed hours per receipt; historical one-hour credits remain a floor. Sleep and coverage gaps add no credit. Speed compares local command-launch samples; it does not measure remote model latency. Missing data stays unavailable.
 

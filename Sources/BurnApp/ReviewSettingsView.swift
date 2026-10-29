@@ -86,7 +86,7 @@ struct ReviewSettingsView: View {
       }
       Text("Applies to future background reviews. Current work keeps running.")
         .font(.caption).foregroundStyle(.secondary)
-      Text("One background reviewer checks new evidence at most hourly. Passive observation uses no model tokens.")
+      Text("Hunts use this harness. Passive observation between hunts uses no model tokens.")
         .font(.caption).foregroundStyle(.secondary)
       HStack {
         Button("Use defaults") { settings.model = ""; settings.thinking = ""; settings.notice = nil }.clickPointer()
