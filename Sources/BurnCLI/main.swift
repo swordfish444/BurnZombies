@@ -21,7 +21,8 @@ func json<T: Encodable>(_ value: T) throws {
   }
   let previous = NSWorkspace.shared.runningApplications.filter {
     $0.bundleIdentifier == "io.burnzombies.app"
-      && $0.bundleURL?.standardizedFileURL == app.standardizedFileURL
+      && $0.bundleURL.map { WorkspaceSafety.canonical($0.path) }
+        == WorkspaceSafety.canonical(app.path)
   }
   for running in previous {
     guard running.terminate() else {
@@ -94,9 +95,9 @@ do {
   case "--disk-walk-worker":
     exit(DiskWalkWorker.run(arguments: Array(args.dropFirst())))
   case "stop-observer":
-    guard args.count == 2, args[1].hasPrefix("/"), args[1] == WorkspaceSafety.canonical(args[1])
+    guard args.count == 2, args[1].hasPrefix("/")
     else { fail("Use stop-observer with the exact canonical BurnZombies.app path.") }
-    try await stopObserver(at: URL(fileURLWithPath: args[1]))
+    try await stopObserver(at: URL(fileURLWithPath: WorkspaceSafety.canonical(args[1])))
   case "start-observer":
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     let app = executable.deletingLastPathComponent().deletingLastPathComponent()
@@ -116,6 +117,24 @@ do {
             throwing: error ?? StoreError.message("Could not start the background observer."))
         }
       }
+    }
+    let readyDeadline = Date().addingTimeInterval(20)
+    var ready = false
+    while Date() < readyDeadline {
+      if AgentConnection.isAvailable(),
+        let reply = try? await AgentConnection.callAsync(AgentRequest("access_status")),
+        let value = try? JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any],
+        value["ok"] as? Bool == true
+      {
+        ready = true
+        break
+      }
+      try await Task.sleep(nanoseconds: 100_000_000)
+    }
+    guard ready else {
+      fail(
+        "Observer launch was acknowledged but its private connection did not become ready. No cleanup was requested."
+      )
     }
   case "review-codex":
     guard args.count == 2 || (args.count == 3 && args[2] == "--probe") else {
