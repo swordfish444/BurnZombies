@@ -6,7 +6,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 macOS 14+, Apple Silicon or Intel. The installer checks the release checksum and signature, installs `~/Applications/BurnZombies.app`, selects an available harness CLI, and starts the menu bar observer in the background. No active chat, special job wrapper or computer reboot is required.
 
-Complete the required Full Disk Access step below before protected-folder inspection and automatic reviews begin. The observer then scans visible processes owned by your macOS user across every project and session. New supported lifecycle evidence queues batched reviews from the selected harness. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
+Complete the required Full Disk Access step below before protected-folder inspection and automatic reviews begin. The observer then scans visible processes owned by your macOS user across every project and session. Supported lifecycle and storage evidence feeds deep hunts from the selected harness, scheduled every four hours by default. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
 
 ## Required Full Disk Access
 
@@ -34,11 +34,19 @@ Full Disk Access enables inspection; it does not approve deletion, bypass owners
 
 Codex, Claude Code, Cursor CLI, GitHub Copilot CLI and Gemini CLI have launch adapters. The selected CLI must be installed and signed in. Codex's bundled desktop CLI is detected when available. A desktop app without a usable local CLI is not sufficient by itself. Authentication is reused, never copied or changed.
 
-Default selection order is Codex, Claude, Cursor, Copilot, Gemini. Reinstallation retains the previous provider; a failed or quota-limited provider is never replaced automatically. Reviews use that harness's existing account and usage allowance. Failed authentication, unsupported CLI options, permission refusals or usage errors pause reviews while native observation continues. Resolve the issue in the harness, then use **Resume reviews** in BurnZombies.
+Default selection order is Codex, Claude, Cursor, Copilot, Gemini. Reinstallation retains the previous provider; a failed or quota-limited provider is never replaced automatically. Reviews use that harness's existing account and usage allowance. Failed authentication, unsupported CLI options, permission refusals or usage errors pause reviews while native observation continues. Resolve the issue in the harness, then explicitly start a new hunt in BurnZombies.
 
 Default setup writes only BurnZombies's private reviewer configuration. It retires byte-verified installer-owned lifecycle skills so working chats no longer perform cleanup bookkeeping. Customized copies are preserved and reported. It does not add an always-loaded MCP server to working chats. It does not install chat hooks, inject reminders, or change persistent tool permissions. Per-run MCP configuration connects the reviewer to the local observer. Legacy BurnZombies hooks become inert when computer-wide review is configured.
 
 ## Options
+
+### Hunt now or choose a schedule
+
+Click **Hunt Zombies** in the menu bar to start a deep review now. Manual hunts use the same ownership, disk-retention and verified-cleanup checks as scheduled hunts. They work even when automatic hunts are off, as long as a harness is configured and Full Disk Access is verified. Only one hunt runs at a time.
+
+While a hunt is running, **Hunting Zombies →** opens its progress view. The side-scrolling scene shows the search, scanner and verified-burn celebrations; the activity log below records actual discoveries, decisions and resource totals. Finding a candidate does not count as a completed cleanup. A worktree celebration follows its verified cleanup receipt too. Closing the progress window leaves the hunt running.
+
+Open **Settings → Zombie hunts** to turn automatic hunts on or off, or select **1, 2, 4, 8, 12 or 24 hours** between hunts. The default is **4 hours**. A first eligible automatic hunt can start immediately; later hunts use the selected interval from the previous start. Click **Save** to apply the schedule. Saving does not launch a hunt, interrupt a running hunt, clear an error pause, or change the model. Automatic hunts never open the progress window or take focus.
 
 ### Model and thinking level
 
@@ -66,7 +74,7 @@ No `--yolo`, blanket permission bypass, account fallback, quarantine removal or 
 
 ## Acceptance
 
-Check the menu bar observer and its selected harness, then verify a bounded background review once actual completion evidence is released. An idle Mac should not invoke the model. CLI configuration alone is not live model proof. Current validation and remaining harness limits are in [VALIDATION.md](VALIDATION.md).
+Check the menu bar observer and its selected harness, then verify a bounded hunt against actual completion evidence. An empty queue or already-resolved evidence should not cause repeated model calls. CLI configuration alone is not live model proof. Current validation and remaining harness limits are in [VALIDATION.md](VALIDATION.md).
 
 
 ### Passive evidence without working-chat overhead
@@ -75,4 +83,4 @@ Codex children are associated with an owning turn through native process ancestr
 
 This first passive adapter covers local Codex and Claude Code sessions. The other three reviewer adapters remain available, but missing ownership metadata is preserved as a coverage gap. Explicit lifecycle claims remain supported for integrations; they are no longer injected into every working chat. Existing active claims never expire into disposable work.
 
-Reviews are separated by at least one hour and run only for changed supported evidence. Settings → Usage & estimated cost is collapsed initially. Expand it for 1, 7 or 30 days of hourly/daily token and API-equivalent cost charts, with full and per-model rollups. Unknown model prices or missing usage are marked unavailable, not fabricated.
+Automatic hunts default to every four hours and batch supported evidence across the Mac. The schedule is configurable; an explicit manual hunt can start sooner. Observation and the animated progress display do not make model calls of their own. Settings → Usage & estimated cost is collapsed initially. Expand it for 1, 7 or 30 days of hourly/daily token and API-equivalent cost charts, with full and per-model rollups. Unknown model prices or missing usage are marked unavailable, not fabricated.

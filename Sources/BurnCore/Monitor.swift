@@ -100,6 +100,24 @@ public actor Monitor {
     lastSave = Date()
     receiptNeedsCheckpoint = false
   }
+  /// Native-only preparation. Wait locally for the bounded map; no AI polling.
+  public func prepareHunt(timeout: TimeInterval = 120) async throws -> ViewState {
+    try requireFullDiskAccess()
+    if let discovery { discovery.requestCycle(policy: try DiskPolicy.load(store)) }
+    return try await settleHuntDiscovery(timeout: timeout)
+  }
+  /// Wait for work already requested by a discovery tool, without starting a new map.
+  public func settleHuntDiscovery(timeout: TimeInterval = 120) async throws -> ViewState {
+    try requireFullDiskAccess()
+    if let discovery {
+      let deadline = ProcessInfo.processInfo.systemUptime + timeout
+      while discovery.isMeasuring && ProcessInfo.processInfo.systemUptime < deadline {
+        try Task.checkCancellation()
+        try await Task.sleep(nanoseconds: 500_000_000)
+      }
+    }
+    return refresh()
+  }
   public func refresh() -> ViewState {
     // Swift concurrency workers do not drain Cocoa temporaries per observation.
     // Bound Foundation path/encoding allocations to this scan, including on errors.

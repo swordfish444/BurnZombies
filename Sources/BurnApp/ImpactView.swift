@@ -161,10 +161,11 @@ struct BurnStatus: View {
   var status: String {
     if !model.accessReady { return "Setup required" }
     if model.state.error != nil { return "Needs attention" }
+    if model.huntRunning { return "Hunting Zombies" }
     if model.machineReview.phase == "paused" { return "Review paused" }
     if compact {
-      if !model.demo && !model.machineReviewEnabled { return "Reviews off" }
-      return model.machineReview.phase == "reviewing" ? "Reviewing this Mac" : "Agent-led cleanup"
+      if !model.demo && !model.machineReviewEnabled { return "Automatic hunts off" }
+      return "Agent-led cleanup"
     }
     return "Watching this Mac"
   }
@@ -174,14 +175,21 @@ struct BurnStatus: View {
         .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
       Text(status).font(.system(size: compact ? 13 : 18)).foregroundStyle(Color(white: 0.82))
       Button {
-        if model.accessReady { model.requestAgentCleanup() } else { model.openFullDiskAccessSettings() }
+        if !model.accessReady { model.openFullDiskAccessSettings() }
+        else if model.huntRunning { model.openHunt?() }
+        else { model.requestAgentCleanup() }
       } label: {
-        Text(!model.accessReady ? "Finish setup" : model.cleanupQueued ? "Queued" : "Safe cleanup")
+        HStack(spacing: 6) {
+          if model.accessReady && model.huntRunning { Image(systemName: "arrow.up.right") }
+          else { Text(!model.accessReady ? "Finish setup" : "Hunt Zombies") }
+        }
           .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(BurnTheme.orange)
           .padding(.horizontal, 9).padding(.vertical, compact ? 4 : 6)
           .background(BurnTheme.orange.opacity(0.08), in: Capsule()).contentShape(Capsule())
-      }.clickPointer().disabled(model.accessReady && !model.demo && !model.machineReviewEnabled)
-        .help(model.accessReady ? "Review buildup across this Mac now. No active chat or reboot needed." : "Enable Full Disk Access in Settings to begin.")
+      }.buttonStyle(.plain).clickPointer().disabled(model.accessReady && !model.demo && !model.harnessConfigured)
+        .accessibilityLabel(!model.accessReady ? "Finish setup" : model.huntRunning ? "View hunt progress" : "Hunt Zombies")
+        .accessibilityIdentifier(model.huntRunning ? "view-hunt-progress" : "start-hunt")
+        .help(!model.accessReady ? "Enable Full Disk Access in Settings to begin." : model.huntRunning ? "Watch the hunt and its live activity log." : "Start a deep hunt across this Mac now.")
     }
   }
 }

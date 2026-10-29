@@ -44,6 +44,10 @@ jobs:
         run: .build/debug/BurnZombiesApp --impact-proof "$RUNNER_TEMP/bz-impact"
       - name: Compact menu states without opening a window
         run: .build/debug/BurnZombiesApp --mini-proof "$RUNNER_TEMP/bz-mini"
+      - name: Hunt progress without opening a window
+        run: .build/debug/BurnZombiesApp --hunt-proof "$RUNNER_TEMP/bz-hunt"
+      - name: Hunt scene without opening a window
+        run: .build/debug/BurnZombiesApp --hunt-scene-proof "$RUNNER_TEMP/bz-hunt-scene"
       - name: Installer proof
         run: |
           COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/BurnZombies-test.tar.gz" -C dist BurnZombies.app

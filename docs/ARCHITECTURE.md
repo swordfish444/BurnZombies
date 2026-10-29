@@ -2,7 +2,7 @@
 
 ```text
 Resident macOS observer ── samples all current-user processes
-          │ own schedule, change coalescing, one review at a time
+          │ 4-hour default schedule or manual Hunt Zombies, one hunt at a time
           ▼
 Selected installed harness ── bounded background reasoning
           │ MCP: status → inspect → preview → burn
@@ -10,7 +10,7 @@ Selected installed harness ── bounded background reasoning
 Native evidence / identity guards / graceful stop
           │ independent exit and recurrence verification
           ▼
-Private catalog ── menu-bar impact + burn log
+Private catalog ── menu-bar impact + burn log + live hunt progress
 ```
 
 Observation and scheduling belong to the computer, not a chat. One selected harness provides reasoning through a supervised, bounded invocation using its existing authentication. There is no fixed abandonment classifier or mandatory launch wrapper for user jobs. Default setup writes only BurnZombies configuration and installs no chat hooks.
@@ -21,9 +21,11 @@ One monitor owns a nonblocking private lock. It observes current-user processes 
 
 The catalog is compressed Codable data with bounded reads/decompression, a five-minute checkpoint and immediate durable action/settings writes. Before signaling, the monitor persists intent. Only a completed verified receipt contributes impact. A crash cannot turn absent processes into labeled training examples.
 
-The aggregate signal contains observation time, process count, RSS and pressure. A complete fresh scan can start the initial review; later resource changes have a ten-minute cooldown, with an hourly review for ownership changes that do not increase totals. A manual request is independent of chats. These are scheduling rules, never kill criteria.
+The aggregate signal contains observation time, process count, RSS, pressure and compact review evidence. Automatic deep hunts default to every four hours; the user can choose a different interval or disable the schedule. An explicit manual hunt can start sooner and works with automatic hunts off. It still requires verified Full Disk Access, fresh complete evidence and the single-run lock. These are scheduling rules, never kill criteria. Native preparation waits up to two minutes for bounded local measurements without using a model, then freezes the ready evidence IDs for a finite pass. A first eligible automatic hunt can start immediately; later starts follow the configured interval. Each hunt processes focused evidence batches across eligible lanes; completed revisions remain deduplicated and unfinished read-only investigations retain their backoff.
 
-`MachineReviewer` persists review intent before launching. It owns one three-minute process-group supervisor, caps output at one MiB, keeps its run directory private and removes it afterward. Completion does not stop observation or receipt verification. Errors, quota failures, cancellation and interrupted reviews pause further invocations until explicit resume. No automatic provider fallback. No LaunchAgent, recurring codex exec, chat mutation or UI activation is installed.
+`MachineReviewer` persists hunt/review intent before launching. Each focused harness invocation owns one three-minute process-group supervisor, caps output at one MiB, keeps its run directory private and removes it afterward. Completion does not stop observation or receipt verification. Errors, quota failures, cancellation and interrupted reviews pause further invocations until explicit resume. No automatic provider fallback. No LaunchAgent, recurring codex exec, chat mutation or UI activation is installed.
+
+The optional hunt window reads structured progress and verified receipts. Its scene animates the search independently of the model's exact tool timing; scanner percentages are not a global completion percentage. Candidate detection never increments impact, and a burn celebration requires a verified receipt. Opening or animating the display does not call the model. The activity log retains the actual operation/result details.
 
 ## Execution
 
@@ -41,7 +43,7 @@ Verification distinguishes unknown, partial, possible recurrence and verified ex
 - `MachineSetup.swift`: private provider selection without editing harness settings.
 - `HarnessInstall.swift`: optional legacy interactive MCP/skill setup.
 - `BurnMCP`: official Swift SDK protocol server; compatibility adapter for SDK 0.12.1 experimental capabilities.
-- `BurnApp`: impact UI and optional details. Reopen events never show windows; presenting UI requires a menu action.
+- `BurnApp`: impact UI, hunt schedule settings, optional live hunt scene/activity log and details. Reopen events never show windows; presenting UI requires a menu action.
 - `Store.swift`, `Native.swift`, `CBurn`: bounded persistence and small macOS API boundary.
 - `Proof`: native fixtures, real OS zombies, active controls, pressure simulations and protocol tests.
 
