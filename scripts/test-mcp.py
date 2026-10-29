@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import statistics
+import uuid
 
 repo = Path(__file__).resolve().parents[1]
 binary = repo / ".build/debug"
@@ -159,6 +160,21 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
             assert compact['work'] == [] and compact['workspaces'] == [], 'Reviewer saw evidence outside selected batch'
             assert 'groups' not in compact and 'receipts' not in compact and 'worktreeReceipts' not in compact
         assert call('burnzombies_status', {})['result']['isError']
+        server.stdin.close(); assert server.wait(timeout=10)==0
+        # Actual worktree MCP routing must retain the sub-action in Hunt's feed.
+        attempt = str(uuid.uuid4())
+        Path(root, 'review-progress.json').write_text(json.dumps({
+            'attempt': attempt, 'selected': [], 'steps': []}))
+        env['BURNZOMBIES_REVIEW_LANE'] = 'worktree'
+        env['BURNZOMBIES_REVIEW_ATTEMPT'] = attempt
+        server = subprocess.Popen([str(server_binary)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        send('initialize', {'protocolVersion':'2025-11-25', 'capabilities':{}, 'clientInfo':{'name':'Worktree Hunt activity proof','version':'1'}})
+        send('notifications/initialized', notification=True)
+        listed = call('burnzombies_worktrees', {'action':'list'})['result']
+        assert not listed.get('isError'), listed
+        activity = json.loads(Path(root, 'review-progress.json').read_text())['activity']
+        assert len(activity) == 1 and activity[0]['tool'] == 'worktrees_read'
+        assert activity[0]['action'] == 'list' and activity[0]['succeeded']
         server.stdin.close(); assert server.wait(timeout=10)==0
         print("PASS MCP lifecycle, protected working claims, redacted readback, strict arguments, reviewer capability restrictions and call budget")
     finally:

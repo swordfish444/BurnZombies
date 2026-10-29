@@ -167,6 +167,13 @@ func machineReviewProof() async throws {
   check(activity.completed.isEmpty, "Tool activity cannot acknowledge discovery or fabricate cleanup")
   var presented = HuntSnapshot(startedAt: now); presented.include(activity)
   checkFalse(presented.log.contains { $0.kind == "burn" }, "Only verified receipts trigger burn celebrations")
+  try ReviewProgress.record(store: manualStore, attempt: activityAttempt, operation: "worktrees_read", id: nil, succeeded: true, action: "preview")
+  try ReviewProgress.record(store: manualStore, attempt: activityAttempt, operation: "worktrees_read", id: nil, succeeded: true, action: "retire")
+  try ReviewProgress.record(store: manualStore, attempt: activityAttempt, operation: "worktrees_read", id: nil, succeeded: false, action: "preview")
+  var worktreeActivity = HuntSnapshot(startedAt: now)
+  worktreeActivity.include(try ReviewProgress.load(manualStore))
+  equal(worktreeActivity.newCelebrations(since: []).filter { $0.kind == "detected" }.count, 1, "Only a successful typed worktree preview is detected")
+  checkFalse(worktreeActivity.log.contains { $0.kind == "burn" }, "Retirement acknowledgment fabricated a verified burn")
 
   // Activity metadata remains backward-compatible and inside the private file bound.
   let oldProgress = Data("{\"attempt\":\"\(UUID().uuidString)\",\"selected\":[],\"steps\":[],\"activity\":[{\"tool\":\"inspect\",\"succeeded\":true,\"date\":0}]}".utf8)

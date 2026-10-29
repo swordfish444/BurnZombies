@@ -102,3 +102,9 @@ scripts/build-app.sh --universal
 The earlier 0.7 adoption and descriptor-limit statements above describe historical behavior. For the current authority, supported preservation and recovery contract, use [Worktree lifecycle](WORKTREE-CLEANUP.md).
 
 Reinstalled-app acceptance uses `python3 scripts/test-installed-worktrees.py --cli /absolute/path/to/BurnZombies.app/Contents/MacOS/burnzombies`. It generates its own private repository, verifies active cwd/open-file refusal, performs clean and dirty retirement through the actual observer/CLI, restores after deleting the original test repository using the actual app recovery key, purges only exact test archives, and removes its temporary discovery root. No access/consumer injection is used.
+
+## Hunt worktree receipt integration (0.12.1)
+
+The 0.12.0 monitor projection is now used through a shared Hunt receipt method that preserves unknown coverage when `worktreeError` is present. An unavailable SQLite projection cannot display a clean zero or generate a burn event. Known totals remain in memory while the UI shows unknown; fresh verified projection restores availability. The actual retirement fixture verifies a SQLite-only receipt changes the count and animation event once, while repeated reads and unavailable evidence never replay it.
+
+MCP worktree activity retains a bounded typed sub-action. Only successful preview emits detection; retirement acknowledgment remains activity until a verified receipt supplies the burn event. The actual MCP protocol fixture checks that `worktrees_read` list activity is recorded with its sub-action, and core tests check successful/refused preview and retire behavior. Existing Hunt controls, four-hour scheduling, no-focus behavior and live feed checks remain in the combined suite.

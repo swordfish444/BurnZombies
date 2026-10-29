@@ -156,6 +156,7 @@ public struct ReviewProgress: Codable, Sendable {
     public var date: Date
     public var detail: String?
     public var id: String?
+    public var action: String?
   }
   public var activity: [Activity]?
   public init(attempt: UUID, selected: [String]) {
@@ -177,10 +178,11 @@ public struct ReviewProgress: Codable, Sendable {
   }
   public static func record(
     store: Store, attempt: UUID, operation: String, id: String?, succeeded: Bool = true,
-    detail: String? = nil
+    detail: String? = nil, action: String? = nil
   ) throws {
     let tools = [
-      "worktrees", "status", "inspect", "preview", "burn", "owner_preview", "owner_stop",
+      "worktrees", "worktrees_read", "status", "inspect", "preview", "burn", "owner_preview",
+      "owner_stop",
       "cache_preview", "cache_clean", "workspace_preview", "workspace_clean", "disk_decide",
       "disk_preview", "disk_clean", "disk_inspect", "disk_evidence", "disk_recommend",
       "disk_explore",
@@ -203,11 +205,17 @@ public struct ReviewProgress: Codable, Sendable {
       bytes += size
     }
     let clean = bounded.trimmingCharacters(in: .whitespacesAndNewlines)
+    let worktreeActions: Set<String> = [
+      "list", "operations", "inspect", "claim", "release", "retain", "advise", "preview", "retire",
+    ]
+    let typedAction =
+      ["worktrees", "worktrees_read"].contains(operation)
+        && action.map(worktreeActions.contains) == true ? action : nil
     value.activity = Array(
       ((value.activity ?? []) + [
         .init(
           tool: operation, succeeded: succeeded, date: Date(),
-          detail: clean.isEmpty ? nil : clean, id: UUID().uuidString)
+          detail: clean.isEmpty ? nil : clean, id: UUID().uuidString, action: typedAction)
       ]).suffix(24))
     guard let id,
       ["disk_inspect", "disk_evidence", "disk_recommend", "disk_explore"].contains(operation),
