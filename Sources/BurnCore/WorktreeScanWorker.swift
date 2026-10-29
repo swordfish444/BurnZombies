@@ -177,7 +177,8 @@ public final class WorktreeScanRunner: @unchecked Sendable {
       } + [nil]
     var environment =
       ["PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "BURNZOMBIES_HOME=" + root.path].map {
-        strdup($0)
+        (value: String) in
+        value.withCString { strdup($0) }
       } + [nil]
     defer {
       words.forEach { free($0) }
