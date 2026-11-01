@@ -17,6 +17,38 @@ private final class AnalysisCounter: @unchecked Sendable {
   var count: Int { lock.withLock { calls } }
 }
 
+private final class ReplyFinalizationGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Void, Never>?
+  private var cancelled = false
+  private var released = false
+  var ready: Bool { lock.withLock { continuation != nil } }
+  var wasCancelled: Bool { lock.withLock { cancelled } }
+  func hold() async {
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        let resumeNow = lock.withLock {
+          if released { return true }
+          self.continuation = continuation
+          return false
+        }
+        if resumeNow { continuation.resume() }
+      }
+    } onCancel: {
+      self.lock.withLock { self.cancelled = true }
+    }
+  }
+  func release() {
+    let waiting = lock.withLock {
+      released = true
+      let saved = continuation
+      continuation = nil
+      return saved
+    }
+    waiting?.resume()
+  }
+}
+
 func transportProof() async throws {
   let root = URL(fileURLWithPath: "/private/tmp/bz-transport-" + UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: root) }
@@ -25,6 +57,10 @@ func transportProof() async throws {
       + (ProcessInfo.processInfo.environment["LIBDISPATCH_COOPERATIVE_POOL_STRICT"] ?? "unset"))
   try await transportStage("parallel-storage-status", root: root) {
     try await independentRequestsProof(root: root)
+  }
+  let finalized = root.appendingPathComponent("delivered-shutdown")
+  try await transportStage("delivered-reply-shutdown", root: finalized) {
+    try await deliveredReplyShutdownProof(root: finalized)
   }
   let preview = root.appendingPathComponent("preview")
   try await transportStage("worktree-preview-deadline", root: preview) {
@@ -49,6 +85,43 @@ func transportProof() async throws {
   let analysis = root.appendingPathComponent("analysis-limit")
   try await transportStage("bounded-analysis", root: analysis) {
     try await boundedAnalysisProof(root: analysis)
+  }
+}
+
+private func deliveredReplyShutdownProof(root: URL) async throws {
+  for accepted in [true, false] {
+    let state = root.appendingPathComponent(accepted ? "accepted" : "refused")
+    let gate = ReplyFinalizationGate()
+    defer { gate.release() }
+    let listener = try AgentListener(
+      root: state,
+      responseWriter: { client, line in
+        let result = await AgentListener.writeResponse(client, line)
+        if result == 0 { await gate.hold() }
+        return result
+      },
+      handler: { _ in AgentReply(ok: accepted, message: "Complete socket reply") })
+    let text = try await AgentConnection.callAsync(.init("status"), root: state)
+    let reply = try JSONDecoder().decode(AgentReply.self, from: Data(text.utf8))
+    equal(reply.ok, accepted)
+    equal(reply.message, "Complete socket reply")
+    for _ in 0..<100 where !gate.ready { try await Task.sleep(for: .milliseconds(5)) }
+    check(gate.ready, "Real response write reached the finalization boundary")
+    let stopped = Task { await listener.stop() }
+    for _ in 0..<100 where !gate.wasCancelled { try await Task.sleep(for: .milliseconds(5)) }
+    check(
+      gate.wasCancelled,
+      "Shutdown cancelled the held server task after the client received its reply")
+    gate.release()
+    await stopped.value
+    let receipts = try JSONDecoder().decode(
+      [AgentTransportReceipt].self,
+      from: Data(contentsOf: state.appendingPathComponent("agent-transport.json")))
+    equal(receipts.count, 1)
+    check(
+      receipts.first?.status == (accepted ? "ok" : "refused"),
+      "Completed reply was misclassified after shutdown: \(receipts.map(\.status))")
+    check((receipts.first?.responseBytes ?? 0) > 0, "Completed response byte count was lost")
   }
 }
 
@@ -116,7 +189,7 @@ private func independentRequestsProof(root: URL) async throws {
   check(gate.ready, "Storage fixture entered the request handler")
   let start = Date()
   let fast = try await AgentConnection.callAsync(AgentRequest("status"), root: root)
-  check(fast.contains("fixture status"))
+  check(fast.contains("fixture status"), "Parallel status returned an unexpected fixture reply")
   check(
     Date().timeIntervalSince(start) < 0.4,
     "An unrelated status request must not wait behind storage inspection")
@@ -126,9 +199,18 @@ private func independentRequestsProof(root: URL) async throws {
   let records = try JSONDecoder().decode(
     [AgentTransportReceipt].self,
     from: Data(contentsOf: root.appendingPathComponent("agent-transport.json")))
-  check(records.contains { $0.operation == "disk_inspect" && $0.handlerMilliseconds >= 800 })
-  check(records.contains { $0.operation == "status" && $0.handlerMilliseconds < 400 })
-  check(records.allSatisfy { $0.status == "ok" })
+  let timing = records.map {
+    "\($0.operation):\($0.status):handler=\($0.handlerMilliseconds)ms:total=\($0.totalMilliseconds)ms"
+  }.joined(separator: "; ")
+  check(
+    records.contains { $0.operation == "disk_inspect" && $0.handlerMilliseconds >= 800 },
+    "Missing completed slow-handler timing: \(timing)")
+  check(
+    records.contains { $0.operation == "status" && $0.handlerMilliseconds < 400 },
+    "Missing responsive status-handler timing: \(timing)")
+  check(
+    records.allSatisfy { $0.status == "ok" },
+    "Parallel completed replies lost success status: \(timing)")
 }
 
 private func idleTransportProof(root idleRoot: URL) async throws {

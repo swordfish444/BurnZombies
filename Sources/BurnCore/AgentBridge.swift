@@ -664,8 +664,18 @@ public final class AgentListener: @unchecked Sendable {
   public static func socketPath(_ root: URL = Store.defaultRoot) -> String {
     root.appendingPathComponent("agent.sock").path
   }
-  public init(
+  public convenience init(
     root: URL = Store.defaultRoot,
+    handler: @escaping @Sendable (AgentRequest) async -> AgentReply
+  ) throws {
+    try self.init(
+      root: root, responseWriter: { await Self.writeResponse($0, $1) }, handler: handler)
+  }
+  // Package-scoped seam lets the socket proof hold finalization after an actual
+  // successful write. Public callers always use the native writer.
+  package init(
+    root: URL,
+    responseWriter: @escaping @Sendable (Int32, String) async -> Int32,
     handler: @escaping @Sendable (AgentRequest) async -> AgentReply
   ) throws {
     let store = try Store(root: root)
@@ -742,9 +752,12 @@ public final class AgentListener: @unchecked Sendable {
           var receipt = AgentTransportReceipt(
             started: Date(), operation: "unknown", status: "read_failed",
             frameMilliseconds: 0, handlerMilliseconds: 0, totalMilliseconds: 0, responseBytes: 0)
+          var responseWriteCompleted = false
           defer {
             receipt.totalMilliseconds = (bz_continuous_ns() - began) / 1_000_000
-            if Task.isCancelled { receipt.status = "cancelled" }
+            // Shutdown may cancel the task after its complete response reached
+            // the client but before the native write continuation resumed.
+            if Task.isCancelled && !responseWriteCompleted { receipt.status = "cancelled" }
             clients.record(receipt)
           }
           let data: Data? = await withCheckedContinuation { continuation in
@@ -790,20 +803,22 @@ public final class AgentListener: @unchecked Sendable {
               receipt.status = "oversize"
               return
             }
-            let written: Int32 = await withCheckedContinuation { continuation in
-              DispatchQueue.global(qos: .utility).async {
-                continuation.resume(
-                  returning: line.withCString {
-                    bz_agent_write(client, $0, Int32(line.utf8.count))
-                  })
-              }
-            }
+            let written = await responseWriter(client, line)
+            responseWriteCompleted = written == 0
             if written != 0 {
               receipt.status = "write_failed"
             }
           } catch { receipt.status = "encoding_failed" }
         }
         clients.attach(work, to: client)
+      }
+    }
+  }
+  package static func writeResponse(_ client: Int32, _ line: String) async -> Int32 {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .utility).async {
+        continuation.resume(
+          returning: line.withCString { bz_agent_write(client, $0, Int32(line.utf8.count)) })
       }
     }
   }
