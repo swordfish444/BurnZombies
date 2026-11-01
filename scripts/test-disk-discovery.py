@@ -42,15 +42,21 @@ with tempfile.TemporaryDirectory(prefix="bz-discovery-mcp-") as directory:
         "lastCycle": now, "updated": now, "explored": [], "detail": "Isolated protocol fixture."}))
     expected = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob("*") if p.is_file()}
     identity = "space:" + hashlib.sha256((str(source) + "|folder").encode()).hexdigest()
+    # The 100 MB discovery floor makes all three measured child branches
+    # independently reviewable. Status must choose those disjoint leaves, while
+    # the explicit scope also permits inspecting their common parent for grouping.
+    child_ids = {"space:" + hashlib.sha256((node["path"] + "|folder").encode()).hexdigest()
+                 for node in nodes[1:]}
+    selected = [identity] + sorted(child_ids)
     fixture = subprocess.Popen([str(binary / "BurnProof"), "--agent-fixture", str(root)],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     server = None
     try:
         assert line(fixture).strip() == b"READY"
         attempt = str(uuid.uuid4()).upper()
-        (root / 'review-progress.json').write_text(json.dumps({'attempt':attempt,'selected':[identity],'steps':[]}))
+        (root / 'review-progress.json').write_text(json.dumps({'attempt':attempt,'selected':selected,'steps':[]}))
         env = dict(os.environ, BURNZOMBIES_HOME=str(root), BURNZOMBIES_REVIEW_MODE="1",
-                   BURNZOMBIES_REVIEW_IDS=json.dumps([identity]), BURNZOMBIES_REVIEW_LANE='discovery',
+                   BURNZOMBIES_REVIEW_IDS=json.dumps(selected), BURNZOMBIES_REVIEW_LANE='discovery',
                    BURNZOMBIES_REVIEW_ATTEMPT=attempt)
         server = subprocess.Popen([str(binary / "burnzombies-mcp")], env=env,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -75,7 +81,8 @@ with tempfile.TemporaryDirectory(prefix="bz-discovery-mcp-") as directory:
             result = send("tools/call", {"name": "burnzombies_" + name, "arguments": arguments})["result"]
             return result, json.loads(result["content"][0]["text"])
         result, status = call("status", {})
-        assert not result.get("isError") and status["diskDiscovery"][0]["id"] == identity
+        assert not result.get("isError"), status
+        assert {node["id"] for node in status["diskDiscovery"]} == child_ids, status
         assert status["diskPolicy"]["mode"] == "recommend", "Discovery-only reviews must receive user policy"
         result, facts = call("disk_inspect", {"node_id": identity})
         assert not result.get("isError"), facts
