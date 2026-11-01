@@ -19,6 +19,23 @@ private struct WorktreeDiscoveryFrontier: Codable {
 }
 
 public enum WorktreeDiscovery {
+  static func roundRobinRepositories(_ rows: [WorktreeRecord]) -> [WorktreeRecord] {
+    let groups = Dictionary(grouping: rows, by: \.repository)
+    var active = groups.keys.sorted()
+    var offset = 0
+    var result: [WorktreeRecord] = []
+    while !active.isEmpty {
+      var next: [String] = []
+      for key in active {
+        let group = groups[key]!
+        result.append(group[offset])
+        if group.count > offset + 1 { next.append(key) }
+      }
+      active = next
+      offset += 1
+    }
+    return result
+  }
   public static func ownerManaged(_ path: String) -> Bool {
     ["/.codex/worktrees/", "/.claude/worktrees/", "/.cursor/worktrees/"].contains {
       path.contains($0)
@@ -169,7 +186,22 @@ public enum WorktreeDiscovery {
           WorktreeGit.run(seed, ["worktree", "list", "--porcelain", "-z"]), repository: common)
         registeredPaths.formUnion(rows.map(\.path))
         for var row in rows {
-          row.gaps = ["Detailed inspection pending."]
+          if row.main || row.bare || row.ownerManaged {
+            row.blockers = [
+              row.ownerManaged
+                ? "Use the owning application's supported archive/restore workflow."
+                : "Main and bare repository anchors are protected."
+            ]
+            row.gaps = [
+              "Protected inventory: file and consumer details are not measured automatically. Use Inspect for current details."
+            ]
+          } else if !roots.contains(where: { WorkspaceSafety.contains($0, row.path) }) {
+            row.gaps = [
+              "Registered location is outside discovery permission; add its exact folder to inspect."
+            ]
+          } else {
+            row.gaps = ["Detailed inspection pending."]
+          }
           result.records.append(row)
           publish(row)
         }
@@ -184,13 +216,21 @@ public enum WorktreeDiscovery {
     }
     // Inventory is complete before expensive status/files/consumer inspection.
     // Deferred details remain explicit and the next round starts at the cursor.
-    let recordCount = result.records.count
+    let detailed = roundRobinRepositories(
+      result.records.filter { row in
+        !row.main && !row.bare && !row.ownerManaged
+          && roots.contains(where: { WorkspaceSafety.contains($0, row.path) })
+      })
+    let positions = Dictionary(
+      uniqueKeysWithValues: result.records.enumerated().map { ($0.element.id, $0.offset) })
+    let recordCount = detailed.count
     if recordCount > 0 {
       let start = max(0, inspectOffset) % recordCount
       for step in 0..<recordCount {
-        let index = (start + step) % recordCount
+        let position = (start + step) % recordCount
+        let index = positions[detailed[position].id]!
         if Task.isCancelled || ProcessInfo.processInfo.systemUptime > deadline {
-          result.nextInspection = index
+          result.nextInspection = position
           result.gaps.append(
             "Detailed inspection deferred for \(recordCount - step) worktree(s); next scan resumes from its saved cursor."
           )

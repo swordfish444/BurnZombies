@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 
 func nativeWorktreeRefreshProof() async throws {
+  try worktreeDiscoveryFairnessProof()
   let base = URL(fileURLWithPath: "/private/tmp/bz-refresh-native-" + UUID().uuidString)
   let repository = base.appendingPathComponent("repository")
   let root = base.appendingPathComponent("state")
@@ -11,6 +12,7 @@ func nativeWorktreeRefreshProof() async throws {
   let activeMarker = base.appendingPathComponent("inspecting.json")
   let lateMarker = base.appendingPathComponent("late-marker")
   let deferral = base.appendingPathComponent("defer-worker")
+  let single = base.appendingPathComponent("single-row-worker")
   let starts = base.appendingPathComponent("worker-starts")
   let wrapper = base.appendingPathComponent("worker")
   defer { try? FileManager.default.removeItem(at: base) }
@@ -35,6 +37,12 @@ func nativeWorktreeRefreshProof() async throws {
   func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
   try Data(
     ("#!/bin/sh\nprintf 'started\\n' >> \(quote(starts.path))\n"
+      + "if [ -e " + quote(single.path) + " ]; then exec /usr/bin/python3 -c "
+      + quote(
+        "import json,os,sys;from pathlib import Path;p=Path(os.environ['BURNZOMBIES_HOME'])/('worktree-refresh-'+sys.argv[3]+'.json');row=json.loads(p.read_text())[0];p.write_text(json.dumps([row]));os.execv(sys.argv[1],[sys.argv[1]]+sys.argv[2:5]+[row['path']])"
+      )
+      + " " + quote(URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path)
+      + " \"$@\"; fi\n"
       + "if [ -e " + quote(deferral.path) + " ]; then /usr/bin/python3 -c "
       + quote(
         "import json,sys;print(json.dumps({'run':sys.argv[1],'complete':True,'deferred':True}),flush=True)"
@@ -300,6 +308,66 @@ func nativeWorktreeRefreshProof() async throws {
       fairRows.first { $0.id == remaining.id }!.observedAt >= fairStart,
       "Older incomplete rows starved the healthy cohort")
     equal(fairRows.filter { $0.observedAt >= fairStart }.count, 8)
+    var newlyFound = fairRows.first { $0.id == remaining.id }!
+    newlyFound.revision = ""
+    newlyFound.consumer = "unknown"
+    newlyFound.gaps = ["Detailed inspection pending."]
+    newlyFound.observedAt = Date()
+    try db.put(newlyFound, kind: "record", id: newlyFound.id)
+    var failed = fairRows.first { $0.id == vanished[0].id }!
+    failed.consumer = "unknown"
+    failed.gaps = ["Real failed-inspection control"]
+    failed.observedAt = Date().addingTimeInterval(-60)
+    try db.put(failed, kind: "record", id: failed.id)
+    _ = try await service.tick()
+    let firstInspection = try await service.snapshot()
+    let newlyInspected = firstInspection.records.first { $0.id == newlyFound.id }!
+    check(
+      !newlyInspected.revision.isEmpty && newlyInspected.gaps.isEmpty,
+      "A newly discovered checkout waited behind the failed-inspection backoff")
+    equal(
+      firstInspection.records.first { $0.id == failed.id }!.observedAt, failed.observedAt,
+      "A real inspection failure lost its backoff")
+    let ordinary = firstInspection.records.filter {
+      !$0.main && !vanished.map(\.id).contains($0.id)
+    }
+    let readyIDs = Set(ordinary.prefix(3).map(\.id))
+    let pendingIDs = Set(ordinary.dropFirst(3).prefix(3).map(\.id))
+    let blockedIDs = Set(firstInspection.records.filter { !$0.main }.map(\.id))
+      .subtracting(readyIDs).subtracting(pendingIDs)
+    for var row in firstInspection.records where !row.main {
+      row.blockers = []
+      if readyIDs.contains(row.id) {
+        row.consumer = "none observed"
+        row.gaps = []
+        row.observedAt = Date().addingTimeInterval(-125)
+      } else if pendingIDs.contains(row.id) {
+        row.consumer = "unknown"
+        row.revision = ""
+        row.gaps = ["Detailed inspection pending."]
+        row.observedAt = Date()
+      } else {
+        row.consumer = "unknown"
+        row.gaps = ["Older incomplete fixture"]
+        row.observedAt = Date().addingTimeInterval(-901)
+      }
+      try db.put(row, kind: "record", id: row.id)
+    }
+    try Data().write(to: single)
+    let cohortStart = Date()
+    for _ in 0..<3 { _ = try await service.tick() }
+    try FileManager.default.removeItem(at: single)
+    let progressed = try await service.snapshot().records.filter {
+      !$0.main && $0.observedAt >= cohortStart
+    }
+    equal(progressed.count, 3, "One-row workers fabricated observations for deferred rows")
+    for cohort in [readyIDs, pendingIDs, blockedIDs] {
+      check(
+        progressed.contains { cohort.contains($0.id) }, "One-row batches starved a refresh cohort")
+    }
+    print(
+      "PASS newly discovered rows bypass failure backoff; three one-row native batches advance all cohorts without refreshing deferred rows"
+    )
     print(
       "PASS externally removed and manually missing checkouts become bounded row-level unknowns; remaining findings refresh without a permanent global error or repeated worker loop"
     )

@@ -28,6 +28,8 @@ jobs:
         run: .build/debug/BurnProof --worktree-refresh-native
       - name: Native worktree and recovery screens
         run: .build/debug/BurnZombiesApp --worktree-view-proof "$RUNNER_TEMP/bz-worktrees"
+      - name: Large Findings window and visible notification controls
+        run: .build/debug/BurnZombiesApp --findings-proof "$RUNNER_TEMP/bz-findings.png"
       - name: Transport with one cooperative worker
         run: LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 .build/debug/BurnProof --transport
       - name: Build universal candidate bundle

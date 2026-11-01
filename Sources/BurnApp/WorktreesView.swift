@@ -24,7 +24,9 @@ struct WorktreesView: View {
     selectedID: String? = nil
   ) {
     self.model = model
-    let value = initial ?? (model.demo ? WorktreeExamples.snapshot() : WorktreeReply())
+    let value =
+      initial
+      ?? (model.demo ? WorktreeExamples.snapshot() : model.state.worktrees ?? WorktreeReply())
     _inventory = State(initialValue: value)
     _tab = State(initialValue: initialTab)
     _selected = State(initialValue: selectedID.map { Set([$0]) } ?? [])
@@ -57,14 +59,16 @@ struct WorktreesView: View {
       }.padding(20)
       HStack {
         Text(
-          "\(inventory.totalRecords ?? inventory.records.count) discovered · \(inventory.policy.roots.count) discovery folders"
+          inventory.totalRecords == nil && !model.demo
+            ? "Loading worktree inventory…"
+            : "\(inventory.totalRecords ?? inventory.records.count) discovered · \(inventory.policy.roots.count) discovery folders"
         )
         Spacer()
         if let scanned = inventory.lastScan {
           Text("Last scan \(scanned.formatted(date: .abbreviated, time: .shortened))")
         }
       }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.bottom, 8)
-      if inventory.policy.roots.isEmpty {
+      if inventory.policy.roots.isEmpty && (inventory.totalRecords != nil || model.demo) {
         Text(
           "Worktree discovery is not configured. Add a repository or development folder to begin."
         )
@@ -111,7 +115,9 @@ struct WorktreesView: View {
             TextField("Search repository, branch or state", text: $search).textFieldStyle(
               .roundedBorder
             ).padding(12)
-            if rows.isEmpty {
+            if inventory.totalRecords == nil && !model.demo {
+              ProgressView("Loading worktree inventory…")
+            } else if rows.isEmpty {
               ContentUnavailableView(
                 "No worktrees discovered", systemImage: "folder.badge.questionmark",
                 description: Text(
@@ -281,11 +287,13 @@ struct WorktreesView: View {
         }
         GridRow {
           Text("Local changes").foregroundStyle(.secondary)
-          Text("\(row.changes) changed entries · \(row.ignored) ignored entries")
+          Text(
+            row.revision.isEmpty
+              ? "Not measured" : "\(row.changes) changed entries · \(row.ignored) ignored entries")
         }
         GridRow {
           Text("Footprint").foregroundStyle(.secondary)
-          Text(ImpactNumbers.bytes(row.allocated))
+          Text(row.revision.isEmpty ? "Not measured" : ImpactNumbers.bytes(row.allocated))
         }
         GridRow {
           Text("Consumers").foregroundStyle(.secondary)

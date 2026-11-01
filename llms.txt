@@ -34,7 +34,7 @@ Substitute the operator's explicit BURNZOMBIES_INSTALL_DIR if used. Check doctor
 
 Full Disk Access requires the human: System Settings → Privacy & Security → Full Disk Access → add/enable the exact installed BurnZombies.app. `access-check` verifies an existing grant; it cannot grant access. Recovery may require the human to answer a Keychain prompt. Never bypass these permission boundaries. Report pending human steps honestly.
 
-Show the operator how to open Findings from the menu bar and enable the chosen reviewer in Settings → Zombie hunts. The default schedule is four hours. Review permission is not blanket cleanup permission. Notification permission and details visibility are separate choices; do not enable them silently as an install test.
+Show the operator how to open Findings from the menu bar and enable the chosen reviewer in Settings → Zombie hunts. The default schedule is four hours. Review permission is not blanket cleanup permission. Finding notifications are controlled in Findings → Notifications and workflow rules → Notify me about findings. Notification permission and details visibility are separate choices; do not enable them silently as an install test.
 
 ## Existing installation / update
 
@@ -63,8 +63,8 @@ The resident app uses the installed Claude Code CLI and existing login, with foc
 - doctor: configuration and app connectivity; no cleanup or model invocation.
 - access-status: permission state; access-check: recheck an existing grant.
 - findings [OFFSET]: durable inbox; blocked/unknown is not zero.
-- worktrees list: discovered checkouts and evidence gaps.
-- worktrees operations: native retirement/recovery receipts.
+- Native Worktrees window: discovered checkouts, evidence gaps and recovery history.
+- Private reviewer MCP tool burnzombies_worktrees with action list or operations: inventory or native receipts. These are MCP calls, not CLI subcommands; normal setup does not add them to unrelated chats.
 - evidence PID [PID ...]: up to 16 exact current process identities; no signals.
 - status: saved aggregate catalog; does not prove the running app responds.
 

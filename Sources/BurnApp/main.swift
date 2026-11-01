@@ -1119,15 +1119,7 @@ struct Dashboard: View {
   func showFindings() {
     popover?.performClose(nil)
     if findingsWindow == nil {
-      let w = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 1060, height: 740),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered,
-        defer: false)
-      w.title = "BurnZombies — Findings"
-      w.isReleasedWhenClosed = false
-      w.contentView = NSHostingView(rootView: FindingsView(model: model))
-      w.center()
-      findingsWindow = w
+      findingsWindow = FindingsView.makeWindow(model: model)
     }
     findingsWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
@@ -1221,6 +1213,15 @@ struct Dashboard: View {
 MainActor.assumeIsolated {
   let app = NSApplication.shared
   #if DEBUG
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--findings-proof" {
+      do {
+        try findingsProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--worktree-view-proof" {
       do {
         try worktreeViewProof(output: CommandLine.arguments[2])

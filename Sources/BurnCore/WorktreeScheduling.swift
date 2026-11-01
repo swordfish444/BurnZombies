@@ -27,25 +27,34 @@ extension WorktreeService {
     func unblocked(_ row: WorktreeRecord) -> Bool {
       row.consumer == "none observed" && row.blockers.isEmpty && row.gaps.isEmpty
     }
+    func pending(_ row: WorktreeRecord) -> Bool {
+      row.revision.isEmpty && row.gaps == ["Detailed inspection pending."]
+    }
     let candidates = try records().filter { row in
       !row.main && !row.bare && !row.retired && !row.kept && !row.ownerManaged
         && Date().timeIntervalSince(row.observedAt)
-          >= (unblocked(row) ? 120 : 900)
+          >= (pending(row) ? 0 : unblocked(row) ? 120 : 900)
         && (p.roots.contains(where: { WorkspaceSafety.contains($0, row.path) })
           || WorkspaceSafety.contains(privateRoot, row.path))
     }.sorted { $0.observedAt < $1.observedAt }
-    // Reserve progress for both cohorts even after long-lived missing records
-    // accumulate. Fill unused slots in oldest-first order.
-    let ready = Array(candidates.filter(unblocked).prefix(6))
-    let blocked = Array(candidates.filter { !unblocked($0) }.prefix(2))
+    // New observations must not wait behind failed inspections. Reserve work
+    // for all three cohorts and rotate the lead when only one row fits a batch.
+    let cohorts = [
+      Array(candidates.filter(unblocked).prefix(3)),
+      Array(WorktreeDiscovery.roundRobinRepositories(candidates.filter(pending)).prefix(4)),
+      Array(candidates.filter { !unblocked($0) && !pending($0) }.prefix(1)),
+    ]
     var selected: [WorktreeRecord] = []
-    for index in 0..<max(ready.count, blocked.count) {
-      if index < ready.count { selected.append(ready[index]) }
-      if index < blocked.count { selected.append(blocked[index]) }
+    for index in 0..<4 {
+      for step in 0..<3 {
+        let cohort = cohorts[(refreshCohort + step) % 3]
+        if index < cohort.count { selected.append(cohort[index]) }
+      }
     }
     let reserved = Set(selected.map(\.id))
     selected += candidates.filter { !reserved.contains($0.id) }.prefix(8 - selected.count)
     guard !selected.isEmpty else { return }
+    refreshCohort = (refreshCohort + 1) % 3
     refreshingFindings = true
     defer { refreshingFindings = false }
     let rows = Array(selected)

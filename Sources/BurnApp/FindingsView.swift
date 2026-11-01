@@ -1,3 +1,4 @@
+import AppKit
 import BurnCore
 import SwiftUI
 
@@ -14,6 +15,30 @@ struct FindingsView: View {
   @State private var worktreeConfirmation: CleanupProposal?
   @State private var history: [CleanupDecision] = []
   @State private var expiry = Date().addingTimeInterval(30 * 86400)
+  @State private var notificationsExpanded: Bool
+  init(model: AppModel, notificationsExpanded: Bool = false) {
+    self.model = model
+    _notificationsExpanded = State(initialValue: notificationsExpanded)
+  }
+  @MainActor static func makeWindow(model: AppModel, notificationsExpanded: Bool = false)
+    -> NSWindow
+  {
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 1060, height: 740),
+      styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false
+    )
+    window.title = "BurnZombies — Findings"
+    window.isReleasedWhenClosed = false
+    let host = NSHostingView(
+      rootView: FindingsView(model: model, notificationsExpanded: notificationsExpanded))
+    // The list's intrinsic height grows with its rows. The window owns the
+    // viewport; its list and detail pane scroll inside that bounded viewport.
+    host.sizingOptions = []
+    window.contentMinSize = NSSize(width: 820, height: 540)
+    window.contentView = host
+    window.center()
+    return window
+  }
   var proposals: [CleanupProposal] {
     inbox.proposals.filter {
       search.isEmpty
@@ -84,7 +109,7 @@ struct FindingsView: View {
           }
         }.frame(minWidth: 450)
       }
-      DisclosureGroup("Notifications and workflow rules") {
+      DisclosureGroup("Notifications and workflow rules", isExpanded: $notificationsExpanded) {
         VStack(alignment: .leading, spacing: 8) {
           Toggle(
             "Notify me about findings",

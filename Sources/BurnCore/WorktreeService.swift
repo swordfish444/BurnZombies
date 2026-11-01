@@ -28,6 +28,7 @@ public actor WorktreeService {
   var executing = false
   var lastScan = Date.distantPast
   var refreshingFindings = false
+  var refreshCohort = 0
   var scanGaps: [String] = []
   var closing = false
   var workJobs: [UUID: @Sendable () -> Void] = [:]
@@ -312,7 +313,11 @@ public actor WorktreeService {
       let control = WorktreeScanControl()
       scanControl = control
       let root = store.root
-      let cursor = try store.value(Int.self, kind: "scan", id: "cursor") ?? 0
+      // Earlier releases indexed every registration in repository order. The
+      // new cursor indexes only the fair detail queue; migrate it once.
+      let cursor =
+        try store.value(Int.self, kind: "scan", id: "cursor-version") == 2
+        ? store.value(Int.self, kind: "scan", id: "cursor") ?? 0 : 0
       result = try await runWork {
         runner.run(
           roots: roots, root: root, inspectOffset: cursor,
@@ -327,7 +332,10 @@ public actor WorktreeService {
     }
     for row in result.records { _ = try publish(row) }
     // Missing discoveries are not tombstoned merely because a scan is partial.
-    try store.put(result.nextInspection, kind: "scan", id: "cursor")
+    try store.transaction {
+      try store.put(result.nextInspection, kind: "scan", id: "cursor")
+      try store.put(2, kind: "scan", id: "cursor-version")
+    }
     scanGaps = result.gaps
     lastScan = Date()
     try store.put(lastScan, kind: "scan", id: "last")
