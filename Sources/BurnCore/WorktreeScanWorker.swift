@@ -64,6 +64,7 @@ struct WorktreeScanEnvelope: Codable {
   var gap: String?
   var complete = false
   var cursor: Int?
+  var unavailablePath: String?
 }
 
 public enum WorktreeScanWorker {
@@ -78,26 +79,44 @@ public enum WorktreeScanWorker {
     else { return 64 }
     func emit(
       _ record: WorktreeRecord? = nil, gap: String? = nil, complete: Bool = false,
-      cursor: Int? = nil
+      cursor: Int? = nil, unavailablePath: String? = nil
     ) {
       if let data = try? WorktreeEncoding.data(
-        WorktreeScanEnvelope(run: run, record: record, gap: gap, complete: complete, cursor: cursor)
+        WorktreeScanEnvelope(
+          run: run, record: record, gap: gap, complete: complete, cursor: cursor,
+          unavailablePath: unavailablePath)
       ) {
         try? FileHandle.standardOutput.write(contentsOf: data + Data([10]))
       }
     }
     emit()
-    let consumers = WorktreeConsumerSnapshot(roots: Array(arguments.dropFirst(2)))
+    let started = ProcessInfo.processInfo.systemUptime
+    let knownOnly = ProcessInfo.processInfo.environment["BURNZOMBIES_WORKTREE_REFRESH"] == "1"
+    var roots = Array(arguments.dropFirst(2))
+    if knownOnly {
+      roots = roots.filter { path in
+        guard FileManager.default.fileExists(atPath: path + "/.git") else {
+          emit(gap: "Checkout registration unavailable: " + path, unavailablePath: path)
+          return false
+        }
+        return true
+      }
+      if roots.isEmpty {
+        emit(complete: true, cursor: 0)
+        return 0
+      }
+    }
+    let consumers = WorktreeConsumerSnapshot(roots: roots)
     if let gap = consumers.gap { emit(gap: "Consumer coverage: " + gap) }
     let result = WorktreeDiscovery.scan(
-      roots: Array(arguments.dropFirst(2)),
-      seconds: ProcessInfo.processInfo.environment["BURNZOMBIES_WORKTREE_REFRESH"] == "1"
-        ? 20 : 240,
+      roots: roots,
+      seconds: knownOnly ? max(0.001, 24 - (ProcessInfo.processInfo.systemUptime - started)) : 240,
       visibility: { consumers.state($0) }, inspectOffset: cursor, publish: { emit($0) },
       progress: { emit() },
       checkpoint: ProcessInfo.processInfo.environment["BURNZOMBIES_WORKTREE_REFRESH"] == "1"
         ? nil : Store.defaultRoot.appendingPathComponent("worktree-discovery-cursor.json"))
-    for gap in result.gaps { emit(gap: gap) }
+    for (path, gap) in result.unavailablePaths { emit(gap: gap, unavailablePath: path) }
+    for gap in result.gaps where !result.unavailablePaths.values.contains(gap) { emit(gap: gap) }
     emit(complete: true, cursor: result.nextInspection)
     return 0
   }
@@ -145,7 +164,13 @@ private final class WorktreeScanCapture {
           result.records.append(record)
           publish(record)
         }
-        if let gap = item.gap { result.gaps.append(String(gap.prefix(1000))) }
+        if let gap = item.gap {
+          let detail = String(gap.prefix(1000))
+          result.gaps.append(detail)
+          if let path = item.unavailablePath, path.hasPrefix("/"), path.utf8.count < 4096 {
+            result.unavailablePaths[path] = detail
+          }
+        }
         if let cursor = item.cursor, (0...100_000).contains(cursor) {
           result.nextInspection = cursor
         }
@@ -227,6 +252,7 @@ public final class WorktreeScanRunner: @unchecked Sendable {
         "Worktree worker interrupted or incomplete (status \(status)); completed observations retained."
       )
     }
+    capture.result.workerCompleted = status == 0 && capture.complete
     return capture.result
   }
 }

@@ -4,6 +4,8 @@ public struct WorktreeDiscoveryResult: Sendable {
   public var records: [WorktreeRecord] = []
   public var gaps: [String] = []
   public var nextInspection: Int = 0
+  public var unavailablePaths: [String: String] = [:]
+  public var workerCompleted = false
 }
 
 private struct WorktreeDiscoveryFrontier: Codable {
@@ -86,7 +88,9 @@ public enum WorktreeDiscovery {
       guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
         values.isDirectory == true, values.isSymbolicLink != true
       else {
-        result.gaps.append("Discovery directory unavailable or linked: " + path)
+        let gap = "Discovery directory unavailable or linked: " + path
+        result.gaps.append(gap)
+        result.unavailablePaths[path] = gap
         continue
       }
       if FileManager.default.fileExists(atPath: path + "/.git")
@@ -168,7 +172,9 @@ public enum WorktreeDiscovery {
       } catch {
         // Ordinary non-repository root seeds are expected; discovered .git seeds are not.
         if FileManager.default.fileExists(atPath: seed + "/.git") {
-          result.gaps.append("Repository inspection unavailable: " + seed)
+          let gap = "Repository inspection unavailable: " + seed
+          result.gaps.append(gap)
+          result.unavailablePaths[seed] = gap
         }
       }
     }

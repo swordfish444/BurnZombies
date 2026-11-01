@@ -8,6 +8,7 @@ func nativeWorktreeRefreshProof() async throws {
   let root = base.appendingPathComponent("state")
   let gate = base.appendingPathComponent("hold-worker")
   let placeholder = base.appendingPathComponent("placeholder.json")
+  let starts = base.appendingPathComponent("worker-starts")
   let wrapper = base.appendingPathComponent("worker")
   defer { try? FileManager.default.removeItem(at: base) }
   try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
@@ -30,7 +31,7 @@ func nativeWorktreeRefreshProof() async throws {
   }
   func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
   try Data(
-    ("#!/bin/sh\nif [ -e \(quote(gate.path)) ]; then /usr/bin/python3 -c "
+    ("#!/bin/sh\nprintf 'started\\n' >> \(quote(starts.path))\nif [ -e \(quote(gate.path)) ]; then /usr/bin/python3 -c "
       + quote(
         "import json,sys;print(json.dumps({'run':sys.argv[1],'record':json.load(open(sys.argv[2]))}),flush=True)"
       )
@@ -40,9 +41,10 @@ func nativeWorktreeRefreshProof() async throws {
       + " \"$@\"\n").utf8
   ).write(to: wrapper)
   try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+  let ledger = try IntentLedger(root: root)
   let service = try WorktreeService(
     root: root, access: fixtureAccess,
-    scanRunner: WorktreeScanRunner(executable: wrapper))
+    scanRunner: WorktreeScanRunner(executable: wrapper), intent: ledger)
   do {
     _ = try await service.request(.init("add_root", path: base.path), caller: "fixture")
     _ = try await service.scan()
@@ -109,6 +111,58 @@ func nativeWorktreeRefreshProof() async throws {
     check(
       observedAgain > blocked,
       "Timed-out refresh permanently suppressed observation")
+    let vanished = Array(rows.prefix(2))
+    _ = try WorktreeGit.run(repository.path, ["worktree", "remove", vanished[0].path])
+    try FileManager.default.removeItem(atPath: vanished[1].path)
+    for var row in vanished {
+      row.observedAt = Date().addingTimeInterval(-125)
+      try db.put(row, kind: "record", id: row.id)
+    }
+    let removedAt = Date()
+    let removalTick = try await service.tick()
+    check(removalTick != nil)
+    let afterRemoval = try await service.snapshot()
+    for removed in vanished {
+      let row = afterRemoval.records.first { $0.id == removed.id }!
+      check(row.observedAt >= removedAt && row.consumer == "unknown" && !row.gaps.isEmpty)
+      let proposal = try ledger.snapshot().proposals.first {
+        $0.resources == ["worktree:" + row.id]
+      }!
+      checkFalse(proposal.ready)
+    }
+    let callsBefore = try Data(contentsOf: starts)
+    _ = try await service.tick()
+    equal(
+      try Data(contentsOf: starts), callsBefore,
+      "Missing checkout caused a new full consumer scan on every observer tick")
+    for (index, removed) in vanished.enumerated() {
+      let path = URL(fileURLWithPath: removed.path)
+      try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false)
+      try Data("replacement must survive".utf8).write(to: path.appendingPathComponent("control"))
+      if index == 1 {
+        try Data("gitdir: \(base.path)/nonexistent-administration\n".utf8)
+          .write(to: path.appendingPathComponent(".git"))
+      }
+      var row = afterRemoval.records.first { $0.id == removed.id }!
+      row.observedAt = Date().addingTimeInterval(-901)
+      try db.put(row, kind: "record", id: row.id)
+    }
+    _ = try await service.tick()
+    for removed in vanished {
+      let path = URL(fileURLWithPath: removed.path)
+      equal(
+        try Data(contentsOf: path.appendingPathComponent("control")),
+        Data("replacement must survive".utf8))
+    }
+    var remaining = afterRemoval.records.first { !$0.main && !vanished.map(\.id).contains($0.id) }!
+    remaining.observedAt = Date().addingTimeInterval(-125)
+    try db.put(remaining, kind: "record", id: remaining.id)
+    _ = try await service.tick()
+    let rotated = try await service.snapshot().records.first { $0.id == remaining.id }!
+    check(rotated.observedAt >= removedAt && rotated.consumer == "none observed")
+    print(
+      "PASS externally removed and manually missing checkouts become bounded row-level unknowns; remaining findings refresh without a permanent global error or repeated worker loop"
+    )
     await service.shutdown()
   } catch {
     try? FileManager.default.removeItem(at: gate)
