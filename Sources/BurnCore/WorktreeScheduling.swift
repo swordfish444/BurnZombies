@@ -39,9 +39,12 @@ extension WorktreeService {
     }.sorted { $0.observedAt < $1.observedAt }
     // New observations must not wait behind failed inspections. Reserve work
     // for all three cohorts and rotate the lead when only one row fits a batch.
+    let pendingQueue = WorktreeDiscovery.roundRobinRepositories(
+      candidates.filter(pending),
+      after: try store.value(String.self, kind: "scan", id: "pending-repository"))
     let cohorts = [
       Array(candidates.filter(unblocked).prefix(3)),
-      Array(WorktreeDiscovery.roundRobinRepositories(candidates.filter(pending)).prefix(4)),
+      Array(pendingQueue.prefix(4)),
       Array(candidates.filter { !unblocked($0) && !pending($0) }.prefix(1)),
     ]
     var selected: [WorktreeRecord] = []
@@ -52,12 +55,20 @@ extension WorktreeService {
       }
     }
     let reserved = Set(selected.map(\.id))
-    selected += candidates.filter { !reserved.contains($0.id) }.prefix(8 - selected.count)
+    selected += (pendingQueue + candidates.filter { !pending($0) })
+      .filter { !reserved.contains($0.id) }.prefix(8 - selected.count)
     guard !selected.isEmpty else { return }
     refreshCohort = (refreshCohort + 1) % 3
     refreshingFindings = true
     defer { refreshingFindings = false }
     let rows = Array(selected)
+    let pendingIDs = Set(rows.filter(pending).map(\.id))
+    func publishProgress(_ row: WorktreeRecord) throws {
+      _ = try publish(row)
+      if pendingIDs.contains(row.id) {
+        try store.put(row.repository, kind: "scan", id: "pending-repository")
+      }
+    }
     let current = generation
     if let runner = scanRunner {
       let root = store.root
@@ -73,7 +84,7 @@ extension WorktreeService {
       where identities[row.id]?.path == row.path && identities[row.id]?.repository == row.repository
         && !(row.revision.isEmpty && row.gaps == ["Detailed inspection pending."])
       {
-        _ = try publish(row)
+        try publishProgress(row)
       }
       if !result.workerCompleted, let id = result.inspectionInProgress,
         let started = result.inspectionStartedAt, (result.inspectionElapsed ?? 0) >= 15,
@@ -85,7 +96,7 @@ extension WorktreeService {
         row.consumer = "unknown"
         row.blockers = []
         row.gaps = ["Inspection exceeded the bounded refresh budget; retry is deferred."]
-        _ = try publish(row)
+        try publishProgress(row)
       }
       guard result.workerCompleted, result.gaps.isEmpty else {
         throw StoreError.message("Known worktree refresh: " + result.gaps.joined(separator: ". "))
@@ -105,7 +116,7 @@ extension WorktreeService {
       return result
     }
     guard current == generation, !executing else { return }
-    for row in fresh { _ = try publish(row) }
+    for row in fresh { try publishProgress(row) }
   }
   /// Bypass only the observer cadence. Reuse a scan in flight and wait natively,
   /// leaving it owned by the service if the caller cancels or exhausts its budget.

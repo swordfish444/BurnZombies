@@ -142,10 +142,10 @@ import Vision
     "policyRevision": disk.policy.revision, "recommendationEligible": true, "decision": "recommend",
     "rationale": "Old build output is a worthwhile cleanup candidate. Confirm this folder can be rebuilt, then approve cleanup; active work stays protected."
   ]))
-  var small = candidate; small.id = "disk:small"; small.bytes = 9_999_999_999
-  var boundary = candidate; boundary.id = "disk:boundary"; boundary.bytes = 10_000_000_000
+  var small = candidate; small.id = "disk:small"; small.bytes = 99_999_999
+  var boundary = candidate; boundary.id = "disk:boundary"; boundary.bytes = 100_000_000
   disk.inventory.candidates = [small, candidate, boundary]
-  guard disk.candidates.map(\.id) == [candidate.id, boundary.id] else { throw StoreError.message("Disk UI did not enforce 10 GB floor") }
+  guard disk.candidates.map(\.id) == [candidate.id, boundary.id] else { throw StoreError.message("Disk UI did not enforce 100 MB floor") }
   disk.inventory.candidates = [candidate]; disk.inventory.freeBytes = 80_000_000_000
   try disk.inventory.save(Store(root: root))
   var discoveryNode = DiskSpaceNode(path: "/example/build-environments", scanRoot: "/example", allocated: 74_000_000_000,
@@ -172,7 +172,7 @@ import Vision
     approved.rules[0].disposition == "regenerable", !FileManager.default.fileExists(atPath: root.appendingPathComponent("review-request").path) else {
     throw StoreError.message("Exact-folder approval changed scope or dispatched a model")
   }
-  print("PASS simplified AI recommendations, 10 GB floor, collapsed advanced controls, exact-folder approval and durable preferences without model dispatch")
+  print("PASS simplified AI recommendations, 100 MB floor, collapsed advanced controls, exact-folder approval and durable preferences without model dispatch")
   let accessModel = AppModel(demo: true)
   for accessState in [FullDiskAccessState.required, .unknown, .granted] {
     accessModel.state.fullDiskAccess = .init(state: accessState,

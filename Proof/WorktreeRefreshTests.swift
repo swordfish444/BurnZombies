@@ -368,6 +368,82 @@ func nativeWorktreeRefreshProof() async throws {
     print(
       "PASS newly discovered rows bypass failure backoff; three one-row native batches advance all cohorts without refreshing deferred rows"
     )
+    // Unequal repository backlogs must rotate across batches, including when
+    // budget deferral allows only one actual observation per native worker.
+    for var row in try await service.snapshot().records {
+      row.observedAt = Date()
+      row.revision = "previously-inspected-control"
+      row.gaps = ["Recent control"]
+      try db.put(row, kind: "record", id: row.id)
+    }
+    var repositoryRows: [WorktreeRecord] = []
+    for (name, count) in [("a", 3), ("b", 3), ("c", 3), ("d", 3), ("z", 1)] {
+      let repo = base.appendingPathComponent("fair-" + name)
+      try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: false)
+      _ = try WorktreeGit.run(repo.path, ["init", "--initial-branch=main"])
+      try Data("fixture\n".utf8).write(to: repo.appendingPathComponent("source"))
+      _ = try WorktreeGit.run(repo.path, ["add", "."])
+      _ = try WorktreeGit.run(
+        repo.path,
+        [
+          "-c", "user.name=Proof", "-c", "user.email=proof@example.invalid", "commit", "-m",
+          "fixture",
+        ])
+      for index in 0..<count {
+        _ = try WorktreeGit.run(
+          repo.path,
+          [
+            "worktree", "add", "--detach",
+            base.appendingPathComponent("fair-\(name)-\(index)").path,
+          ])
+      }
+      let raw = try WorktreeGit.run(repo.path, ["worktree", "list", "--porcelain", "-z"])
+      repositoryRows += try WorktreeDiscovery.parse(raw, repository: repo.path).filter { !$0.main }
+    }
+    func resetPendingRepositories() throws {
+      for var row in repositoryRows {
+        row.revision = ""
+        row.gaps = ["Detailed inspection pending."]
+        row.observedAt = Date()
+        try db.put(row, kind: "record", id: row.id)
+      }
+      try db.put("", kind: "scan", id: "pending-repository")
+    }
+    try resetPendingRepositories()
+    try Data().write(to: single)
+    let repositoryIDs = Set(repositoryRows.map(\.id))
+    let repositoryStart = Date()
+    var served = Set<String>()
+    for _ in 0..<5 {
+      _ = try await service.tick()
+      let actual = try await service.snapshot().records.filter {
+        repositoryIDs.contains($0.id) && !$0.revision.isEmpty && $0.observedAt >= repositoryStart
+      }
+      equal(actual.count, served.count + 1, "Deferred rows received fabricated observations")
+      let next = actual.filter { !served.contains($0.repository) }
+      equal(next.count, 1, "A pending repository repeated before every repository got a turn")
+      if let row = next.first {
+        served.insert(row.repository)
+        equal(
+          try db.value(String.self, kind: "scan", id: "pending-repository"), row.repository,
+          "Pending cursor did not follow the actual completed observation")
+      }
+    }
+    equal(served.count, 5, "The small repository starved behind larger pending backlogs")
+    try FileManager.default.removeItem(at: single)
+    try resetPendingRepositories()
+    let batchStart = Date()
+    _ = try await service.tick()
+    let fullBatch = try await service.snapshot().records.filter {
+      repositoryIDs.contains($0.id) && !$0.revision.isEmpty && $0.observedAt >= batchStart
+    }
+    equal(fullBatch.count, 8)
+    equal(
+      Set(fullBatch.map(\.repository)).count, 5,
+      "Repositories beyond the four reserved slots starved in the spare-slot fill")
+    print(
+      "PASS five unequal repository backlogs rotate across one-row native batches and all appear in an eight-row batch; cursor follows completed observations only"
+    )
     print(
       "PASS externally removed and manually missing checkouts become bounded row-level unknowns; remaining findings refresh without a permanent global error or repeated worker loop"
     )

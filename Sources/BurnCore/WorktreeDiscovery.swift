@@ -19,9 +19,14 @@ private struct WorktreeDiscoveryFrontier: Codable {
 }
 
 public enum WorktreeDiscovery {
-  static func roundRobinRepositories(_ rows: [WorktreeRecord]) -> [WorktreeRecord] {
+  static func roundRobinRepositories(_ rows: [WorktreeRecord], after: String? = nil)
+    -> [WorktreeRecord]
+  {
     let groups = Dictionary(grouping: rows, by: \.repository)
     var active = groups.keys.sorted()
+    if let after, let index = active.firstIndex(where: { $0 > after }) {
+      active = Array(active[index...]) + Array(active[..<index])
+    }
     var offset = 0
     var result: [WorktreeRecord] = []
     while !active.isEmpty {
