@@ -92,6 +92,24 @@ func nativeWorktreeRediscoveryProof() async throws {
     equal(protected.consumer, "unknown")
     let protectedProposal = try ledger.snapshot().proposals.first { $0.id == proposal.id }!
     checkFalse(protectedProposal.ready)
+    try records.put(before, kind: "record", id: before.id)
+    _ = try WorktreeGit.run(repo.path, ["worktree", "lock", checkout.path])
+    let registrations = try WorktreeDiscovery.parse(
+      WorktreeGit.run(repo.path, ["worktree", "list", "--porcelain", "-z"]),
+      repository: before.repository)
+    var locked = registrations.first { $0.id == before.id }!
+    check(locked.locked && locked.head == before.head)
+    locked.gaps = ["Detailed inspection pending."]
+    try JSONEncoder().encode(locked).write(to: stub)
+    _ = try await service.scan()
+    let newlyProtected = try await service.snapshot().records.first { $0.id == before.id }!
+    check(
+      newlyProtected.locked && newlyProtected.revision.isEmpty,
+      "Same-HEAD rediscovery discarded newly observed Git protection")
+    let lockedProposal = try ledger.snapshot().proposals.first { $0.id == proposal.id }!
+    checkFalse(lockedProposal.ready)
+    let lockedNotifications = try db.notificationProposals(now: Date())
+    checkFalse(lockedNotifications.contains { $0.id == proposal.id })
     await service.shutdown()
   } catch {
     await service.shutdown()

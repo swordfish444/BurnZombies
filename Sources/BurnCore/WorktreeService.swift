@@ -232,7 +232,9 @@ public actor WorktreeService {
       }
       r.id = old.id
       if !r.missing && r.gaps == ["Detailed inspection pending."] && r.revision.isEmpty
-        && !old.revision.isEmpty && r.head == old.head
+        && !old.revision.isEmpty && r.head == old.head && r.branch == old.branch
+        && r.locked == old.locked && r.main == old.main && r.bare == old.bare
+        && r.ownerManaged == old.ownerManaged && r.missing == old.missing
       {
         // Registration confirms topology, not new inspection evidence. Preserve
         // the previous observation; known refresh and action-time inspection
