@@ -215,7 +215,9 @@ func nativeWorktreeRefreshProof() async throws {
     print(
       "NATIVE_REFRESH_TIMEOUT concurrent elapsed=\(Date().timeIntervalSince(concurrentStarted))s")
     check(Date().timeIntervalSince(concurrentStarted) >= 24)
-    check(manualResult.gaps.isEmpty && preserved.gaps.isEmpty)
+    check(
+      manualResult.gaps.isEmpty && preserved.gaps.isEmpty,
+      "Concurrent inspection gaps: manual=\(manualResult.gaps), stored=\(preserved.gaps)")
     equal(
       preserved.observedAt, manualResult.observedAt, "Timeout overwrote a newer complete inspection"
     )
@@ -229,11 +231,14 @@ func nativeWorktreeRefreshProof() async throws {
     }
     let removedAt = Date()
     let removalTick = try await service.tick()
-    check(removalTick != nil)
+    check(removalTick != nil, "Missing-row tick returned no evidence")
     let afterRemoval = try await service.snapshot()
     for removed in vanished {
       let row = afterRemoval.records.first { $0.id == removed.id }!
-      check(row.observedAt >= removedAt && row.consumer == "unknown" && !row.gaps.isEmpty)
+      check(
+        row.observedAt >= removedAt && row.consumer == "unknown" && !row.gaps.isEmpty,
+        "Missing-row observation was not refreshed to unknown: \(row.id), \(row.consumer), \(row.gaps)"
+      )
       let proposal = try ledger.snapshot().proposals.first {
         $0.resources == ["worktree:" + row.id]
       }!
@@ -272,8 +277,12 @@ func nativeWorktreeRefreshProof() async throws {
     let replacementStarted = Date()
     _ = try await service.tick()
     let replacement = try await service.snapshot().records.first { $0.id == replaced.id }!
-    check(replacement.observedAt >= replacementStarted && replacement.consumer == "unknown")
-    check(replacement.gaps.contains { $0.contains("recorded repository") })
+    check(
+      replacement.observedAt >= replacementStarted && replacement.consumer == "unknown",
+      "Replacement-row observation was not refreshed: \(replacement.consumer), \(replacement.gaps)")
+    check(
+      replacement.gaps.contains { $0.contains("recorded repository") },
+      "Replacement identity was not diagnosed: \(replacement.gaps)")
     let replacementProposal = try ledger.snapshot().proposals.first {
       $0.resources == ["worktree:" + replaced.id]
     }!
@@ -291,7 +300,10 @@ func nativeWorktreeRefreshProof() async throws {
     try db.put(remaining, kind: "record", id: remaining.id)
     _ = try await service.tick()
     let rotated = try await service.snapshot().records.first { $0.id == remaining.id }!
-    check(rotated.observedAt >= removedAt && rotated.consumer == "none observed")
+    check(
+      rotated.observedAt >= removedAt && rotated.consumer == "none observed",
+      "Healthy-row rotation did not produce complete evidence: \(rotated.consumer), \(rotated.gaps)"
+    )
     // Eight older incomplete rows must not consume every slot ahead of the
     // newer, ready row. Both cohorts must make progress on the same tick.
     for var row in try await service.snapshot().records where !row.main {
