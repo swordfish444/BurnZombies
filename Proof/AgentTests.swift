@@ -7,6 +7,7 @@ func agentBridgeProof() async throws {
   let root = URL(fileURLWithPath: "/tmp/bz-" + UUID().uuidString.prefix(8))
   defer { try? FileManager.default.removeItem(at: root) }
   let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil,
     root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker(),
     worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 42, count: 32)) })
   _ = await monitor.refresh()  // The observer samples; cheap status must not trigger a scan.
@@ -242,6 +243,7 @@ func runAgentFixture(root: URL) async throws {
     throw StoreError.message("Fixture discovery must stay inside the test-owned directory.")
   }
   let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil,
     root: root, discoveryRoots: discoveryRoots, accessCheck: fixtureAccess,
     discoveryWalker: fixtureWalker(),
     worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 42, count: 32)) })

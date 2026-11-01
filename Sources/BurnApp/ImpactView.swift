@@ -296,11 +296,17 @@ struct MiniImpactView: View {
           model.openImpact?()
         } label: {
           HStack(spacing: 10) {
-            Text("View impact").fontWeight(.semibold)
+            Text("Impact").fontWeight(.semibold)
             Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
             Spacer(minLength: 0)
           }.frame(maxWidth: .infinity).frame(height: 44).contentShape(Rectangle())
         }.clickPointer()
+        Button {
+          model.openFindings?()
+        } label: {
+          Text("Findings").fontWeight(.semibold).frame(maxWidth: .infinity).frame(height: 44)
+            .contentShape(Rectangle())
+        }.clickPointer().help("Review discovered processes, worktrees and storage")
         Rectangle().fill(BurnTheme.line).frame(width: 1, height: 22)
         Button {
           model.openLog?()
@@ -689,10 +695,24 @@ struct ImpactWindowView: View {
             Text(receipt.path + "\n" + receipt.rationale).font(.system(size: 15)).foregroundStyle(
               BurnTheme.muted
             ).padding(.top, 8)
+            if ["prepared", "unverified"].contains(receipt.outcome) {
+              HStack {
+                Button("Inspect and reconcile") { model.reconcileDisk(receipt.id, restore: false) }
+                Button("Restore intact pending output") {
+                  model.reconcileDisk(receipt.id, restore: true)
+                }
+              }
+              Text(
+                "No overwrite, no deletion and no retrospective cleanup credit. Conflicting or incomplete contents remain preserved."
+              ).font(.caption)
+            }
           } label: {
             HStack {
               Image(systemName: "externaldrive").foregroundStyle(BurnTheme.orange)
-              Text("Regenerable output").fontWeight(.semibold)
+              Text(
+                receipt.fixture == true
+                  ? "Test fixture · excluded from impact" : "Regenerable output"
+              ).fontWeight(.semibold)
               Spacer()
               Text(
                 receipt.outcome == "verified"
@@ -709,7 +729,8 @@ struct ImpactWindowView: View {
           } label: {
             HStack {
               Image(systemName: "folder.badge.minus").foregroundStyle(BurnTheme.orange)
-              Text(receipt.label).fontWeight(.semibold)
+              Text(receipt.fixture == true ? "Test fixture · excluded from impact" : receipt.label)
+                .fontWeight(.semibold)
               Spacer()
               Text(
                 receipt.outcome == "verified"
@@ -728,7 +749,8 @@ struct ImpactWindowView: View {
           } label: {
             HStack {
               Flame(size: 24)
-              Text(event.label).fontWeight(.semibold)
+              Text(event.fixture == true ? "Test fixture · excluded from impact" : event.label)
+                .fontWeight(.semibold)
               Spacer()
               Text(
                 event.outcome == "verified"

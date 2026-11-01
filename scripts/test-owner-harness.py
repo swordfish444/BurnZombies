@@ -2,20 +2,24 @@
 """One opt-in real harness review against private Gradle owners, using production instructions.
 No live settings/hooks/UI, no expected-answer prompt, no retry or account/provider fallback.
 """
-import argparse, hashlib, json, os, pathlib, select, shutil, socket, subprocess, tempfile, time
+import argparse, ctypes, hashlib, json, os, pathlib, select, shutil, socket, subprocess, tempfile, time
 
 repo = pathlib.Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--client', choices=['codex', 'claude'], required=True)
+p.add_argument('--model', help='Explicit Claude model for this isolated fixture; Codex preserves installed selection')
 p.add_argument('--distribution', required=True, type=pathlib.Path)
 p.add_argument('--java', required=True, type=pathlib.Path)
 p.add_argument('--output', required=True, type=pathlib.Path)
 p.add_argument('--preflight-only', action='store_true')
+p.add_argument('--explicit-approval', action='store_true', help='Use a non-legacy ledger and exact one-time fixture approval')
+p.add_argument('--native-dispatch', action='store_true', help='Diagnose native dispatch on fixtures without a model; not harness acceptance')
 args = p.parse_args()
 args.output.mkdir(parents=True, exist_ok=True); args.output.chmod(0o700)
 binary = repo/'.build/debug'
 distribution, java = args.distribution.resolve(), args.java.resolve()
-assert distribution.name == 'gradle-8.14.6' and (distribution/'lib/gradle-daemon-main-8.14.6.jar').is_file()
+version = distribution.name.removeprefix('gradle-')
+assert version in ('8.14.6', '9.8.2') and (distribution/f'lib/gradle-daemon-main-{version}.jar').is_file()
 for name in ['BurnProof', 'burnzombies', 'burnzombies-mcp']: assert (binary/name).is_file(), 'Build products first'
 installed = pathlib.Path.home()/'Library/Application Support/BurnZombies/machine-review.json'
 live = json.loads(installed.read_text())
@@ -27,8 +31,12 @@ if args.client == 'codex':
     assert live.get('harness') == 'codex', 'Do not infer a different model/account selection'
     for key in ['model', 'reasoningEffort']:
         if live.get(key) is not None: config[key] = live[key]
+if args.model:
+    assert args.client == 'claude', 'Do not replace installed Codex selection'
+    config['model']=args.model
 report = {'client': args.client, 'passed': False, 'modelInvocations': 0, 'requestedModel': config.get('model'),
-          'requestedEffort': config.get('reasoningEffort'), 'productionOwnerLane': True, 'checks': [],
+          'requestedEffort': config.get('reasoningEffort'), 'productionOwnerLane': True, 'explicitApproval': args.explicit_approval, 'checks': [],
+          'proofBinarySHA256': hashlib.sha256((binary/'BurnProof').read_bytes()).hexdigest(),
           'reviewInstructionsSHA256': hashlib.sha256((repo/'Sources/BurnCore/ReviewBatch.swift').read_bytes()).hexdigest()}
 env = dict(os.environ); env.pop('BURNZOMBIES_HOME', None)
 fixture_env = {'PATH': '/usr/bin:/bin', 'HOME': str(pathlib.Path.home()), 'JAVA_HOME': str(java.parent.parent), 'LANG': 'en_US.UTF-8'}
@@ -60,7 +68,7 @@ with tempfile.TemporaryDirectory(prefix='bz-owner-harness-', dir='/tmp') as temp
         deadline = time.monotonic()+45
         while not (project/'started').exists() and time.monotonic()<deadline and worker.poll() is None: time.sleep(.1)
         assert (project/'started').exists(), 'Owned fixture did not start'
-        logs = list((home/'daemon/8.14.6').glob('daemon-*.out.log')); assert len(logs) == 1
+        logs = list((home/f'daemon/{version}').glob('daemon-*.out.log')); assert len(logs) == 1
         pid = int(logs[0].name.split('-')[1].split('.')[0])
         if not held: assert worker.wait(timeout=20) == 0
         fixtures.append((home, project, pid))
@@ -120,6 +128,7 @@ with tempfile.TemporaryDirectory(prefix='bz-owner-harness-', dir='/tmp') as temp
         idle_home, idle_project, idle_pid = create('idle-owner', False)
         busy_home, busy_project, busy_pid = create('active-owner', True)
         (state/'owned-pids.json').write_text(json.dumps([idle_pid, busy_pid]))
+        if args.explicit_approval: (state/'explicit-approval').touch()
         monitor = subprocess.Popen([str(binary/'BurnProof'), '--owner-agent-fixture', str(state)],
             cwd=root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         assert select.select([monitor.stdout], [], [], 25)[0], 'Private observer did not become ready'
@@ -136,18 +145,30 @@ with tempfile.TemporaryDirectory(prefix='bz-owner-harness-', dir='/tmp') as temp
             report['passed']=True
             print(json.dumps({'client':args.client,'preflightPassed':True,'modelInvocations':0}))
             raise SystemExit(0)
-        report['modelInvocations']=1; model_started=True
-        with (args.output/'review-driver.txt').open('w') as output:
-            result = subprocess.run([str(binary/'BurnProof'), '--review-owner-model', str(state)], cwd=root,
-                env=env, stdout=output, stderr=subprocess.STDOUT, timeout=200)
-        if (state/'last-review.log').exists(): shutil.copy2(state/'last-review.log', args.output/'review.jsonl')
-        if (state/'owner-review-usage.json').exists(): report['usage']=json.loads((state/'owner-review-usage.json').read_text())
-        assert result.returncode == 0, 'Harness review failed; stop without retrying or switching account/provider'
-        report['checks'].append('one harness review through production ownerProcess instructions and scoped MCP tools')
+        if args.native_dispatch:
+            ids=json.loads((state/'owner-review-ids.json').read_text())
+            idle=next(v for v in source if v['state']=='IDLE'); identity=idle['member']['identity']
+            owner_id=f"owner-process:{identity['boot']}:{identity['pid']}:{identity['seconds']}:{identity['micros']}"
+            preview=rpc({'operation':'owner_preview','findingID':owner_id,'rationale':'Sacrificial native dispatch diagnosis; exact idle fixture owner only.'})
+            assert preview.get('ok') and preview.get('previewToken'), preview
+            dispatched=rpc({'operation':'owner_stop','previewToken':preview['previewToken']})
+            assert dispatched.get('ok'), dispatched
+            report['checks'].append('native-only diagnostic dispatch; NO model acceptance claimed')
+        else:
+            report['modelInvocations']=1; model_started=True
+            with (args.output/'review-driver.txt').open('w') as output:
+                result = subprocess.run([str(binary/'BurnProof'), '--review-owner-model', str(state)], cwd=root,
+                    env=env, stdout=output, stderr=subprocess.STDOUT, timeout=200)
+            if (state/'last-review.log').exists(): shutil.copy2(state/'last-review.log', args.output/'review.jsonl')
+            if (state/'owner-review-usage.json').exists(): report['usage']=json.loads((state/'owner-review-usage.json').read_text())
+            assert result.returncode == 0, 'Harness review failed; stop without retrying or switching account/provider'
+            report['checks'].append('one harness review through production ownerProcess instructions and scoped MCP tools')
         status=rpc({'operation':'status'}); deadline=time.monotonic()+150
         while status.get('verifiedHelpers',0) != 1 and time.monotonic()<deadline:
             assert workers[1][0].poll() is None and not (busy_project/'completed').exists(), 'Active build was interrupted'
             if not status.get('receipts'): raise AssertionError('Harness did not request an owner retirement; do not manufacture a receipt')
+            if any(r.get('outcome') not in ('prepared','verifying','verified') for r in status.get('receipts',[])):
+                raise AssertionError('Native receipt reached a non-success terminal outcome; inspect preserved last-status.json')
             time.sleep(5); status=rpc({'operation':'status'})
         assert status.get('verifiedHelpers') == 1 and len(status.get('receipts',[])) == 1, 'Exact exit did not earn a verified receipt'
         assert status.get('memoryReleasedBytes',0)>0
@@ -162,6 +183,9 @@ with tempfile.TemporaryDirectory(prefix='bz-owner-harness-', dir='/tmp') as temp
         report['receipts']=status['receipts']; report['passed']=True
     except Exception as error:
         report['failure']=str(error)[:600]
+        if monitor and monitor.poll() is None:
+            try: (args.output/'last-status.json').write_text(json.dumps(rpc({'operation':'status'}),indent=2))
+            except Exception as capture: report['statusCaptureError']=str(capture)[:300]
         if model_started and (state/'last-review.log').exists(): shutil.copy2(state/'last-review.log', args.output/'review.jsonl')
         raise
     finally:
@@ -174,6 +198,17 @@ with tempfile.TemporaryDirectory(prefix='bz-owner-harness-', dir='/tmp') as temp
             output.close()
         if monitor and monitor.poll() is None:
             monitor.stdin.close(); monitor.wait(timeout=15)
+        # Keep exact native outcome evidence even when verification fails.
+        packed=state/'catalog.bzcat'
+        if packed.exists():
+            raw=packed.read_bytes(); src=ctypes.create_string_buffer(raw); dst=ctypes.create_string_buffer(24*1024*1024)
+            compression=ctypes.CDLL('/usr/lib/libcompression.dylib')
+            compression.compression_decode_buffer.restype=ctypes.c_size_t
+            compression.compression_decode_buffer.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_void_p,ctypes.c_size_t,ctypes.c_void_p,ctypes.c_int]
+            size=compression.compression_decode_buffer(dst,len(dst),src,len(raw),None,0x801)
+            if 0<size<len(dst):
+                native=json.loads(dst.raw[:size])
+                (args.output/'native-events.json').write_text(json.dumps(native.get('events',[]),indent=2))
         # Exact owner-native fixture teardown, independent of model acceptance.
         saved = state/'owner-fixture-evidence.json'
         if saved.exists():

@@ -26,7 +26,8 @@ func worktreeLifecycleProof() async throws {
   let root = base.appendingPathComponent("state")
   let key = SymmetricKey(data: Data(repeating: 37, count: 32))
   let service = try WorktreeService(
-    root: root, visibility: { _ in 0 }, access: { fixtureAccess() }, recoveryKey: { key })
+    legacyAuthority: true, root: root, visibility: { _ in 0 }, access: { fixtureAccess() },
+    recoveryKey: { key })
   func call(_ q: WorktreeRequest) async throws -> WorktreeReply {
     try await service.request(q, caller: "fixture")
   }
@@ -135,7 +136,8 @@ func worktreeLifecycleProof() async throws {
   interrupted.phase = "removing"
   try journal.put(interrupted, kind: "operation", id: interrupted.id)
   let restarted = try WorktreeService(
-    root: root, visibility: { _ in 0 }, access: fixtureAccess, recoveryKey: { key })
+    legacyAuthority: true, root: root, visibility: { _ in 0 }, access: fixtureAccess,
+    recoveryKey: { key })
   equal(
     try await restarted.snapshot().operations.first { $0.id == interrupted.id }?.phase, "uncertain")
   do {
@@ -148,7 +150,7 @@ func worktreeLifecycleProof() async throws {
   equal(reconciled.operations.first?.diskCredit, 0)
   check(fm.fileExists(atPath: dirty.path))
   let missingKey = try WorktreeService(
-    root: root, visibility: { _ in 0 }, access: fixtureAccess,
+    legacyAuthority: true, root: root, visibility: { _ in 0 }, access: fixtureAccess,
     recoveryKey: { throw StoreError.message("Synthetic missing Keychain key") })
   do {
     _ = try await missingKey.request(
@@ -201,11 +203,37 @@ func worktreeLifecycleProof() async throws {
   var quarantineTimes = [quarantineMetadata.st_atimespec, quarantineMetadata.st_mtimespec]
   check(
     utimensat(AT_FDCWD, quarantined.quarantinePath!, &quarantineTimes, AT_SYMLINK_NOFOLLOW) == 0)
+  // Model a process interruption after reservation but before Git removal.
+  // Reconciliation proves the exact quarantine intact, permitting a NEW ID.
+  let finishLedger = try IntentLedger(root: root, legacyAuthority: true)
+  var finishRow = try journal.value(WorktreeRecord.self, kind: "record", id: qr.id)!
+  finishRow.path = quarantined.quarantinePath!
+  finishRow.identity = quarantined.quarantineIdentity
+  finishRow.retired = false
+  var finishProposal = CleanupProposal.worktree(finishRow, ready: true)
+  finishProposal.revision += "|finish-quarantine"
+  finishProposal = try finishLedger.present(finishProposal)
+  try finishLedger.decide(finishProposal.id, revision: finishProposal.revision, decision: "approve")
+  let firstFinishID = quarantined.id + ":finish:interrupted-fixture"
+  try finishLedger.reserve(finishProposal, operationID: firstFinishID)
+  var interruptedFinish = quarantined
+  interruptedFinish.phase = "uncertain"
+  interruptedFinish.finishPhase = "uncertain"
+  interruptedFinish.finishID = firstFinishID
+  interruptedFinish.finishHistory = [firstFinishID: "uncertain"]
+  try journal.put(interruptedFinish, kind: "operation", id: interruptedFinish.id)
+  let reconciledFinish = try await call(
+    .init("reconcile", id: quarantined.id, evidence: "RECONCILE RECOVERY"))
+  equal(reconciledFinish.operations.first?.phase, "quarantined")
+  equal(reconciledFinish.operations.first?.finishPhase, "refused")
   let finished = try await call(
     .init(
       "finish_quarantine", id: quarantined.id, revision: quarantined.archiveDigest,
       evidence: "RETIRE QUARANTINE NOW"))
   equal(finished.operations.first?.phase, "completed")
+  notEqual(finished.operations.first?.finishID, firstFinishID)
+  equal(finished.operations.first?.finishHistory?[firstFinishID], "refused")
+  throwsError(try finishLedger.reserve(finishProposal, operationID: firstFinishID))
   checkFalse(fm.fileExists(atPath: quarantined.quarantinePath!))
   // Batch execution preserves a target that changes after its reviewed plan.
   var batchRows: [WorktreeRecord] = []
@@ -237,7 +265,8 @@ func worktreeLifecycleProof() async throws {
   absentOperation.phase = "verifying"
   try journal.put(absentOperation, kind: "operation", id: absentOperation.id)
   let absentRestart = try WorktreeService(
-    root: root, visibility: { _ in 0 }, access: fixtureAccess, recoveryKey: { key })
+    legacyAuthority: true, root: root, visibility: { _ in 0 }, access: fixtureAccess,
+    recoveryKey: { key })
   let absentReconciliation = try await absentRestart.request(
     .init("reconcile", id: absentOperation.id, evidence: "RECONCILE RECOVERY"), caller: "fixture")
   equal(absentReconciliation.operations.first?.phase, "reconciled-absent")
@@ -278,6 +307,14 @@ func worktreeLifecycleProof() async throws {
     .init(
       "release", token: boundOwner.token,
       evidence: "The detached checkout task finished and no consumer remains."))
+  do {
+    _ = try await call(.init("preview", id: boundRow.id, revision: boundRow.revision))
+    failTest("Recovery feedback failed to suspend the legacy workflow")
+  } catch {}
+  _ = try await call(
+    .init(
+      "confirm", id: boundRow.id, revision: boundRow.revision,
+      evidence: "I reviewed this new fixture after the recovery test; its exact task is complete."))
   let boundPreview = try await call(.init("preview", id: boundRow.id, revision: boundRow.revision))
   _ = try git(binding.path, ["switch", "-c", "new-task-same-commit"])
   do {
@@ -347,5 +384,35 @@ func worktreeLifecycleProof() async throws {
   check(rolledBack.isEmpty)
   print(
     "PASS dirty staged/unstaged, binary, ignored-file rescue and independent restoration after original repository loss; database rollback/backup"
+  )
+  // Corrupt only the preference ledger while leaving the native recovery journal
+  // and archive intact. Recovery must work and future cleanup must remain blocked.
+  let intentStore = try WorktreeStore(root: root, databaseName: "intent.sqlite")
+  try intentStore.put("malformed decision fixture", kind: "proposal", id: "corruption")
+  let latch = root.appendingPathComponent("intent-suspended")
+  try fm.createDirectory(at: latch, withIntermediateDirectories: true)
+  try Data("fixture obstruction".utf8).write(to: latch.appendingPathComponent("obstruction"))
+  let recoveredDespiteIntentFailure = base.appendingPathComponent("restored-despite-intent-failure")
+  let recovered = try await call(
+    .init("restore", id: retired.operations.first!.id, path: recoveredDespiteIntentFailure.path))
+  equal(
+    try Data(contentsOf: recoveredDespiteIntentFailure.appendingPathComponent("source")),
+    Data("initial\n".utf8))
+  check(recovered.intentError != nil)
+  var latchIsDirectory: ObjCBool = false
+  check(
+    fm.fileExists(atPath: latch.path, isDirectory: &latchIsDirectory) && latchIsDirectory.boolValue,
+    "Fallback write unexpectedly replaced the injected obstruction")
+  // Remove only the fixture obstruction: restart has no fallback feedback file.
+  try fm.removeItem(at: latch)
+  checkFalse(fm.fileExists(atPath: latch.path))
+  let brokenLedger = try IntentLedger(root: root, legacyAuthority: true)
+  let restoredService = try WorktreeService(
+    root: root, visibility: { _ in 0 }, access: fixtureAccess, recoveryKey: { key },
+    intent: brokenLedger)
+  _ = try await restoredService.snapshot()
+  throwsError(try brokenLedger.veto(["new-resource"]))
+  print(
+    "PASS independent restoration with corrupt decision store; durable cleanup suspension survives restart"
   )
 }

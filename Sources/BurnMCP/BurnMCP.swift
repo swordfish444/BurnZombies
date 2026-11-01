@@ -515,6 +515,13 @@ import MCP
       default: throw MCPError.invalidParams("Unknown tool.")
       }
       do {
+        if reviewMode, let attempt,
+          ["burn", "workspace_clean", "disk_clean", "owner_stop", "cache_clean"].contains(
+            request.operation)
+            || (request.worktreeRequest?.action == "retire")
+        {
+          try ReviewProgress.beginMutation(store: Store(), attempt: attempt)
+        }
         var text = try await AgentConnection.callAsync(request)
         var object = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
         if reviewMode, let succeeded = object?["ok"] as? Bool, let attempt {
@@ -531,6 +538,7 @@ import MCP
             fields = [
               "work", "workspaces", "releasedWorkCount", "disk", "diskPolicy", "diskDiscovery",
               "ownerProcesses", "managedCache", "managedCacheAllowanceBytes",
+              "decisionContext", "passiveCoverage",
             ]
           case "worktrees_read": fields = ["worktreeInventory"]
           case "disk_inspect": fields = ["diskInspection"]

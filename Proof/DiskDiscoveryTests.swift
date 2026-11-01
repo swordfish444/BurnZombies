@@ -69,17 +69,19 @@ func diskDiscoveryProof() throws {
   check(linked.hardlinks >= 2, "Hardlinks must be identified")
   equal(linked.unshared, 0)
 
-  // A compact 15 GB simulated measurement uses tiny real files; never allocate fake GB.
+  // A compact 150 MB simulated measurement uses tiny real files; never allocate fake GB.
   for i in measured.indices {
-    measured[i].allocated = measured[i].path == home.path ? 15_000_000_000 : 5_000_000_000
+    measured[i].allocated = measured[i].path == home.path ? 150_000_000 : 50_000_000
     measured[i].unshared = measured[i].allocated
   }
   let store = try Store(root: base.appendingPathComponent("state"))
   var saved = DiskDiscoveryState()
   saved.nodes = measured
   try saved.save(store)
-  let discovery = try DiskDiscovery(store: store, roots: [home.path],
-    walker: DiskWalkRunner(executable: URL(fileURLWithPath: CommandLine.arguments[0]),
+  let discovery = try DiskDiscovery(
+    store: store, roots: [home.path],
+    walker: DiskWalkRunner(
+      executable: URL(fileURLWithPath: CommandLine.arguments[0]),
       argumentPrefix: ["--disk-walk-worker"]),
     accessCheck: { .init(state: .granted, detail: "Isolated fixture") })
   equal(
@@ -95,7 +97,7 @@ func diskDiscoveryProof() throws {
   else {
     throw StoreError.message("Repeated output grouping missing")
   }
-  equal(group.allocated, 15_000_000_000)
+  equal(group.allocated, 150_000_000)
   equal(group.folders, 3)
   let encoded = try JSONEncoder().encode(inspected)
   check(encoded.count < 12_000, "Bounded model evidence must not include every group member")
@@ -194,8 +196,10 @@ func diskDiscoveryProof() throws {
 }
 
 private func diskPermissionPreflightProof() throws {
-  let root = URL(fileURLWithPath: WorkspaceSafety.canonical(FileManager.default.temporaryDirectory.path))
-    .appendingPathComponent("bz-permission-walk-" + UUID().uuidString)
+  let root = URL(
+    fileURLWithPath: WorkspaceSafety.canonical(FileManager.default.temporaryDirectory.path)
+  )
+  .appendingPathComponent("bz-permission-walk-" + UUID().uuidString)
   let denied = root.appendingPathComponent("denied")
   let visible = root.appendingPathComponent("visible")
   try FileManager.default.createDirectory(at: denied, withIntermediateDirectories: true)

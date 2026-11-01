@@ -55,6 +55,21 @@ struct WorktreesView: View {
         Button("Add folder…", action: addRoot).disabled(working)
         Button("Scan") { run(.init("scan")) }.disabled(working || !model.accessReady)
       }.padding(20)
+      HStack {
+        Text(
+          "\(inventory.totalRecords ?? inventory.records.count) discovered · \(inventory.policy.roots.count) discovery folders"
+        )
+        Spacer()
+        if let scanned = inventory.lastScan {
+          Text("Last scan \(scanned.formatted(date: .abbreviated, time: .shortened))")
+        }
+      }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.bottom, 8)
+      if inventory.policy.roots.isEmpty {
+        Text(
+          "Worktree discovery is not configured. Add a repository or development folder to begin."
+        )
+        .foregroundStyle(.orange).padding(.horizontal, 20).padding(.bottom, 8)
+      }
       Picker("View", selection: $tab) {
         Text("Worktrees").tag("Worktrees")
         Text("Recovery").tag("Recovery")

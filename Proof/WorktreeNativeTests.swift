@@ -10,7 +10,7 @@ private final class NativePathMatch {
   init(_ target: String) { self.target = target }
 }
 
-func worktreeNativeProof(descriptorOnly: Bool = false) async throws {
+func worktreeNativeProof(descriptorOnly: Bool = false, dense: Bool = false) async throws {
   let fm = FileManager.default
   let temporary = fm.temporaryDirectory.appendingPathComponent(
     "bz-native-worktree-" + UUID().uuidString)
@@ -24,11 +24,12 @@ func worktreeNativeProof(descriptorOnly: Bool = false) async throws {
     throw StoreError.message("Cannot inspect fixture descriptor allowance.")
   }
   let originalLimit = limit
-  guard limit.rlim_max >= 6200 else {
+  let needed: rlim_t = dense ? 140_100 : 6200
+  guard limit.rlim_max >= needed else {
     throw StoreError.message("Host cannot run the >4,096-descriptor regression fixture.")
   }
-  if limit.rlim_cur < 6200 {
-    limit.rlim_cur = 6200
+  if limit.rlim_cur < needed {
+    limit.rlim_cur = needed
     guard setrlimit(RLIMIT_NOFILE, &limit) == 0 else {
       throw StoreError.message("Cannot reserve descriptor capacity inside the proof process.")
     }
@@ -39,7 +40,7 @@ func worktreeNativeProof(descriptorOnly: Bool = false) async throws {
     var saved = originalLimit
     _ = setrlimit(RLIMIT_NOFILE, &saved)
   }
-  for _ in 0..<5000 {
+  for _ in 0..<(dense ? 140_000 : 5000) {
     let fd = open("/dev/null", O_RDONLY | O_CLOEXEC)
     guard fd >= 0 else {
       throw StoreError.message("Sacrificial descriptor fixture exhausted its process allowance.")
@@ -105,8 +106,18 @@ func worktreeNativeProof(descriptorOnly: Bool = false) async throws {
   descriptors.forEach { close($0) }
   descriptors = []
   if coverage == 0 && match.matched {
-    print("PASS real 5,000-open-descriptor coverage and high-descriptor file control")
+    print(
+      "PASS real \(dense ? 140_000 : 5000)-open-descriptor coverage and high-descriptor file control"
+    )
   }
+  let alias = base.appendingPathComponent("consumer-alias")
+  try fm.createSymbolicLink(at: alias, withDestinationURL: target)
+  let aliasFD = open(alias.path, O_RDONLY | O_CLOEXEC)
+  guard aliasFD >= 0 else { throw StoreError.message("Symlink consumer fixture could not open.") }
+  equal(
+    bz_path_in_use(target.path), 1,
+    "A file opened through a symlink must retain its real vnode consumer identity")
+  close(aliasFD)
   if descriptorOnly { return }
 
   let repository = base.appendingPathComponent("repository")
@@ -127,7 +138,7 @@ func worktreeNativeProof(descriptorOnly: Bool = false) async throws {
   // Only the access-setup prerequisite and secret material are injected. The
   // production worker, kernel path reader, Git, files, recovery and actuator run.
   let service = try WorktreeService(
-    root: state, access: { fixtureAccess() }, recoveryKey: { key },
+    legacyAuthority: true, root: state, access: { fixtureAccess() }, recoveryKey: { key },
     scanRunner: WorktreeScanRunner(executable: URL(fileURLWithPath: CommandLine.arguments[0])))
   func request(_ q: WorktreeRequest) async throws -> WorktreeReply {
     try await service.request(q, caller: "native-fixture")

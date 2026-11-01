@@ -32,9 +32,9 @@ Full Disk Access enables inspection; it does not approve deletion, bypass owners
 
 ## Existing harness, existing login
 
-Codex, Claude Code, Cursor CLI, GitHub Copilot CLI and Gemini CLI have launch adapters. The selected CLI must be installed and signed in. Codex's bundled desktop CLI is detected when available. A desktop app without a usable local CLI is not sufficient by itself. Authentication is reused, never copied or changed.
+Codex and Claude Code are the supported installation and acceptance targets. Older Cursor, GitHub Copilot and Gemini launch adapters remain for compatibility. The selected CLI must be installed and signed in. Codex's bundled desktop CLI is detected when available. A desktop app without a usable local CLI is not sufficient by itself. Authentication is reused, never copied or changed.
 
-Default selection order is Codex, Claude, Cursor, Copilot, Gemini. Reinstallation retains the previous provider; a failed or quota-limited provider is never replaced automatically. Reviews use that harness's existing account and usage allowance. Failed authentication, unsupported CLI options, permission refusals or usage errors pause reviews while native observation continues. Resolve the issue in the harness, then explicitly start a new hunt in BurnZombies.
+Fresh automatic selection tries Codex, then Claude. Reinstallation retains the previous provider; a failed or quota-limited provider is never replaced automatically. Reviews use that harness's existing account and usage allowance. Failed authentication, unsupported CLI options, permission refusals or usage errors pause reviews while native observation continues. Resolve the issue in the harness, then explicitly start a new hunt in BurnZombies.
 
 Default setup writes only BurnZombies's private reviewer configuration. It retires byte-verified installer-owned lifecycle skills so working chats no longer perform cleanup bookkeeping. Customized copies are preserved and reported. It does not add an always-loaded MCP server to working chats. It does not install chat hooks, inject reminders, or change persistent tool permissions. Per-run MCP configuration connects the reviewer to the local observer. Legacy BurnZombies hooks become inert when computer-wide review is configured.
 
@@ -84,3 +84,9 @@ Codex children are associated with an owning turn through native process ancestr
 This first passive adapter covers local Codex and Claude Code sessions. The other three reviewer adapters remain available, but missing ownership metadata is preserved as a coverage gap. Explicit lifecycle claims remain supported for integrations; they are no longer injected into every working chat. Existing active claims never expire into disposable work.
 
 Automatic hunts default to every four hours and batch supported evidence across the Mac. The schedule is configurable; an explicit manual hunt can start sooner. Observation and the animated progress display do not make model calls of their own. Settings → Usage & estimated cost is collapsed initially. Expand it for 1, 7 or 30 days of hourly/daily token and API-equivalent cost charts, with full and per-model rollups. Unknown model prices or missing usage are marked unavailable, not fabricated.
+
+## Agent-led setup
+
+Give Codex or Claude Code the [canonical llms.txt guide](https://raw.githubusercontent.com/swordfish444/BurnZombies/main/llms.txt). Its fresh-install commands use `--observe-only`, verify the bundled CLI with `doctor`, preserve global harness settings and distinguish installed, authenticated, permission-ready and useful. Setup never acts as cleanup approval.
+
+`doctor` is read-only: it checks private configuration, executable/server availability and the running app's response. It does not start a model or claim that CLI availability proves login. `findings` reads the durable inbox, including blockers and unknown coverage.

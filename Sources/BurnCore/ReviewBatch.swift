@@ -137,6 +137,9 @@ public struct ReviewAttempt: Codable, Sendable {
   public var revision: String
   public var date: Date
   public var count: Int
+  public var retryAfter: Date?
+  public var failures: Int?
+  public var failure: String?
 }
 
 /// A receipt binds successful recommendation/exploration calls to this invocation.
@@ -150,6 +153,7 @@ public struct ReviewProgress: Codable, Sendable {
   public var selected: [String]
   public var steps: [Step] = []
   public var refusals: [Step]?
+  public var mutationAttempted: Bool?
   public struct Activity: Codable, Sendable {
     public var tool: String
     public var succeeded: Bool
@@ -162,6 +166,7 @@ public struct ReviewProgress: Codable, Sendable {
   public init(attempt: UUID, selected: [String]) {
     self.attempt = attempt
     self.selected = selected
+    self.mutationAttempted = false
   }
   public var completed: Set<String> {
     Set(steps.filter { ["disk_recommend", "disk_explore"].contains($0.tool) }.map(\.id))
@@ -175,6 +180,15 @@ public struct ReviewProgress: Codable, Sendable {
     try store.write(
       JSONEncoder().encode(self), to: store.root.appendingPathComponent("review-progress.json"),
       limit: 16384)
+  }
+  /// Persist before dispatch, including requests whose reply may be lost.
+  public static func beginMutation(store: Store, attempt: UUID) throws {
+    let lock = try InstanceLock(url: store.root.appendingPathComponent("review-progress.lock"))
+    defer { withExtendedLifetime(lock) {} }
+    var value = try load(store)
+    guard value.attempt == attempt else { throw StoreError.message("Review attempt changed.") }
+    value.mutationAttempted = true
+    try value.save(store)
   }
   public static func record(
     store: Store, attempt: UUID, operation: String, id: String?, succeeded: Bool = true,

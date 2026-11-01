@@ -18,7 +18,9 @@ func worktreeHuntRefreshProof() async throws {
   _ = try WorktreeGit.run(
     repo.path,
     ["-c", "user.name=Proof", "-c", "user.email=proof@example.invalid", "commit", "-m", "fixture"])
-  let monitor = try Monitor(root: root, workspaceVisibility: { _ in 0 }, accessCheck: fixtureAccess)
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: root, workspaceVisibility: { _ in 0 },
+    accessCheck: fixtureAccess)
   _ = try await monitor.worktreeRequest(.init("add_root", path: base.path), caller: "fixture")
   _ = try await monitor.worktreeRequest(.init("scan"), caller: "fixture")
   let created = base.appendingPathComponent("created-after-recent-scan")

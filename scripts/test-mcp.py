@@ -57,8 +57,11 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
             # Native preview performs two complete consumer passes; preservation
             # can take longer. Wait beyond their bounded product deadlines while
             # retaining the ordinary frame bound for cheap status calls.
-            return send("tools/call", {"name": name, "arguments": args},
+            response = send("tools/call", {"name": name, "arguments": args},
                         timeout=60 if name in {"burnzombies_workspace_preview", "burnzombies_workspace_clean"} else 10)
+            if response.get('result', {}).get('isError'):
+                print('MCP refusal', name, json.dumps(response['result'])[:1600], flush=True)
+            return response
         status = call("burnzombies_status", {})["result"]
         assert not status.get("isError")
         actual = json.loads(status["content"][0]["text"])

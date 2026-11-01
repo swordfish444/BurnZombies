@@ -116,8 +116,10 @@ extension WorktreeService {
   }
   public func projectedReceipts() throws -> [WorkspaceReceipt] {
     let rows = try records()
+    let fixtures = try FixtureProvenance.load(root: store.root)
     return try store.values(WorktreeOperation.self, kind: "operation").filter {
-      $0.phase == "completed"
+      $0.phase == "completed" && $0.fixture != true && !fixtures.operations.contains($0.id)
+        && !fixtures.matches(["worktree:" + $0.worktreeID])
     }.compactMap { op in
       guard let r = rows.first(where: { $0.id == op.worktreeID }), let i = r.identity,
         let id = UUID(uuidString: op.id)

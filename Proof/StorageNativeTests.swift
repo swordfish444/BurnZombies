@@ -99,8 +99,13 @@ final class StorageNativeTests: TestSuite {
   func testOnlyOneMonitorOwnsCatalog() throws {
     let root = temp()
     defer { try? FileManager.default.removeItem(at: root) }
-    let a = try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
-    throwsError(try Monitor(root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker()))
+    let a = try Monitor(
+      legacyAuthority: true, discoveryHome: nil, root: root, accessCheck: fixtureAccess,
+      discoveryWalker: fixtureWalker())
+    throwsError(
+      try Monitor(
+        legacyAuthority: true, discoveryHome: nil, root: root, accessCheck: fixtureAccess,
+        discoveryWalker: fixtureWalker()))
     withExtendedLifetime(a) {}
   }
   func testRetentionCapsRecordsAndEvents() {
@@ -119,7 +124,9 @@ final class StorageNativeTests: TestSuite {
     c.lifetimeVerified = 900
     c.prune(now: now)
     equal(c.records.count, 4096)
-    equal(c.events.count, 500)
+    equal(
+      c.events.count, 600,
+      "Unresolved partial outcomes are authority barriers, not prunable UI history")
     equal(c.lifetimeVerified, 900)
   }
   func testActualProcessIdentityAndGracefulStop() throws {

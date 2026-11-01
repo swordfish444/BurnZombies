@@ -132,3 +132,15 @@ A native fixture duplicates a real open file at or above descriptor 65,536 with 
 ### Legacy preview deadline (build 29)
 
 Real native previews measured 4.5–4.9 seconds while the legacy RPC inherited the five-second status deadline. The preview performs two complete consumer checks, so a valid six-second response was deterministically rejected. That regression now passes with a bounded 30-second read-only preview budget, while an unrelated status request returns promptly. Storage preservation retains its separate existing deadline. The strict single-worker transport suite includes this case. MCP fixtures wait beyond the product preview deadline and retain the actual error text if a response is not JSON; cheap status calls keep their ordinary bound.
+
+## Approval and useful discovery regression coverage (0.13.0)
+
+The source proof suite covers fresh-install approval for released explicit claims, ended leases and grouped helpers. Ordinary observation preserves a valid approval; resumed ownership revokes it. Sacrificial helpers must exit, pass the recurrence watch and leave retained controls alive. Source fixtures are distinct from installed-app acceptance.
+
+The intent tests cover more than 10,000 historical proposals, unbounded scoped approval revocation, uncertain-operation retention, missing or truncated migration databases, exact one-use decisions, cross-action Keep and bounded recurring rules. Setup tests run 50 concurrent pairs of first migrations and verify that the external migration receipt matches the internal identity.
+
+Worktree proofs exercise explicit adoption of an unmanaged dirty checkout, injected ledger failure after adoption, encrypted ignored-file restoration, interrupted quarantine finish with a new attempt ID, and replay refusal. Native worker proofs use actual same-user process visibility, including dense descriptor tables and moved executables. Disk recovery tests cover interruption before rename, after rename and after removal; partial deletion and replacement identities remain blocked. Restore requests replay into protection even if both preference feedback and its fallback write fail.
+
+The opt-in `scripts/test-owner-harness.py` accepts `--explicit-approval` to test a fresh permission ledger with the actual Codex or Claude Code reviewer, an exact idle Gradle fixture and an actively building control. It records binary hashes, native outcomes and model invocation evidence. `--native-dispatch` diagnoses the native path without a model and does not count as harness acceptance. Both 8.14.6 and 9.8.2 are checked by the separate exact-version protocol fixture.
+
+Release acceptance additionally requires the installed bundle identity, permission readiness, proactive surfaced findings, a delivered notification and action round-trip, verified sacrificial cleanup and restoration, and real setup from the published agent guide. Unit or fixture success alone does not establish those outcomes.

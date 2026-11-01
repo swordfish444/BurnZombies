@@ -88,6 +88,8 @@ public struct WorktreeClaim: Codable, Identifiable, Sendable {
 }
 
 public struct WorktreePolicy: Codable, Sendable {
+  public var discoveryVersion: Int?
+  public var removedDiscoveryRoots: [String]?
   public var roots: [String] = []
   public var automaticRepositories: [String] = []
   public var staleDays = 14
@@ -106,18 +108,29 @@ public struct WorktreePolicy: Codable, Sendable {
       Set(automaticRepositories).count == automaticRepositories.count
     else { throw StoreError.message("Invalid worktree policy; operations paused.") }
   }
+  public var authorityRevision: String {
+    var copy = self
+    copy.roots = []
+    copy.discoveryVersion = nil
+    copy.removedDiscoveryRoots = nil
+    return copy.revision
+  }
   public var revision: String {
     WorkEvidence.hash(String(decoding: (try? WorktreeEncoding.data(self)) ?? Data(), as: UTF8.self))
   }
 }
 
 public struct WorktreeOperation: Codable, Identifiable, Sendable {
+  public var fixture: Bool?
   public var id: String
   public var worktreeID: String
   public var originalPath: String
   public var repository: String
   public var head: String
   public var phase: String
+  public var finishPhase: String?
+  public var finishID: String?
+  public var finishHistory: [String: String]?
   public var kind: String
   public var date: Date
   public var completedAt: Date?
@@ -197,6 +210,11 @@ public struct WorktreeRequest: Codable, Sendable {
 }
 
 public struct WorktreeReply: Codable, Sendable {
+  public var totalRecords: Int?
+  public var stateCounts: [String: Int]?
+  public var lastScan: Date?
+  public var scanning: Bool?
+  public var intentError: String?
   public var records: [WorktreeRecord] = []
   public var operations: [WorktreeOperation] = []
   public var policy = WorktreePolicy()

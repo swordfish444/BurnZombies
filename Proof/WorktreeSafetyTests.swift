@@ -45,6 +45,7 @@ func worktreeSafetyProof() async throws {
   try oldStore.save(catalog)
   let key = SymmetricKey(data: Data(repeating: 81, count: 32))
   let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil,
     root: root, workspaceVisibility: { _ in 0 }, accessCheck: fixtureAccess,
     worktreeRecoveryKey: { key })
   let cutover = try oldStore.load()
@@ -74,14 +75,16 @@ func worktreeSafetyProof() async throws {
   _ = try await monitor.recordWorkspace(release)
   _ = try await monitor.previewWorkspace(id)
   let service = try WorktreeService(
-    root: root, visibility: { _ in 0 }, access: fixtureAccess, recoveryKey: { key })
+    legacyAuthority: true, root: root, visibility: { _ in 0 }, access: fixtureAccess,
+    recoveryKey: { key })
   let scanned = try await service.scan()
   check(
     scanned.records.contains { $0.id == id },
     "Private legacy root must be scanned without user discovery roots")
   let row = try await service.inspect(id)
   let unknown = try WorktreeService(
-    root: root, visibility: { _ in -1 }, access: fixtureAccess, recoveryKey: { key })
+    legacyAuthority: true, root: root, visibility: { _ in -1 }, access: fixtureAccess,
+    recoveryKey: { key })
   let before = try await unknown.inspect(id)
   _ = try await unknown.request(
     .init(
@@ -159,7 +162,8 @@ func worktreeSafetyProof() async throws {
       _ = try WorktreeStore(root: unsafeRoot)
       failTest("Unsafe database accepted: " + kind)
     } catch {}
-    let protectedMonitor = try Monitor(root: unsafeRoot, accessCheck: fixtureAccess)
+    let protectedMonitor = try Monitor(
+      legacyAuthority: true, discoveryHome: nil, root: unsafeRoot, accessCheck: fixtureAccess)
     let snapshot = await protectedMonitor.refresh()
     check(snapshot.worktreeError != nil)
     check(snapshot.processCount > 0, "Worktree damage stopped process observation")

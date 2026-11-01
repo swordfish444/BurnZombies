@@ -9,7 +9,8 @@ public final class OwnerMaintenance: @unchecked Sendable {
     public var checkedAt: Date?
     public var gaps: [String] = []
   }
-  public typealias ProcessCollector = @Sendable ([Record], [String: Record], Bool) -> ([GradleDaemonEvidence], [String])
+  public typealias ProcessCollector =
+    @Sendable ([Record], [String: Record], Bool) -> ([GradleDaemonEvidence], [String])
   public typealias CacheCollector = @Sendable (DiskPolicy) throws -> BuildKitCache.Inventory
   private let lock = NSLock()
   private let accessCheck: @Sendable () -> FullDiskAccessStatus
@@ -23,63 +24,99 @@ public final class OwnerMaintenance: @unchecked Sendable {
   private var cacheGeneration: UInt64 = 0
   private var processProbeRound: UInt64 = 0
   private var lastProcessProbe: [String: UInt64] = [:]
-  public init(store: Store, processCollector: ProcessCollector? = nil, cacheCollector: CacheCollector? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) {
+  public init(
+    store: Store, processCollector: ProcessCollector? = nil, cacheCollector: CacheCollector? = nil,
+    accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil
+  ) {
     self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: store.root) }
-    self.processCollector = processCollector ?? { selected, records, complete in
-      var daemons: [GradleDaemonEvidence] = [], gaps: [String] = []
-      if records.values.filter({ $0.missingSince == nil && $0.latest.name == "java" }).count > selected.count {
-        gaps.append("Gradle owner inspection rotates through at most 16 live Java identities per round.")
+    self.processCollector =
+      processCollector ?? { selected, records, complete in
+        var daemons: [GradleDaemonEvidence] = []
+        var gaps: [String] = []
+        if records.values.filter({ $0.missingSince == nil && $0.latest.name == "java" }).count
+          > selected.count
+        {
+          gaps.append(
+            "Gradle owner inspection rotates through at most 16 live Java identities per round.")
+        }
+        for record in selected {
+          do {
+            if let evidence = try GradleDaemon.inspect(
+              record.latest, records: records, complete: complete)
+            {
+              daemons.append(evidence)
+            }
+          } catch {
+            gaps.append(
+              "PID \(record.latest.identity.pid): supported Gradle owner evidence unavailable; preserved."
+            )
+          }
+        }
+        return (daemons, gaps)
       }
-      for record in selected {
-        do { if let evidence = try GradleDaemon.inspect(record.latest, records: records, complete: complete) { daemons.append(evidence) } }
-        catch { gaps.append("PID \(record.latest.identity.pid): supported Gradle owner evidence unavailable; preserved.") }
+    self.cacheCollector =
+      cacheCollector ?? { policy in
+        // Decode only routing metadata; never copy credentials to a tool or model.
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+          ".docker/config.json")
+        struct Config: Decodable { var currentContext: String? }
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard data.count <= 262144 else {
+          throw StoreError.message("Docker context metadata exceeds bound.")
+        }
+        let context = try JSONDecoder().decode(Config.self, from: data).currentContext ?? "default"
+        return try BuildKitCache.live(store: store).inspect(
+          target: .init(context: context, builder: context), policy: policy)
       }
-      return (daemons, gaps)
-    }
-    self.cacheCollector = cacheCollector ?? { policy in
-      // Decode only routing metadata; never copy credentials to a tool or model.
-      let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".docker/config.json")
-      struct Config: Decodable { var currentContext: String? }
-      let data = try Data(contentsOf: url, options: .mappedIfSafe)
-      guard data.count <= 262144 else { throw StoreError.message("Docker context metadata exceeds bound.") }
-      let context = try JSONDecoder().decode(Config.self, from: data).currentContext ?? "default"
-      return try BuildKitCache.live(store: store).inspect(target: .init(context: context, builder: context), policy: policy)
-    }
     // Restore selection facts only. The next native tick prunes exact identities,
     // and every owner action still requires fresh producer revalidation. Never
     // restore a managed-cache route or treat saved checkedAt as a new probe.
     value.daemons = (try? store.load().ownerDaemons) ?? []
   }
   public func snapshot() -> Snapshot { lock.withLock { value } }
-  public func tick(records: [String: Record], policy: DiskPolicy, complete: Bool, now: Date = Date()) {
+  public func tick(
+    records: [String: Record], policy: DiskPolicy, complete: Bool, now: Date = Date()
+  ) {
     guard accessCheck().canScan else { return }
-    let job = lock.withLock { () -> (process: Bool, probes: [Record], cache: Bool, generation: UInt64)? in
+    let job = lock.withLock {
+      () -> (process: Bool, probes: [Record], cache: Bool, generation: UInt64)? in
       value.daemons.removeAll { owner in
-        guard let live = records[owner.member.identity.key], live.missingSince == nil else { return true }
+        guard let live = records[owner.member.identity.key], live.missingSince == nil else {
+          return true
+        }
         return Member(live.latest) != owner.member
       }
       if policyRevision != policy.revision {
         policyRevision = policy.revision
         cacheGeneration &+= 1
-        value.cache = nil; lastCache = .distantPast
+        value.cache = nil
+        lastCache = .distantPast
       }
       let processDue = now.timeIntervalSince(lastProcess) >= 300
-      let cacheInterval = (value.cache?.eligibleBytes ?? 0) >= DiskCandidate.minimumReviewBytes ? 300 : Double(policy.scanHours * 3600)
+      let cacheInterval =
+        (value.cache?.eligibleBytes ?? 0) >= DiskCandidate.minimumAutomaticCacheBytes
+        ? 300 : Double(policy.scanHours * 3600)
       let cacheDue = policy.mode != "off" && now.timeIntervalSince(lastCache) >= cacheInterval
       guard !running, processDue || cacheDue else { return nil }
       running = true
       var probes: [Record] = []
       if processDue {
         lastProcess = now
-        let candidates = records.values.filter { $0.missingSince == nil && $0.latest.name == "java" }
+        let candidates = records.values.filter {
+          $0.missingSince == nil && $0.latest.name == "java"
+        }
         let live = Set(candidates.map(\.id))
         lastProcessProbe = lastProcessProbe.filter { live.contains($0.key) }
-        probes = Array(candidates.sorted {
-          let a = lastProcessProbe[$0.id] ?? 0, b = lastProcessProbe[$1.id] ?? 0
-          if a != b { return a < b }
-          if $0.latest.identity.pid != $1.latest.identity.pid { return $0.latest.identity.pid < $1.latest.identity.pid }
-          return $0.id < $1.id
-        }.prefix(16))
+        probes = Array(
+          candidates.sorted {
+            let a = lastProcessProbe[$0.id] ?? 0
+            let b = lastProcessProbe[$1.id] ?? 0
+            if a != b { return a < b }
+            if $0.latest.identity.pid != $1.latest.identity.pid {
+              return $0.latest.identity.pid < $1.latest.identity.pid
+            }
+            return $0.id < $1.id
+          }.prefix(16))
         processProbeRound &+= 1
         for probe in probes { lastProcessProbe[probe.id] = processProbeRound }
       }
@@ -89,13 +126,19 @@ public final class OwnerMaintenance: @unchecked Sendable {
     guard let job else { return }
     // Producer probes are blocking local I/O; never occupy a cooperative actor worker.
     DispatchQueue.global(qos: .utility).async { [self] in
-      guard accessCheck().canScan else { lock.withLock { running = false }; return }
+      guard accessCheck().canScan else {
+        lock.withLock { running = false }
+        return
+      }
       // Keep the full process map for child/ownership checks; only owner probes rotate.
       let processResult = job.process ? processCollector(job.probes, records, complete) : nil
-      var cache: BuildKitCache.Inventory?, cacheGap: String?
+      var cache: BuildKitCache.Inventory?
+      var cacheGap: String?
       if job.cache, accessCheck().canScan, lock.withLock({ cacheGeneration == job.generation }) {
-        do { cache = try cacheCollector(policy) }
-        catch { cacheGap = "Local BuildKit inventory unavailable: " + error.localizedDescription.prefix(180) }
+        do { cache = try cacheCollector(policy) } catch {
+          cacheGap =
+            "Local BuildKit inventory unavailable: " + error.localizedDescription.prefix(180)
+        }
       }
       lock.withLock {
         if let processResult {
@@ -120,16 +163,19 @@ public final class OwnerMaintenance: @unchecked Sendable {
   public func invalidateCache() {
     lock.withLock {
       cacheGeneration &+= 1
-      value.cache = nil; lastCache = .distantPast
+      value.cache = nil
+      lastCache = .distantPast
     }
   }
 }
 
-public extension GradleDaemonEvidence {
-  var id: String { "owner-process:" + member.identity.key }
-  var revision: String {
-    WorkEvidence.hash(id + "|" + daemonUID + "|" + state + "|" + String(lastBusy.timeIntervalSince1970)
-      + "|" + evidenceFingerprint + "|" + nativeChildren.map(\.key).sorted().joined(separator: ","))
+extension GradleDaemonEvidence {
+  public var id: String { "owner-process:" + member.identity.key }
+  public var revision: String {
+    WorkEvidence.hash(
+      id + "|" + daemonUID + "|" + state + "|" + String(lastBusy.timeIntervalSince1970)
+        + "|" + evidenceFingerprint + "|"
+        + nativeChildren.map(\.key).sorted().joined(separator: ","))
   }
 }
 
@@ -139,11 +185,14 @@ public struct OwnerProcessSummary: Codable, Sendable {
   public var evidence: GradleDaemonEvidence
   public var requiresRevalidation: Bool
   public init(_ evidence: GradleDaemonEvidence) {
-    id = evidence.id; self.evidence = evidence; requiresRevalidation = true
+    id = evidence.id
+    self.evidence = evidence
+    requiresRevalidation = true
   }
 }
 
 public struct ManagedCacheAttempt: Codable, Sendable {
+  public var fixture: Bool?
   public var plan: BuildKitCache.Plan
   public var date: Date
   public var outcome: String
@@ -160,14 +209,25 @@ public struct ManagedCacheSummary: Codable, Sendable {
   public var eligibleBytes: UInt64
   public var eligibleRecords: [BuildKitCache.Record]
   public var omittedEligibleRecords: Int
-  public init(_ inventory: BuildKitCache.Inventory, blocked: Set<String> = [], allowance: UInt64? = nil) {
-    id = "cache:" + WorkEvidence.hash(inventory.owner.daemonID + "|" + inventory.owner.target.context)
-    owner = inventory.owner; date = inventory.date
-    let eligible = inventory.records.filter { inventory.eligibleIDs.contains($0.id) && !blocked.contains($0.id) && (allowance == nil || $0.bytes <= allowance!) }.sorted { $0.bytes > $1.bytes }
+  public init(
+    _ inventory: BuildKitCache.Inventory, blocked: Set<String> = [], allowance: UInt64? = nil
+  ) {
+    id =
+      "cache:" + WorkEvidence.hash(inventory.owner.daemonID + "|" + inventory.owner.target.context)
+    owner = inventory.owner
+    date = inventory.date
+    let eligible = inventory.records.filter {
+      inventory.eligibleIDs.contains($0.id) && !blocked.contains($0.id)
+        && (allowance == nil || $0.bytes <= allowance!)
+    }.sorted { $0.bytes > $1.bytes }
     eligibleBytes = eligible.reduce(UInt64(0)) { $0 + $1.bytes }
     var opportunity = inventory
-    opportunity.records = eligible; opportunity.eligibleIDs = eligible.map(\.id); opportunity.eligibleBytes = eligibleBytes
-    revision = WorkEvidence.hash(opportunity.revision + "|" + (allowance.map(String.init) ?? "recommend"))
-    eligibleRecords = Array(eligible.prefix(32)); omittedEligibleRecords = max(0, eligible.count - 32)
+    opportunity.records = eligible
+    opportunity.eligibleIDs = eligible.map(\.id)
+    opportunity.eligibleBytes = eligibleBytes
+    revision = WorkEvidence.hash(
+      opportunity.revision + "|" + (allowance.map(String.init) ?? "recommend"))
+    eligibleRecords = Array(eligible.prefix(32))
+    omittedEligibleRecords = max(0, eligible.count - 32)
   }
 }

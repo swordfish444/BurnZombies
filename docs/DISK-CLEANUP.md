@@ -4,7 +4,7 @@
 
 ## Start with the recommendation
 
-Discovery cards start at **10 GB of measured unshared storage**. Each has a short recommendation and one practical next step. Smaller outputs are still measured: repeated folders can form one large opportunity. Referenced footprint, coverage gaps and paths stay under Details. Unshared storage excludes APFS clone sharing and hardlinks. It is a conservative lower bound on stored blocks, not a guarantee that every file is disposable.
+Discovery cards start at **100 MB of measured unshared storage**. Each has a short recommendation and one practical next step. Smaller outputs are still measured: repeated folders can form one large opportunity. Referenced footprint, coverage gaps and paths stay under Details. Unshared storage excludes APFS clone sharing and hardlinks. It is a conservative lower bound on stored blocks, not a guarantee that every file is disposable.
 
 The harness can inspect measured branches, read bounded producer/build/retention evidence, group repeated outputs and ask the native scanner to go deeper. It then finishes; no model sits waiting for a filesystem walk. Completed subtrees become available while the rest of a large scan continues. Completed measurements and advice survive app restarts; an interrupted branch starts a new local walk. Online-only files are not hydrated. Permission gaps are reported, never interpreted as empty space.
 
@@ -12,7 +12,7 @@ The AI distinguishes reusable source, retained evidence, rebuildable output and 
 
 If Mole is already installed through Homebrew, exact-branch inspections can also use its JSON analyzer. The adapter is read-only, bounded and cached; protected or incompletely mapped branches stay native-only. Mole's cleanup hints are evidence for the harness, never permission to delete. No Mole installation, global skill or per-chat hook is added. See [the supported integration](MOLE-INTEGRATION.md).
 
-Expand **Advanced** to tune retention, scan cadence, free-space goal, daily removal cap, cleanup roots, protected folders or instructions. Existing guarded cleanup cards live there too: **Keep** protects an exact folder; **Approve cleanup…** confirms replaceable output and enables guarded automatic cleanup for approved folders. It does not remove anything immediately or invoke an extra model call. The free-space goal gates removal, not discovery. Folder rules are exact, not recursive cleanup grants. Recommend mode never removes anything.
+Expand **Advanced** to tune retention, scan cadence, free-space goal, daily removal cap, cleanup roots, protected folders or instructions. Existing guarded cleanup cards live there too: **Keep** protects an exact folder; **Approve cleanup…** confirms replaceable output and enables guarded automatic cleanup for approved folders. It does not remove anything immediately or invoke an extra model call. The free-space goal gates removal, not discovery. Folder rules are exact, not recursive cleanup grants. Automatic reviews in Recommend mode never remove anything. A separate one-time approval in Findings can execute an already classified, eligible output after the native guards pass.
 
 ## Discovery and removal have different boundaries
 
@@ -29,6 +29,12 @@ Before removal, the path must belong to the same repository, be ignored and cont
 **Active consumers or incomplete same-user handle visibility block raw folder and worktree removal.** No permission downgrade or age threshold bypasses this boundary. Protected macOS services can make those removal paths unavailable. Discovery can still explain the opportunity; process observation continues. The separate BuildKit operation below relies on the storage owner's reference locks and never deletes host paths.
 
 Discovery and cleanup participate in the same deep hunt, scheduled every four hours by default or started explicitly with **Hunt Zombies**. The frequency is configurable; each focused harness invocation retains its eight-call bound and failure pause. Daily token/count cutoffs do not stop useful work. Discovery reviews expose only storage tools and concise storage instructions; up to two supplied branches match the inspection budget. Unhandled branches stay queued, with backoff after repeated attempts without progress. Small file changes and unchanged recommendations do not launch new reviews. Deeper native scans produce evidence for a later review without keeping a model running. Destructive actions always use fresh, complete evidence. Settings changes and local scans never invoke a model directly. See [usage accounting](USAGE.md).
+
+## Interrupted output cleanup
+
+An interrupted raw-output operation appears under **Impact** with its original and pending recovery location. **Inspect and reconcile** checks the recorded directory identity and full contents. **Restore intact pending output** returns the preserved directory only when the destination is absent; it never overwrites another folder. Changed, partially removed or inaccessible contents remain protected for manual recovery.
+
+Requesting restoration saves exact-resource Keep before removal permission can return. Keep survives restarts, including a preference-store write failure. Clear it explicitly in Findings before reconsidering that output. Reconciliation never awards retrospective cleanup or disk credit. Older receipts without the original identity and manifest require manual recovery.
 
 ## Build cache without marking folders
 

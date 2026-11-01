@@ -41,6 +41,10 @@ func json<T: Encodable>(_ value: T) throws {
 let args = Array(CommandLine.arguments.dropFirst())
 do {
   switch args.first ?? "help" {
+  case "version", "--version":
+    print("BurnZombies \(BuildIdentity.version) (build \(BuildIdentity.build))")
+  case "doctor":
+    try await Doctor.run()
   case "--worktree-scan-worker":
     exit(WorktreeScanWorker.run(arguments: Array(args.dropFirst())))
   case "worktrees":
@@ -174,6 +178,12 @@ do {
     try LifecycleSkillInstall.run(Array(args.dropFirst()))
   case "setup":
     try MachineSetup.run(Array(args.dropFirst()))
+  case "findings":
+    let offset = args.count > 1 ? Int(args[1]) : 0
+    guard let offset, offset >= 0 else {
+      throw StoreError.message("Usage: burnzombies findings [OFFSET]")
+    }
+    print(try await AgentConnection.callAsync(AgentRequest("findings", offset: offset)))
   case "review-once":
     try FullDiskAccess.requireAccess()
     let reviewer = try MachineReviewer()
@@ -184,12 +194,15 @@ do {
   case "help", "--help", "-h":
     print(
       """
-      BurnZombies 0.12.2
+      BurnZombies \(BuildIdentity.version) (build \(BuildIdentity.build))
+      version   Print this binary's version and build.
+      doctor    Read setup, selected harness and app connectivity; never requests cleanup.
+      findings [OFFSET]   Read the running app's durable findings inbox; no cleanup or grants.
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
       install-skill [--home PATH] [--skill-file PATH]   Optional legacy lifecycle instructions (adds working-chat overhead).
-      setup [--harness auto|codex|claude|cursor|copilot|gemini|none] [--model ID|default] [--thinking LEVEL|default]
+      setup [--harness auto|codex|claude|none] [--model ID|default] [--thinking LEVEL|default] [--observe-only]
         Enable computer-wide background reviews. No chat hooks or live config edits.
       install [--harness auto|all|codex|claude|cursor|copilot|gemini] [--mcp-only]
         Connect installed harnesses. MCP-only mode preserves hooks and permissions.

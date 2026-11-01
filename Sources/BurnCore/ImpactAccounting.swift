@@ -32,7 +32,8 @@ public enum ImpactAccounting {
     for i in catalog.events.indices {
       let event = catalog.events[i]
       guard event.outcome == "verified", event.cpuSavingsRate == nil,
-        let old = event.cpuSecondsSavedEstimate, old.isFinite, old >= 0 else { continue }
+        let old = event.cpuSecondsSavedEstimate, old.isFinite, old >= 0
+      else { continue }
       catalog.events[i].cpuSavingsRate = old / projectionSeconds
       catalog.events[i].cpuObservedSeconds = 0
       catalog.events[i].cpuLegacyFloorSeconds = projectionSeconds
@@ -41,19 +42,24 @@ public enum ImpactAccounting {
 
   /// Called only for consecutive complete scans. Awake time excludes sleep; the
   /// interval limit also excludes downtime, suspension and missed observations.
-  @discardableResult public static func accrue(_ catalog: inout Catalog,
-    awakeSeconds: Double, wallSeconds: Double, boot: UInt64, ended: Set<UUID> = []) -> Double {
+  @discardableResult public static func accrue(
+    _ catalog: inout Catalog,
+    awakeSeconds: Double, wallSeconds: Double, boot: UInt64, ended: Set<UUID> = []
+  ) -> Double {
     guard awakeSeconds.isFinite, wallSeconds.isFinite, awakeSeconds > 0,
       awakeSeconds <= 75, wallSeconds > 0, wallSeconds <= 75,
-      abs(wallSeconds - awakeSeconds) <= 5, boot != 0 else { return 0 }
+      abs(wallSeconds - awakeSeconds) <= 5, boot != 0
+    else { return 0 }
     var added = 0.0
     for i in catalog.events.indices {
       let event = catalog.events[i]
-      guard event.outcome == "verified", event.cpuAccrualEnded != true,
+      guard event.outcome == "verified", event.fixture != true, event.cpuAccrualEnded != true,
         let rate = event.cpuSavingsRate, rate.isFinite, rate >= 0,
-        let observed = event.cpuObservedSeconds, observed.isFinite, observed >= 0 else { continue }
+        let observed = event.cpuObservedSeconds, observed.isFinite, observed >= 0
+      else { continue }
       guard !ended.contains(event.id), !event.targets.isEmpty,
-        event.targets.allSatisfy({ $0.identity.boot == boot }) else {
+        event.targets.allSatisfy({ $0.identity.boot == boot })
+      else {
         catalog.events[i].cpuAccrualEnded = true
         continue
       }
@@ -66,7 +72,9 @@ public enum ImpactAccounting {
       catalog.events[i].cpuAccrualEnded = duration >= maximumObservedSeconds
       added += delta
     }
-    if added > 0 { catalog.lifetimeCPUSecondsSaved = (catalog.lifetimeCPUSecondsSaved ?? 0) + added }
+    if added > 0 {
+      catalog.lifetimeCPUSecondsSaved = (catalog.lifetimeCPUSecondsSaved ?? 0) + added
+    }
     return added
   }
 }

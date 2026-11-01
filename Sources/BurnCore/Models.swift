@@ -130,6 +130,7 @@ public struct Finding: Identifiable, Sendable {
 }
 
 public struct CleanupEvent: Codable, Identifiable, Sendable {
+  public var fixture: Bool?
   public var id = UUID()
   public var leaseID: UUID
   public var label: String
@@ -178,14 +179,19 @@ public struct RecurrenceScope: Codable, Sendable {
 public struct Preferences: Codable, Sendable {
   public var automaticCleanup = false
   public var notifications = false
+  public var notificationBudget: Int?
+  public var notificationDetails: Bool?
+  public var shareDecisionHistory: Bool?
   public var protectedExecutables: Set<String> = []
   public init() {}
 }
 
 public struct Catalog: Codable, Sendable {
   public var version = 1
+  public var intentVersion: Int?
   public var workEvidence: [WorkEvidence]?
   public var passiveEvidence: [PassiveEvidence]?
+  public var pinnedOperationIDs: Set<String>?
   public var diskCandidates: [DiskCandidate]?
   public var diskDiscovery: [DiskSpaceNode]?
   public var diskReceipts: [DiskReceipt]?
@@ -228,20 +234,42 @@ public struct Catalog: Codable, Sendable {
       let keep = records.values.sorted { $0.latest.time > $1.latest.time }.prefix(4096)
       records = Dictionary(uniqueKeysWithValues: keep.map { ($0.id, $0) })
     }
+    let pinned = pinnedOperationIDs ?? []
     if let attempts = managedCacheAttempts {
+      let preserve = attempts.filter {
+        ["prepared", "uncertain"].contains($0.outcome) || pinned.contains($0.plan.id.uuidString)
+      }
+      let ids = Set(preserve.map { $0.plan.id })
       managedCacheAttempts =
-        attempts.filter { ["prepared", "uncertain"].contains($0.outcome) }
-        + Array(attempts.filter { !["prepared", "uncertain"].contains($0.outcome) }.suffix(500))
+        preserve + Array(attempts.filter { !ids.contains($0.plan.id) }.suffix(500))
     }
-    if let receipts = diskReceipts { diskReceipts = Array(receipts.suffix(500)) }
+    if let receipts = diskReceipts {
+      let preserve = receipts.filter {
+        !["verified", "refused"].contains($0.outcome) || pinned.contains($0.id.uuidString)
+      }
+      let ids = Set(preserve.map(\.id))
+      diskReceipts = preserve + Array(receipts.filter { !ids.contains($0.id) }.suffix(500))
+    }
     if let receipts = workspaceReceipts {
+      let preserve = receipts.filter {
+        !["verified", "refused"].contains($0.outcome) || pinned.contains($0.id.uuidString)
+      }
+      let ids = Set(preserve.map(\.id))
       workspaceReceipts =
-        receipts.filter { $0.outcome == "prepared" }
+        preserve
         + Array(
           receipts.filter {
-            $0.outcome != "prepared" && now.timeIntervalSince($0.verifiedAt ?? $0.date) < 30 * 86400
+            !ids.contains($0.id) && now.timeIntervalSince($0.verifiedAt ?? $0.date) < 30 * 86400
           }.suffix(500))
     }
-    events = Array(events.filter { now.timeIntervalSince($0.date) < 30 * 86400 }.suffix(500))
+    let preserve = events.filter {
+      !["verified", "refused"].contains($0.outcome) || pinned.contains($0.id.uuidString)
+    }
+    let ids = Set(preserve.map(\.id))
+    events =
+      preserve
+      + Array(
+        events.filter { !ids.contains($0.id) && now.timeIntervalSince($0.date) < 30 * 86400 }
+          .suffix(500))
   }
 }

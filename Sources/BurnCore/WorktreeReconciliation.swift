@@ -58,8 +58,9 @@ extension WorktreeService {
         var fresh = row
         fresh.path = path
         fresh.identity = moved
+        let quarantined = fresh
         try await runWork {
-          try WorktreeRecovery.verifySource(fresh, operation: captured, key: key)
+          try WorktreeRecovery.verifySource(quarantined, operation: captured, key: key)
         }
         op.quarantineIdentity = moved
         op.phase = "quarantined"
@@ -70,7 +71,11 @@ extension WorktreeService {
         let registrations = try WorktreeDiscovery.parse(
           WorktreeGit.run(op.repository, ["worktree", "list", "--porcelain", "-z"]),
           repository: op.repository)
-        guard !registrations.contains(where: { $0.path == op.originalPath }) else {
+        guard
+          !registrations.contains(where: {
+            $0.path == op.originalPath || $0.path == op.quarantinePath
+          })
+        else {
           throw StoreError.message(
             "Missing directory still has a registration; resolve it before reconciliation.")
         }
@@ -91,6 +96,10 @@ extension WorktreeService {
       op.phase = "failed"
       op.detail =
         "Preparation was interrupted before any removal phase. Original directory remains. No verified archive or benefit claimed."
+    }
+    if op.finishPhase == "uncertain" {
+      op.finishPhase = op.phase == "reconciled-absent" ? "reconciled" : "refused"
+      if let id = op.finishID { op.finishHistory?[id] = op.finishPhase }
     }
     op.diskCredit = 0
     try store.transaction {

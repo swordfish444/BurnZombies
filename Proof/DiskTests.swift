@@ -86,6 +86,7 @@ func diskProof() async throws {
   try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: build.path)
   try policy.save(store)
   let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil,
     root: state, workspaceVisibility: { _ in 0 }, accessCheck: fixtureAccess,
     discoveryWalker: fixtureWalker())
   let service = AgentService(monitor: monitor)
@@ -227,6 +228,7 @@ private func diskAdviceProof(_ seed: DiskCandidate, root: URL, policy original: 
   snapshot.candidates = [candidate]
   try snapshot.save(store)
   let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil,
     root: store.root, workspaceVisibility: { _ in -1 }, accessCheck: fixtureAccess,
     discoveryWalker: fixtureWalker())
   _ = await monitor.refresh()

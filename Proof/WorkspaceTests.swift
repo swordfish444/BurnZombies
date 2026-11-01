@@ -31,6 +31,7 @@ func workspaceProof() async throws {
   // The shipped app/CLI have no override switch and always use the strict native reader.
   let prefix = WorkspaceSafety.canonical(base.path) + "/"
   let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil,
     root: root,
     workspaceVisibility: { path in
       guard path.hasPrefix(prefix) else { return -1 }
@@ -208,7 +209,9 @@ func workspaceProof() async throws {
   hunt.includeMonitorReceipts(projected)
   equal(hunt.receiptEvidenceAvailable, true)
   equal(hunt.worktreesCleaned, 1)
-  print("PASS SQLite-backed Hunt retirement counts and animates once; unknown coverage preserves history and suppresses burns")
+  print(
+    "PASS SQLite-backed Hunt retirement counts and animates once; unknown coverage preserves history and suppresses burns"
+  )
   guard let receipt = saved.workspaceReceipts?.last else {
     throw StoreError.message("Missing verified worktree receipt")
   }
@@ -244,6 +247,7 @@ func workspaceProof() async throws {
   interrupted.workspaceReceipts = [pending]
   try interruptedStore.save(interrupted)
   let recovered = try Monitor(
+    legacyAuthority: true, discoveryHome: nil,
     root: interruptedRoot, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker(),
     worktreeRecoveryKey: { SymmetricKey(data: Data(repeating: 42, count: 32)) })
   let recoveredState = await recovered.refresh()

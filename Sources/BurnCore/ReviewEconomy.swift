@@ -64,14 +64,15 @@ public struct ReviewEvidence: Codable, Equatable, Sendable {
       result.append(.init(id: owner.id, revision: owner.revision))
     }
     if let cache = catalog.managedCache, catalog.managedCacheReviewAllowed != false,
-      catalog.managedCacheAllowanceBytes.map({ $0 >= DiskCandidate.minimumReviewBytes }) ?? true,
+      catalog.managedCacheAllowanceBytes.map({ $0 >= DiskCandidate.minimumAutomaticCacheBytes })
+        ?? true,
       (0...600).contains(Date().timeIntervalSince(cache.date))
     {
       let blocked = ManagedCacheAttempt.blockedIDs(
         catalog.managedCacheAttempts ?? [], inventory: cache)
       let summary = ManagedCacheSummary(
         cache, blocked: blocked, allowance: catalog.managedCacheAllowanceBytes)
-      if summary.eligibleBytes >= DiskCandidate.minimumReviewBytes {
+      if summary.eligibleBytes >= DiskCandidate.minimumAutomaticCacheBytes {
         result.append(.init(id: summary.id, revision: summary.revision, processCount: 0))
       }
     }

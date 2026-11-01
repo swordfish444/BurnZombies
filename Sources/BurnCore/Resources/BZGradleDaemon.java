@@ -20,7 +20,7 @@ import org.gradle.launcher.daemon.protocol.*;
 import org.gradle.launcher.daemon.server.api.DaemonState;
 
 class BZGradleDaemon {
-  static final String VERSION = "8.14.6";
+  static final String VERSION = org.gradle.util.GradleVersion.current().getVersion();
   static void require(boolean value) { if (!value) throw new IllegalStateException("Owner evidence unavailable or changed"); }
   static void identity(long pid, long startMillis, Path java) throws Exception {
     ProcessHandle p = ProcessHandle.of(pid).orElseThrow();
@@ -46,6 +46,7 @@ class BZGradleDaemon {
     Map<String,Object> reply = new LinkedHashMap<>();
     try {
       require(args.length == 7);
+      require(Set.of("8.14.6", "9.8.2").contains(VERSION));
       String action = args[0], expectedUID = args[5];
       require(action.equals("inspect") || action.equals("stop-when-idle"));
       long pid = Long.parseLong(args[2]), startMillis = Long.parseLong(args[3]);

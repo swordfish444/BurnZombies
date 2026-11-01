@@ -42,9 +42,13 @@ public struct ImpactNumbers: Sendable {
   public var speedBoostPercent: Double?
   public var lifetimeCount: Int = 0
 
-  public enum Benefit: Equatable, Sendable { case firstBurn, ready, speed, memory, helpers, disk, worktrees }
+  public enum Benefit: Equatable, Sendable {
+    case firstBurn, ready, speed, memory, helpers, disk, worktrees
+  }
   public var benefit: Benefit {
-    guard count > 0 || worktrees > 0 else { return lifetimeCount + lifetimeWorktrees > 0 ? .ready : .firstBurn }
+    guard count > 0 || worktrees > 0 else {
+      return lifetimeCount + lifetimeWorktrees > 0 ? .ready : .firstBurn
+    }
     if boost != "—" { return .speed }
     if memory > 0 { return .memory }
     if count > 0 { return .helpers }
@@ -62,40 +66,55 @@ public struct ImpactNumbers: Sendable {
     let start = period.start(now: now, calendar: calendar)
     let verified = catalog.events.filter {
       let completed = $0.verificationDate ?? $0.date
-      return $0.outcome == "verified" && completed >= start && completed <= now
+      return $0.outcome == "verified" && $0.fixture != true && completed >= start
+        && completed <= now
     }.sorted { ($0.verificationDate ?? $0.date) < ($1.verificationDate ?? $1.date) }
     let cpu = verified.compactMap(\.cpuSecondsSavedEstimate)
     let latest = verified.last
     let measured = verified.last { $0.responseBeforeMS != nil && $0.responseAfterMS != nil }
     let comparison = Responsiveness.comparison(verified)
     let workspaces = (catalog.workspaceReceipts ?? []).filter {
-      $0.outcome == "verified" && $0.verifiedAt != nil && $0.verifiedAt! >= start && $0.verifiedAt! <= now
+      $0.outcome == "verified" && $0.fixture != true && $0.verifiedAt != nil
+        && $0.verifiedAt! >= start && $0.verifiedAt! <= now
     }.sorted { $0.verifiedAt! < $1.verifiedAt! }
-    let diskOutputs = (catalog.diskReceipts ?? []).filter { $0.outcome == "verified" && $0.date >= start && $0.date <= now }
+    let diskOutputs = (catalog.diskReceipts ?? []).filter {
+      $0.outcome == "verified" && $0.fixture != true && $0.date >= start && $0.date <= now
+    }
     let workspace = workspaces.last
-    let latestIsWorkspace = (workspace?.verifiedAt ?? .distantPast) > (latest?.verificationDate ?? latest?.date ?? .distantPast)
+    let latestIsWorkspace =
+      (workspace?.verifiedAt ?? .distantPast)
+      > (latest?.verificationDate ?? latest?.date ?? .distantPast)
     return Self(
       count: period == .all
         ? catalog.lifetimeVerified : verified.reduce(0) { $0 + $1.verifiedCount },
       memory: period == .all
         ? (catalog.lifetimeResidentReleased ?? verified.reduce(0) { $0 + $1.residentBefore })
         : verified.reduce(0) { $0 + $1.residentBefore },
-      disk: period == .all ? (catalog.lifetimeDiskReclaimedBytes ?? 0) : workspaces.reduce(0) { $0 + $1.diskReclaimedBytes } + diskOutputs.reduce(0) { $0 + $1.diskReclaimedBytes },
+      disk: period == .all
+        ? (catalog.lifetimeDiskReclaimedBytes ?? 0)
+        : workspaces.reduce(0) { $0 + $1.diskReclaimedBytes }
+          + diskOutputs.reduce(0) { $0 + $1.diskReclaimedBytes },
       worktrees: period == .all ? (catalog.lifetimeWorktreesCleaned ?? 0) : workspaces.count,
       lifetimeWorktrees: catalog.lifetimeWorktreesCleaned ?? 0,
-      latestIsWorkspace: latestIsWorkspace, latestDisk: latestIsWorkspace ? (workspace?.diskReclaimedBytes ?? 0) : 0,
+      latestIsWorkspace: latestIsWorkspace,
+      latestDisk: latestIsWorkspace ? (workspace?.diskReclaimedBytes ?? 0) : 0,
       cpuSeconds: period == .all
         ? (catalog.lifetimeCPUSecondsSaved ?? (catalog.lifetimeVerified == 0 ? 0 : nil))
         : (cpu.isEmpty && !verified.isEmpty ? nil : cpu.reduce(0, +)),
       before: comparison?.before ?? measured?.responseBeforeMS,
       after: comparison?.after ?? measured?.responseAfterMS,
-      last: latestIsWorkspace ? workspace?.verifiedAt : latest?.verificationDate ?? latest?.date, latestCount: latest?.verifiedCount ?? 0,
+      last: latestIsWorkspace ? workspace?.verifiedAt : latest?.verificationDate ?? latest?.date,
+      latestCount: latest?.verifiedCount ?? 0,
       latestMemory: latest?.residentBefore ?? 0,
-      latestLabel: latestIsWorkspace ? "Worktree cleaned" : latest.map {
-        "\($0.verifiedCount) \($0.verifiedCount == 1 ? "helper" : "helpers") burned"
-      }, speedBoostPercent: comparison?.boostPercent,
-      lifetimeCount: max(catalog.lifetimeVerified, catalog.events.filter {
-        $0.outcome == "verified" && ($0.verificationDate ?? $0.date) <= now
-      }.reduce(0) { $0 + $1.verifiedCount }))
+      latestLabel: latestIsWorkspace
+        ? "Worktree cleaned"
+        : latest.map {
+          "\($0.verifiedCount) \($0.verifiedCount == 1 ? "helper" : "helpers") burned"
+        }, speedBoostPercent: comparison?.boostPercent,
+      lifetimeCount: max(
+        catalog.lifetimeVerified,
+        catalog.events.filter {
+          $0.outcome == "verified" && $0.fixture != true && ($0.verificationDate ?? $0.date) <= now
+        }.reduce(0) { $0 + $1.verifiedCount }))
   }
 }

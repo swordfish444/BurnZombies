@@ -33,11 +33,13 @@ int bz_gradle_launch(int32_t pid, bz_gradle_identity *out) {
     if (!strcmp(args[i], "org.gradle.launcher.daemon.bootstrap.GradleDaemon")) main = i;
     if ((!strcmp(args[i], "-cp") || !strcmp(args[i], "-classpath")) && i + 1 < argc) classpath = args[++i];
   }
-  if (main < 0 || main + 2 != argc || strcmp(args[main+1], "8.14.6") || !classpath) goto done;
-  const char *suffix = "/lib/gradle-daemon-main-8.14.6.jar";
+  if (main < 0 || main + 2 != argc || !classpath) goto done;
+  const char *version = args[main+1];
+  if (strcmp(version, "8.14.6") && strcmp(version, "9.8.2")) goto done;
+  char suffix[100]; snprintf(suffix, sizeof(suffix), "/lib/gradle-daemon-main-%s.jar", version);
   size_t n = strlen(classpath), tail = strlen(suffix);
   if (classpath[0] != '/' || strchr(classpath, ':') || n <= tail || strcmp(classpath+n-tail, suffix) || n-tail >= 4096) goto done;
-  memcpy(out->distribution, classpath, n-tail); strcpy(out->version, "8.14.6");
+  memcpy(out->distribution, classpath, n-tail); strcpy(out->version, version);
   // The daemon keeps its exact log open even when cwd changes to a build root.
   // Inspect every descriptor or fail closed. A guessed ~/.gradle home is unsafe.
   int bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, NULL, 0);
@@ -49,7 +51,7 @@ int bz_gradle_launch(int32_t pid, bz_gradle_identity *out) {
   int read = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, fds, bytes + 16 * sizeof(*fds));
   if (read <= 0 || read > bytes || read % sizeof(*fds)) { free(fds); goto done; }
   int count = read / sizeof(*fds); out->descriptor_count = count;
-  char logSuffix[100]; snprintf(logSuffix, sizeof(logSuffix), "/daemon/8.14.6/daemon-%d.out.log", pid);
+  char logSuffix[100]; snprintf(logSuffix, sizeof(logSuffix), "/daemon/%s/daemon-%d.out.log", version, pid);
   size_t logTail = strlen(logSuffix); int matches = 0, failed = 0;
   for (int i = 0; i < count; ++i) if (fds[i].proc_fdtype == PROX_FDTYPE_VNODE) {
     struct vnode_fdinfowithpath info;

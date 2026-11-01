@@ -7,18 +7,19 @@
 // Extract only a UUID from the two documented Codex session markers. No command
 // arguments or other environment values leave this function; erase the scratch buffer.
 int bz_codex_session(int32_t pid, char *out, int capacity) {
-    if (capacity < 37) return 0;
+    if (capacity < 37) return -1;
     bz_process process;
-    if (bz_read(pid, &process) != 1 || process.uid != getuid()) return 0;
+    if (bz_read(pid, &process) != 1 || process.uid != getuid()) return -1;
     size_t size = 262144;
     char *buffer = calloc(1, size);
-    if (!buffer) return 0;
-    int mib[3] = {CTL_KERN, KERN_PROCARGS2, pid}, found = 0, priority = 2;
+    if (!buffer) return -1;
+    int mib[3] = {CTL_KERN, KERN_PROCARGS2, pid}, found = -1, priority = 2;
     if (sysctl(mib, 3, buffer, &size, NULL, 0) == 0 && size > sizeof(int)) {
         int argc = 0; memcpy(&argc, buffer, sizeof(argc));
         char *p = buffer + sizeof(int), *end = buffer + size;
         char *zero = memchr(p, 0, end-p);
         if (zero && argc > 0 && argc < 65536) {
+            found = 0;
             p = zero + 1; while (p < end && *p == 0) p++;
             for (int i=0; i<argc && p<end; i++) { zero=memchr(p,0,end-p); if (!zero) {p=end;break;} p=zero+1; }
             while (p<end && *p) {

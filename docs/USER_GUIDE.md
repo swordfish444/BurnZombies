@@ -44,4 +44,14 @@ Quit BurnZombies and remove the app to stop the observer. Its supervised reviewe
 
 ## Disk cleanup
 
-Expand **Settings → Disk cleanup** for AI recommendations on items of 10 GB or more. Choose Keep to protect a folder, or Approve cleanup to confirm that exact output is replaceable and allow guarded automatic cleanup. Advice can arrive before deletion permission; approval never overrides active consumers or incomplete visibility. Detailed retention, presets and preferences live under Advanced. See [the cleanup boundary and research](DISK-CLEANUP.md).
+Expand **Settings → Disk cleanup** for AI recommendations on items of 100 MB or more (automatic cache removal still has a separate 10 GB floor). Choose Keep to protect a folder, or Approve cleanup to confirm that exact output is replaceable and allow guarded automatic cleanup. Advice can arrive before deletion permission; approval never overrides active consumers or incomplete visibility. Detailed retention, presets and preferences live under Advanced. See [the cleanup boundary and research](DISK-CLEANUP.md).
+
+## Findings and personal workflows
+
+Open **Findings** directly from the menu panel, even when the cleanup counter is zero. Each item shows why it was found, current blockers, exact scope and recovery. Unsupported or owner-managed resources remain visible. The app does not claim that an idle or old item is abandoned.
+
+**Approve once** rechecks the current evidence. Worktrees use a separate explicit **Manage, preserve and retire** sheet: this can adopt the exact checkout and includes ignored/local files in independently verified encrypted recovery. It cannot override active owners or incomplete inspection. **Keep** protects that identity across all cleanup routes until cleared; **Tomorrow** changes prompting only.
+
+Notifications start with a private digest. The configurable budget is 1–5 prompts per day (default 3), with an hour between prompts. Details are off by default; only recognizable supported Gradle owners offer a direct notification stop action. Worktree adoption and local-file decisions stay in the review sheet. Notification submission is not proof of delivery or approval.
+
+For a repeated Gradle workflow, **Review recurring rule** shows its exact producer/home/distribution, current matches, blockers and past decisions. Shadow mode shows what would match without permitting execution. An enabled rule has an explicit daily limit and expiry, starts with one verified canary, and still requires independent AI review plus current native checks. Pause affects future dispatches; it cannot cancel an already dispatched operation. **I needed this** or restoration pauses the affected workflow. **Forget workflow preferences** also pauses its automation; recovery records remain.

@@ -31,6 +31,8 @@ public struct HuntSnapshot: Codable, Sendable, Identifiable {
   public var diskReclaimed: UInt64 = 0
   public var activeAttempt: UUID?
   public var receiptEvidenceAvailable: Bool?
+  public var discoveredWorktrees: Int?
+  public var worktreeStates: [String: Int]?
   public var isRunning: Bool { phase == "hunting" }
   public init(startedAt: Date = Date()) { self.startedAt = startedAt }
   public mutating func append(_ kind: String, _ message: String, date: Date = Date()) {
@@ -83,19 +85,34 @@ public struct HuntSnapshot: Codable, Sendable, Identifiable {
     return value
   }
   public mutating func includeReceipts(_ catalog: Catalog) {
+    let nativeWorktrees = (catalog.worktreeEvidence ?? []).count
+    let nativeDisk = (catalog.diskCandidates ?? []).count + (catalog.diskDiscovery ?? []).count
+    if isRunning, nativeWorktrees + nativeDisk > 0,
+      !log.contains(where: { $0.id == "native-discovery" })
+    {
+      log.append(
+        .init(
+          id: "native-discovery", date: Date(), kind: "detected",
+          message:
+            "Found \(nativeWorktrees) worktree review candidates and \(nativeDisk) storage findings. Discovery is not cleanup permission; active and blocked items remain protected."
+        ))
+    }
     receiptEvidenceAvailable = true
     let end = finishedAt ?? .distantFuture
     let events = catalog.events.filter {
-      $0.date >= startedAt && $0.date <= end && $0.outcome == "verified" && $0.verifiedCount > 0
+      $0.date >= startedAt && $0.date <= end && $0.outcome == "verified" && $0.fixture != true
+        && $0.verifiedCount > 0
     }
     let worktrees = (catalog.workspaceReceipts ?? []).filter {
-      $0.date >= startedAt && $0.date <= end && $0.outcome == "verified"
+      $0.date >= startedAt && $0.date <= end && $0.outcome == "verified" && $0.fixture != true
     }
-    let caches = (catalog.managedCacheAttempts ?? []).compactMap(\.receipt).filter {
+    let caches = (catalog.managedCacheAttempts ?? []).filter { $0.fixture != true }.compactMap(
+      \.receipt
+    ).filter {
       $0.date >= startedAt && $0.date <= end && $0.outcome == "verified" && !$0.removedIDs.isEmpty
     }
     let disks = (catalog.diskReceipts ?? []).filter {
-      $0.date >= startedAt && $0.date <= end && $0.outcome == "verified"
+      $0.date >= startedAt && $0.date <= end && $0.outcome == "verified" && $0.fixture != true
     }
     burned = events.reduce(0) { $0 + $1.verifiedCount }
     worktreesCleaned = worktrees.count
@@ -139,6 +156,12 @@ public struct HuntSnapshot: Codable, Sendable, Identifiable {
     log = Array(log.sorted { $0.date < $1.date }.suffix(128))
   }
   public mutating func includeMonitorReceipts(_ state: ViewState) {
+    if isRunning {
+      discoveredWorktrees =
+        state.worktreeError == nil
+        ? state.worktrees?.totalRecords ?? state.worktrees?.records.count : nil
+      worktreeStates = state.worktreeError == nil ? state.worktrees?.stateCounts : nil
+    }
     guard state.worktreeError == nil else {
       receiptEvidenceAvailable = false
       let id = "worktree-receipts-unavailable-" + self.id.uuidString

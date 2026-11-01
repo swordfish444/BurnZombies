@@ -62,6 +62,7 @@ func recoveryResponsivenessProof() async throws {
   _ = try WorktreeGit.run(repo.path, ["worktree", "add", "--detach", tree.path])
   let key = PendingRecoveryKey()
   let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil,
     root: root, workspaceVisibility: { _ in 0 }, accessCheck: fixtureAccess,
     worktreeRecoveryKey: { key.load() })
   let service = AgentService(monitor: monitor)
@@ -81,7 +82,7 @@ func recoveryResponsivenessProof() async throws {
   // The fallback prevents the deliberately broken pre-fix implementation from
   // hanging the runner, including with a single cooperative executor thread.
   let fallback = DispatchWorkItem { key.release() }
-  DispatchQueue.global().asyncAfter(deadline: .now() + 2, execute: fallback)
+  DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: fallback)
   defer {
     fallback.cancel()
     key.release()
@@ -89,7 +90,7 @@ func recoveryResponsivenessProof() async throws {
   let retirement = Task {
     try await monitor.worktreeRequest(.init("retire", token: preview.token), caller: "fixture")
   }
-  let waitDeadline = ProcessInfo.processInfo.systemUptime + 1
+  let waitDeadline = ProcessInfo.processInfo.systemUptime + 5
   while !key.pending && ProcessInfo.processInfo.systemUptime < waitDeadline {
     try await Task.sleep(nanoseconds: 10_000_000)
   }
@@ -139,7 +140,7 @@ func recoveryResponsivenessProof() async throws {
     .init("preview", id: keptRow.id, revision: keptRow.revision), caller: "fixture")
   key.reset()
   let secondFallback = DispatchWorkItem { key.release() }
-  DispatchQueue.global().asyncAfter(deadline: .now() + 2, execute: secondFallback)
+  DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: secondFallback)
   defer {
     secondFallback.cancel()
     key.release()
@@ -148,13 +149,20 @@ func recoveryResponsivenessProof() async throws {
     try await monitor.worktreeRequest(
       .init("retire", token: secondPreview.token), caller: "fixture")
   }
-  let secondDeadline = ProcessInfo.processInfo.systemUptime + 1
+  let secondDeadline = ProcessInfo.processInfo.systemUptime + 5
   while !key.pending && ProcessInfo.processInfo.systemUptime < secondDeadline {
     try await Task.sleep(nanoseconds: 10_000_000)
   }
+  guard key.pending else {
+    throw StoreError.message("Second retirement never reached the instrumented recovery prompt.")
+  }
+  let keepBegan = ProcessInfo.processInfo.systemUptime
   _ = try await monitor.worktreeRequest(
     .init("keep", id: keptRow.id, revision: keptRow.revision), caller: "fixture")
   check(key.pending, "Keep was blocked by the recovery prompt")
+  check(
+    ProcessInfo.processInfo.systemUptime - keepBegan < 0.75,
+    "Keep response exceeded the nonblocking latency bound")
   secondFallback.cancel()
   key.release()
   do {

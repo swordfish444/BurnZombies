@@ -2,14 +2,16 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.12.2"
+version="0.13.0"
 client="auto"
 launch=true
+setup_options=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mcp) client="${2:?Choose auto, all, codex, claude, cursor, copilot, gemini or none}"; shift 2 ;;
     --no-open) launch=false; shift ;;
-    --help) echo 'Install BurnZombies: install.sh [--mcp auto|all|codex|claude|cursor|copilot|gemini|none] [--no-open]'; exit 0 ;;
+    --observe-only) setup_options+=(--observe-only); shift ;;
+    --help) echo 'Install BurnZombies: install.sh [--mcp auto|codex|claude|none] [--observe-only] [--no-open]'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -61,7 +63,7 @@ fi
 
 if [[ "$client" != none ]]; then
   if ! "$app/Contents/MacOS/burnzombies" retire-skill --check ||
-     ! "$app/Contents/MacOS/burnzombies" setup --harness "$client" ||
+     ! "$app/Contents/MacOS/burnzombies" setup --harness "$client" "${setup_options[@]}" ||
      ! "$app/Contents/MacOS/burnzombies" retire-skill; then
     rm -rf "$app"
     [[ ! -d "$work/previous.app" ]] || mv "$work/previous.app" "$app"

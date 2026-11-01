@@ -9,36 +9,77 @@ enum MachineSetup {
       return args[i + 1]
     }
     let selected = try value("--harness") ?? "auto"
-    guard ["auto", "all", "none"].contains(selected) || MachineReviewConfiguration.harnesses.contains(selected) else {
+    guard
+      ["auto", "all", "none"].contains(selected)
+        || MachineReviewConfiguration.harnesses.contains(selected)
+    else {
       throw StoreError.message("Choose auto, codex, claude, cursor, copilot or gemini.")
     }
     let root = try value("--root").map { URL(fileURLWithPath: $0) } ?? Store.defaultRoot
     if selected == "none" {
-      if var config = try MachineReviewConfiguration.load(root: root) { config.enabled = false; try config.save(root: root) }
-      print("Background reviews off. The app can still observe this Mac."); return
+      if var config = try MachineReviewConfiguration.load(root: root) {
+        config.enabled = false
+        try config.save(root: root)
+      }
+      print("Background reviews off. The app can still observe this Mac.")
+      return
     }
     let old = try MachineReviewConfiguration.load(root: root)
     // A reinstall never switches a previously selected provider, including when it is unavailable.
-    let choices = selected == "auto" || selected == "all" ? old.map { [$0.harness] } ?? MachineReviewConfiguration.harnesses : [selected]
+    let choices =
+      selected == "auto" || selected == "all"
+      ? old.map { [$0.harness] } ?? ["codex", "claude"] : [selected]
     guard let harness = choices.first(where: { MachineReviewConfiguration.detect($0) != nil }),
-      let executable = MachineReviewConfiguration.detect(harness) else {
-      throw StoreError.message("No selected harness CLI is available. Install/sign in to Codex, Claude Code, Cursor CLI, Copilot CLI or Gemini CLI, then run setup again. Nothing changed.")
+      let executable = MachineReviewConfiguration.detect(harness)
+    else {
+      throw StoreError.message(
+        "No selected harness CLI is available. Install/sign in to the selected harness (Codex or Claude Code for current supported setup), then run setup again. Nothing changed."
+      )
     }
-    let launcher = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.resolvingSymlinksInPath()
-    var config = MachineReviewConfiguration(harness: harness, executable: executable, launcher: launcher.path,
+    // Establish migration only after read-only prerequisites pass.
+    _ = try IntentLedger.migrate(root: root)
+    let launcher = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+      .resolvingSymlinksInPath()
+    var config = MachineReviewConfiguration(
+      harness: harness, executable: executable, launcher: launcher.path,
       server: launcher.deletingLastPathComponent().appendingPathComponent("burnzombies-mcp").path)
     if let old {
       config.enabled = old.enabled
-      if old.harness == harness { config.model = old.model; config.reasoningEffort = old.reasoningEffort }
+      config.huntIntervalHours = old.huntIntervalHours
+      if old.harness == harness {
+        config.model = old.model
+        config.reasoningEffort = old.reasoningEffort
+      }
     }
-    if let model = try value("--model") { config.model = MachineReviewConfiguration.selectionValue(model) }
-    if let thinking = try value("--thinking") { config.reasoningEffort = MachineReviewConfiguration.selectionValue(thinking) }
+    if let model = try value("--model") {
+      config.model = MachineReviewConfiguration.selectionValue(model)
+    }
+    if let thinking = try value("--thinking") {
+      config.reasoningEffort = MachineReviewConfiguration.selectionValue(thinking)
+    }
+    if args.contains("--observe-only") { config.enabled = false }
     try config.save(root: root)
-    print("BurnZombies will watch this Mac across all projects and sessions, using \(harness) for bounded background reviews.")
-    print("No active chat, chat hooks, computer restart or edits to harness configuration required.")
-    print("Reviews use your existing harness login and usage allowance. One provider; no automatic fallback.")
-    print("Model: \(config.model ?? "harness default") · Thinking: \(config.reasoningEffort ?? "harness default"). Change these in Settings.")
-    print("Setup requires Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add and enable BurnZombies.app.")
-    print("Use Allow Full Disk Access in the menu-bar banner, then return to BurnZombies for an access check. Inspection and reviews wait until access is verified.")
+    print(
+      config.enabled
+        ? "BurnZombies will watch this Mac across all projects and sessions, using \(harness) for bounded background reviews."
+        : "BurnZombies is configured for \(harness). AI reviews are off; native observation remains available."
+    )
+    print(
+      "No active chat, chat hooks, computer restart or edits to harness configuration required.")
+    print(
+      "Reviews use your existing harness login and usage allowance. One provider; no automatic fallback."
+    )
+    print(
+      "Setup grants no new cleanup permission. Findings require approval or an explicitly granted scoped rule; existing native policies keep their original guards."
+    )
+    print(
+      "Model: \(config.model ?? "harness default") · Thinking: \(config.reasoningEffort ?? "harness default"). Change these in Settings."
+    )
+    print(
+      "Setup requires Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add and enable BurnZombies.app."
+    )
+    print(
+      "Use Allow Full Disk Access in the menu-bar banner, then return to BurnZombies for an access check. Inspection and reviews wait until access is verified."
+    )
   }
 }

@@ -1,6 +1,15 @@
 import Darwin
 import Foundation
 
+public enum ReviewFailure: Error, LocalizedError {
+  case transient(String)
+  public var errorDescription: String? {
+    switch self {
+    case .transient(let detail): return detail
+    }
+  }
+}
+
 public struct MachineReviewConfiguration: Codable, Sendable {
   public var harness: String
   public var executable: String
@@ -102,6 +111,11 @@ public struct MachineReviewState: Codable, Sendable {
       return ad == bd ? a.offset < b.offset : ad < bd
     }.map(\.element)
     for item in candidates where reviewedEvidence?[item.id] != item.revision {
+      if let attempt = attempts?[item.id], attempt.revision == item.revision {
+        if (attempt.failures ?? 0) >= 3 || (attempt.retryAfter.map { $0 > now } ?? false) {
+          continue
+        }
+      }
       let itemLane = ReviewLane.lane(for: item)
       guard itemLane != .unsupported else { continue }
       if let attempt = attempts?[item.id], itemLane == .discovery, attempt.revision == item.revision
@@ -161,15 +175,38 @@ public struct MachineReviewState: Codable, Sendable {
       attempts?[evidence.id] = .init(
         revision: evidence.revision, date: now,
         count: prior?.revision == evidence.revision ? min(16, (prior?.count ?? 0) + 1) : 1)
-      if ReviewLane.lane(for: evidence) != .discovery {
-        reviewedEvidence?[evidence.id] = evidence.revision
-      }
+      attempts?[evidence.id]?.failures =
+        prior?.revision == evidence.revision ? prior?.failures : nil
     }
   }
   public mutating func complete(_ selected: [ReviewEvidence], progress: ReviewProgress) {
     for evidence in selected
-    where ReviewLane.lane(for: evidence) == .discovery && progress.completed.contains(evidence.id) {
+    where ReviewLane.lane(for: evidence) != .discovery || progress.completed.contains(evidence.id) {
       reviewedEvidence?[evidence.id] = evidence.revision
+      attempts?[evidence.id]?.retryAfter = nil
+      attempts?[evidence.id]?.failure = nil
+      attempts?[evidence.id]?.failures = nil
+    }
+  }
+  public mutating func deferReview(_ selected: [ReviewEvidence], reason: String, now: Date) {
+    for item in selected {
+      let count = (attempts?[item.id]?.failures ?? 0) + 1
+      attempts?[item.id]?.failures = count
+      attempts?[item.id]?.failure = reason
+      attempts?[item.id]?.retryAfter = now.addingTimeInterval(
+        min(3600, 60 * pow(2, Double(count - 1))))
+    }
+  }
+  public func retryDue(_ current: HarnessHook.Signal?, now: Date) -> Bool {
+    guard let current, (0...180).contains(now.timeIntervalSince(current.observedAt)) else {
+      return false
+    }
+    return (current.reviewEvidence ?? []).contains { item in
+      guard let a = attempts?[item.id], a.revision == item.revision,
+        reviewedEvidence?[item.id] != item.revision
+      else { return false }
+      return (a.failures ?? 0) > 0 && (a.failures ?? 0) < 3
+        && (a.retryAfter.map { $0 <= now } ?? false)
     }
   }
 }
@@ -184,17 +221,21 @@ public actor MachineReviewer {
   private var state = MachineReviewState()
   private let prepareHunt: (@Sendable () async throws -> Void)?
   private let settleHunt: (@Sendable () async throws -> Void)?
+  private let executor:
+    (@Sendable (MachineReviewConfiguration, [ReviewEvidence], UUID) throws -> Void)?
   private var huntState: HuntSnapshot?
   public init(
     root: URL = Store.defaultRoot, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil,
     prepareHunt: (@Sendable () async throws -> Void)? = nil,
-    settleHunt: (@Sendable () async throws -> Void)? = nil
+    settleHunt: (@Sendable () async throws -> Void)? = nil,
+    executor: (@Sendable (MachineReviewConfiguration, [ReviewEvidence], UUID) throws -> Void)? = nil
   ) throws {
     self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: root) }
     self.root = root
     store = try Store(root: root)
     self.prepareHunt = prepareHunt
     self.settleHunt = settleHunt
+    self.executor = executor
     huntState = try? HuntSnapshot.load(root: root)
     if huntState?.phase == "hunting" {
       huntState?.phase = "paused"
@@ -234,7 +275,7 @@ public actor MachineReviewer {
       guard let config = try MachineReviewConfiguration.load(root: root) else { return }
       guard manual || (config.enabled && state.phase != "paused") else { return }
       guard
-        manual
+        manual || state.retryDue(readSignal(), now: now)
           || state.lastStarted.map({
             now.timeIntervalSince($0) >= Double(config.effectiveHuntIntervalHours * 3600)
           }) ?? true
@@ -327,6 +368,7 @@ public actor MachineReviewer {
         try save()
         try huntState?.save(store)
         let result = await Task.detached {
+          if let executor = self.executor { return try executor(config, pending, attempt) }
           try Self.execute(
             config, root: self.root,
             prompt:
@@ -345,8 +387,18 @@ public actor MachineReviewer {
         var requestedExploration = false
         if let progress = try? ReviewProgress.load(store), progress.attempt == attempt {
           huntState?.include(progress)
-          state.complete(pending, progress: progress)
+          if (try? result.get()) != nil { state.complete(pending, progress: progress) }
           requestedExploration = progress.steps.contains { $0.tool == "disk_explore" }
+        }
+        if case .failure(let failure) = result, let transient = failure as? ReviewFailure {
+          state.deferReview(pending, reason: transient.localizedDescription, now: now)
+          huntState?.append(
+            "warning",
+            transient.localizedDescription
+              + " Other findings will continue; this review has a bounded retry.")
+          try save()
+          try huntState?.save(store)
+          continue
         }
         try result.get()
         if requestedExploration, !settledDiscovery, let settleHunt {
@@ -676,7 +728,20 @@ public actor MachineReviewer {
     let drained = capture.waitForEnd()
     let bytes = capture.data
     try store.write(bytes, to: root.appendingPathComponent("last-review.log"), limit: 1_048_576)
+    let reportedFailure = String(decoding: bytes, as: UTF8.self).split(separator: "\n").contains {
+      line in
+      guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+      else { return false }
+      return object["is_error"] as? Bool == true || object["type"] as? String == "error"
+        || object["error"] != nil
+    }
     if exceeded {
+      let progress = try? ReviewProgress.load(store)
+      if drained, !capture.overflow, !reportedFailure, let attempt, progress?.attempt == attempt,
+        progress?.mutationAttempted == false
+      {
+        throw ReviewFailure.transient("Review timed out before any cleanup request.")
+      }
       throw StoreError.message(
         "Review reached its time or output limit. Reviews paused; observation continues.")
     }
@@ -685,6 +750,12 @@ public actor MachineReviewer {
         "Review output did not finish. Reviews paused; preserve incomplete usage evidence.")
     }
     guard process.terminationStatus == 0 else {
+      let progress = try? ReviewProgress.load(store)
+      if process.terminationStatus == 124, !reportedFailure, let attempt,
+        progress?.attempt == attempt, progress?.mutationAttempted == false
+      {
+        throw ReviewFailure.transient("Review timed out before any cleanup request.")
+      }
       throw StoreError.message(
         "\(c.harness) could not complete the review (exit \(process.terminationStatus)). Check its login, permissions or usage limits, then resume. No automatic retry or provider switch."
       )

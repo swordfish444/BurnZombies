@@ -13,7 +13,7 @@ permissions:
 jobs:
   prove:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 35
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
@@ -28,8 +28,8 @@ jobs:
         run: .build/debug/BurnZombiesApp --worktree-view-proof "$RUNNER_TEMP/bz-worktrees"
       - name: Transport with one cooperative worker
         run: LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 .build/debug/BurnProof --transport
-      - name: Build local app bundle
-        run: scripts/build-app.sh
+      - name: Build universal candidate bundle
+        run: scripts/build-app.sh --universal
       - name: MCP client protocol proof
         run: python3 scripts/test-mcp.py
       - name: Storage discovery through the production MCP bridge
@@ -56,3 +56,19 @@ jobs:
         run: |
           COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/BurnZombies-test.tar.gz" -C dist BurnZombies.app
           python3 scripts/test-install.py "$RUNNER_TEMP/BurnZombies-test.tar.gz"
+
+      - name: Package exact tested candidate
+        run: |
+          for binary in BurnZombiesApp burnzombies burnzombies-mcp; do
+            lipo -verify_arch arm64 x86_64 "dist/BurnZombies.app/Contents/MacOS/$binary"
+          done
+          COPYFILE_DISABLE=1 tar -czf dist/BurnZombies-macOS-universal.tar.gz -C dist BurnZombies.app
+          cd dist
+          shasum -a 256 BurnZombies-macOS-universal.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BurnZombies-${{ github.sha }}
+          path: |
+            dist/BurnZombies-macOS-universal.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error

@@ -24,7 +24,7 @@ func checkFalse(_ value: @autoclosure () -> Bool, _ message: String = "expected 
   if value() { failTest(message) }
 }
 func equal<T: Equatable>(_ a: T, _ b: T, _ message: String = "values differ") {
-  if a != b { failTest(message) }
+  if a != b { failTest("\(message); actual=\(a), expected=\(b)") }
 }
 func notEqual<T: Equatable>(_ a: T, _ b: T) { if a == b { failTest("unexpected equality") } }
 func isNil<T>(_ value: T?) { if value != nil { failTest("expected nil") } }
@@ -38,6 +38,51 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--mapped-child" {
+      let page = Int(getpagesize())
+      let pages = 16384
+      guard let region = mmap(nil, page * pages, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0),
+        region != MAP_FAILED
+      else { exit(2) }
+      for i in stride(from: 0, to: pages, by: 2) {
+        guard mprotect(region.advanced(by: page * i), page, PROT_READ) == 0 else { exit(3) }
+      }
+      guard
+        FileManager.default.createFile(
+          atPath: CommandLine.arguments[2], contents: Data("ready".utf8))
+      else { exit(4) }
+      sleep(60)
+      _ = munmap(region, page * pages)
+      return
+    }
+    if CommandLine.arguments.contains("--disk-recovery") {
+      do { try await diskRecoveryProof() } catch { failTest("Disk recovery: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--approval-process") {
+      do { try await approvalProcessProof() } catch { failTest("Process approval: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--approval-integration") {
+      do { try await approvalIntegrationProof() } catch {
+        failTest("Approval integration: \(error)")
+      }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--intent") {
+      do { try intentProof() } catch { failTest("Intent ledger: \(error)") }
+      print("Intent checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--passive-coverage") {
+      do { try passiveCoverageProbe() } catch { failTest("Passive coverage: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--useful-discovery") {
+      do { try await usefulDiscoveryProof() } catch { failTest("Useful discovery: \(error)") }
+      print("Useful discovery checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--workspace-preview-deadline") {
       let root = URL(fileURLWithPath: "/private/tmp/bz-preview-" + UUID().uuidString.prefix(8))
       defer { try? FileManager.default.removeItem(at: root) }
@@ -82,6 +127,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         failTest("Native descriptor coverage: \(error)")
       }
       print("Native descriptor checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-dense-descriptors") {
+      do { try await worktreeNativeProof(descriptorOnly: true, dense: true) } catch {
+        failTest("Dense native descriptors: \(error)")
+      }
+      print("Dense descriptor checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--worktree-native") {
@@ -321,6 +373,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     let s = StorageNativeTests()
     let pressure = PressureTests()
     let tests: [(String, () throws -> Void)] = [
+      ("durable cleanup intent and bounded explicit workflow rules", intentProof),
       ("owner-managed BuildKit cleanup plans and receipts", managedCacheProof),
       (
         "whole-machine disk discovery, APFS clones, grouped advice and scope safety",
@@ -385,6 +438,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       )
     }
     let beforeAgent = failures
+    do { try await diskRecoveryProof() } catch { failTest("Disk recovery: \(error)") }
+    do { try await usefulDiscoveryProof() } catch { failTest("Useful discovery: \(error)") }
+    do { try await approvalIntegrationProof() } catch { failTest("Approval integration: \(error)") }
     do { try await ownerMaintenanceProof() } catch { failTest("Owner maintenance: \(error)") }
     do { try await transportProof() } catch { failTest("Transport: \(error)") }
     do { try await agentBridgeProof() } catch { failTest("Agent bridge: \(error)") }
@@ -397,6 +453,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       )
     }
     if CommandLine.arguments.contains("--integration") {
+      do { try await approvalProcessProof() } catch { failTest("Process approval: \(error)") }
       do { try await integration() } catch { failTest("Integration: \(error)") }
     }
     print("All proof groups completed; \(failures) failures")
@@ -438,6 +495,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       }
     }
     let monitor = try Monitor(
+      legacyAuthority: true, discoveryHome: nil,
       root: root, accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
     let service = AgentService(monitor: monitor)
     let start = Date()

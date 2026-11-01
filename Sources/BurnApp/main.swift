@@ -248,6 +248,10 @@ import UserNotifications
   var openAudit: (() -> Void)?
   var openWorktrees: (() -> Void)?
   var openHunt: (() -> Void)?
+  var openFindings: (() -> Void)?
+  var openWorktreeID: ((String) -> Void)?
+  @Published var findingSelection: String?
+  @Published var findingBusy = Set<String>()
   let demo: Bool
   private var monitor: Monitor?
   private var agentListener: AgentListener?
@@ -311,6 +315,124 @@ import UserNotifications
     if !["list", "operations"].contains(request.action) { state = await monitor.snapshot() }
     return reply
   }
+  func decideFinding(_ p: CleanupProposal, decision: String, reason: String = "") {
+    guard let monitor else { return }
+    Task {
+      findingBusy.insert(p.id)
+      defer { findingBusy.remove(p.id) }
+      do {
+        try await monitor.decideFinding(
+          p.id, revision: p.revision, decision: decision, reason: reason)
+        state = await monitor.snapshot()
+        if decision == "approve" {
+          message = try await monitor.executeApprovedFinding(p.id, revision: p.revision)
+        } else {
+          message = decision == "keep" ? "Kept until you clear this decision." : "Decision saved."
+        }
+      } catch { message = error.localizedDescription }
+      state = await monitor.snapshot()
+    }
+  }
+  func grantRule(_ p: CleanupProposal, cap: Int, expires: Date, shadow: Bool = false) {
+    guard let monitor else { return }
+    Task {
+      do {
+        try await monitor.grantFindingRule(
+          p.id, revision: p.revision, maximumPerDay: cap, expires: expires, shadow: shadow)
+      } catch { message = error.localizedDescription }
+      state = await monitor.snapshot()
+    }
+  }
+  func refreshFinding(_ id: String) async {
+    guard let monitor else { return }
+    do { try await monitor.refreshFinding(id) } catch { message = error.localizedDescription }
+    state = await monitor.snapshot()
+  }
+  func findingDetail(_ id: String) async -> CleanupProposal? {
+    guard let monitor else { return nil }
+    return try? await monitor.finding(id)
+  }
+  func findingPage(_ offset: Int) async -> FindingsSnapshot? {
+    guard let monitor else { return nil }
+    return try? await monitor.findingPage(offset: offset)
+  }
+  func findingHistory(_ workflow: String) async -> [CleanupDecision] {
+    guard let monitor else { return [] }
+    return (try? await monitor.findingHistory(workflow: workflow)) ?? []
+  }
+  func forgetWorkflow(_ workflow: String) {
+    guard let monitor else { return }
+    Task {
+      do { try await monitor.forgetFindingWorkflow(workflow) } catch {
+        message = error.localizedDescription
+      }
+      state = await monitor.snapshot()
+    }
+  }
+  func reconcileDisk(_ id: UUID, restore: Bool) {
+    guard let monitor else { return }
+    Task {
+      do { message = try await monitor.reconcileDisk(id, restore: restore) } catch {
+        message = error.localizedDescription
+      }
+      state = await monitor.snapshot()
+    }
+  }
+  func reconcileFindingFeedback() {
+    guard let monitor else { return }
+    Task {
+      do {
+        try await monitor.reconcileFindingFeedback()
+        message =
+          "Recovery feedback saved. Affected workflows remain paused pending explicit review."
+      } catch { message = error.localizedDescription }
+      state = await monitor.snapshot()
+    }
+  }
+  func setNotificationBudget(_ budget: Int) {
+    var p = state.catalog.preferences
+    p.notificationBudget = max(1, min(5, budget))
+    save(p)
+  }
+  func pauseRule(_ rule: CleanupRule) {
+    guard let monitor else { return }
+    Task {
+      do { try await monitor.pauseFindingRule(rule.id) } catch {
+        message = error.localizedDescription
+      }
+      state = await monitor.snapshot()
+    }
+  }
+  func notificationAction(id: String, revision: String, action: String) {
+    Task {
+      if let monitor { state = await monitor.snapshot() }
+      if id == "digest" {
+        openFindings?()
+        return
+      }
+      guard let monitor, let p = try? await monitor.finding(id), p.revision == revision else {
+        message = "That finding changed. Review its current evidence."
+        openFindings?()
+        return
+      }
+      if action == "approve" || action == "keep" || action == "snooze" {
+        decideFinding(p, decision: action)
+      } else {
+        findingSelection = p.id
+        openFindings?()
+      }
+    }
+  }
+  func setNotificationDetails(_ enabled: Bool) {
+    var p = state.catalog.preferences
+    p.notificationDetails = enabled
+    save(p)
+  }
+  func setDecisionSharing(_ enabled: Bool) {
+    var p = state.catalog.preferences
+    p.shareDecisionHistory = enabled
+    save(p)
+  }
   deinit { agentSnapshotTask?.cancel() }
   private func requestAgentSnapshot() {
     guard agentSnapshotTask == nil, let monitor else { return }
@@ -342,12 +464,12 @@ import UserNotifications
       if let selected = selection { selection = state.findings.first { $0.id == selected.id } }
       if state.error == nil {
         do {
-          if let text = try await monitor.notificationSummary() {
-            let content = UNMutableNotificationContent()
-            content.title = "A little attention could help"
-            content.body = text
-            try await UNUserNotificationCenter.current().add(
-              UNNotificationRequest(identifier: "grouped-findings", content: content, trigger: nil))
+          if state.catalog.preferences.notifications,
+            let proposal = try await monitor.findingNotification()
+          {
+            try await FindingNotifications.deliver(
+              proposal, details: state.catalog.preferences.notificationDetails == true)
+            try await monitor.findingNotificationDelivered(proposal)
           }
         } catch { message = "Notification delivery unavailable: \(error.localizedDescription)" }
 
@@ -888,6 +1010,8 @@ struct Dashboard: View {
   var auditWindow: NSWindow?
   var menuPreviewWindow: NSWindow?
   var huntWindow: NSWindow?
+  var findingsWindow: NSWindow?
+  var findingNotifications: FindingNotifications?
   var model: AppModel!
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
@@ -902,6 +1026,11 @@ struct Dashboard: View {
       self?.showAudit()
     }
     model.openWorktrees = { [weak self] in self?.showWorktrees() }
+    model.openWorktreeID = { [weak self] id in self?.showWorktrees(selectedID: id) }
+    model.openFindings = { [weak self] in self?.showFindings() }
+    findingNotifications = FindingNotifications { [weak self] id, revision, action in
+      self?.model.notificationAction(id: id, revision: revision, action: action)
+    }
     model.openAudit = { [weak self] in self?.showAudit() }
     model.openHunt = { [weak self] in self?.showHunt() }
     item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -922,6 +1051,7 @@ struct Dashboard: View {
     NSWorkspace.shared.notificationCenter.addObserver(
       self, selector: #selector(waking), name: NSWorkspace.didWakeNotification, object: nil)
     if CommandLine.arguments.contains("--show-worktrees") { showWorktrees() }
+    if CommandLine.arguments.contains("--show-findings") { showFindings() }
     if CommandLine.arguments.contains("--show-window") { showImpact("Impact") }
     if CommandLine.arguments.contains("--show-popover") { toggle() }
     if CommandLine.arguments.contains("--show-mini-window") {
@@ -966,7 +1096,7 @@ struct Dashboard: View {
     window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
-  func showWorktrees() {
+  func showWorktrees(selectedID: String? = nil) {
     popover?.performClose(nil)
     if worktreeWindow == nil {
       let w = NSWindow(
@@ -975,11 +1105,31 @@ struct Dashboard: View {
         defer: false)
       w.title = "BurnZombies — Worktrees"
       w.isReleasedWhenClosed = false
-      w.contentView = NSHostingView(rootView: WorktreesView(model: model))
+      w.contentView = NSHostingView(rootView: WorktreesView(model: model, selectedID: selectedID))
       w.center()
       worktreeWindow = w
     }
+    if let selectedID {
+      worktreeWindow?.contentView = NSHostingView(
+        rootView: WorktreesView(model: model, selectedID: selectedID))
+    }
     worktreeWindow?.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+  func showFindings() {
+    popover?.performClose(nil)
+    if findingsWindow == nil {
+      let w = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 1060, height: 740),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered,
+        defer: false)
+      w.title = "BurnZombies — Findings"
+      w.isReleasedWhenClosed = false
+      w.contentView = NSHostingView(rootView: FindingsView(model: model))
+      w.center()
+      findingsWindow = w
+    }
+    findingsWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
   func showAudit() {

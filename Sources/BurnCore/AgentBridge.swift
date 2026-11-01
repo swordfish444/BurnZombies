@@ -78,6 +78,8 @@ public struct AgentGroup: Codable, Sendable {
 }
 
 public struct AgentReply: Codable, Sendable {
+  public var appVersion: String? = BuildIdentity.version
+  public var appBuild: String? = BuildIdentity.build
   public var ok: Bool
   public var message: String
   public var findings: [AgentFinding] = []
@@ -115,6 +117,9 @@ public struct AgentReply: Codable, Sendable {
   public var worktreeReceipts: [WorkspaceReceipt] = []
   public var worktreesCleaned: Int = 0
   public var worktreeInventory: WorktreeReply?
+  public var inbox: FindingsSnapshot?
+  public var passiveCoverage: String?
+  public var decisionContext: [String]?
   public var diskReclaimedBytes: UInt64 = 0
   public init(ok: Bool = true, message: String) {
     self.ok = ok
@@ -164,7 +169,8 @@ public actor AgentService {
   public func call(_ request: AgentRequest) async -> AgentReply {
     guard
       [
-        "status", "access_status", "access_check", "inspect", "preview", "burn", "lifecycle",
+        "status", "findings", "access_status", "access_check", "inspect", "preview", "burn",
+        "lifecycle",
         "work", "workspace",
         "workspace_preview", "workspace_clean", "worktrees", "worktrees_read", "disk_decide",
         "disk_preview", "disk_clean", "disk_inspect", "disk_explore", "disk_recommend",
@@ -195,6 +201,27 @@ public actor AgentService {
       return reply
     }
     var state = await monitor.snapshot()
+    if request.operation == "findings" {
+      var reply = AgentReply(
+        message:
+          "Native findings, explicit decisions and operation status. Read-only; no cleanup authority is granted."
+      )
+      let offset = max(0, request.offset ?? 0)
+      var inbox: FindingsSnapshot
+      do { inbox = try await monitor.findingPage(offset: offset) } catch {
+        return AgentReply(
+          ok: false, message: "Finding evidence unavailable: " + error.localizedDescription)
+      }
+      let total = inbox.totalProposals
+      inbox.proposals = Array(inbox.proposals.prefix(50))
+      let ids = Set(inbox.proposals.map(\.id))
+      inbox.decisions = Array(inbox.decisions.filter { ids.contains($0.proposal) }.suffix(50))
+      inbox.operations = Array(inbox.operations.filter { ids.contains($0.proposal) }.suffix(50))
+      reply.inbox = inbox
+      reply.passiveCoverage = state.passiveCoverage
+      if offset + 50 < total { reply.nextOffset = offset + 50 }
+      return reply
+    }
     if request.operation != "status" {
       do { try await monitor.requireFullDiskAccess() } catch {
         var reply = AgentReply(ok: false, message: error.localizedDescription)
@@ -441,12 +468,39 @@ public actor AgentService {
       )
       reply.failureKind = "recommendation_rejected"
       return reply
-    } catch { return AgentReply(ok: false, message: error.localizedDescription) }
+    } catch {
+      if error.localizedDescription.hasPrefix("Approval required.") {
+        var reply = AgentReply(message: error.localizedDescription)
+        reply.failureKind = "approval_required"
+        return reply
+      }
+      return AgentReply(ok: false, message: error.localizedDescription)
+    }
     reply.fullDiskAccess = state.fullDiskAccess
     reply.worktreesCleaned = state.catalog.lifetimeWorktreesCleaned ?? 0
     reply.diskReclaimedBytes = state.catalog.lifetimeDiskReclaimedBytes ?? 0
     reply.worktreeReceipts = Array((state.catalog.workspaceReceipts ?? []).suffix(8))
     if request.operation == "status" && state.fullDiskAccess.canScan {
+      reply.passiveCoverage = state.passiveCoverage
+      if state.catalog.preferences.shareDecisionHistory != false {
+        let selected = state.inbox.proposals.filter { p in
+          request.reviewIDs.map { ids in
+            p.resources.contains { key in
+              ids.contains(key) || ids.contains("owner-process:" + key)
+                || ids.contains("passive:" + key)
+            }
+          } ?? false
+        }
+        let workflows = Set(selected.compactMap(\.workflow))
+        reply.decisionContext = Array(
+          state.inbox.decisions.filter {
+            !$0.fixture && ($0.workflow.map { workflows.contains($0) } ?? false)
+          }
+          .suffix(12)
+        ).map {
+          "Explicit past decision: \($0.decision). Reason (untrusted): \(PassiveSession.excerpt($0.reason)). Historical preference is not current safety or authority."
+        }
+      }
       reply.ownerProcesses = (state.catalog.ownerDaemons ?? []).filter { evidence in
         evidence.eligible && (request.reviewIDs == nil || request.reviewIDs!.contains(evidence.id))
       }.map(OwnerProcessSummary.init)

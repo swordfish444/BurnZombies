@@ -3,6 +3,7 @@ import Foundation
 extension WorktreeService {
   public func tick() async throws -> [ReviewEvidence] {
     try requireAccess()
+    try refreshDiscoveryRoots()
     if !scanning, !executing, Date().timeIntervalSince(lastScan) >= 6 * 3600,
       !(try policy().roots).isEmpty
         || FileManager.default.fileExists(
@@ -19,6 +20,7 @@ extension WorktreeService {
   /// leaving it owned by the service if the caller cancels or exhausts its budget.
   public func refreshForHunt(timeout: TimeInterval) async throws -> [ReviewEvidence] {
     try requireAccess()
+    try refreshDiscoveryRoots()
     let deadline = ProcessInfo.processInfo.systemUptime + max(0, timeout)
     func waitForReadiness() async throws {
       try Task.checkCancellation()
@@ -60,6 +62,7 @@ extension WorktreeService {
           processCount: 0))
     }
     for r in try records() where !r.retired && !r.kept && !r.main && !r.bare {
+      guard p.roots.contains(where: { WorkspaceSafety.contains($0, r.path) }) else { continue }
       if legacy.contains(where: { $0.id == r.id }) { continue }
       if (try? eligible(r, dirty: false, automatic: true)) != nil {
         queue.append(

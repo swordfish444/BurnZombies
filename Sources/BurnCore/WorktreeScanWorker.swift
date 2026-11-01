@@ -12,18 +12,31 @@ final class WorktreeScanControl: @unchecked Sendable {
 private final class WorktreePathBox {
   var paths = Set<String>()
   var invalid = false
+  let roots: [String]
+  init(roots: [String]) { self.roots = roots }
 }
 public struct WorktreeConsumerSnapshot: Sendable {
   public let paths: Set<String>
   public let gap: String?
-  public init() {
-    let box = WorktreePathBox()
+  private let roots: [String]
+  public init(roots: [String] = []) {
+    let box = WorktreePathBox(roots: roots.map(WorkspaceSafety.canonical))
+    self.roots = box.roots
     var detail = [CChar](repeating: 0, count: 256)
     let status = bz_worktree_paths(
       { context, path in
         guard let context, let path else { return }
         let b = Unmanaged<WorktreePathBox>.fromOpaque(context).takeUnretainedValue()
-        guard let value = String(validatingUTF8: path), b.paths.count < 100_000 else {
+        guard let value = String(validatingUTF8: path), value.isEmpty || value.hasPrefix("/") else {
+          b.invalid = true
+          return
+        }
+        // Kernel vnode paths are physical file-backed paths. Project the
+        // requested roots before retaining metadata from unrelated large VMs.
+        if !b.roots.isEmpty && !b.roots.contains(where: { WorkspaceSafety.contains($0, value) }) {
+          return
+        }
+        guard b.paths.contains(value) || b.paths.count < 500_000 else {
           b.invalid = true
           return
         }
@@ -37,6 +50,9 @@ public struct WorktreeConsumerSnapshot: Sendable {
         ? "Path snapshot exceeded its bounds or encoding support." : String(cString: detail))
   }
   public func state(_ path: String) -> Int32 {
+    if !roots.isEmpty && !roots.contains(where: { WorkspaceSafety.contains($0, path) }) {
+      return -1
+    }
     if paths.contains(where: { WorkspaceSafety.contains(path, $0) }) { return 1 }
     return gap == nil ? 0 : -1
   }
@@ -71,12 +87,13 @@ public enum WorktreeScanWorker {
       }
     }
     emit()
-    let consumers = WorktreeConsumerSnapshot()
+    let consumers = WorktreeConsumerSnapshot(roots: Array(arguments.dropFirst(2)))
     if let gap = consumers.gap { emit(gap: "Consumer coverage: " + gap) }
     let result = WorktreeDiscovery.scan(
       roots: Array(arguments.dropFirst(2)), seconds: 240,
       visibility: { consumers.state($0) }, inspectOffset: cursor, publish: { emit($0) },
-      progress: { emit() })
+      progress: { emit() },
+      checkpoint: Store.defaultRoot.appendingPathComponent("worktree-discovery-cursor.json"))
     for gap in result.gaps { emit(gap: gap) }
     emit(complete: true, cursor: result.nextInspection)
     return 0

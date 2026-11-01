@@ -19,10 +19,13 @@ static int gone(int pid) {
     return bz_read(pid, &observed) == 1 && observed.status == 5;
 }
 static int within(const char *root, const char *path) {
-    char resolved[4096];
-    const char *candidate = realpath(path, resolved) ? resolved : path;
+    // These paths come from the kernel's vnode vn_getpath, not a caller's
+    // spelling of a symlink. The root is resolved once before this traversal.
+    // Resolving every vnode again made a 200k-handle VM consume the inspection
+    // deadline in filesystem lookups and blocked unrelated cleanup.
+    // XNU bsd/kern/proc_info.c: PROC_PIDVNODEPATHINFO / PROC_PIDREGIONPATHINFO.
     size_t n = strlen(root);
-    return strncmp(root, candidate, n) == 0 && (candidate[n] == 0 || candidate[n] == '/');
+    return strncmp(root, path, n) == 0 && (path[n] == 0 || path[n] == '/');
 }
 static void mark_gap(char *gap, size_t capacity, int pid, const char *reason) {
     if (!gap[0]) snprintf(gap, capacity, "PID %d: %s", pid, reason);
@@ -34,7 +37,9 @@ static void mark_gap(char *gap, size_t capacity, int pid, const char *reason) {
 static int mapped_paths(int pid, void (*visit)(void *, const char *), void *context, uint64_t deadline) {
     uint64_t address = 0;
     int found = 0;
-    for (int i = 0; i < 4096 && bz_continuous_ns() < deadline; i++) {
+    // Browser runtimes reserve many anonymous VM regions. Walk them without
+    // retaining contents; the same wall-time bound still applies.
+    for (int i = 0; i < 262144 && bz_continuous_ns() < deadline; i++) {
         struct proc_regionwithpathinfo region = {0};
         errno = 0;
         int size = proc_pidinfo(pid, PROC_PIDREGIONPATHINFO, address, &region, sizeof(region));
@@ -56,7 +61,9 @@ static int mapped_paths(int pid, void (*visit)(void *, const char *), void *cont
 // The old fixed 4,096-entry descriptor array truncated ordinary large app
 // processes. The kernel's size hint reflects table capacity, which can exceed
 // the actual inventory for sparse/high descriptors. Cap the allocation, then
-// require the returned inventory to fit completely inside the hard 1 MiB bound.
+// require the returned inventory to fit completely inside the hard 4 MiB bound.
+// A live Virtualization.framework worker can hold >200,000 real vnode handles;
+// the former 1 MiB limit blocked every otherwise unused checkout on that host.
 static int collect_pid(int pid, void (*visit)(void *, const char *), void *context,
                        char *gap, size_t capacity, uint64_t deadline) {
     if (pid <= 0 || !visit || !context || !gap || capacity < 2) return -1;
@@ -82,7 +89,7 @@ static int collect_pid(int pid, void (*visit)(void *, const char *), void *conte
         if (!gone(pid)) GAP("descriptor-size query denied");
         return unknown ? -1 : 0;
     }
-    const int maximum = 1048576;
+    const int maximum = 4194304;
     int margin = (int)(64 * sizeof(struct proc_fdinfo));
     int bytes = required > maximum - margin ? maximum : required + margin, n = -1;
     struct proc_fdinfo *fds = NULL;
@@ -104,6 +111,9 @@ static int collect_pid(int pid, void (*visit)(void *, const char *), void *conte
     }
     int opaque[256], opaque_count = 0;
     for (int j = 0; j < n / (int)sizeof(fds[0]); j++) if (fds[j].proc_fdtype == PROX_FDTYPE_VNODE) {
+        if ((j & 255) == 0 && bz_continuous_ns() >= deadline) {
+            GAP("descriptor metadata exceeded bounded inspection time"); break;
+        }
         struct vnode_fdinfowithpath v = {0};
         errno = 0;
         if (proc_pidfdinfo(pid, fds[j].proc_fd, PROC_PIDFDVNODEPATHINFO, &v, sizeof(v)) == sizeof(v)) visit(context, v.pvip.vip_path);

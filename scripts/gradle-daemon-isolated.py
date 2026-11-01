@@ -15,12 +15,13 @@ parser.add_argument('--swift-only', action='store_true')
 options = parser.parse_args()
 repo = pathlib.Path(__file__).resolve().parents[1]
 distribution, java = options.distribution.resolve(), options.java.resolve()
-assert distribution.name == 'gradle-8.14.6'
-assert (distribution/'lib/gradle-daemon-main-8.14.6.jar').is_file()
+version = distribution.name.removeprefix('gradle-')
+assert version in ('8.14.6', '9.8.2'), 'Only protocol-tested exact versions are supported'
+assert (distribution/f'lib/gradle-daemon-main-{version}.jar').is_file()
 helper = repo/'Sources/BurnCore/Resources/BZGradleDaemon.java'
 env = {'PATH': '/usr/bin:/bin', 'HOME': str(pathlib.Path.home()), 'JAVA_HOME': str(java.parent.parent),
        'LANG': 'en_US.UTF-8', 'TMPDIR': tempfile.gettempdir()}
-evidence = {'version': '8.14.6', 'ownedFixtureOnly': True, 'checks': []}
+evidence = {'version': version, 'ownedFixtureOnly': True, 'checks': []}
 children = []
 with tempfile.TemporaryDirectory(prefix='bz-gradle-proof-') as temp:
     root = pathlib.Path(temp).resolve()
@@ -80,7 +81,7 @@ printf("%s\\n%s\\n%s\\n",g.home,g.distribution,g.version);return 0;}
         deadline = time.time()+45
         while not (project/'started').exists() and time.time()<deadline and process.poll() is None: time.sleep(.1)
         assert (project/'started').exists(), 'Fixture startup failed: '+(root/(name+'.log')).read_text()[-2000:]
-        logs = list((home/'daemon/8.14.6').glob('daemon-*.out.log'))
+        logs = list((home/f'daemon/{version}').glob('daemon-*.out.log'))
         assert len(logs) == 1
         pid = int(logs[0].name.split('-')[1].split('.')[0])
         if not busy: assert process.wait(timeout=20) == 0

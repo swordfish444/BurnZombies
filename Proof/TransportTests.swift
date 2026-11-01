@@ -214,6 +214,7 @@ private func concurrentServiceProof(root: URL) async throws {
   try saved.save(store)
   // No refresh/scan: test saved discovery through the actual service and Monitor routing.
   let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil,
     root: root, discoveryRoots: [source.path], accessCheck: fixtureAccess,
     discoveryWalker: fixtureWalker())
   let service = AgentService(monitor: monitor)

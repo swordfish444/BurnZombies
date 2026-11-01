@@ -56,8 +56,9 @@ func worktreeVisibilityProof() throws {
   defer { try? FileManager.default.removeItem(at: root) }
   let source = root.appendingPathComponent("sleep")
   let moved = root.appendingPathComponent("moved-sleep")
-  try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: source.path)
-  var argv = [strdup(source.path), strdup("60"), nil]
+  try FileManager.default.copyItem(atPath: CommandLine.arguments[0], toPath: source.path)
+  let marker = root.appendingPathComponent("regions-ready")
+  var argv = [strdup(source.path), strdup("--mapped-child"), strdup(marker.path), nil]
   defer { argv.forEach { free($0) } }
   var environment = [strdup("PATH=/usr/bin:/bin"), nil]
   defer { environment.forEach { free($0) } }
@@ -75,6 +76,10 @@ func worktreeVisibilityProof() throws {
   let readyDeadline = Date().addingTimeInterval(2)
   var ready = false
   while Date() < readyDeadline {
+    if !FileManager.default.fileExists(atPath: marker.path) {
+      Thread.sleep(forTimeInterval: 0.01)
+      continue
+    }
     var before = [CChar](repeating: 0, count: 256)
     let readyBox = MetadataPaths()
     let status = bz_worktree_pid_paths(
@@ -130,6 +135,6 @@ func worktreeVisibilityProof() throws {
   equal(zombieCoverage, 0, "Zombie coverage: " + String(cString: gap))
   check(zombieBox.paths.isEmpty)
   print(
-    "PASS strict Apple metadata protocol: PID/descriptor completeness, truncation, duplication, types and lossless names; real moved-executable coverage"
+    "PASS strict Apple metadata protocol and moved executable with over 8,192 anonymous VM regions"
   )
 }

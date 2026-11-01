@@ -4,6 +4,8 @@ import Darwin
 import Foundation
 
 public struct ViewState: Sendable {
+  public var inbox = FindingsSnapshot()
+  public var passiveCoverage: String?
   public var worktrees: WorktreeReply?
   public var worktreeError: String?
   public var fullDiskAccess = FullDiskAccessStatus()
@@ -22,6 +24,7 @@ public struct ViewState: Sendable {
 public actor Monitor {
   private let accessCheck: @Sendable () -> FullDiskAccessStatus
   private let store: Store
+  private let intent: IntentLedger?
   private var worktreeService: WorktreeService?
   private let lock: InstanceLock
   private let native = Native()
@@ -37,10 +40,13 @@ public actor Monitor {
   private var lastSave = Date.distantPast
   private var receiptNeedsCheckpoint = false
   private var busy = false
+  private var preparingOwnerOperation: UUID?
   private var lastMonotonic: Double?
   private var lastWall: Date?
   private var lastAwake: Double?
   public init(
+    legacyAuthority: Bool? = nil,
+    discoveryHome: URL? = FileManager.default.homeDirectoryForCurrentUser,
     root: URL = Store.defaultRoot, passiveHome: URL? = nil, discoveryRoots: [String]? = nil,
     workspaceVisibility: (@Sendable (String) -> Int32)? = nil,
     accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil,
@@ -50,6 +56,14 @@ public actor Monitor {
     self.workspaceVisibility = workspaceVisibility ?? { bz_path_in_use($0) }
     self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: root) }
     store = try Store(root: root)
+    do {
+      intent =
+        try legacyAuthority.map { try IntentLedger(root: root, legacyAuthority: $0) }
+        ?? IntentLedger.migrate(root: root)
+    } catch {
+      intent = nil
+      state.inbox.error = "Cleanup decisions unavailable: " + error.localizedDescription
+    }
     ownerMaintenance =
       root.standardizedFileURL == Store.defaultRoot.standardizedFileURL
         && ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil
@@ -67,14 +81,18 @@ public actor Monitor {
         store: store, home: passiveHome ?? FileManager.default.homeDirectoryForCurrentUser) : nil
     lock = try InstanceLock(url: root.appendingPathComponent("monitor.lock"))
     var loaded = try store.load()
+    if try FixtureProvenance.load(root: root).classify(&loaded) { try store.save(loaded) }
     if loaded.lifetimeResidentReleased == nil {
-      loaded.lifetimeResidentReleased = loaded.events.filter { $0.outcome == "verified" }.reduce(
+      loaded.lifetimeResidentReleased = loaded.events.filter {
+        $0.outcome == "verified" && $0.fixture != true
+      }.reduce(
         0
       ) { $0 + $1.residentBefore }
     }
     if loaded.lifetimeCPUSecondsSaved == nil {
-      let measured = loaded.events.filter { $0.outcome == "verified" }.compactMap(
-        \.cpuSecondsSavedEstimate)
+      let measured = loaded.events.filter { $0.outcome == "verified" && $0.fixture != true }
+        .compactMap(
+          \.cpuSecondsSavedEstimate)
       if !measured.isEmpty || loaded.lifetimeVerified == 0 {
         loaded.lifetimeCPUSecondsSaved = measured.reduce(0, +)
       }
@@ -86,6 +104,17 @@ public actor Monitor {
           "Workspace operation interrupted. Preserve the recovery ref; no disk or worktree credit without the completed receipt."
       }
       loaded.workspaceReceipts = receipts
+    }
+    if var receipts = loaded.diskReceipts {
+      for i in receipts.indices where receipts[i].outcome == "prepared" {
+        receipts[i].outcome = "unverified"
+        receipts[i].rationale +=
+          " Interrupted cleanup: inspect or restore its pending location from Impact. No removal credit is known."
+      }
+      loaded.diskReceipts = receipts
+    }
+    for receipt in loaded.diskReceipts ?? [] where receipt.restoreRequested == true {
+      if let intent { _ = DiskRecovery.recordRestoreFeedback(receipt, ledger: intent) }
     }
     if var attempts = loaded.managedCacheAttempts {
       for i in attempts.indices where attempts[i].outcome == "prepared" {
@@ -103,7 +132,8 @@ public actor Monitor {
     do {
       let service = try WorktreeService(
         root: root, visibility: workspaceVisibility, access: self.accessCheck,
-        recoveryKey: worktreeRecoveryKey, legacy: loaded.workspaces ?? [])
+        recoveryKey: worktreeRecoveryKey, legacy: loaded.workspaces ?? [],
+        discoveryHome: discoveryHome, intent: intent)
       if !(loaded.workspaces ?? []).isEmpty {
         loaded.workspaces = []
         try store.save(loaded)
@@ -121,6 +151,7 @@ public actor Monitor {
     if let service = worktreeService {
       do {
         projected.worktrees = try await service.snapshot()
+        if let error = projected.worktrees?.intentError { projected.inbox.error = error }
         let added = try await service.projectedReceipts()
         projected.catalog.workspaces = try await service.legacyClaims()
         projected.catalog.workspaceReceipts = (catalog.workspaceReceipts ?? []) + added
@@ -132,7 +163,299 @@ public actor Monitor {
         projected.worktreeError = "Worktree evidence unavailable: " + error.localizedDescription
       }
     }
+    do {
+      if let intent {
+        // Only the durable native journal can settle decision reservations. An
+        // in-memory result whose checkpoint failed must not unlock a rule canary.
+        let durable = try store.load()
+        var proposals = (catalog.ownerDaemons ?? []).filter {
+          catalog.records[$0.member.identity.key]?.missingSince == nil
+            && catalog.records[$0.member.identity.key] != nil
+        }.map(ownerProposal)
+        let diskPolicy = try DiskPolicy.load(store)
+        let used = managedUsedToday()
+        for candidate in diskSnapshot.candidates where candidate.kind != "worktree" {
+          var p = CleanupProposal.disk(candidate)
+          if diskPolicy.mode == "off"
+            || used + candidate.bytes > UInt64(diskPolicy.maximumGBPerDay) * 1_000_000_000
+            || (try? WorkspaceSafety.freeBytes(candidate.path)) ?? UInt64.max >= UInt64(
+              diskPolicy.targetFreeGB) * 1_000_000_000
+          {
+            p.ready = false
+            p.detail +=
+              " Current disk policy, free-space goal or daily allowance does not permit removal."
+          }
+          proposals.append(p)
+        }
+        if let inventory = catalog.managedCache,
+          (try? WorkspaceSafety.freeBytes(store.root.path)) ?? UInt64.max < UInt64(
+            diskPolicy.targetFreeGB) * 1_000_000_000
+        {
+          let attempts = catalog.managedCacheAttempts ?? []
+          let blocked = ManagedCacheAttempt.blockedIDs(attempts, inventory: inventory)
+          let ids = Array(inventory.eligibleIDs.filter { !blocked.contains($0) }.prefix(32))
+          if attempts.filter({ ["prepared", "uncertain"].contains($0.outcome) }).count < 128,
+            let plan = try? BuildKitCache.preview(
+              inventory: inventory, recordIDs: ids, policy: diskPolicy, usedTodayBytes: used)
+          {
+            proposals.append(.cache(plan))
+          }
+        }
+        let leases = try store.leases()
+        var completed = Set(
+          (catalog.passiveEvidence ?? []).filter { $0.canReview() }.map { $0.member.identity.key })
+        for claim in catalog.workEvidence ?? [] where claim.state == "released" {
+          completed.formUnion(claim.members.map { $0.identity.key })
+        }
+        for lease in leases
+        where lease.allowCleanup && !lease.disarmed && lease.ended != nil
+          && native.ownerState(lease.owner) == .gone
+        {
+          completed.formUnion(lease.members.map { $0.identity.key })
+        }
+        for id in completed.sorted() {
+          if let row = catalog.records[id], row.missingSince == nil {
+            var p = processProposal([row.latest])
+            p.ready = (try? checkedProcessTargets([id], callerPID: getpid(), leases: leases)) != nil
+            proposals.append(p)
+          }
+        }
+        for group in try intent.openProcessFindings() {
+          let rows = group.resources.compactMap { catalog.records[$0] }.filter {
+            $0.missingSince == nil
+          }
+          guard rows.count == group.resources.count else { continue }
+          var current = processProposal(rows.map(\.latest))
+          current.ready =
+            (try? checkedProcessTargets(group.resources, callerPID: getpid(), leases: leases))
+            != nil
+          proposals.append(current)
+        }
+        try intent.presentMany(proposals)
+        if !state.partial {
+          // A multi-target preview or a released explicit claim may not be a
+          // passive single-target card. Only native disappearance proves absent.
+          try intent.resolveMissingProcesses(
+            presentResources: Set(
+              catalog.records.values.filter { $0.missingSince == nil }.map { $0.id }))
+        }
+        var projectionErrors: [String] = []
+        func project(_ id: String, _ outcome: String) {
+          do { try intent.project(operationID: id, outcome: outcome) } catch {
+            projectionErrors.append(error.localizedDescription)
+          }
+        }
+        for event in durable.events where !["prepared", "verifying"].contains(event.outcome) {
+          project(
+            event.id.uuidString,
+            event.outcome == "verified"
+              ? "verified" : event.outcome == "refused" ? "refused" : "uncertain")
+        }
+        for receipt in durable.diskReceipts ?? [] where receipt.outcome != "prepared" {
+          project(
+            receipt.id.uuidString,
+            receipt.outcome == "verified"
+              ? "verified"
+              : receipt.outcome == "refused"
+                ? "refused" : receipt.outcome == "reconciled" ? "reconciled" : "uncertain")
+        }
+        for receipt in durable.managedCacheAttempts ?? [] where receipt.outcome != "prepared" {
+          project(
+            receipt.plan.id.uuidString,
+            receipt.outcome == "verified"
+              ? "verified" : receipt.outcome == "refused" ? "refused" : "uncertain")
+        }
+        projected.inbox = try intent.snapshot()
+        if let error = projectionErrors.first {
+          projected.inbox.error = "Some native receipts require reconciliation: " + error
+        }
+      }
+      if let error = projected.worktrees?.intentError {
+        projected.inbox.error = [projected.inbox.error, error].compactMap { $0 }.joined(
+          separator: " ")
+      }
+      projected.passiveCoverage = passive?.coverage
+    } catch {
+      projected.inbox.error = "Cleanup decisions unavailable: " + error.localizedDescription
+    }
     return projected
+  }
+  private func intentLedger() throws -> IntentLedger {
+    guard let intent else {
+      throw StoreError.message(
+        "Cleanup decision authority unavailable; observation and recovery remain available.")
+    }
+    return intent
+  }
+  private func ownerProposal(_ evidence: GradleDaemonEvidence) -> CleanupProposal {
+    var p = CleanupProposal.owner(evidence)
+    if let record = catalog.records[evidence.member.identity.key] {
+      p.revision = WorkEvidence.hash(p.revision + processProposal([record.latest]).revision)
+    }
+    // Publishing our own prepared receipt must not revoke the proposal that
+    // its background preflight is about to reserve. New calls still use the
+    // full guard; native use/claims and the shared intent gate remain enforced.
+    p.ready =
+      evidence.eligible
+      && (try? ownerGuard(evidence, callerPID: getpid(), excludingEvent: preparingOwnerOperation))
+        != nil
+    return p
+  }
+  private func processProposal(_ targets: [Observation]) -> CleanupProposal {
+    var p = CleanupProposal.processes(targets)
+    let keys = Set(targets.map { $0.identity.key })
+    let claims = (catalog.workEvidence ?? []).filter {
+      !$0.members.filter { keys.contains($0.identity.key) }.isEmpty
+    }.sorted { $0.id < $1.id }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let claimsRevision = String(decoding: (try? encoder.encode(claims)) ?? Data(), as: UTF8.self)
+    let passiveRevision = (catalog.passiveEvidence ?? []).filter {
+      keys.contains($0.member.identity.key)
+    }.map(\.revision).sorted().joined(separator: "|")
+    p.revision = WorkEvidence.hash(
+      p.revision + claimsRevision + passiveRevision
+        + catalog.preferences.protectedExecutables.sorted().joined(separator: "|"))
+    return p
+  }
+  public func decideFinding(_ id: String, revision: String, decision: String, reason: String = "")
+    throws
+  {
+    try intentLedger().decide(id, revision: revision, decision: decision, reason: reason)
+  }
+  public func grantFindingRule(
+    _ id: String, revision: String, maximumPerDay: Int, expires: Date, shadow: Bool = false
+  ) throws {
+    _ = try intentLedger().grant(
+      id, revision: revision, maximumPerDay: maximumPerDay, expires: expires, shadow: shadow)
+  }
+  public func findingHistory(workflow: String) throws -> [CleanupDecision] {
+    try intentLedger().history(workflow: workflow)
+  }
+  public func forgetFindingWorkflow(_ workflow: String) throws {
+    try intentLedger().forget(workflow: workflow)
+  }
+  public func reconcileFindingFeedback() async throws {
+    if FileManager.default.fileExists(
+      atPath: store.root.appendingPathComponent("intent-suspended").path)
+    {
+      try intentLedger().reconcileRecoveryFeedback()
+    } else if let service = worktreeService {
+      try await service.replayRecoveryFeedback()
+    } else {
+      throw StoreError.message(
+        "Native recovery history is unavailable; preserve the cleanup suspension.")
+    }
+  }
+  public func pauseFindingRule(_ id: String) throws { try intentLedger().pauseRule(id) }
+  public func findingPage(offset: Int) throws -> FindingsSnapshot {
+    try intentLedger().snapshot(offset: offset)
+  }
+  public func finding(_ id: String) throws -> CleanupProposal? { try intentLedger().proposal(id) }
+  public func findingNotification() throws -> CleanupProposal? {
+    try intentLedger().notificationCandidate(budget: catalog.preferences.notificationBudget ?? 3)
+  }
+  public func findingNotificationDelivered(_ value: CleanupProposal) throws {
+    try intentLedger().delivered(value)
+  }
+  public func refreshFinding(_ id: String) async throws {
+    try requireFullDiskAccess()
+    guard let p = try intentLedger().proposal(id) else {
+      throw StoreError.message("Unknown finding.")
+    }
+    switch p.action {
+    case .worktree:
+      guard let key = p.resources.first, let service = worktreeService else { return }
+      _ = try await service.inspect(String(key.dropFirst(9)))
+    case .ownerStop:
+      _ = refresh()
+      guard let key = p.resources.first, let record = catalog.records[key],
+        record.missingSince == nil
+      else { return }
+      let records = catalog.records
+      let complete = !state.partial
+      let evidence = try await Task.detached(priority: .utility) {
+        try GradleDaemon.inspect(record.latest, records: records, complete: complete)
+      }.value
+      catalog.ownerDaemons?.removeAll { $0.member.identity.key == key }
+      if let evidence { catalog.ownerDaemons = (catalog.ownerDaemons ?? []) + [evidence] }
+      state.catalog = catalog
+    case .disk:
+      guard let index = diskSnapshot.candidates.firstIndex(where: { $0.id == p.resources.first })
+      else {
+        throw StoreError.message(
+          "This finding is no longer in the current disk inventory. It has not been classified as deleted; review current coverage."
+        )
+      }
+      let candidate = diskSnapshot.candidates[index]
+      let policy = try DiskPolicy.load(store)
+      let visibility = workspaceVisibility
+      _ = try await Task.detached(priority: .utility) {
+        try DiskInventory.check(candidate, policy: policy, visibility: visibility)
+      }.value
+      guard try DiskPolicy.load(store).revision == policy.revision,
+        let currentIndex = diskSnapshot.candidates.firstIndex(where: {
+          $0.id == candidate.id && $0.revision == candidate.revision
+        })
+      else {
+        throw StoreError.message("Disk policy or inventory changed while refreshing.")
+      }
+      diskSnapshot.candidates[currentIndex].observedAt = Date()
+      try diskSnapshot.save(store)
+    case .cache:
+      ownerMaintenance?.invalidateCache()
+      _ = refresh()
+    case .process: _ = refresh()
+    }
+  }
+  public func executeApprovedFinding(_ id: String, revision: String) async throws -> String {
+    let ledger = try intentLedger()
+    guard let p = try ledger.proposal(id), p.revision == revision else {
+      throw StoreError.message("Finding changed; review again.")
+    }
+    try ledger.check(p)
+    switch p.action {
+    case .ownerStop:
+      guard let key = p.resources.first else { throw StoreError.message("Missing owner identity.") }
+      let value = try previewOwnerProcess("owner-process:" + key, callerPID: getpid())
+      return try startOwnerStop(
+        value, rationale: "Explicit operator approval of this exact finding.", callerPID: getpid())
+    case .process:
+      let values = try previewTargets(p.resources, callerPID: getpid())
+      return try burnTargets(
+        values, label: p.title,
+        rationale: "Explicit operator approval of this exact completed helper.", callerPID: getpid()
+      )
+    case .worktree:
+      guard let key = p.resources.first, key.hasPrefix("worktree:") else {
+        throw StoreError.message("Missing worktree identity.")
+      }
+      try requireFullDiskAccess()
+      guard !busy, let service = worktreeService else {
+        throw StoreError.message("Cleanup is busy or worktree service unavailable.")
+      }
+      busy = true
+      defer { busy = false }
+      return try await service.retireApprovedFinding(String(key.dropFirst(9)), revision: revision)
+        .detail
+    case .disk:
+      return try cleanDisk(
+        previewDisk(p.resources[0], manual: true),
+        rationale: "Explicit operator approval; existing exact disk policy remains required.",
+        manual: true)
+    case .cache:
+      guard let inventory = catalog.managedCache else {
+        throw StoreError.message("Cache owner inventory is unavailable.")
+      }
+      let ids = p.resources.compactMap { $0.split(separator: ":").last.map(String.init) }
+      let plan = try previewManagedCache(ManagedCacheSummary(inventory).id, recordIDs: ids)
+      let current = CleanupProposal.cache(plan)
+      guard current.id == p.id, current.revision == p.revision else {
+        throw StoreError.message("Cache owner or selection changed. Review again.")
+      }
+      return try startManagedCache(
+        plan, rationale: "Explicit operator approval of this exact local cache selection.")
+    }
   }
   public func workspaceClaims() async throws -> [WorkspaceClaim] {
     guard let service = worktreeService else {
@@ -292,9 +615,17 @@ public actor Monitor {
         receiptNeedsCheckpoint = receiptNeedsCheckpoint || added > 0
       }
       verifyPending(now: now, observations: scan.observations)
+      if try FixtureProvenance.load(root: store.root).classify(&catalog) {
+        receiptNeedsCheckpoint = true
+      }
       receiptNeedsCheckpoint =
         receiptNeedsCheckpoint || priorOutcomes != catalog.events.map(\.outcome)
       catalog.lastSample = now
+      if let intent {
+        do { catalog.pinnedOperationIDs = try intent.pendingOperationIDs() } catch {
+          state.inbox.error = "Cleanup decisions unavailable: " + error.localizedDescription
+        }
+      }
       catalog.prune(now: now)
       if state.fullDiskAccess.canScan, let passive {
         catalog.passiveEvidence = try passive.poll(
@@ -442,12 +773,14 @@ public actor Monitor {
         catalog.events[i].verificationDate = now
         catalog.events[i].detail =
           "Exact targets exited; no replacement was observed under the same verified parent during the 120-second watch. Reparented or differently owned replacements cannot be attributed. Resident footprint is an upper-bound attribution."
-        catalog.lifetimeVerified += e.targets.count
-        catalog.lifetimeActions += 1
-        catalog.lifetimeResidentReleased =
-          (catalog.lifetimeResidentReleased ?? 0) + e.residentBefore
-        if let cpu = e.cpuSecondsSavedEstimate {
-          catalog.lifetimeCPUSecondsSaved = (catalog.lifetimeCPUSecondsSaved ?? 0) + cpu
+        if e.fixture != true {
+          catalog.lifetimeVerified += e.targets.count
+          catalog.lifetimeActions += 1
+          catalog.lifetimeResidentReleased =
+            (catalog.lifetimeResidentReleased ?? 0) + e.residentBefore
+          if let cpu = e.cpuSecondsSavedEstimate {
+            catalog.lifetimeCPUSecondsSaved = (catalog.lifetimeCPUSecondsSaved ?? 0) + cpu
+          }
         }
         let after = Responsiveness.sample()
         catalog.events[i].responseAfterSamples = after
@@ -592,10 +925,10 @@ public actor Monitor {
     return
       "AI recommendation saved in Settings. Nothing removed; removal permission and safety checks are separate."
   }
-  public func previewDisk(_ id: String) throws -> DiskCandidate {
+  public func previewDisk(_ id: String, manual: Bool = false) throws -> DiskCandidate {
     try requireFullDiskAccess()
     let policy = try DiskPolicy.load(store)
-    guard policy.mode == "automatic",
+    guard policy.mode == "automatic" || (manual && policy.mode == "recommend"),
       let c = diskSnapshot.candidates.first(where: { $0.id == id && $0.reviewable }),
       policy.revision == diskSnapshot.policyRevision
     else {
@@ -610,14 +943,18 @@ public actor Monitor {
       throw StoreError.message("Daily disk cleanup cap reached; no removal.")
     }
     _ = try DiskInventory.check(c, policy: policy, visibility: workspaceVisibility)
+    let proposal = try intentLedger().present(.disk(c))
+    try intentLedger().check(proposal, legacy: !manual)
     return c
   }
-  public func cleanDisk(_ preview: DiskCandidate, rationale: String) throws -> String {
+  public func cleanDisk(_ preview: DiskCandidate, rationale: String, manual: Bool = false) throws
+    -> String
+  {
     try requireFullDiskAccess()
     guard !busy else { throw StoreError.message("A cleanup is already in progress.") }
     busy = true
     defer { busy = false }
-    let c = try previewDisk(preview.id)
+    let c = try previewDisk(preview.id, manual: manual)
     guard c.revision == preview.revision else {
       throw StoreError.message("Disk evidence changed after preview.")
     }
@@ -631,18 +968,34 @@ public actor Monitor {
     // Persist intent first. Interrupted moves are retained here for recovery, never
     // treated as free space or silently purged on restart.
     var receipt = DiskReceipt(
+      sourceDevice: source.st_dev, sourceInode: UInt64(source.st_ino),
+      sourceFingerprint: c.fingerprint,
+      fixture: try FixtureProvenance.load(root: store.root).matches([c.id]),
       id: id, candidateID: c.id, path: c.path, date: Date(), outcome: "prepared",
       allocatedRemoved: c.bytes, diskReclaimedBytes: 0,
       rationale: rationale + " Recovery location if interrupted: " + quarantine.path)
     catalog.diskReceipts = (catalog.diskReceipts ?? []) + [receipt]
     try checkpoint()
+    var dispatched = false
     do {
       let currentPolicy = try DiskPolicy.load(store)
-      guard currentPolicy.mode == "automatic", currentPolicy.revision == diskSnapshot.policyRevision
+      guard currentPolicy.mode == "automatic" || (manual && currentPolicy.mode == "recommend"),
+        currentPolicy.revision == diskSnapshot.policyRevision
       else { throw StoreError.message("Disk policy changed.") }
       _ = try DiskInventory.check(c, policy: currentPolicy, visibility: workspaceVisibility)
       let before = try WorkspaceSafety.freeBytes(store.root.path)
+      let proposal = try intentLedger().present(.disk(c))
+      try intentLedger().reserve(proposal, operationID: id.uuidString, legacy: !manual)
+      dispatched = true
       guard rename(c.path, quarantine.path) == 0 else {
+        var stillThere = stat()
+        var absent = stat()
+        if lstat(c.path, &stillThere) == 0, stillThere.st_dev == source.st_dev,
+          stillThere.st_ino == source.st_ino,
+          lstat(quarantine.path, &absent) != 0, errno == ENOENT
+        {
+          dispatched = false
+        }
         throw StoreError.message("Could not atomically isolate the exact folder.")
       }
       let moved = try DiskInventory.manifest(quarantine.path)
@@ -660,8 +1013,10 @@ public actor Monitor {
       var next = catalog
       let receiptIndex = (next.diskReceipts?.count ?? 1) - 1
       next.diskReceipts?[receiptIndex] = receipt
-      next.lifetimeDiskReclaimedBytes =
-        (next.lifetimeDiskReclaimedBytes ?? 0) + receipt.diskReclaimedBytes
+      if receipt.fixture != true {
+        next.lifetimeDiskReclaimedBytes =
+          (next.lifetimeDiskReclaimedBytes ?? 0) + receipt.diskReclaimedBytes
+      }
       diskSnapshot.candidates.removeAll { $0.id == c.id }
       try diskSnapshot.save(store)
       next.diskCandidates?.removeAll { $0.id == c.id }
@@ -677,10 +1032,54 @@ public actor Monitor {
         _ = rename(quarantine.path, c.path)
       }
       let failedIndex = (catalog.diskReceipts?.count ?? 1) - 1
-      catalog.diskReceipts?[failedIndex].outcome = "unverified"
+      catalog.diskReceipts?[failedIndex].outcome = dispatched ? "unverified" : "refused"
       try? checkpoint()
       throw error
     }
+  }
+
+  /// Native operator recovery only. No agent-facing management route.
+  public func reconcileDisk(_ id: UUID, restore: Bool) async throws -> String {
+    try requireFullDiskAccess()
+    guard !busy, let receipt = catalog.diskReceipts?.first(where: { $0.id == id }),
+      ["prepared", "unverified"].contains(receipt.outcome)
+    else {
+      throw StoreError.message("Select an unresolved disk operation while cleanup is idle.")
+    }
+    busy = true
+    defer { busy = false }
+    var requested = receipt
+    if restore {
+      requested.restoreRequested = true
+      guard let index = catalog.diskReceipts?.firstIndex(where: { $0.id == id }) else {
+        throw StoreError.message("Recovery journal changed.")
+      }
+      var next = catalog
+      next.diskReceipts?[index] = requested
+      try store.save(next)
+      catalog = next
+      state.catalog = next
+      // Recovery is independent of preference storage. Its native marker is
+      // replayed on launch if both preference and fallback writes fail.
+      if let intent { _ = DiskRecovery.recordRestoreFeedback(requested, ledger: intent) }
+    }
+    let recoveryReceipt = requested
+    let root = store.root
+    let visibility = workspaceVisibility ?? { bz_path_in_use($0) }
+    let reconciled = try await Task.detached(priority: .utility) {
+      try DiskRecovery.reconcile(
+        recoveryReceipt, root: root, restore: restore, visibility: visibility)
+    }.value
+    guard let index = catalog.diskReceipts?.firstIndex(where: { $0.id == id }) else {
+      throw StoreError.message("Recovery journal changed.")
+    }
+    var next = catalog
+    next.diskReceipts?[index] = reconciled
+    try store.save(next)
+    catalog = next
+    state.catalog = next
+    try intentLedger().project(operationID: id.uuidString, outcome: reconciled.outcome)
+    return reconciled.rationale
   }
 
   public func recordWork(_ request: AgentRequest) throws -> (String?, String) {
@@ -802,7 +1201,9 @@ public actor Monitor {
     return owned + (catalog.passiveEvidence ?? []).map(\.workSummary)
   }
 
-  private func ownerGuard(_ evidence: GradleDaemonEvidence, callerPID: Int32) throws -> Record {
+  private func ownerGuard(
+    _ evidence: GradleDaemonEvidence, callerPID: Int32, excludingEvent: UUID? = nil
+  ) throws -> Record {
     guard !state.partial, let record = catalog.records[evidence.member.identity.key],
       record.missingSince == nil, Member(record.latest) == evidence.member,
       let ancestors = AgentSafety.ancestors(of: callerPID),
@@ -815,7 +1216,7 @@ public actor Monitor {
         $0.missingSince == nil && $0.latest.parent == record.latest.identity.pid
       }),
       !catalog.events.contains(where: {
-        ["prepared", "verifying", "unverified"].contains($0.outcome)
+        $0.id != excludingEvent && ["prepared", "verifying", "unverified"].contains($0.outcome)
           && $0.targets.contains(evidence.member)
       })
     else {
@@ -834,6 +1235,8 @@ public actor Monitor {
       )
     }
     _ = try ownerGuard(evidence, callerPID: callerPID)
+    let proposal = try intentLedger().present(ownerProposal(evidence))
+    try intentLedger().check(proposal, legacy: true)
     return evidence
   }
   public func startOwnerStop(_ evidence: GradleDaemonEvidence, rationale: String, callerPID: Int32)
@@ -843,12 +1246,16 @@ public actor Monitor {
     guard !busy else { throw StoreError.message("A cleanup is already in progress.") }
     _ = refresh()
     let target = try ownerGuard(evidence, callerPID: callerPID)
+    let authority = try intentLedger()
+    let proposal = try authority.present(ownerProposal(evidence))
+    try authority.check(proposal, legacy: true)
     var event = CleanupEvent(
       leaseID: UUID(), label: "Idle Gradle daemon", date: Date(),
       targets: [evidence.member], residentBefore: target.latest.rss, outcome: "prepared",
       detail: "Owner-protocol decision: " + rationale
         + ". Revalidating exact daemon; no benefit credited.")
     event.ownerProtocol = true
+    event.fixture = proposal.fixture
     event.cpuSavingsRate = ImpactAccounting.cpuRate([target])
     event.cpuObservedSeconds = event.cpuSavingsRate == nil ? nil : 0
     event.cpuSecondsSavedEstimate = event.cpuSavingsRate == nil ? nil : 0
@@ -857,6 +1264,7 @@ public actor Monitor {
     state.catalog = catalog
     busy = true
     let eventID = event.id
+    preparingOwnerOperation = eventID
     Task.detached(priority: .utility) { [self] in
       let result = Result { () throws -> String in
         let (fresh, records) = try OwnerStopFailure.preflight {
@@ -899,6 +1307,7 @@ public actor Monitor {
             else {
               throw StoreError.message("Owner protections or active claims changed; preserved.")
             }
+            try authority.reserve(proposal, operationID: eventID.uuidString, legacy: true)
           })
       }
       await self.finishOwnerStop(eventID, result: result)
@@ -907,7 +1316,10 @@ public actor Monitor {
       "Exact owner stop queued with a durable receipt. It will recheck activity, allow any raced build to finish, and verify exit independently. Do not poll or retry."
   }
   private func finishOwnerStop(_ id: UUID, result: Result<String, Error>) {
-    defer { busy = false }
+    defer {
+      busy = false
+      preparingOwnerOperation = nil
+    }
     guard let index = catalog.events.firstIndex(where: { $0.id == id }) else { return }
     switch result {
     case .success(let message):
@@ -959,9 +1371,12 @@ public actor Monitor {
         "Cache inventory expired, free-space target met, or an exact record was already attempted. Preserve it."
       )
     }
-    return try BuildKitCache.preview(
+    let plan = try BuildKitCache.preview(
       inventory: inventory, recordIDs: recordIDs, policy: policy, usedTodayBytes: managedUsedToday()
     )
+    let proposal = try intentLedger().present(.cache(plan))
+    try intentLedger().check(proposal, legacy: true)
+    return plan
   }
   public func startManagedCache(_ plan: BuildKitCache.Plan, rationale: String) throws -> String {
     try requireFullDiskAccess()
@@ -980,6 +1395,8 @@ public actor Monitor {
     catalog.managedCacheAttempts =
       (catalog.managedCacheAttempts ?? []) + [
         ManagedCacheAttempt(
+          fixture: try FixtureProvenance.load(root: store.root).matches(
+            CleanupProposal.cache(plan).resources),
           plan: durablePlan, date: Date(),
           outcome: "prepared", receipt: nil,
           detail: "Owner cache decision: " + rationale
@@ -989,6 +1406,8 @@ public actor Monitor {
     state.catalog = catalog
     busy = true
     let operationStore = store
+    let authority = try intentLedger()
+    let proposal = try authority.present(.cache(plan))
     Task.detached(priority: .utility) { [self] in
       let result = Result { () throws -> BuildKitCache.Receipt in
         guard self.accessCheck().canScan,
@@ -1005,6 +1424,7 @@ public actor Monitor {
               throw StoreError.message(
                 "Disk authorization or free-space target changed; preserved.")
             }
+            try authority.reserve(proposal, operationID: plan.id.uuidString, legacy: true)
           })
       }
       await self.finishManagedCache(plan.id, result: result)
@@ -1036,8 +1456,16 @@ public actor Monitor {
 
   public func previewTargets(_ ids: [String], callerPID: Int32) throws -> [Observation] {
     try requireFullDiskAccess()
-    let before = refresh()
-    guard before.error == nil, !before.partial,
+    _ = refresh()
+    let targets = try checkedProcessTargets(ids, callerPID: callerPID, leases: store.leases())
+    let proposal = try intentLedger().present(processProposal(targets))
+    try intentLedger().check(proposal, legacy: true)
+    return targets
+  }
+  private func checkedProcessTargets(_ ids: [String], callerPID: Int32, leases: [Lease]) throws
+    -> [Observation]
+  {
+    guard state.error == nil, !state.partial,
       !ids.isEmpty, ids.count <= 64, Set(ids).count == ids.count,
       let callerAncestors = AgentSafety.ancestors(of: callerPID),
       let ownAncestors = AgentSafety.ancestors(of: getpid())
@@ -1046,7 +1474,6 @@ public actor Monitor {
         "Complete visibility and 1–64 distinct process identities are required.")
     }
     let protectedPIDs = callerAncestors.union(ownAncestors)
-    let leases = try store.leases()
     var targets = [Observation]()
     for id in ids {
       guard let r = catalog.records[id], r.missingSince == nil else {
@@ -1139,8 +1566,20 @@ public actor Monitor {
     event.cpuSecondsSavedEstimate = event.cpuSavingsRate == nil ? nil : 0
     event.responseBeforeSamples = responseBefore
     event.responseBeforeMS = responseBefore.flatMap(Responsiveness.median)
+    event.fixture = try FixtureProvenance.load(root: store.root).matches(
+      targets.map { $0.identity.key })
     catalog.events.append(event)
     try checkpoint()
+    let proposal = try intentLedger().present(processProposal(targets))
+    do {
+      try intentLedger().reserve(proposal, operationID: event.id.uuidString, legacy: true)
+    } catch {
+      catalog.events[catalog.events.count - 1].outcome = "refused"
+      catalog.events[catalog.events.count - 1].detail =
+        "No signal dispatched: " + error.localizedDescription
+      try checkpoint()
+      throw error
+    }
     var failures = [String]()
     for target in targets {
       let code = native.terminate(target)

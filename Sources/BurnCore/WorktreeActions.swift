@@ -12,6 +12,7 @@ extension WorktreeService {
           "Retirement requires exact managed identity, complete inspection and no active consumer."
         ]).joined(separator: " "))
     }
+    try intentLedger().veto(["worktree:" + r.id])
     guard
       !(try store.values(WorktreeOperation.self, kind: "operation")).contains(where: {
         $0.worktreeID == r.id && $0.phase == "uncertain"
@@ -78,6 +79,60 @@ extension WorktreeService {
       }
     }
   }
+  /// Readiness for an explicit human decision can include unmanaged, dirty
+  /// checkouts. This does not adopt, confirm or authorize anything by itself.
+  func eligibleForDecision(_ original: WorktreeRecord) throws {
+    var row = original
+    row.managed = true
+    row.confirmedRevision = row.revision
+    try eligible(row, dirty: true, automatic: false)
+  }
+  /// Native inbox only; no agent request route. The initial human approval is
+  /// bound to the pre-adoption semantic revision, including claims and policy.
+  public func retireApprovedFinding(_ id: String, revision: String) async throws
+    -> WorktreeOperation
+  {
+    guard !executing else { throw StoreError.message("Another worktree operation is running.") }
+    let ledger = try intentLedger()
+    var row = try await inspect(id)
+    let before = try proposal(row, ready: true)
+    guard before.revision == revision else {
+      throw StoreError.message("Worktree or owner evidence changed. Review again.")
+    }
+    try ledger.check(before)
+    try eligibleForDecision(row)
+    var adoptedRevision: String?
+    do {
+      row.managed = true
+      row.confirmedRevision = row.revision
+      row.confirmedAt = Date()
+      try store.put(row, kind: "record", id: row.id)
+      let current = try ledger.present(proposal(row, ready: true))
+      adoptedRevision = current.revision
+      try ledger.decide(
+        current.id, revision: current.revision, decision: "approve",
+        reason:
+          "Native operator approved adoption, encrypted preservation and retirement of this exact checkout."
+      )
+      let plan = try await preview(
+        .init("preview_dirty", id: row.id, revision: row.revision),
+        caller: "native-operator", dirty: true, automatic: false, interactive: true)
+      return try await retire(plan.token, caller: "native-operator", dirty: true)
+    } catch {
+      try? ledger.revokeApproval(before.id, revision: before.revision)
+      if let adoptedRevision { try? ledger.revokeApproval(before.id, revision: adoptedRevision) }
+      // Adoption is an explicit lasting choice, but a failed retirement must
+      // never leave its temporary confirmation available to another caller.
+      if var retained = try? record(row.id), !retained.retired,
+        retained.confirmedRevision == row.revision
+      {
+        retained.confirmedRevision = nil
+        retained.confirmedAt = nil
+        try? store.put(retained, kind: "record", id: retained.id)
+      }
+      throw error
+    }
+  }
   func preview(
     _ q: WorktreeRequest, caller: String, dirty: Bool, automatic: Bool, interactive: Bool = false
   ) async throws -> WorktreePlan {
@@ -86,6 +141,8 @@ extension WorktreeService {
       throw StoreError.message("Worktree changed; inspect and review again.")
     }
     try eligible(r, dirty: dirty, automatic: automatic)
+    let proposal = try intentLedger().present(proposal(r, ready: true))
+    try intentLedger().check(proposal, legacy: true)
     plans = plans.filter { (0...60).contains(Date().timeIntervalSince($0.value.created)) }
     guard plans.count < 100 else { throw StoreError.message("Preview queue is full.") }
     let p = WorktreePlan(
@@ -100,10 +157,12 @@ extension WorktreeService {
   func operation(_ r: WorktreeRecord, kind: String) throws -> WorktreeOperation {
     let id = UUID().uuidString.lowercased()
     let recovery = store.root.appendingPathComponent("worktree-recovery").appendingPathComponent(id)
-    return WorktreeOperation(
+    var op = WorktreeOperation(
       id: id, worktreeID: r.id, originalPath: r.path, repository: r.repository,
       head: r.head ?? "", phase: "prepared", kind: kind, date: Date(), recoveryPath: recovery.path,
       detail: "Prepared preservation. No files removed or storage credit.", allocated: r.allocated)
+    op.fixture = try FixtureProvenance.load(root: store.root).matches(["worktree:" + r.id])
+    return op
   }
   func save(_ operation: WorktreeOperation) throws {
     try store.put(operation, kind: "operation", id: operation.id)
@@ -140,6 +199,7 @@ extension WorktreeService {
     defer { withExtendedLifetime(repositoryLock) {} }
     var op = try operation(r, kind: dirty ? "dirty" : "clean")
     try save(op)
+    var dispatched = false
     do {
       op.phase = "preserving"
       op.detail =
@@ -164,6 +224,7 @@ extension WorktreeService {
         try claimRevision(r.id) == plan.claimRevision, try policy().revision == plan.policyRevision
       else { throw StoreError.message("Work changed during preservation; original retained.") }
       try eligible(fresh, dirty: dirty, automatic: plan.caller.hasSuffix("|automatic"))
+      let proposal = try intentLedger().present(proposal(fresh, ready: true))
       if quarantine {
         let parent = store.root.appendingPathComponent("worktree-quarantine")
         try FileManager.default.createDirectory(
@@ -177,6 +238,8 @@ extension WorktreeService {
         op.quarantinePath = destination
         op.phase = "moving"
         try save(op)
+        try intentLedger().reserve(proposal, operationID: op.id, legacy: true)
+        dispatched = true
         _ = try WorktreeGit.run(
           r.repository, ["worktree", "move", "--", r.path, destination], seconds: 60)
         op.quarantineIdentity = try WorktreeInspection.identity(destination)
@@ -189,11 +252,15 @@ extension WorktreeService {
           try save(op)
           try store.put(quarantined, kind: "record", id: r.id)
         }
+        // Projection is retryable; its failure cannot rewrite a committed native receipt.
+        try? intentLedger().project(operationID: op.id, outcome: "quarantined")
         return op
       }
       op.phase = "removing"
       try save(op)
       let before = try WorkspaceSafety.freeBytes(r.path)
+      try intentLedger().reserve(proposal, operationID: op.id, legacy: true)
+      dispatched = true
       _ = try WorktreeGit.run(
         r.repository, ["worktree", "remove"] + (dirty ? ["--force"] : []) + ["--", r.path],
         seconds: 60)
@@ -221,13 +288,16 @@ extension WorktreeService {
         try save(op)
         try store.put(retired, kind: "record", id: r.id)
       }
+      try? intentLedger().project(operationID: op.id, outcome: "verified")
       return op
     } catch {
       op.interruptedPhase = op.phase
       op.diskCredit = 0
-      op.phase = ["moving", "removing", "verifying"].contains(op.phase) ? "uncertain" : "failed"
+      op.phase = dispatched ? "uncertain" : "failed"
       op.detail = error.localizedDescription + " Recovery retained; no credit."
       try? save(op)
+      try? intentLedger().project(
+        operationID: op.id, outcome: op.phase == "failed" ? "refused" : "uncertain")
       throw error
     }
   }
@@ -273,6 +343,10 @@ extension WorktreeService {
     }
   }
   func restore(_ q: WorktreeRequest) async throws -> WorktreeOperation {
+    guard !executing else {
+      throw StoreError.message(
+        "Another worktree operation is running; recovery can be retried when it finishes.")
+    }
     guard let id = q.id, let path = q.path,
       var op = try store.value(WorktreeOperation.self, kind: "operation", id: id),
       !op.purged, let digest = op.archiveDigest
@@ -281,21 +355,26 @@ extension WorktreeService {
     }
     executing = true
     defer { executing = false }
-    let key = try await readRecoveryKey(interactiveExistingKey)
     let captured = op
     var attempt = WorktreeRestoreAttempt(
       id: UUID().uuidString, recoveryID: op.id, destination: path,
       phase: "prepared", date: Date(),
       detail: "Restoration requested into a new directory. Original archive retained.")
     try store.put(attempt, kind: "restore", id: attempt.id)
+    let feedbackWarning = intent?.recordRecovery(
+      operationID: op.id,
+      fallback: (try? record(op.worktreeID)).map { CleanupProposal.worktree($0, ready: false) },
+      attemptID: attempt.id)
     do {
+      let key = try await readRecoveryKey(interactiveExistingKey)
       try await runWork {
         try WorktreeRecovery.restore(captured, destination: path, key: key, digest: digest)
       }
       op.restoredPaths.append(path)
       op.purgePending = false
       attempt.phase = "completed"
-      attempt.detail = "Independent restoration verified."
+      attempt.detail =
+        "Independent restoration verified." + (feedbackWarning.map { " " + $0 } ?? "")
       try store.transaction {
         try save(op)
         try store.put(attempt, kind: "restore", id: attempt.id)
@@ -310,6 +389,7 @@ extension WorktreeService {
     }
   }
   func finishQuarantine(_ q: WorktreeRequest) async throws -> WorktreeOperation {
+    guard !executing else { throw StoreError.message("Another worktree operation is running.") }
     guard let id = q.id,
       var op = try store.value(WorktreeOperation.self, kind: "operation", id: id),
       op.phase == "quarantined", !op.purged, q.revision == op.archiveDigest,
@@ -357,10 +437,30 @@ extension WorktreeService {
     else {
       throw StoreError.message("Quarantine content, identity, protection or consumers changed.")
     }
-    op.phase = "removing"
-    try save(op)
+    if let prior = op.finishPhase,
+      ["verified", "refused", "uncertain", "reconciled"].contains(prior)
+    {
+      try intentLedger().project(operationID: op.finishID ?? op.id + ":finish", outcome: prior)
+    }
+    let finishID = op.id + ":finish:" + UUID().uuidString
+    var dispatched = false
     do {
       let before = try WorkspaceSafety.freeBytes(path)
+      let ledger = try intentLedger()
+      var proposal = CleanupProposal.worktree(final, ready: true)
+      proposal.revision += "|finish-quarantine"
+      proposal = try ledger.present(proposal)
+      // This management-only route requires the exact human confirmation above.
+      try ledger.decide(
+        proposal.id, revision: proposal.revision, decision: "approve", reason: q.evidence ?? "")
+      op.phase = "removing"
+      op.finishPhase = "prepared"
+      op.finishID = finishID
+      op.finishHistory = op.finishHistory ?? [:]
+      op.finishHistory?[finishID] = "prepared"
+      try save(op)
+      try ledger.reserve(proposal, operationID: finishID)
+      dispatched = true
       _ = try WorktreeGit.run(
         op.repository, ["worktree", "remove", "--force", "--", path], seconds: 60)
       guard !FileManager.default.fileExists(atPath: path),
@@ -373,13 +473,21 @@ extension WorktreeService {
       op.phase = "completed"
       op.completedAt = Date()
       op.detail = "Quarantine retirement verified; independent recovery retained."
+      op.finishPhase = "verified"
+      op.finishHistory?[finishID] = "verified"
       try save(op)
+      try? ledger.project(operationID: finishID, outcome: "verified")
       return op
     } catch {
-      op.phase = "uncertain"
+      op.phase = dispatched ? "uncertain" : "quarantined"
+      op.finishPhase = dispatched ? "uncertain" : "refused"
+      op.finishHistory = op.finishHistory ?? [:]
+      op.finishHistory?[finishID] = op.finishPhase
       op.diskCredit = 0
       op.detail = error.localizedDescription
       try? save(op)
+      try? intentLedger().project(
+        operationID: finishID, outcome: dispatched ? "uncertain" : "refused")
       throw error
     }
   }

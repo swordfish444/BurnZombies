@@ -2,7 +2,7 @@
 
 The observer combines bounded passive Codex/Claude metadata with native producer evidence. Failed passive lookups now retry with bounded backoff, and bundled helper runtimes can supply evidence without losing app-process execution protections.
 
-Supported Gradle 8.14.6 daemons expose exact owner identity, authenticated idle/busy state, last activity, memory and live children. The independent model can select an idle owner for its own stop-when-idle protocol; no session marker or fabricated completion claim is required. Unknown workers remain protected until positive lifecycle evidence or a supported owner operation exists. Whole-machine observation does not imply universal process cleanup coverage.
+Supported Gradle 8.14.6 and 9.8.2 daemons expose exact owner identity, authenticated idle/busy state, last activity, memory and live children. The independent model can select an idle owner for its own stop-when-idle protocol; no session marker or fabricated completion claim is required. Unknown workers remain protected until positive lifecycle evidence or a supported owner operation exists. Whole-machine observation does not imply universal process cleanup coverage.
 
 Storage uses the same division: model selection, exact owner-backed operation, native revalidation and verified receipts. Current scope and limits are in [Disk cleanup](DISK-CLEANUP.md) and [Safety](SAFETY.md).
 

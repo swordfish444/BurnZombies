@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Private machine setup and owned reviewer cancellation; never launches the app."""
-import json, os, pathlib, signal, subprocess, tempfile, time, shutil
+import json, os, pathlib, signal, subprocess, tempfile, time, shutil, sqlite3
 repo = pathlib.Path(__file__).resolve().parents[1]
 cli = repo / '.build/debug/burnzombies'
 with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
@@ -20,6 +20,10 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
         assert config['harness'] == harness and config['enabled']
         assert config['launcher'] == str(cli.resolve())
         assert config['executable'].startswith(str(fake))
+        with sqlite3.connect(state/'intent.sqlite') as ledger:
+            value = ledger.execute("select payload from documents where kind='setting' and id='legacy-authority'").fetchone()[0]
+            assert json.loads(value) is False, 'Fresh setup granted legacy cleanup authority'
+            assert ledger.execute("select count(*) from documents where kind in ('decision','operation','rule')").fetchone()[0] == 0
         before = (state/'machine-review.json').read_bytes()
         subprocess.run(command, env=env, check=True, capture_output=True)
         assert (state/'machine-review.json').read_bytes() == before
@@ -31,11 +35,13 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
         subprocess.run(command + selection, env=env, check=True, capture_output=True)
         config = json.loads((state/'machine-review.json').read_text())
         config['enabled'] = False
+        config['huntIntervalHours'] = 8
         (state/'machine-review.json').write_text(json.dumps(config))
         subprocess.run(command, env=env, check=True, capture_output=True)
         retained = json.loads((state/'machine-review.json').read_text())
         assert retained['model'] == 'example-model' and retained.get('reasoningEffort') == config.get('reasoningEffort')
         assert retained['enabled'] is False, 'Reinstall re-enabled disabled reviews'
+        assert retained['huntIntervalHours'] == 8, 'Reinstall reset the hunt schedule'
         retained['enabled'] = True
         (state/'machine-review.json').write_text(json.dumps(retained))
         prompt = root/'prompt.txt'; prompt.write_text('Only capture invocation arguments. No real model is invoked.')
@@ -58,6 +64,28 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
         subprocess.run(command+['--model','default','--thinking','default'],env=env,check=True,capture_output=True)
         reset = json.loads((state/'machine-review.json').read_text())
         assert reset.get('model') is None and reset.get('reasoningEffort') is None
+        if harness in ['codex', 'claude']:
+            subprocess.run(command+['--observe-only'],env=env,check=True,capture_output=True)
+            assert json.loads((state/'machine-review.json').read_text())['enabled'] is False
+            report = subprocess.run([str(cli),'doctor'],env=dict(env,BURNZOMBIES_HOME=str(state)),check=True,capture_output=True,text=True,timeout=15)
+            doctor = json.loads(report.stdout)
+            assert doctor['configuredHarness'] == harness and doctor['configuredExecutableAvailable']
+            assert doctor['mcpServerAvailable'] and not doctor['cleanupRequested']
+            assert not doctor['backgroundReviewsEnabled'] and not doctor['appResponding']
+    # Installer setup and app migration use the same exclusive migration lock.
+    for iteration in range(50):
+        state=root/f'concurrent-migration-{iteration}'
+        command=[str(cli),'setup','--harness','codex','--observe-only','--root',str(state)]
+        first=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        second=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        for child in (first,second):
+            stdout,stderr=child.communicate(timeout=15)
+            assert child.returncode==0, (stdout,stderr)
+        receipt=json.loads((state/'intent-migration.json').read_text())
+        with sqlite3.connect(state/'intent.sqlite') as ledger:
+            identity=json.loads(ledger.execute("select payload from documents where kind='setting' and id='migration-identity'").fetchone()[0])
+            assert receipt['phase']=='complete' and receipt['id']==identity
+    print('PASS 50 concurrent two-process first migrations preserve one matching authority identity')
     # Verify the real Codex adapter sends one focused instruction block, not the full playbook twice.
     plan = root/'focused-plan.json'
     plan.write_text(json.dumps({'executable':str(fake/'codex'),'model':'example-model','effort':'low',
