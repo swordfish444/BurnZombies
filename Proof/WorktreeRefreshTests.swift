@@ -398,7 +398,11 @@ func nativeWorktreeRefreshProof() async throws {
           ])
       }
       let raw = try WorktreeGit.run(repo.path, ["worktree", "list", "--porcelain", "-z"])
-      repositoryRows += try WorktreeDiscovery.parse(raw, repository: repo.path).filter { !$0.main }
+      let common = WorkspaceSafety.canonical(
+        try WorktreeGit.line(
+          repo.path,
+          ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
+      repositoryRows += try WorktreeDiscovery.parse(raw, repository: common).filter { !$0.main }
     }
     func resetPendingRepositories() throws {
       for var row in repositoryRows {
