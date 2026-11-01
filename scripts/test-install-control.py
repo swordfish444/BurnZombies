@@ -64,12 +64,23 @@ assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/down
 shutil.copyfile(Path(os.environ['BZ_CONTROL_REMOTE'])/url.rsplit('/',1)[1],args[args.index('-o')+1])
 ''')
     curl.chmod(0o755)
+    mover = stubs / "mv"
+    mover.write_text(f"#!{sys.executable}\n" + '''import os,sys
+from pathlib import Path
+if os.environ.get('BZ_CONTROL_FAIL')=='move':
+    destination=Path(sys.argv[2]); destination.mkdir()
+    (destination/'partial-backup').write_text('incomplete cross-volume copy')
+    sys.exit(68)
+os.execv('/bin/mv',['/bin/mv']+sys.argv[1:])
+''')
+    mover.chmod(0o755)
     for client, observe, upgrade, failure in [
         ("codex", False, False, None), ("codex", True, False, None),
         ("claude", False, False, None), ("claude", True, False, None),
         ("auto", False, True, None), ("codex", False, True, "setup"),
         ("codex", True, True, "start"),
         ("codex", False, False, "setup"),
+        ("auto", False, True, "move"),
     ]:
         case = root / f"case-{client}-{observe}-{upgrade}-{failure}"
         case.mkdir()
@@ -78,15 +89,27 @@ shutil.copyfile(Path(os.environ['BZ_CONTROL_REMOTE'])/url.rsplit('/',1)[1],args[
         if upgrade:
             shutil.copytree(app, installed)
             (installed / "previous-marker").write_text("Exact previous bundle\n")
+        def hashes():
+            return {str(p.relative_to(installed)): hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in installed.rglob('*') if p.is_file()}
+        before = hashes() if upgrade else {}
+        private_tmp = case / "tmp"
+        private_tmp.mkdir()
         log = case / "calls.jsonl"
         env = dict(os.environ, PATH=str(stubs) + os.pathsep + os.environ["PATH"],
                    BURNZOMBIES_INSTALL_DIR=str(destination), BZ_CONTROL_REMOTE=str(remote),
-                   BZ_CONTROL_LOG=str(log), BZ_CONTROL_FAIL=failure or "")
+                   BZ_CONTROL_LOG=str(log), BZ_CONTROL_FAIL=failure or "", TMPDIR=str(private_tmp))
         result = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--mcp", client]
                                 + (["--observe-only"] if observe else []),
                                 env=env, capture_output=True, text=True, timeout=30)
         assert (result.returncode == 0) == (failure is None), result.stdout + result.stderr
         calls = [json.loads(line) for line in log.read_text().splitlines()]
+        if failure == "move":
+            assert calls == [["stop-observer", str(installed)], ["start-observer"]], calls
+            assert hashes() == before and not (installed/'previous.app').exists()
+            assert list(private_tmp.glob('burnzombies-install.*/previous.app/partial-backup'))
+            assert 'preserved both locations without merging' in result.stderr
+            continue
         assert ["setup", "--harness", client] + (["--observe-only"] if observe else []) in calls
         if failure is None or upgrade:
             assert calls[-1] == ["start-observer"], calls

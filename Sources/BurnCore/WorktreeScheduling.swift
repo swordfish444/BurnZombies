@@ -47,7 +47,10 @@ extension WorktreeService {
           publish: { _ in }, keepGoing: { ProcessInfo.processInfo.systemUptime < deadline })
       }
       guard current == generation, !executing else { return }
-      for row in result.records where paths.contains(row.path) { _ = try publish(row) }
+      for row in result.records
+      where paths.contains(row.path)
+        && !(row.revision.isEmpty && row.gaps == ["Detailed inspection pending."])
+      { _ = try publish(row) }
       guard result.gaps.isEmpty else {
         throw StoreError.message("Known worktree refresh: " + result.gaps.joined(separator: ". "))
       }

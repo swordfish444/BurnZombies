@@ -33,6 +33,10 @@ finish_install() {
     fi
     if [[ "$replacing" == true ]]; then rm -rf "$app"; fi
     if [[ -d "$work/previous.app" ]]; then
+      if [[ -e "$app" || -L "$app" ]]; then
+        echo "Rollback preserved both locations without merging: $app and $work/previous.app" >&2
+        return
+      fi
       if ! mv "$work/previous.app" "$app"; then
         echo "Rollback could not finish. Previous app preserved at $work/previous.app" >&2
         return

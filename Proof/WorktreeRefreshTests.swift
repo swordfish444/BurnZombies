@@ -7,6 +7,7 @@ func nativeWorktreeRefreshProof() async throws {
   let repository = base.appendingPathComponent("repository")
   let root = base.appendingPathComponent("state")
   let gate = base.appendingPathComponent("hold-worker")
+  let placeholder = base.appendingPathComponent("placeholder.json")
   let wrapper = base.appendingPathComponent("worker")
   defer { try? FileManager.default.removeItem(at: base) }
   try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
@@ -29,7 +30,12 @@ func nativeWorktreeRefreshProof() async throws {
   }
   func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
   try Data(
-    ("#!/bin/sh\nwhile [ -e \(quote(gate.path)) ]; do /bin/sleep 0.02; done\nexec "
+    ("#!/bin/sh\nif [ -e \(quote(gate.path)) ]; then /usr/bin/python3 -c "
+      + quote(
+        "import json,sys;print(json.dumps({'run':sys.argv[1],'record':json.load(open(sys.argv[2]))}),flush=True)"
+      )
+      + " \"$2\" " + quote(placeholder.path) + "; fi\n"
+      + "while [ -e \(quote(gate.path)) ]; do /bin/sleep 0.02; done\nexec "
       + quote(URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path)
       + " \"$@\"\n").utf8
   ).write(to: wrapper)
@@ -77,8 +83,13 @@ func nativeWorktreeRefreshProof() async throws {
       try Data(contentsOf: cursor), beforeCursor,
       "Known-checkout refresh replaced the full discovery frontier")
     guard var old = first.first else { throw StoreError.message("No completed native refresh") }
-    old.observedAt = Date().addingTimeInterval(-3600)
+    old.observedAt = Date().addingTimeInterval(-125)
     try db.put(old, kind: "record", id: old.id)
+    var pending = old
+    pending.revision = ""
+    pending.gaps = ["Detailed inspection pending."]
+    pending.observedAt = Date()
+    try JSONEncoder().encode(pending).write(to: placeholder)
     try Data().write(to: gate)
     let blocked = Date()
     do {
@@ -88,6 +99,10 @@ func nativeWorktreeRefreshProof() async throws {
       check(error.localizedDescription.contains("refresh"))
     }
     check(Date().timeIntervalSince(blocked) < 30, "Refresh exceeded its native process deadline")
+    let afterTimeout = try await service.snapshot().records.first { $0.id == old.id }!
+    check(
+      afterTimeout.gaps.isEmpty,
+      "Registration-only placeholder delayed the retry of an otherwise ready checkout")
     try FileManager.default.removeItem(at: gate)
     _ = try await service.tick()
     let observedAgain = try await service.snapshot().records.first { $0.id == old.id }!.observedAt
