@@ -226,11 +226,12 @@ public enum WorktreeInspection {
     r.observedAt = Date()
     r.blockers = []
     r.gaps = []
+    r.consumer = "unknown"
+    r.missing = !FileManager.default.fileExists(atPath: r.path)
     if r.main || r.bare { r.blockers.append("Main and bare repository anchors are protected.") }
     if r.ownerManaged {
       r.blockers.append("Use the owning application's supported archive/restore workflow.")
     }
-    if r.locked { r.blockers.append("Git worktree lock is set.") }
     guard !r.missing else {
       r.gaps = ["Registered directory is missing or its volume is unavailable."]
       return r
@@ -246,6 +247,8 @@ public enum WorktreeInspection {
         r.confirmedRevision = nil
       }
       r.identity = identity
+      r.locked = FileManager.default.fileExists(atPath: identity.administration + "/locked")
+      if r.locked { r.blockers.append("Git worktree lock is set.") }
       let headData = try WorktreeRecovery.read(
         URL(fileURLWithPath: identity.administration + "/HEAD"), limit: 8192)
       guard let headFile = String(data: headData, encoding: .utf8), headFile.hasSuffix("\n") else {

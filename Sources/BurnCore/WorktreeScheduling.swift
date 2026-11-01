@@ -24,14 +24,23 @@ extension WorktreeService {
   private func refreshKnownFindings() async throws {
     let p = try policy()
     let privateRoot = store.root.appendingPathComponent("workspaces").path
-    let selected = try records().filter { row in
+    func unblocked(_ row: WorktreeRecord) -> Bool {
+      row.consumer == "none observed" && row.blockers.isEmpty && row.gaps.isEmpty
+    }
+    let candidates = try records().filter { row in
       !row.main && !row.bare && !row.retired && !row.kept && !row.ownerManaged
         && Date().timeIntervalSince(row.observedAt)
-          >= (row.consumer == "none observed" && row.blockers.isEmpty && row.gaps.isEmpty
-            ? 120 : 900)
+          >= (unblocked(row) ? 120 : 900)
         && (p.roots.contains(where: { WorkspaceSafety.contains($0, row.path) })
           || WorkspaceSafety.contains(privateRoot, row.path))
-    }.sorted { $0.observedAt < $1.observedAt }.prefix(8)
+    }.sorted { $0.observedAt < $1.observedAt }
+    // Reserve progress for both cohorts even after long-lived missing records
+    // accumulate. Fill unused slots in oldest-first order.
+    var selected =
+      Array(candidates.filter(unblocked).prefix(6))
+      + Array(candidates.filter { !unblocked($0) }.prefix(2))
+    let reserved = Set(selected.map(\.id))
+    selected += candidates.filter { !reserved.contains($0.id) }.prefix(8 - selected.count)
     guard !selected.isEmpty else { return }
     refreshingFindings = true
     defer { refreshingFindings = false }
@@ -39,34 +48,31 @@ extension WorktreeService {
     let current = generation
     if let runner = scanRunner {
       let root = store.root
-      let paths = Set(rows.map(\.path))
+      let identities = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
       let deadline = ProcessInfo.processInfo.systemUptime + 25
       let result = try await runWork {
         runner.run(
-          roots: rows.map(\.path), root: root, knownOnly: true,
+          roots: rows.map(\.path), root: root, knownRecords: rows,
           publish: { _ in }, keepGoing: { ProcessInfo.processInfo.systemUptime < deadline })
       }
       guard current == generation, !executing else { return }
-      var inspected = Set<String>()
       for row in result.records
-      where paths.contains(row.path)
+      where identities[row.id]?.path == row.path && identities[row.id]?.repository == row.repository
         && !(row.revision.isEmpty && row.gaps == ["Detailed inspection pending."])
       {
         _ = try publish(row)
-        inspected.insert(row.path)
       }
-      let batchGaps = result.gaps.filter { !result.unavailablePaths.values.contains($0) }
-      guard result.workerCompleted, batchGaps.isEmpty else {
-        throw StoreError.message("Known worktree refresh: " + batchGaps.joined(separator: ". "))
-      }
-      for var row in rows where !inspected.contains(row.path) {
+      if !result.workerCompleted, let id = result.inspectionInProgress, var row = identities[id] {
+        // Only an explicitly started row gets an unknown observation. Deferred
+        // rows remain eligible next tick; a slow row backs off for 15 minutes.
         row.observedAt = Date()
         row.consumer = "unknown"
-        row.gaps = [
-          result.unavailablePaths[row.path]
-            ?? "Checkout not present or not registered at its recorded path."
-        ]
+        row.blockers = []
+        row.gaps = ["Inspection exceeded the bounded refresh budget; retry is deferred."]
         _ = try publish(row)
+      }
+      guard result.workerCompleted, result.gaps.isEmpty else {
+        throw StoreError.message("Known worktree refresh: " + result.gaps.joined(separator: ". "))
       }
       return
     }

@@ -65,6 +65,7 @@ struct WorktreeScanEnvelope: Codable {
   var complete = false
   var cursor: Int?
   var unavailablePath: String?
+  var inspecting: String?
 }
 
 public enum WorktreeScanWorker {
@@ -79,12 +80,12 @@ public enum WorktreeScanWorker {
     else { return 64 }
     func emit(
       _ record: WorktreeRecord? = nil, gap: String? = nil, complete: Bool = false,
-      cursor: Int? = nil, unavailablePath: String? = nil
+      cursor: Int? = nil, unavailablePath: String? = nil, inspecting: String? = nil
     ) {
       if let data = try? WorktreeEncoding.data(
         WorktreeScanEnvelope(
           run: run, record: record, gap: gap, complete: complete, cursor: cursor,
-          unavailablePath: unavailablePath)
+          unavailablePath: unavailablePath, inspecting: inspecting)
       ) {
         try? FileHandle.standardOutput.write(contentsOf: data + Data([10]))
       }
@@ -92,29 +93,43 @@ public enum WorktreeScanWorker {
     emit()
     let started = ProcessInfo.processInfo.systemUptime
     let knownOnly = ProcessInfo.processInfo.environment["BURNZOMBIES_WORKTREE_REFRESH"] == "1"
-    var roots = Array(arguments.dropFirst(2))
+    let roots = Array(arguments.dropFirst(2))
     if knownOnly {
-      roots = roots.filter { path in
-        guard FileManager.default.fileExists(atPath: path + "/.git") else {
-          emit(gap: "Checkout registration unavailable: " + path, unavailablePath: path)
-          return false
+      do {
+        let store = try Store()
+        let input = store.root.appendingPathComponent("worktree-refresh-" + run + ".json")
+        let rows = try JSONDecoder().decode(
+          [WorktreeRecord].self, from: store.read(input, limit: 2_097_152))
+        guard !rows.isEmpty, rows.count <= 8, Set(rows.map(\.id)).count == rows.count,
+          rows.map(\.path) == roots, rows.allSatisfy({ !$0.id.isEmpty && $0.id.utf8.count < 4096 })
+        else { return 64 }
+        // Inspect recorded identities directly. Rediscovery by path can report a
+        // replacement repository instead and leave the original row stale forever.
+        let consumers = WorktreeConsumerSnapshot(roots: roots)
+        if let gap = consumers.gap { emit(gap: "Consumer coverage: " + gap) }
+        for row in rows {
+          guard ProcessInfo.processInfo.systemUptime - started < 24 else {
+            emit(gap: "Known worktree refresh deferred remaining checkouts at its budget.")
+            return 0
+          }
+          emit(inspecting: row.id)
+          emit(WorktreeInspection.inspect(row, visibility: { consumers.state($0) }))
         }
-        return true
-      }
-      if roots.isEmpty {
         emit(complete: true, cursor: 0)
         return 0
+      } catch {
+        emit(gap: "Known worktree request unavailable: " + error.localizedDescription)
+        return 65
       }
     }
     let consumers = WorktreeConsumerSnapshot(roots: roots)
     if let gap = consumers.gap { emit(gap: "Consumer coverage: " + gap) }
     let result = WorktreeDiscovery.scan(
       roots: roots,
-      seconds: knownOnly ? max(0.001, 24 - (ProcessInfo.processInfo.systemUptime - started)) : 240,
+      seconds: 240,
       visibility: { consumers.state($0) }, inspectOffset: cursor, publish: { emit($0) },
       progress: { emit() },
-      checkpoint: ProcessInfo.processInfo.environment["BURNZOMBIES_WORKTREE_REFRESH"] == "1"
-        ? nil : Store.defaultRoot.appendingPathComponent("worktree-discovery-cursor.json"))
+      checkpoint: Store.defaultRoot.appendingPathComponent("worktree-discovery-cursor.json"))
     for (path, gap) in result.unavailablePaths { emit(gap: gap, unavailablePath: path) }
     for gap in result.gaps where !result.unavailablePaths.values.contains(gap) { emit(gap: gap) }
     emit(complete: true, cursor: result.nextInspection)
@@ -157,12 +172,17 @@ private final class WorktreeScanCapture {
         guard let item = try? JSONDecoder().decode(WorktreeScanEnvelope.self, from: line),
           item.run == run
         else { return false }
+        if let inspecting = item.inspecting {
+          guard !inspecting.isEmpty, inspecting.utf8.count < 4096 else { return false }
+          result.inspectionInProgress = inspecting
+        }
         if let record = item.record {
           guard record.path.hasPrefix("/"), record.path.utf8.count < 4096,
             result.records.count < 20_000
           else { return false }
           result.records.append(record)
           publish(record)
+          if result.inspectionInProgress == record.id { result.inspectionInProgress = nil }
         }
         if let gap = item.gap {
           let detail = String(gap.prefix(1000))
@@ -195,7 +215,7 @@ public final class WorktreeScanRunner: @unchecked Sendable {
   }
   public func run(
     roots: [String], root: URL, inspectOffset: Int = 0,
-    knownOnly: Bool = false,
+    knownRecords: [WorktreeRecord]? = nil,
     publish: @escaping @Sendable (WorktreeRecord) -> Void,
     keepGoing: @escaping @Sendable () -> Bool = { true }
   ) -> WorktreeDiscoveryResult {
@@ -209,6 +229,17 @@ public final class WorktreeScanRunner: @unchecked Sendable {
       return .init(gaps: ["Discovery root count exceeds bounded worker support."])
     }
     let run = UUID().uuidString
+    let requestFile = root.appendingPathComponent("worktree-refresh-" + run + ".json")
+    if let rows = knownRecords {
+      guard !rows.isEmpty, rows.count <= 8, rows.map(\.path) == roots else {
+        return .init(gaps: ["Invalid bounded known worktree request."])
+      }
+      do {
+        try Store(root: root).write(
+          WorktreeEncoding.data(rows), to: requestFile, limit: 2_097_152)
+      } catch { return .init(gaps: [error.localizedDescription]) }
+    }
+    defer { if knownRecords != nil { unlink(requestFile.path) } }
     let file = root.appendingPathComponent("worktree-scan-" + run)
     let fd = open(file.path, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard fd >= 0 else { return .init(gaps: ["Cannot create bounded worktree scan capture."]) }
@@ -223,7 +254,7 @@ public final class WorktreeScanRunner: @unchecked Sendable {
       } + [nil]
     var environment =
       (["PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "BURNZOMBIES_HOME=" + root.path]
-      + (knownOnly ? ["BURNZOMBIES_WORKTREE_REFRESH=1"] : [])).map {
+      + (knownRecords != nil ? ["BURNZOMBIES_WORKTREE_REFRESH=1"] : [])).map {
         (value: String) in
         value.withCString { strdup($0) }
       } + [nil]

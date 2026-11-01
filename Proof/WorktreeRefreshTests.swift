@@ -8,6 +8,7 @@ func nativeWorktreeRefreshProof() async throws {
   let root = base.appendingPathComponent("state")
   let gate = base.appendingPathComponent("hold-worker")
   let placeholder = base.appendingPathComponent("placeholder.json")
+  let activeMarker = base.appendingPathComponent("inspecting.json")
   let starts = base.appendingPathComponent("worker-starts")
   let wrapper = base.appendingPathComponent("worker")
   defer { try? FileManager.default.removeItem(at: base) }
@@ -33,9 +34,14 @@ func nativeWorktreeRefreshProof() async throws {
   try Data(
     ("#!/bin/sh\nprintf 'started\\n' >> \(quote(starts.path))\nif [ -e \(quote(gate.path)) ]; then /usr/bin/python3 -c "
       + quote(
-        "import json,sys;print(json.dumps({'run':sys.argv[1],'record':json.load(open(sys.argv[2]))}),flush=True)"
+        "import json,sys;print(json.dumps({'run':sys.argv[1],'complete':False,'record':json.load(open(sys.argv[2]))}),flush=True)"
       )
       + " \"$2\" " + quote(placeholder.path) + "; fi\n"
+      + "if [ -e " + quote(activeMarker.path) + " ]; then /usr/bin/python3 -c "
+      + quote(
+        "import json,sys;print(json.dumps({'run':sys.argv[1],'complete':False,'inspecting':json.load(open(sys.argv[2]))}),flush=True)"
+      )
+      + " \"$2\" " + quote(activeMarker.path) + "; fi\n"
       + "while [ -e \(quote(gate.path)) ]; do /bin/sleep 0.02; done\nexec "
       + quote(URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path)
       + " \"$@\"\n").utf8
@@ -101,6 +107,7 @@ func nativeWorktreeRefreshProof() async throws {
       check(error.localizedDescription.contains("refresh"))
     }
     check(Date().timeIntervalSince(blocked) < 30, "Refresh exceeded its native process deadline")
+    check(Date().timeIntervalSince(blocked) >= 24, "Worker fixture did not reach its timeout")
     let afterTimeout = try await service.snapshot().records.first { $0.id == old.id }!
     check(
       afterTimeout.gaps.isEmpty,
@@ -111,6 +118,37 @@ func nativeWorktreeRefreshProof() async throws {
     check(
       observedAgain > blocked,
       "Timed-out refresh permanently suppressed observation")
+    var slow = try await service.snapshot().records.first { $0.id == old.id }!
+    var deferred = try await service.snapshot().records.first { !$0.main && $0.id != old.id }!
+    slow.observedAt = Date().addingTimeInterval(-130)
+    deferred.observedAt = Date().addingTimeInterval(-125)
+    try db.put(slow, kind: "record", id: slow.id)
+    try db.put(deferred, kind: "record", id: deferred.id)
+    try JSONEncoder().encode(slow.id).write(to: activeMarker)
+    try Data().write(to: gate)
+    let slowStarted = Date()
+    do {
+      _ = try await service.tick()
+      failTest("Active inspection timeout silently succeeded")
+    } catch { check(error.localizedDescription.contains("refresh")) }
+    check(
+      Date().timeIntervalSince(slowStarted) >= 24,
+      "Active inspection fixture did not reach its timeout")
+    let timedOut = try await service.snapshot().records.first { $0.id == slow.id }!
+    check(timedOut.observedAt >= slowStarted && timedOut.consumer == "unknown")
+    check(timedOut.gaps.contains { $0.contains("bounded refresh budget") })
+    equal(
+      try await service.snapshot().records.first { $0.id == deferred.id }!.observedAt,
+      deferred.observedAt, "Deferred checkout was incorrectly stamped as inspected")
+    try FileManager.default.removeItem(at: gate)
+    try FileManager.default.removeItem(at: activeMarker)
+    _ = try await service.tick()
+    let afterSlow = try await service.snapshot()
+    equal(afterSlow.records.first { $0.id == slow.id }!.observedAt, timedOut.observedAt)
+    check(afterSlow.records.first { $0.id == deferred.id }!.observedAt >= slowStarted)
+    let slowCalls = try Data(contentsOf: starts)
+    _ = try await service.tick()
+    equal(try Data(contentsOf: starts), slowCalls, "Slow checkout monopolized the next tick")
     let vanished = Array(rows.prefix(2))
     _ = try WorktreeGit.run(repository.path, ["worktree", "remove", vanished[0].path])
     try FileManager.default.removeItem(atPath: vanished[1].path)
@@ -154,12 +192,52 @@ func nativeWorktreeRefreshProof() async throws {
         try Data(contentsOf: path.appendingPathComponent("control")),
         Data("replacement must survive".utf8))
     }
+    // A real replacement repository at the exact old path must not stand in for
+    // the old repository identity, nor keep the old row eligible every tick.
+    _ = try WorktreeGit.run(vanished[0].path, ["init", "--initial-branch=main"])
+    var replaced = try await service.snapshot().records.first { $0.id == vanished[0].id }!
+    replaced.observedAt = Date().addingTimeInterval(-901)
+    try db.put(replaced, kind: "record", id: replaced.id)
+    let replacementStarted = Date()
+    _ = try await service.tick()
+    let replacement = try await service.snapshot().records.first { $0.id == replaced.id }!
+    check(replacement.observedAt >= replacementStarted && replacement.consumer == "unknown")
+    check(replacement.gaps.contains { $0.contains("recorded repository") })
+    let replacementProposal = try ledger.snapshot().proposals.first {
+      $0.resources == ["worktree:" + replaced.id]
+    }!
+    checkFalse(replacementProposal.ready)
+    let replacementCalls = try Data(contentsOf: starts)
+    _ = try await service.tick()
+    equal(
+      try Data(contentsOf: starts), replacementCalls, "Replacement repository caused a refresh loop"
+    )
+    equal(
+      try Data(contentsOf: URL(fileURLWithPath: replaced.path + "/control")),
+      Data("replacement must survive".utf8))
     var remaining = afterRemoval.records.first { !$0.main && !vanished.map(\.id).contains($0.id) }!
     remaining.observedAt = Date().addingTimeInterval(-125)
     try db.put(remaining, kind: "record", id: remaining.id)
     _ = try await service.tick()
     let rotated = try await service.snapshot().records.first { $0.id == remaining.id }!
     check(rotated.observedAt >= removedAt && rotated.consumer == "none observed")
+    // Eight older incomplete rows must not consume every slot ahead of the
+    // newer, ready row. Both cohorts must make progress on the same tick.
+    for var row in try await service.snapshot().records where !row.main {
+      row.observedAt = Date().addingTimeInterval(row.id == remaining.id ? -125 : -3600)
+      if row.id != remaining.id {
+        row.consumer = "unknown"
+        row.gaps = ["Fixture visibility gap"]
+      }
+      try db.put(row, kind: "record", id: row.id)
+    }
+    let fairStart = Date()
+    _ = try await service.tick()
+    let fairRows = try await service.snapshot().records.filter { !$0.main }
+    check(
+      fairRows.first { $0.id == remaining.id }!.observedAt >= fairStart,
+      "Older incomplete rows starved the healthy cohort")
+    equal(fairRows.filter { $0.observedAt >= fairStart }.count, 8)
     print(
       "PASS externally removed and manually missing checkouts become bounded row-level unknowns; remaining findings refresh without a permanent global error or repeated worker loop"
     )

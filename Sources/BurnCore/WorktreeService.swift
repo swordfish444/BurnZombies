@@ -254,6 +254,7 @@ public actor WorktreeService {
       r.consumer = "in use"
       r.blockers.append("\(active.count) owner claim(s) retain this worktree.")
     }
+    r.blockers = Array(Set(r.blockers)).sorted()
     r.readinessRevision = WorkEvidence.hash(
       r.consumer + "|" + r.blockers.sorted().joined(separator: "|") + "|"
         + r.gaps.sorted().joined(separator: "|"))
