@@ -2,6 +2,7 @@ import BurnCore
 import Foundation
 
 func nativeWorktreeRediscoveryProof() async throws {
+  let initialFailures = failures
   let base = URL(fileURLWithPath: "/private/tmp/bz-rediscovery-" + UUID().uuidString)
   let repo = base.appendingPathComponent("repository")
   let checkout = base.appendingPathComponent("checkout")
@@ -83,6 +84,12 @@ func nativeWorktreeRediscoveryProof() async throws {
     let repaired = try await service.snapshot().records.first { $0.id == before.id }!
     equal(repaired.gaps, [], "An older build's synthetic pending marker remained stuck")
     equal(repaired.observedAt, before.observedAt)
+    let repairedProposal = try ledger.snapshot().proposals.first { $0.id == proposal.id }!
+    check(repairedProposal.ready, "Repair did not restore readiness")
+    let repairedNotifications = try db.notificationProposals(now: Date())
+    check(
+      repairedNotifications.contains { $0.id == proposal.id },
+      "Repair did not restore notification eligibility")
     legacy.gaps.append("Real consumer visibility gap")
     legacy.consumer = "unknown"
     try records.put(legacy, kind: "record", id: legacy.id)
@@ -115,7 +122,11 @@ func nativeWorktreeRediscoveryProof() async throws {
     await service.shutdown()
     throw error
   }
-  print(
-    "PASS full-scan rediscovery preserves completed evidence, original observation time, ready inbox and notification eligibility without pretending a new inspection"
-  )
+  if failures == initialFailures {
+    print(
+      "PASS full-scan rediscovery preserves completed evidence, original observation time, ready inbox and notification eligibility without pretending a new inspection"
+    )
+  } else {
+    print("FAIL rediscovery checks: \(failures - initialFailures) failures")
+  }
 }

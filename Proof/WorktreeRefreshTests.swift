@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 
 func nativeWorktreeRefreshProof() async throws {
+  let initialFailures = failures
   try await nativeWorktreeRediscoveryProof()
   try worktreeDiscoveryFairnessProof()
   let base = URL(fileURLWithPath: "/private/tmp/bz-refresh-native-" + UUID().uuidString)
@@ -470,7 +471,11 @@ func nativeWorktreeRefreshProof() async throws {
     await service.shutdown()
     throw error
   }
-  print(
-    "PASS actual native consumer snapshot refresh: eight-row bound, ninth-row rotation, preserved discovery cursor, timed-out worker refusal/reaping and successful later observation"
-  )
+  if failures == initialFailures {
+    print(
+      "PASS actual native consumer snapshot refresh: eight-row bound, ninth-row rotation, preserved discovery cursor, timed-out worker refusal/reaping and successful later observation"
+    )
+  } else {
+    print("FAIL native refresh checks: \(failures - initialFailures) failures")
+  }
 }
