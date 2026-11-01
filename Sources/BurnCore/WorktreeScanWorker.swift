@@ -66,6 +66,7 @@ struct WorktreeScanEnvelope: Codable {
   var cursor: Int?
   var unavailablePath: String?
   var inspecting: String?
+  var deferred: Bool?
 }
 
 public enum WorktreeScanWorker {
@@ -80,12 +81,13 @@ public enum WorktreeScanWorker {
     else { return 64 }
     func emit(
       _ record: WorktreeRecord? = nil, gap: String? = nil, complete: Bool = false,
-      cursor: Int? = nil, unavailablePath: String? = nil, inspecting: String? = nil
+      cursor: Int? = nil, unavailablePath: String? = nil, inspecting: String? = nil,
+      deferred: Bool? = nil
     ) {
       if let data = try? WorktreeEncoding.data(
         WorktreeScanEnvelope(
           run: run, record: record, gap: gap, complete: complete, cursor: cursor,
-          unavailablePath: unavailablePath, inspecting: inspecting)
+          unavailablePath: unavailablePath, inspecting: inspecting, deferred: deferred)
       ) {
         try? FileHandle.standardOutput.write(contentsOf: data + Data([10]))
       }
@@ -105,15 +107,25 @@ public enum WorktreeScanWorker {
         else { return 64 }
         // Inspect recorded identities directly. Rediscovery by path can report a
         // replacement repository instead and leave the original row stale forever.
-        let consumers = WorktreeConsumerSnapshot(roots: roots)
-        if let gap = consumers.gap { emit(gap: "Consumer coverage: " + gap) }
+        var consumers: WorktreeConsumerSnapshot?
         for row in rows {
-          guard ProcessInfo.processInfo.systemUptime - started < 24 else {
-            emit(gap: "Known worktree refresh deferred remaining checkouts at its budget.")
+          // Reserve a useful inspection slice. Exhausting the batch is normal
+          // bounded progress, not a loss of the observations already completed.
+          guard ProcessInfo.processInfo.systemUptime - started < 9 else {
+            emit(complete: true, deferred: true)
             return 0
           }
           emit(inspecting: row.id)
-          emit(WorktreeInspection.inspect(row, visibility: { consumers.state($0) }))
+          emit(
+            WorktreeInspection.inspect(
+              row,
+              visibility: { path in
+                if consumers == nil {
+                  consumers = WorktreeConsumerSnapshot(roots: roots)
+                  if let gap = consumers?.gap { emit(gap: "Consumer coverage: " + gap) }
+                }
+                return consumers?.state(path) ?? -1
+              }))
         }
         emit(complete: true, cursor: 0)
         return 0
@@ -147,6 +159,7 @@ private final class WorktreeScanCapture {
   var progress = ProcessInfo.processInfo.systemUptime
   var result = WorktreeDiscoveryResult()
   var complete = false
+  var inspectionUptime: TimeInterval?
   init(
     fd: Int32, run: String, publish: @escaping @Sendable (WorktreeRecord) -> Void,
     keepGoing: @escaping @Sendable () -> Bool
@@ -175,6 +188,8 @@ private final class WorktreeScanCapture {
         if let inspecting = item.inspecting {
           guard !inspecting.isEmpty, inspecting.utf8.count < 4096 else { return false }
           result.inspectionInProgress = inspecting
+          result.inspectionStartedAt = Date()
+          inspectionUptime = ProcessInfo.processInfo.systemUptime
         }
         if let record = item.record {
           guard record.path.hasPrefix("/"), record.path.utf8.count < 4096,
@@ -182,7 +197,11 @@ private final class WorktreeScanCapture {
           else { return false }
           result.records.append(record)
           publish(record)
-          if result.inspectionInProgress == record.id { result.inspectionInProgress = nil }
+          if result.inspectionInProgress == record.id {
+            result.inspectionInProgress = nil
+            result.inspectionStartedAt = nil
+            inspectionUptime = nil
+          }
         }
         if let gap = item.gap {
           let detail = String(gap.prefix(1000))
@@ -195,6 +214,7 @@ private final class WorktreeScanCapture {
           result.nextInspection = cursor
         }
         complete = item.complete || complete
+        result.deferred = item.deferred == true || result.deferred
       }
     }
     return ProcessInfo.processInfo.systemUptime - progress < 30
@@ -284,6 +304,9 @@ public final class WorktreeScanRunner: @unchecked Sendable {
       )
     }
     capture.result.workerCompleted = status == 0 && capture.complete
+    if let started = capture.inspectionUptime {
+      capture.result.inspectionElapsed = ProcessInfo.processInfo.systemUptime - started
+    }
     return capture.result
   }
 }

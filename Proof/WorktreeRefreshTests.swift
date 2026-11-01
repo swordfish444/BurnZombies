@@ -9,6 +9,8 @@ func nativeWorktreeRefreshProof() async throws {
   let gate = base.appendingPathComponent("hold-worker")
   let placeholder = base.appendingPathComponent("placeholder.json")
   let activeMarker = base.appendingPathComponent("inspecting.json")
+  let lateMarker = base.appendingPathComponent("late-marker")
+  let deferral = base.appendingPathComponent("defer-worker")
   let starts = base.appendingPathComponent("worker-starts")
   let wrapper = base.appendingPathComponent("worker")
   defer { try? FileManager.default.removeItem(at: base) }
@@ -32,7 +34,14 @@ func nativeWorktreeRefreshProof() async throws {
   }
   func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
   try Data(
-    ("#!/bin/sh\nprintf 'started\\n' >> \(quote(starts.path))\nif [ -e \(quote(gate.path)) ]; then /usr/bin/python3 -c "
+    ("#!/bin/sh\nprintf 'started\\n' >> \(quote(starts.path))\n"
+      + "if [ -e " + quote(deferral.path) + " ]; then /usr/bin/python3 -c "
+      + quote(
+        "import json,sys;print(json.dumps({'run':sys.argv[1],'complete':True,'deferred':True}),flush=True)"
+      )
+      + " \"$2\"; exit 0; fi\n"
+      + "if [ -e " + quote(lateMarker.path) + " ]; then /bin/sleep 23.5; fi\n"
+      + "if [ -e \(quote(gate.path)) ]; then /usr/bin/python3 -c "
       + quote(
         "import json,sys;print(json.dumps({'run':sys.argv[1],'complete':False,'record':json.load(open(sys.argv[2]))}),flush=True)"
       )
@@ -108,6 +117,7 @@ func nativeWorktreeRefreshProof() async throws {
     }
     check(Date().timeIntervalSince(blocked) < 30, "Refresh exceeded its native process deadline")
     check(Date().timeIntervalSince(blocked) >= 24, "Worker fixture did not reach its timeout")
+    print("NATIVE_REFRESH_TIMEOUT placeholder elapsed=\(Date().timeIntervalSince(blocked))s")
     let afterTimeout = try await service.snapshot().records.first { $0.id == old.id }!
     check(
       afterTimeout.gaps.isEmpty,
@@ -134,6 +144,7 @@ func nativeWorktreeRefreshProof() async throws {
     check(
       Date().timeIntervalSince(slowStarted) >= 24,
       "Active inspection fixture did not reach its timeout")
+    print("NATIVE_REFRESH_TIMEOUT active elapsed=\(Date().timeIntervalSince(slowStarted))s")
     let timedOut = try await service.snapshot().records.first { $0.id == slow.id }!
     check(timedOut.observedAt >= slowStarted && timedOut.consumer == "unknown")
     check(timedOut.gaps.contains { $0.contains("bounded refresh budget") })
@@ -149,6 +160,57 @@ func nativeWorktreeRefreshProof() async throws {
     let slowCalls = try Data(contentsOf: starts)
     _ = try await service.tick()
     equal(try Data(contentsOf: starts), slowCalls, "Slow checkout monopolized the next tick")
+    var late = afterSlow.records.first { $0.id == deferred.id }!
+    late.observedAt = Date().addingTimeInterval(-125)
+    try db.put(late, kind: "record", id: late.id)
+    try JSONEncoder().encode(late.id).write(to: activeMarker)
+    try Data().write(to: lateMarker)
+    try Data().write(to: gate)
+    let lateStarted = Date()
+    do {
+      _ = try await service.tick()
+      failTest("Late-start interrupted worker silently succeeded")
+    } catch { check(error.localizedDescription.contains("refresh")) }
+    print("NATIVE_REFRESH_TIMEOUT late elapsed=\(Date().timeIntervalSince(lateStarted))s")
+    check(Date().timeIntervalSince(lateStarted) >= 24)
+    let afterLate = try await service.snapshot().records.first { $0.id == late.id }!
+    equal(afterLate.observedAt, late.observedAt, "Late-start row received a false slow-row stamp")
+    check(afterLate.gaps.isEmpty)
+    for file in [gate, lateMarker, activeMarker] { try FileManager.default.removeItem(at: file) }
+    try Data().write(to: deferral)
+    let deferredEvidence = try await service.tick()
+    check(deferredEvidence != nil, "Normal batch deferral suppressed review evidence")
+    equal(
+      try await service.snapshot().records.first { $0.id == late.id }!.observedAt, late.observedAt)
+    try FileManager.default.removeItem(at: deferral)
+    _ = try await service.tick()
+    let retriedLate = try await service.snapshot().records.first { $0.id == late.id }!
+    check(retriedLate.observedAt > lateStarted)
+    var concurrent = retriedLate
+    concurrent.observedAt = Date().addingTimeInterval(-125)
+    try db.put(concurrent, kind: "record", id: concurrent.id)
+    try JSONEncoder().encode(concurrent.id).write(to: activeMarker)
+    try Data().write(to: gate)
+    let concurrentID = concurrent.id
+    let manual = Task {
+      try await Task.sleep(for: .seconds(2))
+      return try await service.inspect(concurrentID)
+    }
+    let concurrentStarted = Date()
+    do {
+      _ = try await service.tick()
+      failTest("Concurrent inspection timeout silently succeeded")
+    } catch { check(error.localizedDescription.contains("refresh")) }
+    let manualResult = try await manual.value
+    let preserved = try await service.snapshot().records.first { $0.id == concurrentID }!
+    print(
+      "NATIVE_REFRESH_TIMEOUT concurrent elapsed=\(Date().timeIntervalSince(concurrentStarted))s")
+    check(Date().timeIntervalSince(concurrentStarted) >= 24)
+    check(manualResult.gaps.isEmpty && preserved.gaps.isEmpty)
+    equal(
+      preserved.observedAt, manualResult.observedAt, "Timeout overwrote a newer complete inspection"
+    )
+    for file in [gate, activeMarker] { try FileManager.default.removeItem(at: file) }
     let vanished = Array(rows.prefix(2))
     _ = try WorktreeGit.run(repository.path, ["worktree", "remove", vanished[0].path])
     try FileManager.default.removeItem(atPath: vanished[1].path)

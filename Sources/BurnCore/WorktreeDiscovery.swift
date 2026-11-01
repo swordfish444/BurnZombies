@@ -7,6 +7,9 @@ public struct WorktreeDiscoveryResult: Sendable {
   public var unavailablePaths: [String: String] = [:]
   public var workerCompleted = false
   public var inspectionInProgress: String?
+  public var inspectionStartedAt: Date?
+  public var inspectionElapsed: TimeInterval?
+  public var deferred = false
 }
 
 private struct WorktreeDiscoveryFrontier: Codable {

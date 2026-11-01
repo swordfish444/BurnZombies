@@ -36,9 +36,13 @@ extension WorktreeService {
     }.sorted { $0.observedAt < $1.observedAt }
     // Reserve progress for both cohorts even after long-lived missing records
     // accumulate. Fill unused slots in oldest-first order.
-    var selected =
-      Array(candidates.filter(unblocked).prefix(6))
-      + Array(candidates.filter { !unblocked($0) }.prefix(2))
+    let ready = Array(candidates.filter(unblocked).prefix(6))
+    let blocked = Array(candidates.filter { !unblocked($0) }.prefix(2))
+    var selected: [WorktreeRecord] = []
+    for index in 0..<max(ready.count, blocked.count) {
+      if index < ready.count { selected.append(ready[index]) }
+      if index < blocked.count { selected.append(blocked[index]) }
+    }
     let reserved = Set(selected.map(\.id))
     selected += candidates.filter { !reserved.contains($0.id) }.prefix(8 - selected.count)
     guard !selected.isEmpty else { return }
@@ -62,10 +66,13 @@ extension WorktreeService {
       {
         _ = try publish(row)
       }
-      if !result.workerCompleted, let id = result.inspectionInProgress, var row = identities[id] {
+      if !result.workerCompleted, let id = result.inspectionInProgress,
+        let started = result.inspectionStartedAt, (result.inspectionElapsed ?? 0) >= 15,
+        var row = identities[id]
+      {
         // Only an explicitly started row gets an unknown observation. Deferred
         // rows remain eligible next tick; a slow row backs off for 15 minutes.
-        row.observedAt = Date()
+        row.observedAt = started
         row.consumer = "unknown"
         row.blockers = []
         row.gaps = ["Inspection exceeded the bounded refresh budget; retry is deferred."]

@@ -237,6 +237,9 @@ public enum WorktreeInspection {
       return r
     }
     do {
+      guard FileManager.default.fileExists(atPath: r.path + "/.git") else {
+        throw StoreError.message("Checkout registration unavailable at its recorded path.")
+      }
       let identity = try identity(r.path)
       guard identity.common == r.repository else {
         throw StoreError.message("Worktree pointer no longer belongs to the recorded repository.")
