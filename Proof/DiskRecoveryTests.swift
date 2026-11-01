@@ -109,6 +109,7 @@ func diskRecoveryProof() async throws {
         try bad.remove(kind: "proposal", id: "during-restore")
         try FileManager.default.removeItem(at: latch)
         try await monitor.reconcileFindingFeedback()
+        isNil(await monitor.snapshot().inbox.error)
         throwsError(try ledger.veto(["fixture-output"]))
         try ledger.veto(["unrelated-output"])
         print(

@@ -178,6 +178,12 @@ private func proactiveWorktreeFreshnessProof() async throws {
   _ = try await service.tick()  // Ordinary observation only: no add_root or Hunt.
   var row = try await service.snapshot().records.first { $0.path == checkout.path }!
   checkFalse(row.ownerManaged)
+  // A new, merely idle checkout stays available in the inbox without a prompt.
+  isNil(try ledger.notificationCandidate())
+  let native = try WorktreeStore(root: root)
+  row.changedAt = Date().addingTimeInterval(-15 * 86400)
+  try native.put(row, kind: "record", id: row.id)
+  _ = try await service.snapshot()
   let digest = try ledger.notificationCandidate()!
   try ledger.delivered(digest)
   let intentDB = try WorktreeStore(root: root, databaseName: "intent.sqlite")
@@ -187,7 +193,6 @@ private func proactiveWorktreeFreshnessProof() async throws {
     Date().addingTimeInterval(-55 * 60), kind: "delivery",
     id: digest.id + ":" + digest.revision)
   isNil(try ledger.notificationCandidate())
-  let native = try WorktreeStore(root: root)
   row.observedAt = Date().addingTimeInterval(-6 * 60)
   try native.put(row, kind: "record", id: row.id)
   _ = try await service.snapshot()

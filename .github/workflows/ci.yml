@@ -24,6 +24,8 @@ jobs:
         run: scripts/test.sh --integration
       - name: Native large-descriptor worktree regression
         run: .build/debug/BurnProof --worktree-native
+      - name: Bounded native worktree finding refresh
+        run: .build/debug/BurnProof --worktree-refresh-native
       - name: Native worktree and recovery screens
         run: .build/debug/BurnZombiesApp --worktree-view-proof "$RUNNER_TEMP/bz-worktrees"
       - name: Transport with one cooperative worker

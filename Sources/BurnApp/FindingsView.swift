@@ -58,7 +58,9 @@ struct FindingsView: View {
               Text(
                 p.state == "review"
                   ? (p.ready && p.observed >= Date().addingTimeInterval(-300)
-                    ? "Needs your decision" : "Inspect or refresh evidence") : p.state.capitalized
+                    ? (p.action == .worktree && p.notificationEligible != true
+                      ? "Available for review" : "Needs your decision")
+                    : "Inspect or refresh evidence") : p.state.capitalized
               )
               .font(.caption).foregroundStyle(p.state == "kept" ? .green : .secondary)
               if p.fixture {

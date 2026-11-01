@@ -194,6 +194,17 @@ public actor WorktreeService {
   }
   func proposal(_ row: WorktreeRecord, ready: Bool) throws -> CleanupProposal {
     var value = CleanupProposal.worktree(row, ready: ready)
+    let owners = try claims(row.id)
+    let released =
+      !owners.isEmpty
+      && owners.allSatisfy {
+        $0.state == "released" && $0.head == row.head && $0.releasedRevision == row.revision
+      }
+    let staleDays = try policy().staleDays
+    value.notificationEligible =
+      released || row.confirmedRevision == row.revision
+      || (row.apparentIdleDays ?? 0) >= staleDays
+      || Date().timeIntervalSince(row.changedAt) >= Double(staleDays) * 86400
     value.nativeRevision = row.revision
     value.revision = WorkEvidence.hash(
       try [

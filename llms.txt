@@ -70,6 +70,8 @@ The resident app uses the installed Claude Code CLI and existing login, with foc
 
 Hunt now explicitly refreshes native evidence and invokes the selected reviewer; it is not an installation test. Native inventory continues without a model. Age, size, a finished chat turn or a merged PR alone never proves abandonment. Missing owner/consumer evidence preserves the resource.
 
+New idle worktrees appear for manual review without prompting. Worktree notifications require the configured stale age (fourteen days by default), an exact completion confirmation, or released current owners. These signals request attention; they do not grant cleanup authority.
+
 ## Decisions and recovery
 
 Findings shows the exact action, evidence, protection and recovery requirement. Keep protects that identity across action paths. Approval once applies to one semantic revision and is revalidated before dispatch. Recurring rules are separate grants with exact scope, cap, expiry and a one-item canary; success never expands them. Silence, dismissal and snooze never approve cleanup.

@@ -59,6 +59,10 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try await diskRecoveryProof() } catch { failTest("Disk recovery: \(error)") }
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.contains("--worktree-refresh-native") {
+      do { try await nativeWorktreeRefreshProof() } catch { failTest("Native refresh: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--approval-process") {
       do { try await approvalProcessProof() } catch { failTest("Process approval: \(error)") }
       exit(failures == 0 ? 0 : 1)

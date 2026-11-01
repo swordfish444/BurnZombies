@@ -69,6 +69,7 @@ shutil.copyfile(Path(os.environ['BZ_CONTROL_REMOTE'])/url.rsplit('/',1)[1],args[
         ("claude", False, False, None), ("claude", True, False, None),
         ("auto", False, True, None), ("codex", False, True, "setup"),
         ("codex", True, True, "start"),
+        ("codex", False, False, "setup"),
     ]:
         case = root / f"case-{client}-{observe}-{upgrade}-{failure}"
         case.mkdir()
@@ -87,10 +88,13 @@ shutil.copyfile(Path(os.environ['BZ_CONTROL_REMOTE'])/url.rsplit('/',1)[1],args[
         assert (result.returncode == 0) == (failure is None), result.stdout + result.stderr
         calls = [json.loads(line) for line in log.read_text().splitlines()]
         assert ["setup", "--harness", client] + (["--observe-only"] if observe else []) in calls
-        assert calls[-1] == ["start-observer"], calls
-        assert (installed / "previous-marker").exists() == bool(failure), calls
+        if failure is None or upgrade:
+            assert calls[-1] == ["start-observer"], calls
+        assert (installed / "previous-marker").exists() == bool(failure and upgrade), calls
         if upgrade:
             assert calls[0] == ["stop-observer", str(installed)], calls
-        if failure:
+        if failure and upgrade:
             assert "Previous app restored" in result.stderr
+        if failure and not upgrade:
+            assert not installed.exists()
     print("PASS stock macOS bash: Codex/Claude fresh installs with/without observe-only, upgrade, setup/start failure rollback and observer launch dispatch")

@@ -26,7 +26,9 @@ extension WorktreeService {
     let privateRoot = store.root.appendingPathComponent("workspaces").path
     let selected = try records().filter { row in
       !row.main && !row.bare && !row.retired && !row.kept && !row.ownerManaged
-        && Date().timeIntervalSince(row.observedAt) >= 120
+        && Date().timeIntervalSince(row.observedAt)
+          >= (row.consumer == "none observed" && row.blockers.isEmpty && row.gaps.isEmpty
+            ? 120 : 900)
         && (p.roots.contains(where: { WorkspaceSafety.contains($0, row.path) })
           || WorkspaceSafety.contains(privateRoot, row.path))
     }.sorted { $0.observedAt < $1.observedAt }.prefix(8)
@@ -35,14 +37,26 @@ extension WorktreeService {
     defer { refreshingFindings = false }
     let rows = Array(selected)
     let current = generation
-    let customVisibility = scanRunner == nil ? visibility : nil
+    if let runner = scanRunner {
+      let root = store.root
+      let paths = Set(rows.map(\.path))
+      let deadline = ProcessInfo.processInfo.systemUptime + 25
+      let result = try await runWork {
+        runner.run(
+          roots: rows.map(\.path), root: root, knownOnly: true,
+          publish: { _ in }, keepGoing: { ProcessInfo.processInfo.systemUptime < deadline })
+      }
+      guard current == generation, !executing else { return }
+      for row in result.records where paths.contains(row.path) { _ = try publish(row) }
+      guard result.gaps.isEmpty else {
+        throw StoreError.message("Known worktree refresh: " + result.gaps.joined(separator: ". "))
+      }
+      return
+    }
+    // Explicit proof visibility runs only against private bounded fixtures.
+    let visibility = visibility
     let fresh = try await runWork {
       let deadline = ProcessInfo.processInfo.systemUptime + 20
-      let consumers =
-        customVisibility == nil ? WorktreeConsumerSnapshot(roots: rows.map(\.path)) : nil
-      let visibility: @Sendable (String) -> Int32 = { path in
-        customVisibility?(path) ?? consumers!.state(path)
-      }
       var result: [WorktreeRecord] = []
       for row in rows {
         try Task.checkCancellation()

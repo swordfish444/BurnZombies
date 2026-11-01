@@ -21,6 +21,7 @@ public struct CleanupProposal: Codable, Sendable, Identifiable {
   public var revision: String
   public var nativeRevision: String?
   public var notificationReviewOnly: Bool?
+  public var notificationEligible: Bool?
   public var title: String
   public var detail: String
   public var path: String?

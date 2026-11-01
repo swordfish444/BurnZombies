@@ -24,10 +24,19 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/burnzombies-install.XXXXXX")"
 replacing=false
 finish_install() {
   status=$?
-  if [[ "$status" -ne 0 && "$replacing" == true ]]; then
-    rm -rf "$app"
+  if [[ "$status" -ne 0 ]]; then
+    if [[ "$replacing" == true && -x "$app/Contents/MacOS/burnzombies" ]]; then
+      if ! "$app/Contents/MacOS/burnzombies" stop-observer "$app"; then
+        echo "Rollback paused: the observer is still closing. Preserve $app and $work/previous.app" >&2
+        return
+      fi
+    fi
+    if [[ "$replacing" == true ]]; then rm -rf "$app"; fi
     if [[ -d "$work/previous.app" ]]; then
-      mv "$work/previous.app" "$app"
+      if ! mv "$work/previous.app" "$app"; then
+        echo "Rollback could not finish. Previous app preserved at $work/previous.app" >&2
+        return
+      fi
       if $launch; then "$app/Contents/MacOS/burnzombies" start-observer || true; fi
       echo 'Previous app restored.' >&2
     fi
@@ -66,7 +75,11 @@ if [[ -e "$app" || -L "$app" ]]; then
   [[ "$existing" == io.burnzombies.app ]] || { echo 'An unrelated app already occupies the install path.' >&2; exit 1; }
   # Finish the old observer before moving its running executable or database owner.
   "$work/BurnZombies.app/Contents/MacOS/burnzombies" stop-observer "$app"
-  mv "$app" "$work/previous.app"
+  if ! mv "$app" "$work/previous.app"; then
+    if $launch; then "$app/Contents/MacOS/burnzombies" start-observer || true; fi
+    echo 'Previous app could not be moved; update cancelled.' >&2
+    exit 1
+  fi
 fi
 replacing=true
 if ! ditto "$work/BurnZombies.app" "$app"; then

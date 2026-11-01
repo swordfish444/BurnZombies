@@ -90,10 +90,13 @@ public enum WorktreeScanWorker {
     let consumers = WorktreeConsumerSnapshot(roots: Array(arguments.dropFirst(2)))
     if let gap = consumers.gap { emit(gap: "Consumer coverage: " + gap) }
     let result = WorktreeDiscovery.scan(
-      roots: Array(arguments.dropFirst(2)), seconds: 240,
+      roots: Array(arguments.dropFirst(2)),
+      seconds: ProcessInfo.processInfo.environment["BURNZOMBIES_WORKTREE_REFRESH"] == "1"
+        ? 20 : 240,
       visibility: { consumers.state($0) }, inspectOffset: cursor, publish: { emit($0) },
       progress: { emit() },
-      checkpoint: Store.defaultRoot.appendingPathComponent("worktree-discovery-cursor.json"))
+      checkpoint: ProcessInfo.processInfo.environment["BURNZOMBIES_WORKTREE_REFRESH"] == "1"
+        ? nil : Store.defaultRoot.appendingPathComponent("worktree-discovery-cursor.json"))
     for gap in result.gaps { emit(gap: gap) }
     emit(complete: true, cursor: result.nextInspection)
     return 0
@@ -167,6 +170,7 @@ public final class WorktreeScanRunner: @unchecked Sendable {
   }
   public func run(
     roots: [String], root: URL, inspectOffset: Int = 0,
+    knownOnly: Bool = false,
     publish: @escaping @Sendable (WorktreeRecord) -> Void,
     keepGoing: @escaping @Sendable () -> Bool = { true }
   ) -> WorktreeDiscoveryResult {
@@ -193,7 +197,8 @@ public final class WorktreeScanRunner: @unchecked Sendable {
         value.withCString { strdup($0) }
       } + [nil]
     var environment =
-      ["PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "BURNZOMBIES_HOME=" + root.path].map {
+      (["PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "BURNZOMBIES_HOME=" + root.path]
+      + (knownOnly ? ["BURNZOMBIES_WORKTREE_REFRESH=1"] : [])).map {
         (value: String) in
         value.withCString { strdup($0) }
       } + [nil]

@@ -234,6 +234,7 @@ public final class WorktreeStore: @unchecked Sendable {
       SELECT payload FROM documents AS p WHERE kind='proposal'
       AND json_extract(payload,'$.state')='review' AND json_extract(payload,'$.ready')=1
       AND json_extract(payload,'$.fixture')=0 AND json_extract(payload,'$.observed') >= ?
+      AND (json_extract(payload,'$.action') != 'worktree' OR json_extract(payload,'$.notificationEligible')=1)
       AND coalesce(json_extract(payload,'$.snoozedUntil'),0) <= ?
       AND NOT EXISTS (SELECT 1 FROM documents AS n WHERE n.kind='notification-sent'
         AND n.id = p.id || ':' || json_extract(p.payload,'$.revision'))
