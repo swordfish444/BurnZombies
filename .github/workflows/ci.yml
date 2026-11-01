@@ -30,6 +30,8 @@ jobs:
         run: .build/debug/BurnZombiesApp --worktree-view-proof "$RUNNER_TEMP/bz-worktrees"
       - name: Large Findings window and visible notification controls
         run: .build/debug/BurnZombiesApp --findings-proof "$RUNNER_TEMP/bz-findings.png"
+      - name: Observer timer survives read-only status traffic
+        run: .build/debug/BurnZombiesApp --observer-schedule-proof
       - name: Transport with one cooperative worker
         run: LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 .build/debug/BurnProof --transport
       - name: Build universal candidate bundle

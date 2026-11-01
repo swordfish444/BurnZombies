@@ -76,7 +76,7 @@ struct WorktreesView: View {
         Image(systemName: "point.3.connected.trianglepath.dotted").foregroundStyle(BurnTheme.orange)
         Text("Worktrees").font(.title2.bold())
         Spacer()
-        if working { ProgressView().controlSize(.small) }
+        if working || loading { ProgressView().controlSize(.small) }
         if scanning {
           Button("Cancel scan") { Task { _ = try? await model.worktree(.init("cancel_scan")) } }
         }
@@ -141,8 +141,14 @@ struct WorktreesView: View {
             TextField("Search repository, branch or state", text: $search).textFieldStyle(
               .roundedBorder
             ).padding(12)
-            if inventory.totalRecords == nil && !model.demo {
+            if (inventory.totalRecords == nil && !model.demo)
+              || (rows.isEmpty && loading)
+            {
               ProgressView("Loading worktree inventory…")
+            } else if rows.isEmpty && !search.isEmpty {
+              ContentUnavailableView(
+                "No matching worktrees", systemImage: "magnifyingglass",
+                description: Text("Try a different repository, branch, path or state."))
             } else if rows.isEmpty {
               ContentUnavailableView(
                 "No worktrees discovered", systemImage: "folder.badge.questionmark",

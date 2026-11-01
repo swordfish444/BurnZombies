@@ -258,6 +258,12 @@ import UserNotifications
   private var agentSnapshotTask: Task<Void, Never>?
   private var reviewer: MachineReviewer?
   private var timer: Timer?
+  private var observationSuspended = false
+  private var observationStopped = false
+  private var notificationPermissionError: String?
+  #if DEBUG
+    private var timerDispatchForProof: (() -> Void)?
+  #endif
   var onUpdate: (() -> Void)?
   init(
     demo: Bool = CommandLine.arguments.contains("--demo"), accessPreferences: UserDefaults? = nil,
@@ -452,7 +458,7 @@ import UserNotifications
     schedule()
   }
   func refresh() {
-    guard !working, let monitor else { return }
+    guard !working, !observationSuspended, !observationStopped, let monitor else { return }
     working = true
     Task {
       _ = await monitor.refresh()
@@ -461,25 +467,46 @@ import UserNotifications
         atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
       pressure = Native().memoryPressure()
       working = false
+      guard !observationSuspended, !observationStopped else { return }
       if let selected = selection { selection = state.findings.first { $0.id == selected.id } }
       if state.error == nil {
         do {
-          if state.catalog.preferences.notifications,
-            let proposal = try await monitor.findingNotification()
-          {
-            try await FindingNotifications.deliver(
-              proposal, details: state.catalog.preferences.notificationDetails == true)
-            try await monitor.findingNotificationDelivered(proposal)
+          if state.catalog.preferences.notifications {
+            try await deliverFindingNotification(
+              next: { try await monitor.findingNotification() },
+              send: { proposal in
+                try await FindingNotifications.deliver(
+                  proposal, details: self.state.catalog.preferences.notificationDetails == true)
+              },
+              record: { try await monitor.findingNotificationDelivered($0) })
           }
         } catch { message = "Notification delivery unavailable: \(error.localizedDescription)" }
 
       }
+      guard !observationSuspended, !observationStopped else { return }
       onUpdate?()
       schedule()
-      Task { await monitor.worktreeTick() }
+      Task {
+        guard !observationSuspended, !observationStopped else { return }
+        await monitor.worktreeTick()
+      }
       // Observation continues on its own timer while a bounded review runs.
       if accessReady && state.error == nil && !state.partial { runScheduledHunt() }
     }
+  }
+  private func deliverFindingNotification(
+    next: () async throws -> CleanupProposal?,
+    send: (CleanupProposal) async throws -> Void,
+    record: (CleanupProposal) async throws -> Void
+  ) async throws {
+    guard !observationSuspended, !observationStopped else { return }
+    guard let proposal = try await next(), !observationSuspended, !observationStopped else {
+      return
+    }
+    try await send(proposal)
+    // A successful delivery must be recorded even if sleep/shutdown happened
+    // while the system notification service was answering.
+    try await record(proposal)
   }
   private func receiveReviewState(includeHunt: Bool = true) async {
     if let reviewer { machineReview = await reviewer.snapshot() }
@@ -491,25 +518,45 @@ import UserNotifications
       atPath: Store.defaultRoot.appendingPathComponent("review-request").path)
   }
   private func schedule() {
+    guard !observationSuspended, !observationStopped else { return }
+    let tolerance = min(10, state.interval / 6)
+    // Read-only agent traffic must never push observation or notification delivery
+    // into the future. A shorter verification cadence may bring it forward.
+    if let timer, timer.isValid,
+      timer.fireDate <= Date().addingTimeInterval(state.interval)
+    {
+      timer.tolerance = min(timer.tolerance, tolerance)
+      return
+    }
     timer?.invalidate()
     let next = Timer(timeInterval: state.interval, repeats: false) {
-      [weak self] _ in Task { @MainActor in self?.refresh() }
+      [weak self] _ in
+      Task { @MainActor in
+        #if DEBUG
+          self?.timerDispatchForProof?()
+        #endif
+        self?.refresh()
+      }
     }
-    next.tolerance = min(10, state.interval / 6)
+    next.tolerance = tolerance
     // MainActor execution does not select a Foundation run loop. Attach explicitly,
     // and keep observing during AppKit menu tracking and modal interactions.
     RunLoop.main.add(next, forMode: .common)
     timer = next
   }
   func shutdownWorktrees() async {
+    observationStopped = true
     timer?.invalidate()
     await monitor?.shutdownWorktrees()
   }
   func suspend() {
+    observationSuspended = true
     timer?.invalidate()
     Task { try? await monitor?.checkpoint() }
   }
   func wake() {
+    guard !observationStopped else { return }
+    observationSuspended = false
     Task {
       await monitor?.resetContinuity()
       refresh()
@@ -613,18 +660,29 @@ import UserNotifications
           let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [
             .alert
           ])
-          var p = state.catalog.preferences
-          p.notifications = allowed
-          save(p)
-          if !allowed {
-            message = "Notifications remain off. You can allow them in System Settings."
-          }
-        } catch { message = error.localizedDescription }
+          applyNotificationAuthorization(allowed)
+        } catch {
+          notificationPermissionError = error.localizedDescription
+          message = notificationPermissionError
+        }
       }
     } else {
       var p = state.catalog.preferences
       p.notifications = enabled
       save(p)
+    }
+  }
+  private func applyNotificationAuthorization(_ allowed: Bool) {
+    var p = state.catalog.preferences
+    p.notifications = allowed
+    save(p)
+    if allowed {
+      if message == notificationPermissionError { message = nil }
+      notificationPermissionError = nil
+    } else {
+      notificationPermissionError =
+        "Notifications remain off. You can allow them in System Settings."
+      message = notificationPermissionError
     }
   }
   private func save(_ p: Preferences) {
@@ -1201,9 +1259,145 @@ struct Dashboard: View {
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
+#if DEBUG
+  extension AppModel {
+    /// Exercise the real snapshot callback and Foundation timer without an observer or window.
+    func proveObservationSchedule() async throws {
+      guard demo else { throw StoreError.message("Scheduling proof requires a demo model") }
+      defer { timer?.invalidate() }
+      var dispatches = 0
+      timerDispatchForProof = { dispatches += 1 }
+      state.interval = 0.5
+      schedule()
+      guard let original = timer else { throw StoreError.message("Observer timer missing") }
+      for _ in 0..<5 {
+        receiveAgentSnapshot(state)
+        guard timer === original, original.isValid else {
+          throw StoreError.message("Read-only status snapshots postponed the observer timer")
+        }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      try await Task.sleep(for: .milliseconds(600))
+      guard !original.isValid, dispatches == 1 else {
+        throw StoreError.message("Observer timer never dispatched after status traffic")
+      }
+      state.interval = 60
+      receiveAgentSnapshot(state)
+      guard let long = timer, long.isValid, long !== original else {
+        throw StoreError.message("A fired timer was not replaced")
+      }
+      let longDeadline = long.fireDate
+      state.interval = 15
+      receiveAgentSnapshot(state)
+      guard let urgent = timer, urgent !== long, urgent.fireDate < longDeadline else {
+        throw StoreError.message("Exit verification did not shorten the observer deadline")
+      }
+      state.interval = 60
+      receiveAgentSnapshot(state)
+      guard timer === urgent, urgent.tolerance <= 2.5 else {
+        throw StoreError.message("A later snapshot postponed an earlier observer deadline")
+      }
+      suspend()
+      guard !urgent.isValid else {
+        throw StoreError.message("Suspend left the observer timer active")
+      }
+      receiveAgentSnapshot(state)
+      guard timer?.isValid != true else {
+        throw StoreError.message("A late snapshot revived suspended observation")
+      }
+      wake()
+      state.interval = 0.05
+      working = true
+      receiveAgentSnapshot(state)
+      try await Task.sleep(for: .milliseconds(150))
+      guard dispatches == 2, timer?.isValid == false else {
+        throw StoreError.message("Busy observation did not consume its one-shot timer")
+      }
+      working = false
+      receiveAgentSnapshot(state)
+      guard timer?.isValid == true else {
+        throw StoreError.message("Completed snapshot did not rearm observation")
+      }
+      await shutdownWorktrees()
+      receiveAgentSnapshot(state)
+      wake()
+      receiveAgentSnapshot(state)
+      guard timer?.isValid != true else {
+        throw StoreError.message("Shutdown observation was revived")
+      }
+      applyNotificationAuthorization(false)
+      guard message == notificationPermissionError, !state.catalog.preferences.notifications else {
+        throw StoreError.message("Notification refusal was not shown")
+      }
+      applyNotificationAuthorization(true)
+      guard message == nil, state.catalog.preferences.notifications else {
+        throw StoreError.message("Successful permission kept its previous refusal")
+      }
+      applyNotificationAuthorization(false)
+      message = "Unrelated recovery failure"
+      applyNotificationAuthorization(true)
+      guard message == "Unrelated recovery failure" else {
+        throw StoreError.message("Permission success hid an unrelated failure")
+      }
+      let proposal = CleanupProposal(
+        action: .worktree, resources: ["synthetic"], revision: "proof", title: "Synthetic finding",
+        detail: "Offscreen notification lifecycle proof", recovery: "No files changed", ready: true)
+      for stopping in [false, true] {
+        let beforeDelivery = AppModel(demo: true)
+        var sent = 0
+        var recorded = 0
+        try await beforeDelivery.deliverFindingNotification(
+          next: {
+            if stopping {
+              await beforeDelivery.shutdownWorktrees()
+            } else {
+              beforeDelivery.suspend()
+            }
+            return proposal
+          }, send: { _ in sent += 1 }, record: { _ in recorded += 1 })
+        guard sent == 0, recorded == 0 else {
+          throw StoreError.message("Inactive observer delivered a late notification candidate")
+        }
+        let duringDelivery = AppModel(demo: true)
+        try await duringDelivery.deliverFindingNotification(
+          next: { proposal },
+          send: { _ in
+            sent += 1
+            if stopping {
+              await duringDelivery.shutdownWorktrees()
+            } else {
+              duringDelivery.suspend()
+            }
+          }, record: { _ in recorded += 1 })
+        duringDelivery.receiveAgentSnapshot(duringDelivery.state)
+        guard sent == 1, recorded == 1, duringDelivery.timer?.isValid != true else {
+          throw StoreError.message(
+            "Successful delivery lost its receipt or revived inactive observation")
+        }
+      }
+      print(
+        "PASS native timer dispatch under status traffic, urgent cadence, busy rearming, suspend/shutdown across notification awaits, and scoped permission messages"
+      )
+    }
+  }
+#endif
 MainActor.assumeIsolated {
   let app = NSApplication.shared
   #if DEBUG
+    if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--observer-schedule-proof" {
+      app.setActivationPolicy(.prohibited)
+      Task { @MainActor in
+        do {
+          try await AppModel(demo: true).proveObservationSchedule()
+          exit(0)
+        } catch {
+          print("FAIL \(error.localizedDescription)")
+          exit(1)
+        }
+      }
+      app.run()
+      exit(1)
+    }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--findings-proof" {
       do {
         try findingsProof(output: CommandLine.arguments[2])
