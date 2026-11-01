@@ -101,7 +101,7 @@ private func deliveredReplyShutdownProof(root: URL) async throws {
         return result
       },
       handler: { _ in AgentReply(ok: accepted, message: "Complete socket reply") })
-    let text = try await AgentConnection.callAsync(.init("status"), root: state)
+    let text = try await AgentConnection.callAsync(.init("findings"), root: state)
     let reply = try JSONDecoder().decode(AgentReply.self, from: Data(text.utf8))
     equal(reply.ok, accepted)
     equal(reply.message, "Complete socket reply")
@@ -118,6 +118,7 @@ private func deliveredReplyShutdownProof(root: URL) async throws {
       [AgentTransportReceipt].self,
       from: Data(contentsOf: state.appendingPathComponent("agent-transport.json")))
     equal(receipts.count, 1)
+    check(receipts.first?.operation == "findings", "Findings transport was recorded as unknown")
     check(
       receipts.first?.status == (accepted ? "ok" : "refused"),
       "Completed reply was misclassified after shutdown: \(receipts.map(\.status))")

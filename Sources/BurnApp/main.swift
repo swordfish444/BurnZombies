@@ -261,6 +261,7 @@ import UserNotifications
   private var observationSuspended = false
   private var observationStopped = false
   private var notificationPermissionError: String?
+  private var notificationDeliveryInFlight = false
   #if DEBUG
     private var timerDispatchForProof: (() -> Void)?
   #endif
@@ -499,7 +500,9 @@ import UserNotifications
     send: (CleanupProposal) async throws -> Void,
     record: (CleanupProposal) async throws -> Void
   ) async throws {
-    guard !observationSuspended, !observationStopped else { return }
+    guard !observationSuspended, !observationStopped, !notificationDeliveryInFlight else { return }
+    notificationDeliveryInFlight = true
+    defer { notificationDeliveryInFlight = false }
     guard let proposal = try await next(), !observationSuspended, !observationStopped else {
       return
     }
@@ -1342,6 +1345,28 @@ struct Dashboard: View {
       let proposal = CleanupProposal(
         action: .worktree, resources: ["synthetic"], revision: "proof", title: "Synthetic finding",
         detail: "Offscreen notification lifecycle proof", recovery: "No files changed", ready: true)
+      let overlapping = AppModel(demo: true)
+      var notificationSends = 0
+      try await overlapping.deliverFindingNotification(
+        next: { proposal },
+        send: { _ in
+          notificationSends += 1
+          try await overlapping.deliverFindingNotification(
+            next: { proposal }, send: { _ in notificationSends += 1 }, record: { _ in })
+        }, record: { _ in })
+      guard notificationSends == 1 else {
+        throw StoreError.message("Overlapping observation delivered the same notification twice")
+      }
+      do {
+        try await overlapping.deliverFindingNotification(
+          next: { proposal }, send: { _ in throw StoreError.message("Synthetic send failure") },
+          record: { _ in })
+      } catch {}
+      try await overlapping.deliverFindingNotification(
+        next: { proposal }, send: { _ in notificationSends += 1 }, record: { _ in })
+      guard notificationSends == 2 else {
+        throw StoreError.message("Failed notification delivery blocked later notifications")
+      }
       for stopping in [false, true] {
         let beforeDelivery = AppModel(demo: true)
         var sent = 0
@@ -1406,6 +1431,21 @@ MainActor.assumeIsolated {
         print("FAIL \(error.localizedDescription)")
         exit(1)
       }
+    }
+    if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--worktree-inventory-proof"
+    {
+      app.setActivationPolicy(.prohibited)
+      Task { @MainActor in
+        do {
+          try await worktreeInventoryProof()
+          exit(0)
+        } catch {
+          print("FAIL \(error.localizedDescription)")
+          exit(1)
+        }
+      }
+      app.run()
+      exit(1)
     }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--worktree-view-proof" {
       do {

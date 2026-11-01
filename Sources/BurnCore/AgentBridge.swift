@@ -777,6 +777,7 @@ public final class AgentListener: @unchecked Sendable {
             // The operation field is untrusted too. Persist only known wire operation names.
             let known = [
               "status", "access_status", "access_check", "inspect", "preview", "burn", "lifecycle",
+              "findings",
               "work", "workspace",
               "workspace_preview", "workspace_clean", "worktrees", "worktrees_read", "disk_decide",
               "disk_preview", "disk_clean",
