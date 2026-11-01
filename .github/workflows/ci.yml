@@ -65,7 +65,9 @@ jobs:
       - name: Package exact tested candidate
         run: |
           for binary in BurnZombiesApp burnzombies burnzombies-mcp; do
-            lipo -verify_arch arm64 x86_64 "dist/BurnZombies.app/Contents/MacOS/$binary"
+            for architecture in arm64 x86_64; do
+              lipo "dist/BurnZombies.app/Contents/MacOS/$binary" -verify_arch "$architecture"
+            done
           done
           COPYFILE_DISABLE=1 tar -czf dist/BurnZombies-macOS-universal.tar.gz -C dist BurnZombies.app
           cd dist
