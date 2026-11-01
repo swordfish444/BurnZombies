@@ -27,6 +27,7 @@ public actor WorktreeService {
   var scanning: Bool { scanFlight != nil }
   var executing = false
   var lastScan = Date.distantPast
+  var refreshingFindings = false
   var scanGaps: [String] = []
   var closing = false
   var workJobs: [UUID: @Sendable () -> Void] = [:]
@@ -113,11 +114,6 @@ public actor WorktreeService {
   public func replayRecoveryFeedback() throws {
     let ledger = try intentLedger()
     let attempts = try store.values(WorktreeRestoreAttempt.self, kind: "restore")
-    guard !attempts.isEmpty else {
-      throw StoreError.message(
-        "No native restore requests are available to reconcile. Inspect the reported storage error."
-      )
-    }
     for attempt in attempts {
       guard
         let op = try store.value(WorktreeOperation.self, kind: "operation", id: attempt.recoveryID),
@@ -130,7 +126,6 @@ public actor WorktreeService {
           "Native recovery feedback cannot yet be saved. Cleanup remains suspended.")
       }
     }
-    try ledger.completedNativeRecoveryReplay()
   }
   private static func seedRoots(store: WorktreeStore, home: URL) throws {
     var policy =
@@ -202,7 +197,7 @@ public actor WorktreeService {
     value.nativeRevision = row.revision
     value.revision = WorkEvidence.hash(
       try [
-        row.revision, claimRevision(row.id), policy().revision,
+        row.revision, claimRevision(row.id), policy().authorityRevision,
         WorktreeEncoding.data(row.identity).base64EncodedString(), row.consumer,
         String(row.managed), String(row.kept), row.confirmedRevision ?? "",
       ].joined(separator: "|"))

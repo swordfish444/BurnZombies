@@ -336,16 +336,21 @@ public actor Monitor {
     try intentLedger().forget(workflow: workflow)
   }
   public func reconcileFindingFeedback() async throws {
-    if FileManager.default.fileExists(
-      atPath: store.root.appendingPathComponent("intent-suspended").path)
-    {
-      try intentLedger().reconcileRecoveryFeedback()
-    } else if let service = worktreeService {
-      try await service.replayRecoveryFeedback()
-    } else {
+    guard let service = worktreeService else {
       throw StoreError.message(
         "Native recovery history is unavailable; preserve the cleanup suspension.")
     }
+    let ledger = try intentLedger()
+    // Rehydrate ALL durable native requests before clearing the shared latch.
+    // In-memory failures also participate if their fallback file could not save.
+    for receipt in try store.load().diskReceipts ?? [] where receipt.restoreRequested == true {
+      guard DiskRecovery.recordRestoreFeedback(receipt, ledger: ledger) == nil else {
+        throw StoreError.message(
+          "Disk recovery feedback still cannot be saved. Cleanup remains suspended.")
+      }
+    }
+    try await service.replayRecoveryFeedback()
+    try ledger.reconcileRecoveryFeedback()
   }
   public func pauseFindingRule(_ id: String) throws { try intentLedger().pauseRule(id) }
   public func findingPage(offset: Int) throws -> FindingsSnapshot {
@@ -476,7 +481,8 @@ public actor Monitor {
       if let huntTimeout {
         catalog.worktreeEvidence = try await service.refreshForHunt(timeout: huntTimeout)
       } else {
-        catalog.worktreeEvidence = try await service.tick()
+        guard let evidence = try await service.tick() else { return }
+        catalog.worktreeEvidence = evidence
       }
       state.worktreeError = nil
     } catch {

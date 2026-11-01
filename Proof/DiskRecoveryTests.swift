@@ -74,7 +74,49 @@ func diskRecoveryProof() async throws {
         } catch {}
         check(FileManager.default.fileExists(atPath: pending.path))
       }
-      _ = try await monitor.reconcileDisk(id, restore: phase == "after-rename")
+      if phase == "after-rename" {
+        // A previous worktree restore must not clear a different disk restore's
+        // failed Keep, even when both feedback stores fail in this same session.
+        let native = try WorktreeStore(root: root)
+        var historical = WorktreeRecord(
+          id: "historical", path: root.appendingPathComponent("historical").path,
+          repository: root.path)
+        historical.retired = true
+        try native.put(historical, kind: "record", id: historical.id)
+        let operation = WorktreeOperation(
+          id: "historical-operation", worktreeID: historical.id, originalPath: historical.path,
+          repository: root.path, head: "fixture", phase: "completed", kind: "retire", date: Date(),
+          recoveryPath: root.path, detail: "Historical synthetic restore", allocated: 0)
+        try native.put(operation, kind: "operation", id: operation.id)
+        let attempt = try JSONDecoder().decode(
+          WorktreeRestoreAttempt.self,
+          from: JSONSerialization.data(withJSONObject: [
+            "id": "historical-attempt", "recoveryID": operation.id,
+            "destination": historical.path, "phase": "completed",
+            "date": Date().timeIntervalSinceReferenceDate, "detail": "Synthetic prior restore",
+          ]))
+        try native.put(attempt, kind: "restore", id: attempt.id)
+        let bad = try WorktreeStore(root: root, databaseName: "intent.sqlite")
+        try bad.put("corrupt fixture", kind: "proposal", id: "during-restore")
+        let latch = root.appendingPathComponent("intent-suspended")
+        try FileManager.default.createDirectory(at: latch, withIntermediateDirectories: false)
+        try Data("obstruction".utf8).write(to: latch.appendingPathComponent("fixture"))
+        _ = try await monitor.reconcileDisk(id, restore: true)
+        isNil(
+          try bad.value(Bool.self, kind: "recovery-feedback", id: id.uuidString + ":disk-restore"))
+        equal(try store.load().diskReceipts?.first?.restoreRequested, true)
+        check(FileManager.default.fileExists(atPath: source.path))
+        try bad.remove(kind: "proposal", id: "during-restore")
+        try FileManager.default.removeItem(at: latch)
+        try await monitor.reconcileFindingFeedback()
+        throwsError(try ledger.veto(["fixture-output"]))
+        try ledger.veto(["unrelated-output"])
+        print(
+          "PASS same-session disk restore double-feedback failure retains Keep after worktree-history reconciliation"
+        )
+      } else {
+        _ = try await monitor.reconcileDisk(id, restore: false)
+      }
       let reconciled = await monitor.snapshot()
       equal(
         reconciled.catalog.diskReceipts?.first?.outcome,
@@ -114,6 +156,19 @@ func diskRecoveryProof() async throws {
         let nativeRequest = try store.load().diskReceipts!.last!
         isNil(DiskRecovery.recordRestoreFeedback(nativeRequest, ledger: reopened))
         throwsError(try reopened.veto(["feedback-failure-output"]))
+        // Exercise Monitor.init's native disk replay itself, without calling the
+        // ledger helper on behalf of startup.
+        let restartRoot = root.appendingPathComponent("startup-replay")
+        let restartStore = try Store(root: restartRoot)
+        var restartCatalog = Catalog()
+        restartCatalog.diskReceipts = [nativeRequest]
+        try restartStore.save(restartCatalog)
+        let restarted = try Monitor(
+          legacyAuthority: false, discoveryHome: nil, root: restartRoot,
+          workspaceVisibility: { _ in 0 }, accessCheck: fixtureAccess)
+        throwsError(try IntentLedger(root: restartRoot).veto(["feedback-failure-output"]))
+        try IntentLedger(root: restartRoot).veto(["unrelated-output"])
+        await restarted.shutdownWorktrees()
       } else {
         try ledger.veto(["fixture-output"])
       }

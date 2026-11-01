@@ -40,8 +40,9 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
                BZ_TEST_REMOTE=str(remote), BZ_TEST_CONFIG=str(config),
                BURNZOMBIES_HOME=str(root / "observer-state"), BURNZOMBIES_SKILL_HOME=str(root / "skill-home"),
                BURNZOMBIES_INSTALL_DIR=str(destination))
-    def install(client, success=True):
-        result = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--mcp", client, "--no-open"],
+    def install(client, success=True, observe=False):
+        result = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--mcp", client, "--no-open"]
+                                + (["--observe-only"] if observe else []),
                                 env=env, capture_output=True, text=True, timeout=60)
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         return result
@@ -61,6 +62,8 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     assert not (root/'skill-home/.agents/skills/burnzombies/SKILL.md').exists(), 'Default installation must not add per-chat instructions'
     install("auto")
     assert json.loads((root / "observer-state/machine-review.json").read_text()) == configured
+    install("codex", observe=True)
+    assert json.loads((root / "observer-state/machine-review.json").read_text())['enabled'] is False
     with (remote / asset).open("ab") as file: file.write(b"bad download")
     assert "checksum failed" in install("none", success=False).stderr
     assert (app / "Contents/MacOS/BurnZombiesApp").read_bytes() == original_binary

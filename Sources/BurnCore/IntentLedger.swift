@@ -120,6 +120,7 @@ public final class IntentLedger: @unchecked Sendable {
   private let db: WorktreeStore
   private let now: @Sendable () -> Date
   private var recoveryFailure: String?
+  private var pendingRecoveryFeedback: [String: RecoveryFeedback] = [:]
   private var lastCompaction: Date?
   private var legacyWorktrees: WorktreeStore?
   public init(
@@ -394,10 +395,15 @@ public final class IntentLedger: @unchecked Sendable {
   }
   public func reconcileRecoveryFeedback() throws {
     try locked {
-      let data = try Store(root: db.root).read(suspensionURL, limit: 1_048_576)
-      let entries = try JSONDecoder().decode([RecoveryFeedback].self, from: data)
-      guard !entries.isEmpty else {
-        throw StoreError.message("Missing recovery feedback; preserve suspension.")
+      let hasLatch = FileManager.default.fileExists(atPath: suspensionURL.path)
+      var entries = Array(pendingRecoveryFeedback.values)
+      if hasLatch {
+        let data = try Store(root: db.root).read(suspensionURL, limit: 1_048_576)
+        let saved = try JSONDecoder().decode([RecoveryFeedback].self, from: data)
+        guard !saved.isEmpty else {
+          throw StoreError.message("Missing recovery feedback; preserve suspension.")
+        }
+        entries += saved
       }
       for entry in entries {
         guard
@@ -409,17 +415,8 @@ public final class IntentLedger: @unchecked Sendable {
             "Recovery feedback still cannot be saved. Cleanup remains suspended.")
         }
       }
-      try FileManager.default.removeItem(at: suspensionURL)
-      recoveryFailure = nil
-    }
-  }
-  /// Called only after WorktreeService has successfully replayed every durable
-  /// native restore attempt. A saved fallback marker still needs its own replay.
-  func completedNativeRecoveryReplay() throws {
-    try locked {
-      guard !FileManager.default.fileExists(atPath: suspensionURL.path) else {
-        throw StoreError.message("Saved recovery feedback still requires reconciliation.")
-      }
+      if hasLatch { try FileManager.default.removeItem(at: suspensionURL) }
+      pendingRecoveryFeedback.removeAll()
       recoveryFailure = nil
     }
   }
@@ -477,15 +474,19 @@ public final class IntentLedger: @unchecked Sendable {
         return nil
       } catch {
         recoveryFailure = error.localizedDescription
+        let entry = RecoveryFeedback(
+          operationID: operationID, proposal: fallback, attemptID: attemptID)
+        pendingRecoveryFeedback[attemptID ?? operationID] = entry
         do {
           let store = try Store(root: db.root)
           var entries =
             FileManager.default.fileExists(atPath: suspensionURL.path)
             ? try JSONDecoder().decode(
               [RecoveryFeedback].self, from: store.read(suspensionURL, limit: 1_048_576)) : []
-          if !entries.contains(where: { $0.operationID == operationID }) {
-            entries.append(
-              RecoveryFeedback(operationID: operationID, proposal: fallback, attemptID: attemptID))
+          if !entries.contains(where: {
+            ($0.attemptID ?? $0.operationID) == (attemptID ?? operationID)
+          }) {
+            entries.append(entry)
           }
           try store.write(JSONEncoder().encode(entries), to: suspensionURL, limit: 1_048_576)
         } catch { /* Keep the existing latch and the in-memory veto. */  }

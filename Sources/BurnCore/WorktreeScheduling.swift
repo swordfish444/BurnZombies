@@ -1,9 +1,12 @@
 import Foundation
 
 extension WorktreeService {
-  public func tick() async throws -> [ReviewEvidence] {
+  public func tick() async throws -> [ReviewEvidence]? {
     try requireAccess()
     try refreshDiscoveryRoots()
+    // An existing flight owns publication. Do not replace its previous evidence
+    // with a transient error, nor begin a second inspection batch.
+    guard !scanning, !executing, !refreshingFindings else { return nil }
     if !scanning, !executing, Date().timeIntervalSince(lastScan) >= 6 * 3600,
       !(try policy().roots).isEmpty
         || FileManager.default.fileExists(
@@ -11,10 +14,45 @@ extension WorktreeService {
     {
       _ = try await scan()
     }
-    guard !scanning else {
-      throw StoreError.message("Worktree refresh is still pending; worktree evidence is not ready.")
-    }
+    guard !scanning, !executing else { return nil }
+    try await refreshKnownFindings()
     return try reviewEvidence()
+  }
+  /// Discovery stays cheap between full scans, but decision evidence cannot live
+  /// for six hours. Refresh up to eight oldest known checkouts, sharing one
+  /// native consumer snapshot, with a bounded inspection budget each tick.
+  private func refreshKnownFindings() async throws {
+    let p = try policy()
+    let privateRoot = store.root.appendingPathComponent("workspaces").path
+    let selected = try records().filter { row in
+      !row.main && !row.bare && !row.retired && !row.kept && !row.ownerManaged
+        && Date().timeIntervalSince(row.observedAt) >= 120
+        && (p.roots.contains(where: { WorkspaceSafety.contains($0, row.path) })
+          || WorkspaceSafety.contains(privateRoot, row.path))
+    }.sorted { $0.observedAt < $1.observedAt }.prefix(8)
+    guard !selected.isEmpty else { return }
+    refreshingFindings = true
+    defer { refreshingFindings = false }
+    let rows = Array(selected)
+    let current = generation
+    let customVisibility = scanRunner == nil ? visibility : nil
+    let fresh = try await runWork {
+      let deadline = ProcessInfo.processInfo.systemUptime + 20
+      let consumers =
+        customVisibility == nil ? WorktreeConsumerSnapshot(roots: rows.map(\.path)) : nil
+      let visibility: @Sendable (String) -> Int32 = { path in
+        customVisibility?(path) ?? consumers!.state(path)
+      }
+      var result: [WorktreeRecord] = []
+      for row in rows {
+        try Task.checkCancellation()
+        guard ProcessInfo.processInfo.systemUptime < deadline else { break }
+        result.append(WorktreeInspection.inspect(row, visibility: visibility))
+      }
+      return result
+    }
+    guard current == generation, !executing else { return }
+    for row in fresh { _ = try publish(row) }
   }
   /// Bypass only the observer cadence. Reuse a scan in flight and wait natively,
   /// leaving it owned by the service if the caller cancels or exhausts its budget.
@@ -69,7 +107,8 @@ extension WorktreeService {
           .init(
             id: "worktree:" + r.id,
             revision: WorkEvidence.hash(
-              r.revision + (r.readinessRevision ?? "") + (try claimRevision(r.id)) + p.revision),
+              r.revision + (r.readinessRevision ?? "") + (try claimRevision(r.id))
+                + p.authorityRevision),
             processCount: 0))
       } else if now.timeIntervalSince(r.changedAt) >= Double(p.staleDays) * 86400
         || (r.apparentIdleDays ?? 0) >= p.staleDays,

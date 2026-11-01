@@ -125,10 +125,7 @@ private func sharedWorktreeHuntRefreshProof(base: URL) async throws {
     }
     check(
       ProcessInfo.processInfo.systemUptime - start < 1, "Hunt exceeded its preparation deadline")
-    do {
-      _ = try await service.tick()
-      failTest("Observer republished stale evidence while a Hunt refresh was pending")
-    } catch {}
+    isNil(try await service.tick())
     let cancelled = Task { try await service.refreshForHunt(timeout: 10) }
     try await Task.sleep(nanoseconds: 30_000_000)
     cancelled.cancel()

@@ -64,6 +64,7 @@ func passiveCoverageProbe() throws {
 }
 
 func usefulDiscoveryProof() async throws {
+  try await proactiveWorktreeFreshnessProof()
   let base = FileManager.default.temporaryDirectory.appendingPathComponent(
     "bz-roots-" + UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: base) }
@@ -150,4 +151,65 @@ func usefulDiscoveryProof() async throws {
   equal(
     failed.pending(fresh, now: now).count, 1,
     "New producer evidence can be considered after retry exhaustion")
+}
+
+private func proactiveWorktreeFreshnessProof() async throws {
+  let base = URL(fileURLWithPath: "/private/tmp/bz-proactive-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: base) }
+  let home = base.appendingPathComponent("home")
+  let repository = home.appendingPathComponent("git/project")
+  let checkout = home.appendingPathComponent("git/review-checkout")
+  let root = base.appendingPathComponent("state")
+  try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+  _ = try WorktreeGit.run(repository.path, ["init", "--initial-branch=main"])
+  try Data("sacrificial\n".utf8).write(to: repository.appendingPathComponent("source"))
+  _ = try WorktreeGit.run(repository.path, ["add", "."])
+  _ = try WorktreeGit.run(
+    repository.path,
+    [
+      "-c", "user.name=Proof", "-c",
+      "user.email=proof@example.invalid", "commit", "-m", "fixture",
+    ])
+  _ = try WorktreeGit.run(repository.path, ["worktree", "add", "--detach", checkout.path])
+  let ledger = try IntentLedger(root: root)
+  let service = try WorktreeService(
+    root: root, visibility: { _ in 0 },
+    access: fixtureAccess, discoveryHome: home, intent: ledger)
+  _ = try await service.tick()  // Ordinary observation only: no add_root or Hunt.
+  var row = try await service.snapshot().records.first { $0.path == checkout.path }!
+  checkFalse(row.ownerManaged)
+  let digest = try ledger.notificationCandidate()!
+  try ledger.delivered(digest)
+  let intentDB = try WorktreeStore(root: root, databaseName: "intent.sqlite")
+  // Model the preceding notification 55 minutes before this scan, then six
+  // minutes passing. Persisted timestamps avoid a one-hour wall-clock sleep.
+  try intentDB.put(
+    Date().addingTimeInterval(-55 * 60), kind: "delivery",
+    id: digest.id + ":" + digest.revision)
+  isNil(try ledger.notificationCandidate())
+  let native = try WorktreeStore(root: root)
+  row.observedAt = Date().addingTimeInterval(-6 * 60)
+  try native.put(row, kind: "record", id: row.id)
+  _ = try await service.snapshot()
+  try intentDB.put(
+    Date().addingTimeInterval(-61 * 60), kind: "delivery",
+    id: digest.id + ":" + digest.revision)
+  isNil(try ledger.notificationCandidate())
+  _ = try await service.tick()
+  _ = try await service.snapshot()
+  let refreshed = try ledger.notificationCandidate()!
+  equal(refreshed.resources, ["worktree:" + row.id])
+  check(refreshed.ready && refreshed.observed > Date().addingTimeInterval(-60))
+  try ledger.decide(refreshed.id, revision: refreshed.revision, decision: "approve")
+  let extra = home.appendingPathComponent("Developer")
+  try FileManager.default.createDirectory(at: extra, withIntermediateDirectories: true)
+  _ = try await service.tick()
+  _ = try await service.snapshot()
+  equal(
+    try ledger.proposal(refreshed.id)?.approvedRevision, refreshed.revision,
+    "Discovery-only roots invalidated an exact decision")
+  await service.shutdown()
+  print(
+    "PASS default-root worktree stays actionable between scans and survives notification cooldown after one bounded observer tick; discovery roots preserve approval"
+  )
 }

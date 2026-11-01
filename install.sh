@@ -21,7 +21,20 @@ os_major="$(sw_vers -productVersion | cut -d. -f1)"
 [[ "$os_major" -ge 14 ]] || { echo 'BurnZombies needs macOS 14 or later.' >&2; exit 1; }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/burnzombies-install.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
+replacing=false
+finish_install() {
+  status=$?
+  if [[ "$status" -ne 0 && "$replacing" == true ]]; then
+    rm -rf "$app"
+    if [[ -d "$work/previous.app" ]]; then
+      mv "$work/previous.app" "$app"
+      if $launch; then "$app/Contents/MacOS/burnzombies" start-observer || true; fi
+      echo 'Previous app restored.' >&2
+    fi
+  fi
+  rm -rf "$work"
+}
+trap finish_install EXIT
 asset="BurnZombies-macOS-universal.tar.gz"
 base="https://github.com/swordfish444/BurnZombies/releases/download/v$version"
 echo 'Downloading BurnZombies…'
@@ -55,19 +68,16 @@ if [[ -e "$app" || -L "$app" ]]; then
   "$work/BurnZombies.app/Contents/MacOS/burnzombies" stop-observer "$app"
   mv "$app" "$work/previous.app"
 fi
+replacing=true
 if ! ditto "$work/BurnZombies.app" "$app"; then
-  rm -rf "$app"
-  [[ ! -d "$work/previous.app" ]] || mv "$work/previous.app" "$app"
-  echo 'Install failed; previous app restored.' >&2; exit 1
+  echo 'Install failed; rolling back.' >&2; exit 1
 fi
 
 if [[ "$client" != none ]]; then
   if ! "$app/Contents/MacOS/burnzombies" retire-skill --check ||
-     ! "$app/Contents/MacOS/burnzombies" setup --harness "$client" "${setup_options[@]}" ||
+     ! "$app/Contents/MacOS/burnzombies" setup --harness "$client" ${setup_options[@]+"${setup_options[@]}"} ||
      ! "$app/Contents/MacOS/burnzombies" retire-skill; then
-    rm -rf "$app"
-    [[ ! -d "$work/previous.app" ]] || mv "$work/previous.app" "$app"
-    echo 'Harness configuration failed; previous app restored. Configurations were preserved.' >&2
+    echo 'Harness configuration failed; rolling back. Configurations were preserved.' >&2
     exit 1
   fi
 fi
