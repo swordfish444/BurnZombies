@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 
 func nativeWorktreeRefreshProof() async throws {
+  try await nativeWorktreeRediscoveryProof()
   try worktreeDiscoveryFairnessProof()
   let base = URL(fileURLWithPath: "/private/tmp/bz-refresh-native-" + UUID().uuidString)
   let repository = base.appendingPathComponent("repository")

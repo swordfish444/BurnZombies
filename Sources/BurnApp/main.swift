@@ -1099,19 +1099,10 @@ struct Dashboard: View {
   func showWorktrees(selectedID: String? = nil) {
     popover?.performClose(nil)
     if worktreeWindow == nil {
-      let w = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered,
-        defer: false)
-      w.title = "BurnZombies — Worktrees"
-      w.isReleasedWhenClosed = false
-      w.contentView = NSHostingView(rootView: WorktreesView(model: model, selectedID: selectedID))
-      w.center()
-      worktreeWindow = w
+      worktreeWindow = WorktreesView.makeWindow(model: model, selectedID: selectedID)
     }
     if let selectedID {
-      worktreeWindow?.contentView = NSHostingView(
-        rootView: WorktreesView(model: model, selectedID: selectedID))
+      worktreeWindow?.contentView = WorktreesView.hostingView(model: model, selectedID: selectedID)
     }
     worktreeWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)

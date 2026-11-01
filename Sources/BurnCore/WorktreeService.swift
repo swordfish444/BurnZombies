@@ -234,10 +234,17 @@ public actor WorktreeService {
       if !r.missing && r.gaps == ["Detailed inspection pending."] && r.revision.isEmpty
         && !old.revision.isEmpty && r.head == old.head
       {
-        var pending = old
-        pending.gaps = Array(Set(old.gaps + ["Detailed inspection pending."])).sorted()
-        try store.put(pending, kind: "record", id: pending.id)
-        return pending
+        // Registration confirms topology, not new inspection evidence. Preserve
+        // the previous observation; known refresh and action-time inspection
+        // own freshness. A late stub must not degrade a completed observation.
+        var previous = old
+        // Older builds appended this registration-only marker to inspected
+        // rows. Repair that marker without refreshing time or clearing a real gap.
+        previous.gaps.removeAll { $0 == "Detailed inspection pending." }
+        if previous.gaps != old.gaps {
+          try store.put(previous, kind: "record", id: previous.id)
+        }
+        return previous
       }
       if old.observedAt > r.observedAt { return old }
       r.firstSeen = old.firstSeen

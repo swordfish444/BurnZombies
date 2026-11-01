@@ -3,6 +3,32 @@ import BurnCore
 import SwiftUI
 
 struct WorktreesView: View {
+  @MainActor static func hostingView(
+    model: AppModel, initial: WorktreeReply? = nil, initialTab: String = "Worktrees",
+    selectedID: String? = nil
+  ) -> NSHostingView<WorktreesView> {
+    let host = NSHostingView(
+      rootView: WorktreesView(
+        model: model, initial: initial, initialTab: initialTab, selectedID: selectedID))
+    return host
+  }
+  @MainActor static func makeWindow(
+    model: AppModel, initial: WorktreeReply? = nil, initialTab: String = "Worktrees",
+    selectedID: String? = nil
+  ) -> NSWindow {
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
+      styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false
+    )
+    window.title = "BurnZombies — Worktrees"
+    window.isReleasedWhenClosed = false
+    window.contentMinSize = NSSize(width: 860, height: 540)
+    window.contentView = hostingView(
+      model: model, initial: initial, initialTab: initialTab,
+      selectedID: selectedID)
+    window.center()
+    return window
+  }
   @ObservedObject var model: AppModel
   @State private var inventory = WorktreeReply()
   @State private var selected = Set<String>()

@@ -63,6 +63,10 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try await nativeWorktreeRefreshProof() } catch { failTest("Native refresh: \(error)") }
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.contains("--worktree-rediscovery-native") {
+      do { try await nativeWorktreeRediscoveryProof() } catch { failTest("Rediscovery: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--approval-process") {
       do { try await approvalProcessProof() } catch { failTest("Process approval: \(error)") }
       exit(failures == 0 ? 0 : 1)

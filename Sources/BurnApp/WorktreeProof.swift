@@ -53,22 +53,37 @@ enum WorktreeExamples {
 
 #if DEBUG
   @MainActor func worktreeViewProof(output: String) throws {
+    NSApp.setActivationPolicy(.prohibited)
+    NSApp.appearance = NSAppearance(named: .darkAqua)
     let directory = URL(fileURLWithPath: output)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     for (name, tab, selected) in [
       ("inventory", "Worktrees", "example-ready"), ("local-work", "Worktrees", "example-dirty"),
       ("recovery", "Recovery", "example-ready"), ("blocked", "Worktrees", "example-blocked"),
+      ("large-inventory", "Worktrees", "example-ready"),
     ] {
       let model = AppModel(demo: true)
-      let host = NSHostingView(
-        rootView: WorktreesView(
-          model: model, initial: WorktreeExamples.snapshot(), initialTab: tab, selectedID: selected)
-      )
-      host.frame = NSRect(x: 0, y: 0, width: 1120, height: 760)
-      let window = NSWindow(
-        contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
-      window.contentView = host
+      var initial = WorktreeExamples.snapshot()
+      if name == "large-inventory" {
+        let prototype = initial.records[0]
+        initial.records += (0..<96).map { index in
+          var row = prototype
+          row.id = "large-fixture-\(index)"
+          row.path = "/example/atlas/disposable-\(index)"
+          return row
+        }
+        initial.totalRecords = 100
+      }
+      let window = WorktreesView.makeWindow(
+        model: model, initial: initial, initialTab: tab,
+        selectedID: selected)
+      defer { window.close() }
       RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+      guard let host = window.contentView, host.bounds.height <= 780,
+        host.bounds.width <= 1140
+      else {
+        throw StoreError.message("Worktree window expanded off-screen: \(window.frame)")
+      }
       host.layoutSubtreeIfNeeded()
       host.displayIfNeeded()
       guard !window.isVisible, let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)
@@ -87,9 +102,12 @@ enum WorktreeExamples {
       guard visible.contains("Worktrees"), visible.contains("Recovery"),
         tab == "Recovery" ? visible.contains("Restore to new folder") : visible.contains("Observed")
       else { throw StoreError.message("Worktree view is clipped or missing controls: " + name) }
+      if name == "large-inventory", !visible.contains("Review 1 selected") {
+        throw StoreError.message("Large worktree inventory clips its selected-review control")
+      }
     }
     print(
-      "PASS four native worktree/recovery fixture views rendered and OCR checked without presenting a window"
+      "PASS five native worktree/recovery views, including 100 rows with visible selected-review controls, stay bounded without presenting a window"
     )
   }
 #endif
