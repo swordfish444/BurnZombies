@@ -86,10 +86,15 @@ import Vision
     recognition.recognitionLevel = .accurate
     recognition.recognitionLanguages = ["en-US"]
     try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([recognition])
-    let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-      .joined(separator: "\n")
+    let visibleLines = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    let visible = visibleLines.joined(separator: "\n")
     try visible.write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
-    guard visible.contains("View impact"), visible.contains("Burn Log"),
+    // Match the visible footer labels, allowing OCR to append the chevrons.
+    // "View impact" is help text on the speed card, not rendered footer text.
+    let footerVisible = ["Impact", "Findings", "Burn Log"].allSatisfy { label in
+      visibleLines.contains { $0 == label || $0.hasPrefix(label + " ") }
+    }
+    guard footerVisible,
       visible.contains("Memory pressure"), visible.contains("Disk reclaimed"), visible.contains("Worktrees cleaned") else {
       throw StoreError.message("Compact labels or footer clipped: \(visible)")
     }
