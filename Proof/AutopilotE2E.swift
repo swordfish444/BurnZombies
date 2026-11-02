@@ -114,7 +114,9 @@ func autopilotEndToEndProof(root: URL, harness: String, executable: String) asyn
       AutopilotWorktrees.retire(item, authority: authority, root: root)
     },
     restoreWorktree: { try AutopilotWorktrees.restore($0) },
-    reclaimDisk: { item, authority in AutopilotDisk.reclaim(item, authority: authority) },
+    reclaimDisk: { item, authority in
+      AutopilotDisk.reclaim(item, authority: authority, home: fixtures.path)
+    },
     inspect: { AutopilotInspector.inspect($0) })
   let engine = try Autopilot(root: root, sources: sources)
   let service = AgentService(monitor: monitor, autopilot: engine)

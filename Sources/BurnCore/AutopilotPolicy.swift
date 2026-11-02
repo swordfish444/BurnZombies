@@ -139,11 +139,15 @@ public enum AutopilotPolicy {
         clusters[id]!.bytes += item.bytes
       }
     }
+    // Equal coverage: prefer patterns the wording can actually describe, then broader ones.
+    func clarity(_ c: Cluster) -> Int { min(2, describable(kind: c.kind, match: c.match)) }
     let ranked = clusters.sorted {
       $0.value.score != $1.value.score
         ? $0.value.score > $1.value.score
-        : $0.value.match.count != $1.value.match.count
-          ? $0.value.match.count < $1.value.match.count : $0.key < $1.key
+        : clarity($0.value) != clarity($1.value)
+          ? clarity($0.value) > clarity($1.value)
+          : $0.value.match.count != $1.value.match.count
+            ? $0.value.match.count < $1.value.match.count : $0.key < $1.key
     }
     var picked = [Cluster]()
     var covered = Set<String>()
@@ -154,7 +158,10 @@ public enum AutopilotPolicy {
       covered.formUnion(ids)
     }
     return picked.map { cluster in
-      let text = wording(kind: cluster.kind, match: cluster.match)
+      let programs = Set(cluster.items.compactMap { $0.facts["program"] })
+      let text = wording(
+        kind: cluster.kind, match: cluster.match,
+        program: programs.count == 1 ? programs.first : nil)
       return AutopilotQuestion(
         kind: cluster.kind, match: cluster.match, question: text,
         why: "I found \(cluster.items.count) like this, using \(format(cluster.bytes)).",
@@ -164,8 +171,30 @@ public enum AutopilotPolicy {
     }
   }
 
+  /// How many of a pattern's secondary facts the native wording puts into words.
+  static func describable(kind: AutopilotKind, match: [String: [String]]) -> Int {
+    let value = { (key: String) in match[key]?.first }
+    switch kind {
+    case .process:
+      return [
+        value("orphaned") == "yes", value("thread") == "ended",
+        ["10m", "1h", "6h", "1d"].contains(value("idle") ?? ""), value("listening") == "yes",
+        (value("agent") ?? "none") != "none",
+      ].filter { $0 }.count
+    case .worktree:
+      return ["place", "changes", "stale", "thread"].filter {
+        guard let v = value($0) else { return false }
+        return !["other", "none", "today", "unknown"].contains(v) || $0 == "changes"
+      }.count
+    case .disk:
+      return ["home", "stale"].filter { value($0) != nil && value($0) != "today" }.count
+    }
+  }
+
   /// Native wording, used until the AI rewrites a question.
-  public static func wording(kind: AutopilotKind, match: [String: [String]]) -> String {
+  public static func wording(
+    kind: AutopilotKind, match: [String: [String]], program: String? = nil
+  ) -> String {
     func value(_ key: String) -> String? { match[key]?.first }
     switch kind {
     case .process:
@@ -175,7 +204,7 @@ public enum AutopilotPolicy {
           "ruby": "leftover Ruby programs", "java": "leftover Java and Gradle helpers",
           "browser": "leftover robot browsers", "build": "leftover build tools",
           "shell": "leftover shell scripts",
-        ][value("family") ?? ""] ?? "leftover programs"
+        ][value("family") ?? ""] ?? (program.map { "leftover \($0) programs" } ?? "leftover programs")
       var parts = [String]()
       if value("orphaned") == "yes" { parts.append("whose app or chat already closed") }
       if value("thread") == "ended" { parts.append("from chats that already finished") }
