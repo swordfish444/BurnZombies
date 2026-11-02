@@ -121,24 +121,31 @@ public struct DiskDiscoveryState: Codable, Sendable {
       limit: 8_388_608)
   }
   public var opportunities: [DiskSpaceNode] {
+    // IDs are cryptographic digests. Compute each once, outside the pairwise
+    // containment checks; rehashing inside this loop blocked the observer.
     let eligible = nodes.filter { $0.complete && $0.allocated >= DiskCandidate.minimumReviewBytes }
+      .map { (node: $0, id: $0.id) }
     // Choose disjoint, most-specific large branches. Many small siblings stay grouped
     // under their measured parent; the display threshold never prunes traversal.
-    let groups = eligible.filter { $0.members != nil && advice[$0.id]?.revision == $0.revision }
-    return eligible.filter { node in
-      if node.members != nil { return groups.contains { $0.id == node.id } }
+    let groups = eligible.filter {
+      $0.node.members != nil && advice[$0.id]?.revision == $0.node.revision
+    }
+    let groupIDs = Set(groups.map(\.id))
+    return eligible.filter { entry in
+      let node = entry.node
+      if node.members != nil { return groupIDs.contains(entry.id) }
       if groups.contains(where: { group in
-        (group.members ?? []).contains {
+        (group.node.members ?? []).contains {
           WorkspaceSafety.contains(node.path, $0) || WorkspaceSafety.contains($0, node.path)
         }
       }) {
         return false
       }
       return !eligible.contains {
-        $0.id != node.id && $0.members == nil && node.members == nil
-          && WorkspaceSafety.contains(node.path, $0.path)
+        $0.id != entry.id && $0.node.members == nil && node.members == nil
+          && WorkspaceSafety.contains(node.path, $0.node.path)
       }
-    }.sorted { a, b in
+    }.map(\.node).sorted { a, b in
       a.unshared == b.unshared ? a.allocated > b.allocated : a.unshared > b.unshared
     }
   }

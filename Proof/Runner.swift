@@ -295,6 +295,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       print("Mole integration checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.contains("--disk-selection-scale") {
+      do { try diskSelectionScaleProof() } catch { failTest("Storage scale: \(error)") }
+      print("Storage scale checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--disk-discovery") {
       do { try diskDiscoveryProof() } catch { failTest("Disk discovery: \(error)") }
       print("Disk discovery checks: \(failures) failures")
