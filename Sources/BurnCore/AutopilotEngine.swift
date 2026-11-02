@@ -107,6 +107,7 @@ public actor Autopilot {
     let (copies, cache) = sources.worktrees(records, threads, delivery)
     delivery = cache
     items += copies.filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
+      .map { Self.mentionChat($0, threads: threads, now: now) }
     items += sources.disk(records)
     catalog = AutopilotCatalog(
       observedAt: now, items: items, threads: threads, coverageNotes: sources.coverageNotes())
@@ -119,6 +120,22 @@ public actor Autopilot {
   }
 
   func memory() -> AutopilotMemory { (try? store.memory()) ?? AutopilotMemory() }
+
+  /// People remember chats by name: mention the last chat that worked in an old copy.
+  static func mentionChat(_ item: AutopilotItem, threads: [AgentThread], now: Date)
+    -> AutopilotItem
+  {
+    guard let path = item.path else { return item }
+    let root = path.hasSuffix("/") ? path : path + "/"
+    guard
+      let chat = threads.filter({ ($0.cwd == path || $0.cwd.hasPrefix(root)) && $0.title != nil })
+        .max(by: { $0.lastActive < $1.lastActive }), let title = chat.title
+    else { return item }
+    var copy = item
+    let when = RelativeDateTimeFormatter().localizedString(for: chat.lastActive, relativeTo: now)
+    copy.detail += " Last used in the chat “\(title.prefix(60))” \(when)."
+    return copy
+  }
 
   /// Burns every item the policy authorizes now, bounded per kind.
   func burnAuthorized(now: Date) async {
