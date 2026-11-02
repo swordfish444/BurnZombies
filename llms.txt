@@ -34,7 +34,7 @@ Substitute the operator's explicit BURNZOMBIES_INSTALL_DIR if used. Check doctor
 
 Full Disk Access requires the human: System Settings → Privacy & Security → Full Disk Access → add/enable the exact installed BurnZombies.app. `access-check` verifies an existing grant; it cannot grant access. Recovery may require the human to answer a Keychain prompt. Never bypass these permission boundaries. Report pending human steps honestly.
 
-Show the operator how to open Findings from the menu bar and enable the chosen reviewer in Settings → Zombie hunts. The default schedule is four hours. Review permission is not blanket cleanup permission. Finding notifications are controlled in Findings → Notifications and workflow rules → Notify me about findings. Notification permission and details visibility are separate choices; do not enable them silently as an install test.
+Show the operator the menu bar's Autopilot line, Teach BZ (yes/no questions that teach rules) and Findings. Autopilot sweeps every 15 minutes: it burns orphaned programs, retires old copies (always restorable) and clears rebuildable junk folders that its starter rules or the operator's answers cover, and asks about the rest. Settings → Autopilot turns it off or changes the frequency. See docs/AUTOPILOT.md. Review permission is not blanket cleanup permission. Finding notifications are controlled in Findings → Notifications and workflow rules → Notify me about findings. Notification permission and details visibility are separate choices; do not enable them silently as an install test.
 
 ## Existing installation / update
 
@@ -68,7 +68,7 @@ The resident app uses the installed Claude Code CLI and existing login, with foc
 - evidence PID [PID ...]: up to 16 exact current process identities; no signals.
 - status: saved aggregate catalog; does not prove the running app responds.
 
-Hunt now explicitly refreshes native evidence and invokes the selected reviewer; it is not an installation test. Native inventory continues without a model. Age, size, a finished chat turn or a merged PR alone never proves abandonment. Missing owner/consumer evidence preserves the resource.
+Hunt now starts an Autopilot sweep immediately; it is not an installation test. `burnzombies autopilot` prints the current snapshot (counts, open questions, learned rules) without changing anything. Native inventory continues without a model. Age, size, a finished chat turn or a merged PR alone never proves abandonment. Missing owner/consumer evidence preserves the resource.
 
 New idle worktrees appear for manual review without prompting. Worktree notifications require the configured stale age (fourteen days by default), an exact completion confirmation, or released current owners. These signals request attention; they do not grant cleanup authority.
 
