@@ -69,7 +69,10 @@ func autopilotProcessProof() async throws {
   // A live chat working in the same folder protects the whole tree.
   let live = AgentThread(
     id: "claude:x", agent: "claude",
-    cwd: realpath(folder.path, nil).map { defer { free($0) }; return String(cString: $0) } ?? "",
+    cwd: realpath(folder.path, nil).map { resolved in
+      defer { free(resolved) }
+      return String(cString: resolved)
+    } ?? "",
     live: true,
     lastActive: Date())
   let guarded = AutopilotProcesses.items(records, threads: [live], protectedPIDs: own)
