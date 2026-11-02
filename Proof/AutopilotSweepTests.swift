@@ -205,6 +205,26 @@ func autopilotSweepProof() async throws {
   isNil(sweep.retryAfter)
   check(sweep.lastAIDigest != nil, "digest remembered")
 
+  // A real Mac's backlog outlasts every sweep: one that judged things before its time ran out
+  // did its job, and must not back off as if the AI had failed.
+  let busy = AutopilotCoordinator(
+    root: root, engine: engine, configuration: { config },
+    runner: { _, root in
+      try AutopilotStore(root: root).updateMemory {
+        $0.judgments[copy.id] = AutopilotJudgment(
+          itemID: copy.id, revision: copy.revision, verdict: .keep, confidence: 0.9,
+          label: "Atlas fix", why: "Someone may still need it.")
+      }
+      throw StoreError.message("The AI sweep ran out of time.")
+    })
+  let busyStart = Date()
+  _ = await busy.tick(now: busyStart, manual: true)
+  await busy.waitForAI()
+  sweep = await engine.sweepState()
+  equal(sweep.failures, 0, "a sweep that judged things before running out of time did its job")
+  isNil(sweep.retryAfter)
+  check((sweep.lastAISweep ?? .distantPast) >= busyStart, "the sweep counts as done")
+
   // The app quit in the middle of a sweep: a fresh app must not wait for it forever.
   await engine.updateSweep { $0.running = true }
   let relaunched = Calls()
