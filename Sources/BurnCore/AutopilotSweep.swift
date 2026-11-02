@@ -4,6 +4,7 @@ import Foundation
 public enum AutopilotSweeper {
   public static let aiTimeout: TimeInterval = 600
   public static let rejudgeInterval: TimeInterval = 4 * 3600
+  public static let minimumSpacing: TimeInterval = 30 * 60
 
   /// Cataloging runs even when Autopilot is off, so the UI can show what it would burn;
   /// the engine only burns while enabled.
@@ -12,10 +13,13 @@ public enum AutopilotSweeper {
     return now.timeIntervalSince(last) >= Double(state.intervalMinutes * 60) - 5
   }
 
-  /// Unsure revisions, rules and open questions. A changed digest means new work for the AI.
+  /// Unsure items the AI has not judged yet, plus rules and open questions. A changed
+  /// digest means new work for the AI.
   public static func digest(_ snapshot: AutopilotSnapshot) -> String {
     AutopilotItem.hash(
-      (snapshot.entries.filter { $0.status == .unsure }.map { $0.item.revision }.sorted()
+      (snapshot.entries.filter { $0.status == .unsure && $0.judged != true }.map {
+        $0.item.revision
+      }.sorted()
         + snapshot.rules.filter(\.enabled).map(\.id).sorted()
         + snapshot.questions.map(\.id).sorted()).joined(separator: "|"))
   }
@@ -27,8 +31,10 @@ public enum AutopilotSweeper {
     if manual { return true }
     if let retry = state.retryAfter, retry > now { return false }
     guard snapshot.count(.unsure) > 0 else { return false }
-    return digest(snapshot) != state.lastAIDigest
-      || (state.lastAISweep.map { now.timeIntervalSince($0) >= rejudgeInterval } ?? true)
+    let since = state.lastAISweep.map { now.timeIntervalSince($0) } ?? .infinity
+    let unjudged = snapshot.entries.contains { $0.status == .unsure && $0.judged != true }
+    return (unjudged && since >= minimumSpacing && digest(snapshot) != state.lastAIDigest)
+      || since >= rejudgeInterval
   }
 
   /// 15, 30, 60, then 120 minutes. Login and usage problems wait at least an hour.

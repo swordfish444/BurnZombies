@@ -272,6 +272,8 @@ public struct AutopilotEntry: Codable, Sendable, Identifiable, Equatable {
   /// What happens if BZ burns it.
   public var consequence: String
   public var receipt: AutopilotReceipt?
+  /// True when the AI has judged this exact revision.
+  public var judged: Bool?
   public var id: String { item.id }
   public init(
     item: AutopilotItem, status: AutopilotStatus, authority: String?, label: String, why: String,

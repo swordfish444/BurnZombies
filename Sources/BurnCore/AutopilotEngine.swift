@@ -269,11 +269,12 @@ public actor Autopilot {
       let receipt = latest[item.id]
       if let receipt, receipt.outcome == "failed" { status = .failed }
       let judgment = memory.judgments[item.id].flatMap { $0.revision == item.revision ? $0 : nil }
-      result.entries.append(
-        AutopilotEntry(
-          item: item, status: status, authority: decision.authority,
-          label: judgment?.label ?? item.name, why: why(item, decision, memory),
-          consequence: AutopilotPolicy.consequence(item), receipt: receipt))
+      var entry = AutopilotEntry(
+        item: item, status: status, authority: decision.authority,
+        label: judgment?.label ?? item.name, why: why(item, decision, memory),
+        consequence: AutopilotPolicy.consequence(item), receipt: receipt)
+      entry.judged = judgment != nil
+      result.entries.append(entry)
     }
     for receipt in latest.values
     where !seen.contains(receipt.itemID) && ["burned", "restored"].contains(receipt.outcome)
