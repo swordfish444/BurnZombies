@@ -97,6 +97,12 @@ public enum AutopilotPolicy {
   static let primaryFacts: [AutopilotKind: String] = [
     .process: "family", .worktree: "saved", .disk: "folder",
   ]
+  /// Every question states how recently things were used, and nothing in use right now is
+  /// asked about until it goes quiet.
+  static let recencyFacts: [AutopilotKind: String] = [
+    .process: "idle", .worktree: "stale", .disk: "stale",
+  ]
+  static let tooRecent: Set<String> = ["active", "today"]
 
   /// Turns the largest clusters of unsure items into yes/no questions about a fact pattern.
   /// Never re-asks an answered pattern, an open one, or one skipped until its snooze ends.
@@ -121,17 +127,18 @@ public enum AutopilotPolicy {
     var clusters = [String: Cluster]()
     for item in unsure where item.protectedReason == nil {
       guard let primary = primaryFacts[item.kind], let primaryValue = item.facts[primary],
-        primaryValue != "unknown"
+        primaryValue != "unknown", let recency = recencyFacts[item.kind],
+        let recent = item.facts[recency], recent != "unknown", !tooRecent.contains(recent)
       else { continue }
       let others = (questionFacts[item.kind] ?? []).filter {
-        $0 != primary && item.facts[$0] != nil && item.facts[$0] != "unknown"
+        $0 != primary && $0 != recency && item.facts[$0] != nil && item.facts[$0] != "unknown"
       }
-      var subsets = others.map { [$0] }
+      var subsets = [[String]()] + others.map { [$0] }
       for i in others.indices {
         for j in others.indices where j > i { subsets.append([others[i], others[j]]) }
       }
       for subset in subsets {
-        var match = [primary: [primaryValue]]
+        var match = [primary: [primaryValue], recency: [recent]]
         for key in subset { match[key] = [item.facts[key]!] }
         let id = AutopilotRule.key(kind: item.kind, match: match)
         guard !excluded.contains(id) else { continue }
@@ -150,13 +157,29 @@ public enum AutopilotPolicy {
             ? $0.value.match.count < $1.value.match.count : $0.key < $1.key
     }
     var picked = [Cluster]()
+    // Items an open question already asks about never get a second question.
     var covered = Set<String>()
-    for (_, cluster) in ranked where picked.count < slots {
+    for open in memory.questions where open.isOpen {
+      let rule = AutopilotRule(
+        kind: open.kind, match: open.match, verdict: .burn, source: .operator, title: "")
+      covered.formUnion(unsure.filter { matches(rule, $0) }.map(\.id))
+    }
+    func take(_ cluster: Cluster) -> Bool {
       let ids = Set(cluster.items.map(\.id))
-      guard Double(ids.intersection(covered).count) < Double(ids.count) * 0.5 else { continue }
+      guard picked.count < slots,
+        Double(ids.intersection(covered).count) < Double(ids.count) * 0.5
+      else { return false }
       picked.append(cluster)
       covered.formUnion(ids)
+      return true
     }
+    // The best question for each kind first, so programs and junk aren't drowned out by
+    // a large pile of old copies; then the rest by value.
+    let openKinds = Set(memory.questions.filter(\.isOpen).map(\.kind))
+    for kind in AutopilotKind.allCases where !openKinds.contains(kind) {
+      if let best = ranked.first(where: { $0.value.kind == kind }) { _ = take(best.value) }
+    }
+    for (_, cluster) in ranked { _ = take(cluster) }
     return picked.map { cluster in
       let programs = Set(cluster.items.compactMap { $0.facts["program"] })
       let text = wording(
@@ -164,7 +187,8 @@ public enum AutopilotPolicy {
         program: programs.count == 1 ? programs.first : nil)
       return AutopilotQuestion(
         kind: cluster.kind, match: cluster.match, question: text,
-        why: "I found \(cluster.items.count) like this, using \(format(cluster.bytes)).",
+        why: "I found \(cluster.items.count) like this, using \(format(cluster.bytes))."
+          + (cluster.kind == .worktree ? " I back each one up first, so you can undo it." : ""),
         examples: Array(
           cluster.items.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name)),
         count: cluster.items.count, bytes: cluster.bytes, asked: now)
@@ -222,38 +246,32 @@ public enum AutopilotPolicy {
       }
       return "Can I burn " + family + joined(parts) + "?"
     case .worktree:
-      let place =
-        [
-          "patrol6": " made by Patrol6 agents", "codex": " made by Codex",
-          "claude": " made by Claude", "conductor": " made by Conductor",
-          "sibling": " sitting next to your main project folders",
-        ][value("place") ?? ""] ?? ""
       var parts = [String]()
-      if let saved = value("saved"),
-        let text = [
-          "merged": "that are already merged into the main branch",
-          "pushed": "that are already saved on GitHub",
-          "local": "that have work only on this Mac (I'll keep a backup)",
-        ][saved]
-      {
-        parts.append(text)
+      if let place = [
+        "patrol6": "made by Patrol6 agents", "codex": "made by Codex", "claude": "made by Claude",
+        "conductor": "made by Conductor", "sibling": "next to your main projects",
+      ][value("place") ?? ""] {
+        parts.append(place)
+      }
+      if let saved = [
+        "merged": "already merged", "pushed": "already on GitHub",
+        "local": "with work only on this Mac",
+      ][value("saved") ?? ""] {
+        parts.append(saved)
       }
       if let changes = value("changes") {
         parts.append(
-          changes == "none"
-            ? "with no unsaved changes" : "with unsaved changes (I'll back them up first)")
+          changes == "none" ? "with no unsaved changes" : "with unsaved changes")
       }
-      if let stale = value("stale"),
-        let text = [
-          "week": "that you haven't touched this week",
-          "month": "that you haven't touched in a month",
-          "older": "that you haven't touched in over a month",
-        ][stale]
-      {
-        parts.append(text)
+      if let stale = [
+        "week": "untouched for a week", "month": "untouched for a month",
+        "older": "untouched for over a month",
+      ][value("stale") ?? ""] {
+        parts.append(stale)
       }
-      if value("thread") == "ended" { parts.append("whose chat already finished") }
-      return "Can I burn old copies of your projects" + place + joined(parts) + "?"
+      if value("thread") == "ended" { parts.append("whose chat finished") }
+      return "Can I burn old project copies" + (parts.isEmpty ? "" : " " + parts.joined(separator: ", "))
+        + "?"
     case .disk:
       let folder =
         [

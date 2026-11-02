@@ -139,7 +139,9 @@ func autopilotPolicyProof() throws {
   let copies = questions.first { $0.kind == .worktree }!
   equal(copies.count, 40, "covers the whole cluster")
   equal(copies.match["saved"], ["local"], "primary fact included")
-  check(copies.question.hasPrefix("Can I burn old copies"), copies.question)
+  check(copies.question.hasPrefix("Can I burn old project copies"), copies.question)
+  check(copies.question.contains("untouched"), "questions state recency: " + copies.question)
+  check(copies.question.count <= 120, "kid-short: " + copies.question)
   check(copies.why.contains("40"), copies.why)
   equal(copies.examples.count, 3)
   let processQuestion = questions.first { $0.kind == .process }!
@@ -147,6 +149,17 @@ func autopilotPolicyProof() throws {
   memory.questions = questions
   equal(
     AutopilotPolicy.proposeQuestions(unsure, memory: memory).count, 0, "no slots while 3 open")
+  var oneOpen = AutopilotMemory()
+  oneOpen.questions = [questions.first { $0.kind == .worktree }!]
+  checkFalse(
+    AutopilotPolicy.proposeQuestions(unsure, memory: oneOpen).contains { $0.kind == .worktree },
+    "no second question about copies an open question covers")
+  var busy = unsure
+  busy.append(
+    copy("today", ["place": "patrol6", "saved": "local", "changes": "none", "stale": "today", "thread": "none"]))
+  check(
+    AutopilotPolicy.proposeQuestions([busy.last!], memory: AutopilotMemory()).isEmpty,
+    "nothing touched today is asked about")
   memory.questions[0].answer = .yes
   memory.questions[0].answered = Date()
   let next = AutopilotPolicy.proposeQuestions(unsure, memory: memory)
@@ -198,7 +211,7 @@ func autopilotPolicyProof() throws {
 
   // Rule titles are plain English.
   let title = AutopilotPolicy.ruleTitle(copies, answer: .yes)
-  check(title.hasPrefix("Burn: Old copies"), title)
+  check(title.hasPrefix("Burn: Old project copies"), title)
 
   // The store round-trips memory and bounds receipts.
   let root = FileManager.default.temporaryDirectory.appendingPathComponent(

@@ -301,7 +301,12 @@ public enum AutopilotDisk {
         consider(String(record.repository.dropLast(5)), linked: false, activity: nil)
       }
     }
-    return byPath.values.sorted { $0.path < $1.path }
+    // The scan is time-bounded, so the stalest checkouts (likeliest junk) go first.
+    return byPath.values.sorted {
+      let a = $0.activity ?? .distantFuture
+      let b = $1.activity ?? .distantFuture
+      return a != b ? a < b : $0.path < $1.path
+    }
   }
 
   /// Rebuildable folders up to three levels below a checkout root. Never enters `.git`, other
