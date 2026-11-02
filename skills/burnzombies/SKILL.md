@@ -5,6 +5,8 @@ description: Keep disposable agent helpers from outliving their work. Use when c
 
 # Keep the work. Lose the leftovers.
 
+BurnZombies now runs on **Autopilot**: every 15 minutes it burns orphaned helpers, retires old worktrees (always restorable) and clears rebuildable junk folders on its own, and asks the operator tiny yes/no questions about the rest. You do not need to do anything for that. Helpers a live chat is working with are protected automatically, and an **active lifecycle claim** (below) also protects a helper until you release it — use it for anything you will need again after your chat goes quiet.
+
 BurnZombies observes the whole Mac and independently reviews saved lifecycle evidence. Your job as the **working agent** is to preserve facts that another reviewer cannot recover from process names or idle time. Do this alongside the user's task; do not start a cleanup chat or wait for verification.
 
 ## While you own work

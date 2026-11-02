@@ -1554,6 +1554,15 @@ public actor Monitor {
   // MARK: Autopilot
 
   public func autopilotRecords() -> [String: Record] { catalog.records }
+  /// Processes a working chat still claims through the lifecycle protocol.
+  public func autopilotClaimedKeys() -> Set<String> {
+    let claims = catalog.workEvidence ?? []
+    guard !claims.isEmpty else { return [] }
+    return Set(
+      catalog.records.values.filter {
+        $0.missingSince == nil && WorkEvidence.blocking(claims, identity: $0.id)
+      }.map(\.id))
+  }
   public func autopilotPreferences() -> Preferences { catalog.preferences }
   public func autopilotWorktreeRecords() -> [WorktreeRecord] {
     worktreeService?.autopilotRecords() ?? []
@@ -1591,6 +1600,9 @@ public actor Monitor {
         r, protectedPIDs: protectedPIDs, preferences: catalog.preferences)
       {
         throw StoreError.message("PID \(r.latest.identity.pid): \(reason)")
+      }
+      if WorkEvidence.blocking(catalog.workEvidence ?? [], identity: r.id) {
+        throw StoreError.message("A chat said it still needs this, so I left it running.")
       }
     }
     let targets = (tree + [root]).map(\.latest)

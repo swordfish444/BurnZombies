@@ -14,7 +14,8 @@ extension AutopilotSources {
         let preferences = await monitor.autopilotPreferences()
         return AutopilotProcesses.items(
           records, threads: threads, protectedPIDs: AgentSafety.ancestors(of: getpid()) ?? [],
-          launchAgents: launchAgentPIDs(), preferences: preferences, home: home)
+          launchAgents: launchAgentPIDs(), claimed: await monitor.autopilotClaimedKeys(),
+          preferences: preferences, home: home)
       },
       worktreeRecords: { await monitor.autopilotWorktreeRecords() },
       worktrees: { records, threads, cache in

@@ -157,7 +157,8 @@ public enum AutopilotProcesses {
 
   public static func items(
     _ records: [String: Record], threads: [AgentThread], protectedPIDs: Set<Int32>,
-    launchAgents: Set<Int32> = [], preferences: Preferences = Preferences(), now: Date = Date(),
+    launchAgents: Set<Int32> = [], claimed: Set<String> = [],
+    preferences: Preferences = Preferences(), now: Date = Date(),
     probe: AutopilotProcessProbe = .live, home: String = NSHomeDirectory()
   ) -> [AutopilotItem] {
     var items = [AutopilotItem]()
@@ -183,6 +184,9 @@ public enum AutopilotProcesses {
       let cwd = probe.cwd(o.identity.pid)
       let thread = cwd.map { AgentThreads.state(for: $0, threads: threads).thread } ?? "none"
       if reason == nil, thread == "live" { reason = "A chat is still working in this project." }
+      if reason == nil, members.contains(where: { claimed.contains($0.id) }) {
+        reason = "A chat said it still needs this."
+      }
       let listening: String = {
         var unknown = false
         for member in members {

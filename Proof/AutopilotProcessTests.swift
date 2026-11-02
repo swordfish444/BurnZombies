@@ -80,6 +80,12 @@ func autopilotProcessProof() async throws {
   equal(guarded?.facts["thread"], "live")
   equal(guarded?.protectedReason, "A chat is still working in this project.")
 
+  // A helper a working chat still claims is protected.
+  let claimed = AutopilotProcesses.items(
+    records, threads: [], protectedPIDs: own, claimed: Set(records.values.filter { $0.latest.identity.pid == fixture.children[0] }.map(\.id)))
+    .first { $0.pid == fixture.shell }
+  equal(claimed?.protectedReason, "A chat said it still needs this.")
+
   // Rails: macOS, harnesses and real apps are protected; automation browsers are not.
   func rail(_ path: String) -> String? {
     var o = Observation(identity: ProcessIdentity(pid: 4242, seconds: 1), executable: path)
