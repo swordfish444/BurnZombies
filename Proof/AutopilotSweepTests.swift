@@ -22,6 +22,34 @@ func autopilotSweepProof() async throws {
   checkFalse(
     AutopilotSweeper.aiDue(state, snapshot: AutopilotSnapshot(), now: now, manual: false),
     "off never starts the AI")
+  // The AI wakes for unjudged unsure items, at most every 30 minutes, plus a 4-hour refresh.
+  var fresh = AutopilotSweepState()
+  var unsureSnapshot = AutopilotSnapshot()
+  let unsureItem = AutopilotItem(id: "process:u", kind: .process, name: "u", facts: ["family": "node"])
+  unsureSnapshot.entries = [
+    AutopilotEntry(
+      item: unsureItem, status: .unsure, authority: nil, label: "u", why: "", consequence: "")
+  ]
+  unsureSnapshot.counts = ["unsure": 1]
+  check(AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false), "first")
+  fresh.lastAISweep = now.addingTimeInterval(-10 * 60)
+  checkFalse(
+    AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false), "spacing")
+  fresh.lastAISweep = now.addingTimeInterval(-31 * 60)
+  check(AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false), "new work")
+  fresh.lastAIDigest = AutopilotSweeper.digest(unsureSnapshot)
+  checkFalse(
+    AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false), "same work")
+  unsureSnapshot.entries[0].judged = true
+  fresh.lastAIDigest = nil
+  checkFalse(
+    AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false),
+    "already judged")
+  fresh.lastAISweep = now.addingTimeInterval(-4 * 3600 - 1)
+  check(AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false), "refresh")
+  check(
+    AutopilotSweeper.aiDue(
+      AutopilotSweepState(), snapshot: AutopilotSnapshot(), now: now, manual: true), "manual hunt")
   equal(AutopilotSweeper.backoff(failures: 1), 15 * 60)
   equal(AutopilotSweeper.backoff(failures: 2), 30 * 60)
   equal(AutopilotSweeper.backoff(failures: 3), 60 * 60)
