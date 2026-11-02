@@ -137,6 +137,13 @@ func autopilotPolicyProof() throws {
   equal(
     AutopilotPolicy.ruleTitle(lonelyServer, answer: .no),
     "Keep: Leftover Node programs · Still running a server · Idle 1+ day")
+  let modules = AutopilotQuestion(
+    kind: .disk, match: ["folder": ["node_modules"], "stale": ["day"], "home": ["repo"]],
+    question: "", why: "", examples: [], count: 9, bytes: 4_000_000_000)
+  equal(
+    AutopilotPolicy.ruleTitle(modules, answer: .yes),
+    "Burn: node_modules folders · Unused since yesterday · Inside your projects",
+    "a folder's real name keeps its case")
 
   let valued = AutopilotPolicy.proposeQuestions(many + few + crumbs, memory: AutopilotMemory())
   equal(valued.first?.match["saved"], ["pushed"], "two 5 GB copies beat thirty 150 MB ones")

@@ -384,7 +384,10 @@ public enum AutopilotPolicy {
   /// The same short words as the question's card: "Burn: Old project copies · Saved on GitHub".
   public static func ruleTitle(_ question: AutopilotQuestion, answer: AutopilotAnswer) -> String {
     let plural = noun(question.kind, match: question.match).1
-    let subject = plural.prefix(1).uppercased() + plural.dropFirst()
+    // A real folder name like node_modules keeps its case.
+    let subject =
+      plural.split(separator: " ").first?.contains("_") == true
+      ? plural : plural.prefix(1).uppercased() + plural.dropFirst()
     return (answer == .yes ? "Burn: " : "Keep: ")
       + ([subject] + facts(question.kind, match: question.match)).joined(separator: " · ")
   }

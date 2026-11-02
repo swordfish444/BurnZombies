@@ -278,7 +278,8 @@ public actor Autopilot {
     if authority == "operator" { return "You asked me to keep it." }
     let id = authority.split(separator: ":", maxSplits: 1).last.map(String.init) ?? ""
     if authority.hasPrefix("rule:"), let rule = memory.rules.first(where: { $0.id == id }) {
-      return "You told me: " + rule.title + "."
+      return rule.verdict == .burn
+        ? "You told me to burn things like this." : "You told me to keep things like this."
     }
     if authority.hasPrefix("starter:"),
       let rule = AutopilotPolicy.starterRules.first(where: { $0.id == id })

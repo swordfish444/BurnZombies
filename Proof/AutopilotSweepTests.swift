@@ -372,6 +372,9 @@ func autopilotSweepProof() async throws {
   equal(
     retitled.rules.first { $0.source == .operator }?.title,
     AutopilotPolicy.ruleTitle(serverQuestion, answer: .no), "short words for an older rule")
+  equal(
+    retitled.entries.first { $0.item.id == server.id }?.why,
+    "You told me to keep things like this.", "the reason is a plain sentence")
 
   // Something burned since the catalog was built is gone: it is never tried again from the
   // same catalog, whether by another pass, the AI or the owner, nor after a restart.
