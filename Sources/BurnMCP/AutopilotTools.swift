@@ -42,7 +42,7 @@ enum AutopilotTools {
         "type": "object",
         "properties": .object([
           "judgments": .object([
-            "type": "array", "minItems": 1, "maxItems": 200,
+            "type": "array", "minItems": 1, "maxItems": 50,
             "items": .object([
               "type": "object",
               "properties": .object([

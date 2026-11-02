@@ -900,8 +900,9 @@ public enum AgentConnection {
     // Legacy preview performs two complete native consumer passes. Its read-only
     // budget must not inherit the fast status deadline or outlast preservation.
     let workspacePreview = request.operation == "workspace_preview"
+    // Autopilot burns can retire several old copies in one call.
     let deadline =
-      worktree
+      worktree || request.operation == "autopilot"
       ? 900000 : workspacePreview ? 30000 : request.operation == "disk_inspect" ? 15000 : 5000
     let count = bz_agent_read_timeout(fd, &buffer, Int32(buffer.count), Int32(deadline))
     guard count > 0 else {

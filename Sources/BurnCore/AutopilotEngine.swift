@@ -555,6 +555,44 @@ public actor Autopilot {
   }
 }
 
+/// A bounded overview for the CLI: the socket reply is capped, so no item lists.
+public struct AutopilotSummary: Codable, Sendable {
+  public var counts: [String: Int]
+  public var bytes: [String: String]
+  public var trainingProgress: Double
+  public var answers: Int
+  public var coverage: Double
+  public var questions: [String]
+  public var rules: [String]
+  public var enabled: Bool
+  public var intervalMinutes: Int
+  public var lastTick: Date?
+  public var lastAISweep: Date?
+  public var retryAfter: Date?
+  public var lastError: String?
+  public var log: [String]
+  public var recent: [String]
+  public var notes: [String]
+  public init(_ s: AutopilotSnapshot) {
+    counts = s.counts
+    bytes = s.bytes.mapValues(AutopilotPolicy.format)
+    trainingProgress = s.trainingProgress
+    answers = s.answers
+    coverage = s.coverage
+    questions = s.questions.map { "\($0.question) (\($0.why))" }
+    rules = s.rules.filter(\.enabled).map { "\($0.source.rawValue): \($0.title)" }
+    enabled = s.sweep.enabled
+    intervalMinutes = s.sweep.intervalMinutes
+    lastTick = s.sweep.lastTick
+    lastAISweep = s.sweep.lastAISweep
+    retryAfter = s.sweep.retryAfter
+    lastError = s.sweep.lastError
+    log = s.sweep.log.suffix(10).map(\.message)
+    recent = s.receipts.prefix(20).map { "\($0.name): \($0.outcome) (\($0.authority))" }
+    notes = s.coverageNotes
+  }
+}
+
 /// One autopilot call from the MCP server or CLI.
 public struct AutopilotRequest: Codable, Sendable {
   /// `catalog`, `inspect`, `decide`, `burn`, `ask`, `report`, `snapshot` or `command`.
@@ -663,7 +701,7 @@ extension Autopilot {
         try report(request.text ?? "")
         return (true, encode(["ok": "true"]))
       case "snapshot":
-        return (true, encode(snapshot()))
+        return (true, encode(AutopilotSummary(snapshot())))
       case "command":
         guard let command = request.command else { return failure("Pass command.") }
         return (true, encode(try await apply(command)))
