@@ -58,12 +58,26 @@ public struct AutopilotSources: Sendable {
   }
 }
 
+/// What the AI reads per item: compact, without UI-only text.
+public struct AutopilotCatalogItem: Codable, Sendable {
+  public var id: String
+  public var kind: AutopilotKind
+  public var name: String
+  public var detail: String
+  public var size: String
+  public var facts: [String: String]
+  public var status: AutopilotStatus
+  public var authority: String?
+  public var label: String?
+  public var why: String?
+}
+
 public struct AutopilotCatalogPage: Codable, Sendable {
   public var summary: [String: String]
   public var rules: [AutopilotRule]
   public var openQuestions: [AutopilotQuestion]
   public var answered: [AutopilotQuestion]
-  public var items: [AutopilotEntry]
+  public var items: [AutopilotCatalogItem]
   public var nextOffset: Int?
 }
 
@@ -396,7 +410,14 @@ public actor Autopilot {
       summary: summary, rules: snap.rules, openQuestions: snap.questions,
       answered: Array(
         memory.questions.filter { $0.answer == .yes || $0.answer == .no }.suffix(20)),
-      items: page,
+      items: page.map { entry in
+        AutopilotCatalogItem(
+          id: entry.id, kind: entry.item.kind, name: entry.item.name, detail: entry.item.detail,
+          size: AutopilotPolicy.format(entry.item.bytes),
+          facts: entry.item.facts.filter { $0.key != "kind" }, status: entry.status,
+          authority: entry.authority, label: entry.label == entry.item.name ? nil : entry.label,
+          why: entry.status == .unsure ? nil : entry.why)
+      },
       nextOffset: offset + page.count < entries.count ? offset + page.count : nil)
   }
 
