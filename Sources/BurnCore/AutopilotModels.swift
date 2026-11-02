@@ -319,3 +319,18 @@ public struct AutopilotCatalog: Codable, Sendable {
     self.coverageNotes = coverageNotes
   }
 }
+
+/// Everything the operator can do from the UI or CLI. The engine applies each command
+/// and returns a fresh snapshot.
+public enum AutopilotCommand: Codable, Sendable, Equatable {
+  case answer(questionID: String, answer: AutopilotAnswer)
+  case burnNow(itemID: String)
+  case keep(itemID: String)
+  case restore(receiptID: UUID)
+  case forgetRule(ruleID: String)
+  case setStarter(ruleID: String, enabled: Bool)
+  case setEnabled(Bool)
+  case setInterval(minutes: Int)
+  case resetTraining
+  case sweepNow
+}
