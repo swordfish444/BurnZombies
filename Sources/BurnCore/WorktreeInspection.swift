@@ -6,7 +6,12 @@ import Foundation
 public enum WorktreeGit {
   private static let stateLock = NSLock()
   private static var unsafeTeardown = false
-  public static func run(_ path: String, _ args: [String], seconds: Double = 15) throws -> Data {
+  /// Git variables a caller may add. None of them widens what the bounded runner may touch.
+  private static let permittedEnvironment: Set<String> = ["GIT_INDEX_FILE", "GIT_LITERAL_PATHSPECS"]
+  public static func run(
+    _ path: String, _ args: [String], seconds: Double = 15,
+    environment extra: [String: String] = [:]
+  ) throws -> Data {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "bz-worktree-git-" + UUID().uuidString)
     let fd = open(url.path, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
@@ -19,18 +24,21 @@ public enum WorktreeGit {
     guard (0.001...180).contains(seconds), !stateLock.withLock({ unsafeTeardown }) else {
       throw StoreError.message("Git work is paused after an unverified owned-child teardown.")
     }
+    guard extra.allSatisfy({ permittedEnvironment.contains($0.key) && !$0.value.contains("\0") })
+    else { throw StoreError.message("That Git environment variable is not permitted.") }
     var words =
       ([
         "/usr/bin/git", "--no-pager", "-c", "core.hooksPath=/dev/null", "-c",
         "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "protocol.allow=never",
         "-C", path,
       ] + args).map { (value: String) in value.withCString { strdup($0) } } + [nil]
-    var env =
-      [
-        "PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "GIT_CONFIG_NOSYSTEM=1",
-        "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0",
-        "GIT_NO_LAZY_FETCH=1", "LC_ALL=C",
-      ].map { (value: String) in value.withCString { strdup($0) } } + [nil]
+    var entries: [String] = [
+      "PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "GIT_CONFIG_NOSYSTEM=1",
+      "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0",
+      "GIT_NO_LAZY_FETCH=1", "LC_ALL=C",
+    ]
+    for key in extra.keys.sorted() { entries.append(key + "=" + extra[key]!) }
+    var env = entries.map { (value: String) in value.withCString { strdup($0) } } + [nil]
     defer {
       words.forEach { free($0) }
       env.forEach { free($0) }
