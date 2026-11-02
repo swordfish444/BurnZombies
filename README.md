@@ -2,11 +2,17 @@
 
 # BurnZombies
 
-**Keep your agents running. Lose the leftovers.**
+**Keep your agents running. Lose the leftovers — on autopilot.**
 
-Long sessions leave a mess: abandoned Node workers, forgotten browser helpers, repeated build caches and worktrees full of yesterday's output. Eventually your Mac pays for work that already ended.
+Long agent sessions leave a mess: orphaned Node workers, robot browsers, build watchers, worktrees nobody opens again and gigabytes of rebuildable junk. BurnZombies sweeps your whole Mac every 15 minutes, burns what is safe, and when it isn't sure it asks you one tiny yes/no question. Every answer becomes a rule. After about a dozen answers it runs itself.
 
-BurnZombies watches your whole Mac—across projects, terminals, agents and old sessions. **Your existing harness supplies the intelligence. BurnZombies runs quietly in the background, cleans up confirmed leftovers and shows what you got back.** No active chat. No reboot.
+| It burns | How |
+| --- | --- |
+| 🧟 **Zombies** — programs whose app or chat is gone | A graceful stop. Programs a live chat is using are never touched. |
+| 📁 **Old copies** — git worktrees you stopped using | Every commit and change is saved in a restore point first. One click restores it. |
+| 🗑️ **Junk folders** — `node_modules`, build output, DerivedData | Deleted; your tools rebuild them when needed. |
+
+Your existing harness (Claude Code by default, or Codex) does the thinking in short headless sweeps; native code supplies facts, enforces the safety rails and verifies every result. [How Autopilot decides →](docs/AUTOPILOT.md)
 
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-242420?logo=apple&logoColor=white)](#install)
 [![MCP ready](https://img.shields.io/badge/MCP-ready-ff541f)](docs/MCP.md)
@@ -45,6 +51,10 @@ Want to choose the brain? **Settings → Review intelligence** lets you set the 
 Installing through an agent? Tell it:
 
 > **Install BurnZombies to watch this Mac and clean up abandoned agent helpers in the background.**
+
+## Teach BZ in a dozen taps
+
+When Autopilot isn't sure, the menu shows **BZ has 3 quick questions**. Each one is a single card — "Can I burn old copies of your projects that are already saved on GitHub? I found 212 like this, using 48 GB." — with **Yes, burn them** and **No, keep them**. Yes burns the matches right away and every future match; No protects them for good. **Findings** shows everything in plain words: what it is, why BZ thinks so, and what happens if it burns it, with technical details tucked away. Settings → **What BZ has learned** lists every rule with a Forget button.
 
 ## Dead weight. Gone.
 
