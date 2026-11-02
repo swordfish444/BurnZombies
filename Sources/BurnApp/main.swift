@@ -249,7 +249,16 @@ import UserNotifications
   var openWorktrees: (() -> Void)?
   var openHunt: (() -> Void)?
   var openFindings: (() -> Void)?
+  var openAdvancedFindings: (() -> Void)?
+  var openTeach: (() -> Void)?
   var openWorktreeID: ((String) -> Void)?
+  /// Autopilot as the windows see it. The engine replaces this after every sweep and command.
+  @Published var autopilot = AutopilotSnapshot()
+  /// Applies one operator command in the engine and returns the new snapshot. While nil (demo and
+  /// offscreen proofs) the model applies the same change to `autopilot` in memory instead.
+  var autopilotRunner: ((AutopilotCommand) async -> AutopilotSnapshot?)?
+  /// The Autopilot surfaces appear once an engine is attached, or in the demo.
+  var autopilotAvailable: Bool { demo || autopilotRunner != nil }
   @Published var findingSelection: String?
   @Published var findingBusy = Set<String>()
   let demo: Bool
@@ -282,6 +291,7 @@ import UserNotifications
     if demo {
       state = Demo.state()
       state.fullDiskAccess = .init(state: .granted, detail: "Preview access state.")
+      autopilot = Demo.autopilot()
       pressure = "Low"
       harnessConfigured = true
       machineReviewEnabled = true
@@ -413,20 +423,21 @@ import UserNotifications
   func notificationAction(id: String, revision: String, action: String) {
     Task {
       if let monitor { state = await monitor.snapshot() }
+      // These notifications are about the detailed inbox, so they open the advanced window.
       if id == "digest" {
-        openFindings?()
+        openAdvancedFindings?()
         return
       }
       guard let monitor, let p = try? await monitor.finding(id), p.revision == revision else {
         message = "That finding changed. Review its current evidence."
-        openFindings?()
+        openAdvancedFindings?()
         return
       }
       if action == "approve" || action == "keep" || action == "snooze" {
         decideFinding(p, decision: action)
       } else {
         findingSelection = p.id
-        openFindings?()
+        openAdvancedFindings?()
       }
     }
   }
@@ -718,6 +729,63 @@ import UserNotifications
       objectWillChange.send()
     } catch { message = "Login item could not be changed: \(error.localizedDescription)" }
   }
+  // MARK: Autopilot commands
+  // Each sends its AutopilotCommand through `autopilotRunner` and shows the snapshot it returns.
+  // With no runner (demo and offscreen proofs) the same change is applied in memory so the
+  // windows visibly react. A real model without a runner changes nothing and says so.
+  func answer(_ q: AutopilotQuestion, _ a: AutopilotAnswer) {
+    sendAutopilot(.answer(questionID: q.id, answer: a)) {
+      AutopilotLocal.answer(&$0, question: q, answer: a, now: Date())
+    }
+  }
+  func burnNow(_ e: AutopilotEntry) {
+    sendAutopilot(.burnNow(itemID: e.id)) { AutopilotLocal.burnNow(&$0, entry: e, now: Date()) }
+  }
+  func keepForever(_ e: AutopilotEntry) {
+    sendAutopilot(.keep(itemID: e.id)) { AutopilotLocal.keep(&$0, entry: e) }
+  }
+  func restore(_ r: AutopilotReceipt) {
+    sendAutopilot(.restore(receiptID: r.id)) { AutopilotLocal.restore(&$0, receipt: r, now: Date()) }
+  }
+  func forgetRule(_ r: AutopilotRule) {
+    sendAutopilot(.forgetRule(ruleID: r.id)) { AutopilotLocal.forget(&$0, rule: r) }
+  }
+  func setStarter(_ id: String, enabled: Bool) {
+    sendAutopilot(.setStarter(ruleID: id, enabled: enabled)) {
+      AutopilotLocal.setStarter(&$0, id: id, enabled: enabled)
+    }
+  }
+  func setAutopilot(enabled: Bool) {
+    sendAutopilot(.setEnabled(enabled)) { $0.sweep.enabled = enabled }
+  }
+  func setSweepInterval(minutes: Int) {
+    sendAutopilot(.setInterval(minutes: minutes)) { $0.sweep.intervalMinutes = minutes }
+  }
+  func resetTraining() {
+    sendAutopilot(.resetTraining) { AutopilotLocal.reset(&$0) }
+  }
+  func sweepNow() {
+    sendAutopilot(.sweepNow) { AutopilotLocal.sweepNow(&$0, now: Date()) }
+  }
+  private func sendAutopilot(_ command: AutopilotCommand, local: (inout AutopilotSnapshot) -> Void) {
+    if let runner = autopilotRunner {
+      Task { [weak self] in
+        if let next = await runner(command) {
+          self?.autopilot = next
+        } else {
+          self?.message = "Autopilot couldn't finish that. Try again in a moment."
+        }
+      }
+      return
+    }
+    guard demo else {
+      message = "Autopilot isn't connected yet."
+      return
+    }
+    var next = autopilot
+    local(&next)
+    autopilot = next
+  }
   func quit() {
     Task {
       do { try await monitor?.checkpoint() } catch {
@@ -750,9 +818,18 @@ private func status(_ d: Disposition) -> String {
 }
 
 struct Dashboard: View {
-  @StateObject private var reviewerSettings = ReviewSettingsModel()
-  @StateObject private var huntSettings = HuntSettingsModel()
+  @StateObject private var reviewerSettings: ReviewSettingsModel
+  @StateObject private var huntSettings: HuntSettingsModel
   @ObservedObject var model: AppModel
+  /// Proofs pass scratch-folder models so rendering never reads the real state folder.
+  init(
+    model: AppModel, reviewerSettings: ReviewSettingsModel? = nil,
+    huntSettings: HuntSettingsModel? = nil
+  ) {
+    self.model = model
+    _reviewerSettings = StateObject(wrappedValue: reviewerSettings ?? ReviewSettingsModel())
+    _huntSettings = StateObject(wrappedValue: huntSettings ?? HuntSettingsModel())
+  }
   var eligible: Int { model.state.findings.filter { $0.disposition == .eligible }.count }
   var attention: Int {
     model.state.findings.filter { $0.disposition == .eligible || $0.disposition == .investigate }
@@ -777,6 +854,10 @@ struct Dashboard: View {
           "Refresh observations")
       }.padding(20)
       Divider()
+      if model.autopilotAvailable && model.selection == nil {
+        AutopilotMenuSection(model: model)
+        Divider()
+      }
       if let error = model.state.error {
         Label(error, systemImage: "exclamationmark.shield").font(.callout).padding()
           .foregroundStyle(.red)
@@ -995,6 +1076,7 @@ struct Dashboard: View {
   var settings: some View {
     Group {
       FullDiskAccessView(model: model)
+      if model.autopilotAvailable { AutopilotSettingsView(model: model) }
       Text("Quiet by default.").font(.title2.weight(.semibold))
       Text("Your whole Mac. One observer.").font(.headline)
       Text(
@@ -1072,6 +1154,8 @@ struct Dashboard: View {
   var menuPreviewWindow: NSWindow?
   var huntWindow: NSWindow?
   var findingsWindow: NSWindow?
+  var autopilotFindingsWindow: NSWindow?
+  var teachWindow: NSWindow?
   var findingNotifications: FindingNotifications?
   var model: AppModel!
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1089,6 +1173,8 @@ struct Dashboard: View {
     model.openWorktrees = { [weak self] in self?.showWorktrees() }
     model.openWorktreeID = { [weak self] id in self?.showWorktrees(selectedID: id) }
     model.openFindings = { [weak self] in self?.showFindings() }
+    model.openAdvancedFindings = { [weak self] in self?.showAdvancedFindings() }
+    model.openTeach = { [weak self] in self?.showTeach() }
     findingNotifications = FindingNotifications { [weak self] id, revision, action in
       self?.model.notificationAction(id: id, revision: revision, action: action)
     }
@@ -1113,6 +1199,8 @@ struct Dashboard: View {
       self, selector: #selector(waking), name: NSWorkspace.didWakeNotification, object: nil)
     if CommandLine.arguments.contains("--show-worktrees") { showWorktrees() }
     if CommandLine.arguments.contains("--show-findings") { showFindings() }
+    if CommandLine.arguments.contains("--show-advanced-findings") { showAdvancedFindings() }
+    if CommandLine.arguments.contains("--show-teach") { showTeach() }
     if CommandLine.arguments.contains("--show-window") { showImpact("Impact") }
     if CommandLine.arguments.contains("--show-popover") { toggle() }
     if CommandLine.arguments.contains("--show-mini-window") {
@@ -1168,12 +1256,34 @@ struct Dashboard: View {
     worktreeWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
+  /// The simple Findings window. Until an Autopilot engine is attached there is nothing for it
+  /// to show, so the detailed window opens instead and the menu keeps working as before.
   func showFindings() {
+    guard model.autopilotAvailable else {
+      showAdvancedFindings()
+      return
+    }
+    popover?.performClose(nil)
+    if autopilotFindingsWindow == nil {
+      autopilotFindingsWindow = AutopilotFindingsView.makeWindow(model: model)
+    }
+    autopilotFindingsWindow?.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+  func showAdvancedFindings() {
     popover?.performClose(nil)
     if findingsWindow == nil {
       findingsWindow = FindingsView.makeWindow(model: model)
     }
     findingsWindow?.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+  func showTeach() {
+    popover?.performClose(nil)
+    if teachWindow == nil {
+      teachWindow = TeachView.makeWindow(model: model)
+    }
+    teachWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
   func showAudit() {
@@ -1426,6 +1536,15 @@ MainActor.assumeIsolated {
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--findings-proof" {
       do {
         try findingsProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--autopilot-proof" {
+      do {
+        try autopilotProof(output: CommandLine.arguments[2])
         exit(0)
       } catch {
         print("FAIL \(error.localizedDescription)")
