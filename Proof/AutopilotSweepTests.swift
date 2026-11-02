@@ -205,6 +205,27 @@ func autopilotSweepProof() async throws {
   isNil(sweep.retryAfter)
   check(sweep.lastAIDigest != nil, "digest remembered")
 
+  // An AI question replaces an open native question about the same items.
+  let askEngine = try Autopilot(
+    root: directory.appendingPathComponent("ask"),
+    sources: AutopilotSources(processes: { _ in [server] }))
+  let before = await askEngine.tick(now: Date())
+  guard let native = before.questions.first(where: { $0.source == "native" }) else {
+    failTest("a native question exists for the unsure server")
+    return
+  }
+  var aiAsk = AutopilotRequest(tool: "ask")
+  var input = AutopilotQuestionInput(
+    kind: .process, match: ["family": ["node"], "listening": ["yes"], "agent": ["none"]],
+    question: "Can I stop the dev servers left behind by chats that finished?")
+  input.why = "They hold ports nobody uses."
+  aiAsk.question = input
+  let (replacedOK, replacedJSON) = await askEngine.handle(aiAsk)
+  check(replacedOK, replacedJSON)
+  let after = await askEngine.snapshot()
+  checkFalse(after.questions.contains { $0.id == native.id }, "native duplicate removed")
+  equal(after.questions.filter { $0.source == "ai" }.count, 1, "AI wording kept")
+
   // Commands.
   snapshot = try await engine.apply(.setInterval(minutes: 30))
   equal(snapshot.sweep.intervalMinutes, 30)

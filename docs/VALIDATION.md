@@ -156,3 +156,15 @@ New idle worktrees remain available for manual review without notification. A wo
 `scripts/test-install-control.py` runs stock `/bin/bash` against an inert signed test app: Codex and Claude setup with and without observe-only, upgrade, setup and launch failure, prior-bundle restoration, and launch dispatch. `scripts/test-install.py` separately verifies the genuine release archive and private setup. Neither test claims a live installed UI journey.
 
 The installed large-inbox acceptance exposed Findings growing beyond the screen. The native window now owns its viewport instead of adopting the list’s intrinsic height. The 1,000-row offscreen proof first reproduced a 3,739-point-tall window, then verifies the production window remains bounded with visible search and notification controls. It never shows a window, takes focus or acts on a resource. Installed interaction is a separate acceptance check.
+
+## Autopilot (0.13.0, build 33)
+
+macOS 27.0.1 / arm64, Swift 6.4. All destructive checks use sacrificial fixtures in temporary folders or processes the proof starts.
+
+- `--autopilot-policy`: keep beats burn, starter rules and their switches, AI confidence floor and eligibility, revision binding, question clustering and wording, training progress, coverage, bounded private store.
+- `--autopilot-process`: a real orphaned process tree (observed reparenting) is cataloged with its two children, protected while a live chat works in its folder, stopped gracefully as one tree, and never stopped twice; macOS, harness and real app binaries are protected while Playwright/`node_modules` browsers are not; listening sockets are detected as a fact.
+- `--autopilot-worktrees`: real Git fixtures for merged/pushed/local facts, clean and dirty retirement into `refs/burnzombies/retired/*` with restore (edits come back uncommitted, untracked and small ignored files return, `node_modules` is not copied), and refusals for main checkouts, locks, merges in progress, in-use/unknown consumers, dirty submodules, changed delivery state and restoring over an existing folder.
+- `--autopilot-disk`: chat-thread index (live and ended Claude sessions, Claude transcripts, Codex rollouts), rebuildable folders inside stale copies and global developer caches, tracked folders and private areas excluded, and reclaim refusals for unknown kinds, symlinks and in-use or unknown consumers.
+- `--autopilot-sweep`: native starter burns with no AI, AI verdicts authorizing only eligible items, answers creating rules that burn in the background, AI wake rules (unjudged work, 30-minute spacing, 4-hour refresh, manual hunts), backoff instead of pause, catalog-only while off.
+- `scripts/test-autopilot-mcp.py`: the real MCP server in autopilot mode over stdio against a private app endpoint — exactly six tools, compact catalog, inspect, refusal guidance, AI authority, a 7-second burn past the old 5-second socket deadline, listening-server refusal, questions and report.
+- `--autopilot-proof`: offscreen menu, Teach BZ, Findings and Settings renders with text checks.

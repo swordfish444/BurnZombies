@@ -25,6 +25,8 @@ public enum AutopilotWorktrees {
   private static let ignoredFileLimit: UInt64 = 5 << 20
   private static let ignoredTotalLimit: UInt64 = 100 << 20
   private static let walkLimit = 100_000
+  /// Untracked, unignored content larger than this is never copied into a safety commit.
+  static let maximumUnsavedBytes: UInt64 = 512 << 20
   private static let refPrefix = "refs/burnzombies/retired/"
   private static let stateFiles = [
     "locked", "index.lock", "HEAD.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD",
@@ -299,6 +301,23 @@ public enum AutopilotWorktrees {
     let links = try gitlinks(path, environment: [:])
     if let reason = try submoduleRefusal(path, links: links, depth: 0) {
       throw Refusal(reason)
+    }
+
+    // Big unsaved files would be copied into the repository's own storage; ask instead.
+    var unsaved: UInt64 = 0
+    let untracked = try WorktreeGit.run(
+      path, ["ls-files", "-z", "--others", "--exclude-standard"], seconds: 60)
+    for name in untracked.split(separator: 0) {
+      var info = stat()
+      if lstat(path + "/" + String(decoding: name, as: UTF8.self), &info) == 0,
+        info.st_mode & S_IFMT == S_IFREG
+      {
+        unsaved += UInt64(max(0, info.st_size))
+      }
+      if unsaved > maximumUnsavedBytes {
+        throw Refusal(
+          "It has big files that aren't saved anywhere else, so I'll ask you before touching it.")
+      }
     }
 
     // Snapshot with a throwaway copy of the index so the real one is never touched.

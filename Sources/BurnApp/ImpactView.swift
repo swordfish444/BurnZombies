@@ -163,6 +163,13 @@ struct BurnStatus: View {
   @ObservedObject var model: AppModel
   var compact = false
   var status: String {
+    if model.autopilotAvailable {
+      let sweep = model.autopilot.sweep
+      if sweep.running || model.huntRunning { return "Hunting Zombies" }
+      if !sweep.enabled { return "Autopilot off" }
+      if let retry = sweep.retryAfter, retry > Date() { return "Autopilot · AI retrying soon" }
+      return "Autopilot on"
+    }
     if !model.accessReady { return "Setup required" }
     if model.state.error != nil { return "Needs attention" }
     if model.huntRunning { return "Hunting Zombies" }
@@ -179,7 +186,7 @@ struct BurnStatus: View {
         .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
       Text(status).font(.system(size: compact ? 13 : 18)).foregroundStyle(Color(white: 0.82))
       Button {
-        if !model.accessReady {
+        if !model.accessReady && !model.autopilotAvailable {
           model.openFullDiskAccessSettings()
         } else if model.huntRunning {
           model.openHunt?()
@@ -188,10 +195,10 @@ struct BurnStatus: View {
         }
       } label: {
         HStack(spacing: 6) {
-          if model.accessReady && model.huntRunning {
+          if (model.accessReady || model.autopilotAvailable) && model.huntRunning {
             Image(systemName: "arrow.up.right")
           } else {
-            Text(!model.accessReady ? "Finish setup" : "Hunt Zombies")
+            Text(!model.accessReady && !model.autopilotAvailable ? "Finish setup" : "Hunt Zombies")
           }
         }
         .font(.system(size: compact ? 10.5 : 12, weight: .semibold)).foregroundStyle(
@@ -245,7 +252,7 @@ struct MiniImpactView: View {
   var lastBurn: String {
     let history = ImpactNumbers.make(model, period: .all)
     if history.last != nil { return "Last burn \(history.age)" }
-    if !model.accessReady { return "Waiting for Full Disk Access" }
+    if !model.accessReady && !model.autopilotAvailable { return "Waiting for Full Disk Access" }
     return history.count + history.worktrees == 0
       ? "Ready for your first burn" : "No burns yet today"
   }
@@ -263,8 +270,27 @@ struct MiniImpactView: View {
         }.clickPointer().help("Settings").accessibilityLabel("Settings")
       }.frame(height: 36)
       BurnStatus(model: model, compact: true).frame(height: 22).padding(.top, 9)
-      Text("Dead weight. Gone.").font(BurnTheme.display(28))
-        .frame(height: 40, alignment: .leading).padding(.top, 16)
+      if model.autopilotAvailable, !model.autopilot.questions.isEmpty {
+        // Same 40 pt slot as the tagline, so the fixed popover layout never moves.
+        Button {
+          model.openTeach?()
+        } label: {
+          HStack(spacing: 8) {
+            Image(systemName: "questionmark.bubble.fill").font(.system(size: 16, weight: .bold))
+            Text(
+              "BZ has \(model.autopilot.questions.count) quick question\(model.autopilot.questions.count == 1 ? "" : "s")"
+            ).font(.system(size: 15, weight: .bold))
+            Spacer(minLength: 4)
+            Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold))
+          }.foregroundStyle(.black).padding(.horizontal, 14).frame(height: 40)
+            .background(BurnTheme.orange, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }.buttonStyle(.plain).clickPointer().padding(.top, 16)
+          .accessibilityLabel("Answer BZ's quick questions")
+      } else {
+        Text("Dead weight. Gone.").font(BurnTheme.display(28))
+          .frame(height: 40, alignment: .leading).padding(.top, 16)
+      }
       Text("TODAY").font(.system(size: 11, weight: .semibold)).tracking(0.5)
         .foregroundStyle(BurnTheme.muted).frame(height: 14).padding(.top, 12)
       VStack(spacing: 10) {

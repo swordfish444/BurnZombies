@@ -533,6 +533,21 @@ public actor Autopilot {
       guard !memory.questions.contains(where: { $0.id == question.id }) else {
         throw StoreError.message("That pattern was already asked.")
       }
+      // An AI question supersedes open native questions about mostly the same items.
+      let unsure = items.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
+      func covered(_ kind: AutopilotKind, _ match: [String: [String]]) -> Set<String> {
+        let rule = AutopilotRule(
+          kind: kind, match: match, verdict: .burn, source: .operator, title: "")
+        return Set(unsure.filter { AutopilotPolicy.matches(rule, $0) }.map(\.id))
+      }
+      let asked = covered(question.kind, question.match)
+      memory.questions.removeAll { open in
+        guard open.isOpen, open.source == "native", open.kind == question.kind else {
+          return false
+        }
+        let theirs = covered(open.kind, open.match)
+        return !theirs.isEmpty && Double(theirs.intersection(asked).count) >= Double(theirs.count) * 0.5
+      }
       guard memory.openQuestions.count < AutopilotPolicy.maximumOpenQuestions else {
         throw StoreError.message(
           "Three questions are already open. Replace one with `replace` or wait for answers.")

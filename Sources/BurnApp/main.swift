@@ -144,6 +144,16 @@ import UserNotifications
   }
 
   func requestAgentCleanup() {
+    if let runtime = autopilotRuntime {
+      guard harnessConfigured else {
+        message = "Choose Claude Code or Codex in Settings so BZ can think through new things."
+        return
+      }
+      message = "Hunting now. I'll burn what's safe and ask if I'm unsure."
+      openHunt?()
+      Task { autopilot = await runtime.tick(manual: true) }
+      return
+    }
     guard accessReady else {
       message = state.fullDiskAccess.detail
       return
@@ -266,6 +276,7 @@ import UserNotifications
   private var agentListener: AgentListener?
   private var agentSnapshotTask: Task<Void, Never>?
   private var reviewer: MachineReviewer?
+  private var autopilotRuntime: AutopilotRuntime?
   private var timer: Timer?
   private var observationSuspended = false
   private var observationStopped = false
@@ -308,12 +319,21 @@ import UserNotifications
         prepareHunt: { _ = try await observer.prepareHunt() },
         settleHunt: { _ = try await observer.settleHuntDiscovery() })
       reloadReviewConfiguration()
+      if let runtime = try? AutopilotRuntime(monitor: observer) {
+        autopilotRuntime = runtime
+        autopilotRunner = { [weak self] command in
+          do { return try await runtime.run(command) } catch {
+            self?.message = error.localizedDescription
+            return nil
+          }
+        }
+      }
     } catch {
       state.error = error.localizedDescription
       return
     }
     if let monitor {
-      let service = AgentService(monitor: monitor)
+      let service = AgentService(monitor: monitor, autopilot: autopilotRuntime?.engine)
       do {
         agentListener = try AgentListener { [weak self] request in
           let reply = await service.call(request)
@@ -502,8 +522,12 @@ import UserNotifications
         guard !observationSuspended, !observationStopped else { return }
         await monitor.worktreeTick()
       }
-      // Observation continues on its own timer while a bounded review runs.
-      if accessReady && state.error == nil && !state.partial { runScheduledHunt() }
+      if let runtime = autopilotRuntime {
+        autopilot = await runtime.tick()
+      } else if accessReady && state.error == nil && !state.partial {
+        // Observation continues on its own timer while a bounded review runs.
+        runScheduledHunt()
+      }
     }
   }
   private func deliverFindingNotification(
@@ -773,7 +797,9 @@ import UserNotifications
         if let next = await runner(command) {
           self?.autopilot = next
         } else {
-          self?.message = "Autopilot couldn't finish that. Try again in a moment."
+          if self?.message == nil {
+            self?.message = "Autopilot couldn't finish that. Try again in a moment."
+          }
         }
       }
       return
@@ -1076,23 +1102,27 @@ struct Dashboard: View {
   var settings: some View {
     Group {
       FullDiskAccessView(model: model)
-      if model.autopilotAvailable { AutopilotSettingsView(model: model) }
-      Text("Quiet by default.").font(.title2.weight(.semibold))
-      Text("Your whole Mac. One observer.").font(.headline)
-      Text(
-        "BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running."
-      )
-      .font(.caption).foregroundStyle(.secondary)
-      Text(
-        model.accessReady
-          ? model.machineReview.detail
-          : "Background reviews wait until Full Disk Access is available."
-      ).font(.caption).foregroundStyle(.secondary)
-      if model.accessReady && model.machineReview.phase == "paused" {
-        Button("Resume scheduled hunts") { model.setAutomatic(true) }.clickPointer()
+      if model.autopilotAvailable {
+        AutopilotSettingsView(model: model)
+      } else {
+        Text("Quiet by default.").font(.title2.weight(.semibold))
+        Text("Your whole Mac. One observer.").font(.headline)
+        Text(
+          "BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        Text(
+          model.accessReady
+            ? model.machineReview.detail
+            : "Background reviews wait until Full Disk Access is available."
+        ).font(.caption).foregroundStyle(.secondary)
+        if model.accessReady && model.machineReview.phase == "paused" {
+          Button("Resume scheduled hunts") { model.setAutomatic(true) }.clickPointer()
+        }
+        // Autopilot replaces the evidence-led hunt schedule when it is available.
+        HuntSettingsView(settings: huntSettings, onSaved: model.reloadReviewConfiguration)
+          .disabled(model.demo)
       }
-      HuntSettingsView(settings: huntSettings, onSaved: model.reloadReviewConfiguration).disabled(
-        model.demo)
       ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
       UsageHistoryView().disabled(model.demo)
       DiskSettingsView(accessReady: model.accessReady).disabled(model.demo)
