@@ -272,7 +272,10 @@ public actor Autopilot {
       let decision = AutopilotPolicy.decide(item, memory: memory)
       var status = decision.status
       let receipt = latest[item.id]
-      if let receipt, receipt.outcome == "failed" { status = .failed }
+      if let receipt, receipt.date >= item.observedAt {
+        if receipt.outcome == "failed" { status = .failed }
+        if receipt.outcome == "burned" { status = .burned }
+      }
       let judgment = memory.judgments[item.id].flatMap { $0.revision == item.revision ? $0 : nil }
       var entry = AutopilotEntry(
         item: item, status: status, authority: decision.authority,
