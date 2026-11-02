@@ -412,13 +412,16 @@ extension AutopilotPolicy {
     "older": "Unused for 3+ months",
   ]
 
-  /// What a question is about, singular and plural.
+  /// What a question is about, singular and plural, naming the project when there is one.
   static func noun(_ kind: AutopilotKind, match: [String: [String]]) -> (String, String) {
     let value = { (key: String) in match[key]?.first ?? "" }
+    let project = match["repo"]?.count == 1 && !["", "none"].contains(value("repo")) ? value("repo") : nil
     switch kind {
-    case .worktree: return ("old project copy", "old project copies")
+    case .worktree:
+      return project.map { ("old copy of " + $0, "old copies of " + $0) }
+        ?? ("old project copy", "old project copies")
     case .process:
-      return [
+      let (one, many) = [
         "node": ("leftover Node program", "leftover Node programs"),
         "python": ("leftover Python program", "leftover Python programs"),
         "ruby": ("leftover Ruby program", "leftover Ruby programs"),
@@ -427,6 +430,7 @@ extension AutopilotPolicy {
         "build": ("leftover build tool", "leftover build tools"),
         "shell": ("leftover script", "leftover scripts"),
       ][value("family")] ?? ("leftover program", "leftover programs")
+      return project.map { (one + " in " + $0, many + " in " + $0) } ?? (one, many)
     case .disk:
       return [
         "node_modules": ("node_modules folder", "node_modules folders"),

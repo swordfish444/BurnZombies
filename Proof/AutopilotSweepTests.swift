@@ -338,6 +338,15 @@ func autopilotSweepProof() async throws {
   let (smallOK, smallJSON) = await modestEngine.handle(smallAsk)
   checkFalse(smallOK, "a pattern freeing under 1 GB isn't worth a question")
   check(smallJSON.contains("1 GB"), smallJSON)
+  // A fact BZ hasn't checked yet can't be part of a question: the answer would stop applying
+  // as soon as it is checked.
+  var uncheckedAsk = AutopilotRequest(tool: "ask")
+  uncheckedAsk.question = AutopilotQuestionInput(
+    kind: .process, match: ["family": ["node"], "listening": ["unknown"]],
+    question: "Can I stop the dev servers I couldn't check?")
+  let (uncheckedOK, uncheckedJSON) = await askEngine.handle(uncheckedAsk)
+  checkFalse(uncheckedOK, "a question can't rest on an unchecked fact")
+  check(uncheckedJSON.contains("checked"), uncheckedJSON)
 
   // An open question whose matches shrink below 1 GB stops being worth asking.
   let shrinking = Calls()

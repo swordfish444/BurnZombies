@@ -561,6 +561,11 @@ public actor Autopilot {
     -> AutopilotQuestion
   {
     let items = catalog?.items ?? []
+    guard !question.match.values.contains(where: { $0.contains("unknown") }) else {
+      throw StoreError.message(
+        "Leave out facts I haven't checked yet (\"unknown\"): an answer about them stops applying once they are checked."
+      )
+    }
     return try store.updateMemory { memory in
       if let replacing {
         memory.questions.removeAll { $0.id == replacing && $0.isOpen }

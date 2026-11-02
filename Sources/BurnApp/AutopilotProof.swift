@@ -78,14 +78,15 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   else { throw StoreError.message("Autopilot \(name) render unavailable") }
   bitmap.size = host.bounds.size
   host.cacheDisplay(in: host.bounds, to: bitmap)
-  guard let image = bitmap.cgImage,
-    let png = bitmap.representation(using: .png, properties: [:])
+  guard let png = bitmap.representation(using: .png, properties: [:])
   else { throw StoreError.message("Autopilot \(name) image unavailable") }
   try png.write(to: directory.appendingPathComponent(name + ".png"))
+  // Read the saved picture itself: the exact pixels a person looks at. Reading the in-memory
+  // bitmap instead missed whole lines under heavy machine load.
   let request = VNRecognizeTextRequest()
   request.recognitionLevel = .accurate
   request.recognitionLanguages = ["en-US"]
-  try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+  try VNImageRequestHandler(data: png, options: [:]).perform([request])
   let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
     .joined(separator: "\n")
   try text.write(

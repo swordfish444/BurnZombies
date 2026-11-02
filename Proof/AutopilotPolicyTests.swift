@@ -137,6 +137,19 @@ func autopilotPolicyProof() throws {
   equal(
     AutopilotPolicy.ruleTitle(lonelyServer, answer: .no),
     "Keep: Leftover Node programs · Still running a server · Idle 1+ day")
+  // A question about one project names it, so the owner knows which copies or programs.
+  let gameCopies = AutopilotQuestion(
+    kind: .worktree,
+    match: ["repo": ["frontier-rpg"], "changes": ["large"], "stale": ["day"], "place": ["other"]],
+    question: "", why: "", examples: [], count: 2, bytes: 3_200_000_000)
+  equal(AutopilotPolicy.card(gameCopies).headline, "Burn 2 old copies of frontier-rpg?")
+  equal(
+    AutopilotPolicy.ruleTitle(gameCopies, answer: .yes),
+    "Burn: Old copies of frontier-rpg · Has unsaved changes · Unused since yesterday")
+  let orbitServers = AutopilotQuestion(
+    kind: .process, match: ["family": ["node"], "repo": ["orbit-web"], "idle": ["1d"]],
+    question: "", why: "", examples: [], count: 3, bytes: 3_000_000_000)
+  equal(AutopilotPolicy.card(orbitServers).headline, "Burn 3 leftover Node programs in orbit-web?")
   let modules = AutopilotQuestion(
     kind: .disk, match: ["folder": ["node_modules"], "stale": ["day"], "home": ["repo"]],
     question: "", why: "", examples: [], count: 9, bytes: 4_000_000_000)
