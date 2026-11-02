@@ -164,6 +164,9 @@ func autopilotSweepProof() async throws {
     return
   }
   snapshot = try await engine.apply(.answer(questionID: question.id, answer: .yes))
+  for _ in 0..<50 where !calls.all.contains(where: { $0.hasPrefix("process:server@rule:") }) {
+    try await Task.sleep(nanoseconds: 50_000_000)
+  }
   check(calls.all.contains { $0.hasPrefix("process:server@rule:") }, "answer burned the server")
   equal(snapshot.answers, 1)
   check(snapshot.rules.contains { $0.source == .operator && $0.verdict == .burn }, "rule saved")

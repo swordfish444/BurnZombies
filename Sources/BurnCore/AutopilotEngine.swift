@@ -90,6 +90,7 @@ public actor Autopilot {
   var catalog: AutopilotCatalog?
   var delivery: [String: AutopilotDelivery] = [:]
   var burning = Set<String>()
+  var ticking = false
 
   public init(root: URL = Store.defaultRoot, sources: AutopilotSources) throws {
     store = try AutopilotStore(root: root)
@@ -101,6 +102,11 @@ public actor Autopilot {
   @discardableResult public func tick(now: Date = Date(), burn: Bool = true) async
     -> AutopilotSnapshot
   {
+    // A long burn pass must not overlap the next tick; the caller gets the current view.
+    guard !ticking else { return snapshot(now: now) }
+    ticking = true
+    defer { ticking = false }
+    try? store.updateSweep { $0.lastTick = now }
     let threads = sources.threads()
     let records = await sources.worktreeRecords()
     var items = await sources.processes(threads)
@@ -115,7 +121,6 @@ public actor Autopilot {
     await refreshReceipts()
     if burn, (try? store.sweep().enabled) ?? true { await burnAuthorized(now: now) }
     refreshQuestions(now: now)
-    try? store.updateSweep { $0.lastTick = now }
     return snapshot(now: now)
   }
 
@@ -339,8 +344,9 @@ public actor Autopilot {
               created: now, questionID: q.id))
         }
       }
-      await burnAuthorized(now: now)
       refreshQuestions(now: now)
+      // Show the answer right away; matching items burn in the background.
+      Task { await self.burnAuthorized(now: now) }
     case .burnNow(let id):
       guard let item = catalog?.items.first(where: { $0.id == id }) else {
         throw StoreError.message("I can't find that anymore. It may already be gone.")
