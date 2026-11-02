@@ -252,6 +252,68 @@ func autopilotSweepProof() async throws {
   let (askOK, askJSON) = await engine.handle(ask)
   checkFalse(askOK, "a question must match unsure items")
   check(askJSON.contains("No unsure items"), askJSON)
+
+  // A real Mac's first sweep spent nine minutes reading before it burned anything.
+  equal(AutopilotSweeper.aiTimeout, 900, "the AI gets the review worker's full limit")
+
+  // A refusal stands for the facts it saw: twenty refusals don't use up the burn allowance,
+  // and unchanged refused copies are not retried every tick.
+  func finished(_ n: Int) -> AutopilotItem {
+    AutopilotItem(
+      id: "worktree:r\(n)", kind: .worktree, name: "copy-\(n)", bytes: 1 << 20,
+      facts: [
+        "place": "sibling", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+        "thread": "none",
+      ])
+  }
+  let stubborn = (0..<Autopilot.maximumBurns[.worktree]!).map(finished)
+  let willing = finished(99)
+  let attempts = Calls()
+  let retired = Calls()
+  let refusing = try Autopilot(
+    root: directory.appendingPathComponent("refusals"),
+    sources: AutopilotSources(
+      worktrees: { _, _, d in
+        ((stubborn + [willing]).filter { !retired.all.contains($0.id) }, d)
+      },
+      retireWorktree: { item, authority in
+        attempts.add(item.id)
+        guard item.id == willing.id else {
+          return .refused(item, authority: authority, "This copy changed since I last looked.")
+        }
+        retired.add(item.id)
+        return AutopilotReceipt(
+          itemID: item.id, kind: .worktree, name: item.name, authority: authority,
+          outcome: "burned", detail: "", bytes: item.bytes)
+      }))
+  _ = await refusing.tick(now: now)
+  equal(retired.all, [willing.id], "refusals don't use up the burn allowance")
+  let firstAttempts = attempts.all.count
+  _ = await refusing.tick(now: now.addingTimeInterval(900))
+  equal(attempts.all.count, firstAttempts, "unchanged refused copies wait")
+  try AutopilotStore(root: directory.appendingPathComponent("refusals")).updateMemory {
+    $0.rules.append(
+      AutopilotRule(
+        kind: .worktree, match: ["place": ["sibling"]], verdict: .burn, source: .operator,
+        title: "Burn sibling copies"))
+  }
+  _ = await refusing.tick(now: now.addingTimeInterval(1800))
+  equal(attempts.all.count, firstAttempts * 2 - 1, "a new answer is tried right away")
+  _ = await refusing.tick(now: now.addingTimeInterval(7 * 3600))
+  equal(attempts.all.count, firstAttempts * 3 - 2, "refused copies are retried after a while")
+
+  // Refusals never push out a burn the owner may want to restore.
+  let receiptStore = try AutopilotStore(root: directory.appendingPathComponent("receipts"))
+  let keeper = AutopilotReceipt(
+    itemID: "worktree:keep", kind: .worktree, name: "keep", authority: "operator",
+    outcome: "burned", detail: "", bytes: 1)
+  try receiptStore.append(keeper)
+  for n in 0..<AutopilotStore.maximumReceipts {
+    try receiptStore.append(.refused(finished(n), authority: "ai:0.90", "refusal \(n)"))
+  }
+  let kept = try receiptStore.receipts()
+  equal(kept.count, AutopilotStore.maximumReceipts, "receipts stay bounded")
+  check(kept.contains { $0.id == keeper.id }, "a restorable burn outlives a stream of refusals")
 }
 
 /// A private app-side endpoint for the MCP protocol proof: an Autopilot engine with

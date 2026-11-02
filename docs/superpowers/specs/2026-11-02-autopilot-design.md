@@ -69,7 +69,7 @@ Worktrees:
 | `repo` | repository name |
 | `saved` | `merged` (HEAD reachable from the default branch), `pushed` (reachable from any remote ref), `local` (commits exist only here), `unknown` |
 | `changes` | `none`, `small` (≤20 files), `large` |
-| `stale` | `today`, `week`, `month`, `older` (last file change or agent activity, whichever is newer) |
+| `stale` | `today` (<1 day), `day` (1+ day), `week` (7+ days), `month` (30+ days), `older` (90+ days), by the last file change or agent activity, whichever is newer. Each value names its lower bound, like `idle`. |
 | `thread` | `live` / `ended` / `none` |
 | `inUse` | `yes` / `no` / `unknown` (a process has its cwd or open files inside) |
 | `size` | `small` (<100 MB), `medium` (<1 GB), `large` |
@@ -146,7 +146,7 @@ This handles shallow clones and LFS (content is stored in the snapshot) and does
 
 ## AI sweep
 
-- Harness: headless Claude Code (`claude -p`), default model `sonnet`, 10-minute timeout, MCP server `burnzombies` in autopilot mode, built-in tools limited to `Read,Glob,Grep`, hooks disabled, no session persistence. Codex remains selectable.
+- Harness: headless Claude Code (`claude -p`), default model `sonnet`, 15-minute timeout (the review worker's maximum), MCP server `burnzombies` in autopilot mode, built-in tools limited to `Read,Glob,Grep`, hooks disabled, no session persistence. Codex remains selectable.
 - MCP tools (autopilot mode):
   - `autopilot_catalog` — policy summary, rules, open questions, items grouped by status (unsure first), paginated.
   - `autopilot_inspect` — live detail for one item: process command line (live only, never stored), cwd, parent chain, children, listening ports, owning thread; worktree status, delivery state, recent commits, last activity; folder contents summary.
@@ -171,7 +171,7 @@ Vocabulary: **zombies** (leftover programs), **old copies** (worktrees), **junk 
 
 ## Storage
 
-JSON documents under `~/Library/Application Support/BurnZombies/autopilot/` through the existing bounded `Store` (0600 files, atomic writes, size limits): `catalog.json` (rewritten each tick), `memory.json` (rules, questions, AI decisions), `receipts.json` (last 500), `sweep.json` (schedule and backoff).
+JSON documents under `~/Library/Application Support/BurnZombies/autopilot/` through the existing bounded `Store` (0600 files, atomic writes, size limits): `catalog.json` (rewritten each tick), `memory.json` (rules, questions, AI decisions), `receipts.json` (last 500; refusals are dropped first), `sweep.json` (schedule and backoff).
 
 ## Testing
 

@@ -104,6 +104,18 @@ public enum AutopilotPolicy {
   ]
   static let tooRecent: Set<String> = ["active", "today"]
 
+  /// How long something sat untouched, named by its lower bound like the idle ages of
+  /// programs: `today`, `day` (1+ day), `week` (7+ days), `month` (30+ days) or `older` (90+).
+  static func stale(since date: Date, now: Date) -> String {
+    switch now.timeIntervalSince(date) / 86_400 {
+    case ..<1: return "today"
+    case ..<7: return "day"
+    case ..<30: return "week"
+    case ..<90: return "month"
+    default: return "older"
+    }
+  }
+
   /// Turns the largest clusters of unsure items into yes/no questions about a fact pattern.
   /// Never re-asks an answered pattern, an open one, or one skipped until its snooze ends.
   public static func proposeQuestions(
@@ -264,8 +276,8 @@ public enum AutopilotPolicy {
           changes == "none" ? "with no unsaved changes" : "with unsaved changes")
       }
       if let stale = [
-        "week": "untouched for a week", "month": "untouched for a month",
-        "older": "untouched for over a month",
+        "day": "untouched since yesterday", "week": "untouched for a week",
+        "month": "untouched for a month", "older": "untouched for 3 months",
       ][value("stale") ?? ""] {
         parts.append(stale)
       }
@@ -286,8 +298,9 @@ public enum AutopilotPolicy {
         ][value("home") ?? ""] ?? ""
       let stale =
         [
-          "week": " that weren't touched this week", "month": " that weren't touched in a month",
-          "older": " that weren't touched in over a month",
+          "day": " that weren't touched since yesterday",
+          "week": " that weren't touched in a week", "month": " that weren't touched in a month",
+          "older": " that weren't touched in 3 months",
         ][value("stale") ?? ""] ?? ""
       return "Can I delete " + folder + home + stale + "? They get rebuilt when needed."
     }
@@ -334,7 +347,8 @@ public enum AutopilotPolicy {
   /// Fact values ordered from riskiest to safest to burn.
   static let safety: [String: [String]] = [
     "orphaned": ["maybe", "yes"], "thread": ["none", "ended"],
-    "idle": ["active", "10m", "1h", "6h", "1d"], "stale": ["today", "week", "month", "older"],
+    "idle": ["active", "10m", "1h", "6h", "1d"],
+    "stale": ["today", "day", "week", "month", "older"],
     "saved": ["local", "pushed", "merged"], "listening": ["yes", "no"],
     "changes": ["large", "small", "none"],
   ]

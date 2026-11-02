@@ -2,7 +2,8 @@ import Foundation
 
 /// When to tick natively, when to spend an AI sweep, and how failures back off.
 public enum AutopilotSweeper {
-  public static let aiTimeout: TimeInterval = 600
+  /// The review worker's own maximum: a real Mac's first sweep read for nine minutes.
+  public static let aiTimeout: TimeInterval = 900
   public static let rejudgeInterval: TimeInterval = 4 * 3600
   public static let minimumSpacing: TimeInterval = 30 * 60
 

@@ -82,8 +82,8 @@ public enum AutopilotDisk {
           id: "disk:" + AutopilotItem.hash(target), kind: .disk, name: name,
           detail: sentence(cache.folder, subject: subject), path: target, bytes: bytes,
           facts: [
-            "folder": cache.folder, "home": "global-cache", "stale": age(touched, now: now),
-            "size": scale(bytes),
+            "folder": cache.folder, "home": "global-cache",
+            "stale": AutopilotPolicy.stale(since: touched, now: now), "size": scale(bytes),
           ], observedAt: now)
         found[item.id] = item
       }
@@ -118,7 +118,7 @@ public enum AutopilotDisk {
           detail: sentence(fact, subject: place), path: folder.path, bytes: bytes,
           facts: [
             "folder": fact, "home": oldCopy ? "stale-worktree" : "repo",
-            "stale": age(newest, now: now), "size": scale(bytes),
+            "stale": AutopilotPolicy.stale(since: newest, now: now), "size": scale(bytes),
           ], observedAt: now)
         found[item.id] = item
       }
@@ -373,15 +373,6 @@ public enum AutopilotDisk {
   private static func leaf(_ path: String) -> String {
     guard let slash = path.lastIndex(of: "/") else { return path }
     return String(path[path.index(after: slash)...])
-  }
-
-  /// `today`, `week`, `month` or `older`, by how long ago the date was.
-  private static func age(_ date: Date, now: Date) -> String {
-    let seconds = now.timeIntervalSince(date)
-    if seconds < 86_400 { return "today" }
-    if seconds < 7 * 86_400 { return "week" }
-    if seconds < 30 * 86_400 { return "month" }
-    return "older"
   }
 
   /// `medium` under 1 GB, `large` under 10 GB, otherwise `huge`.

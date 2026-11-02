@@ -169,7 +169,7 @@ private func apDirectProof() {
   equal(plain.facts["place"], "sibling")
   equal(plain.facts["saved"], "merged")
   equal(plain.facts["changes"], "none")
-  equal(plain.facts["stale"], "older")
+  equal(plain.facts["stale"], "month")
   equal(plain.facts["thread"], "none")
   equal(plain.facts["inUse"], "no")
   equal(plain.facts["size"], "small")
@@ -209,16 +209,29 @@ private func apDirectProof() {
     r.lastCommitAt = r.lastFileChange
     return one(r, threads: chat.map { [$0] } ?? []).facts["stale"]
   }
+  // Each age names its lower bound, like the idle ages of programs: "month" is 30+ days.
   equal(stale(0.5), "today")
-  equal(stale(3), "week")
-  equal(stale(20), "month")
-  equal(stale(40), "older")
+  equal(stale(3), "day")
+  equal(stale(9), "week", "9 days untouched is a week, not a month")
+  equal(stale(29), "week")
+  equal(stale(40), "month")
+  equal(stale(100), "older")
   equal(stale(nil), "unknown", "no dates at all")
   let ended = AgentThread(
     id: "t2", agent: "codex", cwd: "/bz-test/git/project-s", live: false,
     lastActive: now.addingTimeInterval(-3600))
   equal(stale(40, chat: ended), "today", "chat activity counts as use")
   equal(one(record("s"), threads: [ended]).facts["thread"], "ended", "finished chat fact")
+
+  // The finished-copies starter rule promises "untouched for a month".
+  func starter(_ days: Double) -> AutopilotStatus {
+    var r = record("m")
+    r.lastFileChange = now.addingTimeInterval(-days * 86_400)
+    r.lastCommitAt = r.lastFileChange
+    return AutopilotPolicy.decide(one(r), memory: AutopilotMemory()).status
+  }
+  equal(starter(9), .unsure, "a finished copy left 9 days waits for an answer")
+  equal(starter(40), .burn, "a finished copy left 40 days burns")
 
   func size(_ bytes: UInt64) -> String? {
     var r = record("z")
@@ -344,7 +357,7 @@ private func apFactsProof(_ world: APWorld, _ items: [String: AutopilotItem]) th
   var cache: [String: AutopilotDelivery] = [:]
   let later = try apItem(
     world.path("merged"), world, cache: &cache, now: Date().addingTimeInterval(65 * 86_400))
-  equal(later.facts["stale"], "older")
+  equal(later.facts["stale"], "month", "65 days is a month, not yet 3 months")
   equal(
     later.detail, "Copy of project on feature-merged — merged, untouched for 2 months.",
     "detail after two months")
@@ -491,6 +504,19 @@ private func apRefusalProof(_ world: APWorld, _ items: [String: AutopilotItem]) 
   let race = try apExpectRefusal(world, items["racing"]!, "saved changed since the catalog")
   equal(race.detail, "This copy changed since I last looked.")
 
+  // A fact the catalog had not checked yet may only turn out safe.
+  var unchecked = items["localwork"]!
+  unchecked.facts["saved"] = "unknown"
+  let early = try apExpectRefusal(world, unchecked, "local-only work the catalog had not checked")
+  equal(early.detail, "I hadn't finished checking this copy, so I'll judge it again.")
+  var uncheckedEdits = items["dirty"]!
+  uncheckedEdits.facts["changes"] = "unknown"
+  let edits = AutopilotWorktrees.retire(
+    uncheckedEdits, authority: "operator", root: world.state, inUse: { _ in 0 })
+  equal(edits.outcome, "refused", "edits the catalog had not checked")
+  equal(edits.detail, "I hadn't finished checking this copy, so I'll judge it again.")
+  equal(apRead(world.path("dirty") + "/tracked.txt"), "edited\n", "the edit is left alone")
+
   // Nothing there to retire.
   let ghost = AutopilotItem(
     id: "worktree:ghost", kind: .worktree, name: "ghost", path: world.path("ghost"),
@@ -501,6 +527,19 @@ private func apRefusalProof(_ world: APWorld, _ items: [String: AutopilotItem]) 
 }
 
 // MARK: Retire and restore
+
+/// The catalog had not checked where the work is saved or whether it has changes yet; both
+/// turn out safe when the copy is retired.
+private func apUncheckedRetire(_ world: APWorld, _ item: AutopilotItem) throws {
+  var unchecked = item
+  unchecked.facts["saved"] = "unknown"
+  unchecked.facts["changes"] = "unknown"
+  let receipt = AutopilotWorktrees.retire(
+    unchecked, authority: "ai:0.90", root: world.state, inUse: { _ in 0 })
+  equal(receipt.outcome, "burned", "pushed and clean once checked: " + receipt.detail)
+  checkFalse(apExists(item.path!), "the unchecked copy is gone")
+  check(receipt.restore != nil, "the unchecked copy is restorable")
+}
 
 private func apCleanRetire(_ world: APWorld, _ item: AutopilotItem) throws {
   let path = item.path!
@@ -671,6 +710,7 @@ func autopilotWorktreeProof() async throws {
   try apDeliveryProof(world)
   try apRefusalProof(world, items)
   try apCleanRetire(world, items["merged"]!)
+  try apUncheckedRetire(world, items["pushed"]!)
   try apDirtyRetire(world, items["dirty"]!)
   try apSubmoduleProof(world)
 

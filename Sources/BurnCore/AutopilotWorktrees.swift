@@ -62,8 +62,8 @@ public enum AutopilotWorktrees {
       let repo = repoName(record)
       let facts: [String: String] = [
         "place": placeFact(record), "repo": repo, "saved": saved, "changes": changes,
-        "stale": staleFact(newest, now: now), "thread": chat.thread,
-        "inUse": inUseFact(record), "size": sizeFact(record.allocated),
+        "stale": newest.map { AutopilotPolicy.stale(since: $0, now: now) } ?? "unknown",
+        "thread": chat.thread, "inUse": inUseFact(record), "size": sizeFact(record.allocated),
       ]
       let sentence = detail(
         repo: repo, branch: branchName(record), saved: saved, changes: changes, newest: newest,
@@ -97,15 +97,6 @@ public enum AutopilotWorktrees {
 
   private static func changesBucket(_ count: Int) -> String {
     count <= 0 ? "none" : count <= 20 ? "small" : "large"
-  }
-
-  private static func staleFact(_ newest: Date?, now: Date) -> String {
-    guard let newest else { return "unknown" }
-    let age = now.timeIntervalSince(newest)
-    if age < 86_400 { return "today" }
-    if age < 7 * 86_400 { return "week" }
-    if age < 30 * 86_400 { return "month" }
-    return "older"
   }
 
   private static func sizeFact(_ bytes: UInt64) -> String {
@@ -289,12 +280,19 @@ public enum AutopilotWorktrees {
       throw Refusal("I could not check whether something is using it, so I left it alone.")
     }
 
-    // What the catalog said must still be true, recomputed from the current HEAD.
+    // What the catalog said must still be true, recomputed from the current HEAD. A fact it
+    // had not checked yet may only turn out safe; anything riskier is judged again.
     let head = try line(path, ["rev-parse", "--verify", "HEAD^{commit}"])
     let current = try delivery(path: path)
     let changes = try currentChanges(path)
-    guard current.saved == item.facts["saved"], changes == item.facts["changes"] else {
-      throw Refusal("This copy changed since I last looked.")
+    let checks = [("saved", current.saved, ["merged", "pushed"]), ("changes", changes, ["none"])]
+    for (fact, live, safe) in checks where item.facts[fact] != live {
+      guard item.facts[fact] == "unknown" else {
+        throw Refusal("This copy changed since I last looked.")
+      }
+      guard safe.contains(live) else {
+        throw Refusal("I hadn't finished checking this copy, so I'll judge it again.")
+      }
     }
 
     // Submodule content lives inside the worktree's own Git folder and goes with it.

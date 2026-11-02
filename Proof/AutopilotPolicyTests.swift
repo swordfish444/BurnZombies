@@ -52,6 +52,26 @@ func autopilotPolicyProof() throws {
   dirty.facts["changes"] = "small"
   equal(AutopilotPolicy.decide(dirty, memory: memory).status, .unsure, "dirty copy needs a rule")
 
+  // Ages name their lower bound, so the words match what a "yes" covers.
+  equal(
+    AutopilotPolicy.wording(kind: .worktree, match: ["saved": ["merged"], "stale": ["week"]]),
+    "Can I burn old project copies already merged, untouched for a week?")
+  equal(
+    AutopilotPolicy.wording(kind: .worktree, match: ["saved": ["merged"], "stale": ["day"]]),
+    "Can I burn old project copies already merged, untouched since yesterday?")
+  equal(
+    AutopilotPolicy.wording(kind: .worktree, match: ["saved": ["merged"], "stale": ["older"]]),
+    "Can I burn old project copies already merged, untouched for 3 months?")
+  equal(
+    AutopilotPolicy.wording(
+      kind: .disk,
+      match: ["folder": ["package-cache"], "home": ["global-cache"], "stale": ["week"]]),
+    "Can I delete tool caches on your Mac that weren't touched in a week? They get rebuilt when needed."
+  )
+  equal(
+    AutopilotPolicy.widen(["stale": ["day"]], verdict: .burn)["stale"],
+    ["day", "week", "month", "older"], "a yes also covers copies left longer")
+
   // Keep beats burn, for rules and for the operator's own keeps.
   let burnAll = AutopilotRule(
     kind: .process, match: ["family": ["node"]], verdict: .burn, source: .operator,

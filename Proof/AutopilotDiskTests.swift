@@ -380,16 +380,16 @@ private func adkJunkProof(base: String, now: Date) throws {
   check(items.allSatisfy { $0.kind == .disk }, "every junk folder is a disk item")
   equal(items.map { $0.bytes }, items.map { $0.bytes }.sorted(by: >), "biggest first")
   equal(
-    item(old + "/node_modules")?.facts, disk("node_modules", "stale-worktree", "older", "large"),
+    item(old + "/node_modules")?.facts, disk("node_modules", "stale-worktree", "month", "large"),
     "node_modules in a stale linked copy")
   equal(
-    item(old + "/.build")?.facts, disk("build-output", "stale-worktree", "older", "medium"),
+    item(old + "/.build")?.facts, disk("build-output", "stale-worktree", "month", "medium"),
     "ignored .build in a stale linked copy")
   equal(
     item(old + "/packages/web/node_modules")?.facts,
-    disk("node_modules", "stale-worktree", "older", "medium"), "folders three levels down count")
+    disk("node_modules", "stale-worktree", "month", "medium"), "folders three levels down count")
   equal(
-    item(repo + "/node_modules")?.facts, disk("node_modules", "repo", "week", "medium"),
+    item(repo + "/node_modules")?.facts, disk("node_modules", "repo", "day", "medium"),
     "the main checkout is found from the copy's repository and is never stale-worktree")
   equal(
     item(repo + "/dist")?.facts, disk("build-output", "repo", "today", "huge"), "huge fresh dist")
@@ -429,7 +429,7 @@ private func adkJunkProof(base: String, now: Date) throws {
   let recent = AutopilotDisk.items(worktrees: [fresh], home: home, now: now, sizer: sizer)
   let recentNodes = recent.first { $0.path == old + "/node_modules" }
   equal(recentNodes?.facts["home"], "repo", "a copy changed two days ago is not stale")
-  equal(recentNodes?.facts["stale"], "week", "copy activity counts toward the stale bucket")
+  equal(recentNodes?.facts["stale"], "day", "copy activity counts toward the stale bucket")
   var unknown = linked
   unknown.lastFileChange = nil
   unknown.lastCommitAt = nil

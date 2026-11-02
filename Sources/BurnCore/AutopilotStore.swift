@@ -72,7 +72,14 @@ public final class AutopilotStore: @unchecked Sendable {
     try lock.withLock {
       var all = try load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())
       try change(&all)
-      if all.count > Self.maximumReceipts { all.removeFirst(all.count - Self.maximumReceipts) }
+      // Refusals go first, so a stream of them never pushes out a burn the owner may restore.
+      var excess = all.count - Self.maximumReceipts
+      all.removeAll { receipt in
+        guard excess > 0, receipt.outcome == "refused" else { return false }
+        excess -= 1
+        return true
+      }
+      if excess > 0 { all.removeFirst(excess) }
       try save(all, "receipts.json", limit: 8 << 20)
     }
   }

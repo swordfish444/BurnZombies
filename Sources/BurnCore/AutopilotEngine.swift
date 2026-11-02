@@ -85,6 +85,8 @@ public struct AutopilotCatalogPage: Codable, Sendable {
 public actor Autopilot {
   /// Per tick, so a wrong fact can never sweep the whole Mac in one pass.
   public static let maximumBurns: [AutopilotKind: Int] = [.process: 50, .worktree: 20, .disk: 20]
+  /// An item refused for unchanged facts is tried again after this long.
+  public static let retryRefusalsAfter: TimeInterval = 6 * 3600
   let store: AutopilotStore
   let sources: AutopilotSources
   var catalog: AutopilotCatalog?
@@ -146,16 +148,24 @@ public actor Autopilot {
   func burnAuthorized(now: Date) async {
     guard let items = catalog?.items else { return }
     let memory = memory()
-    let active = Set(
-      ((try? store.receipts()) ?? []).filter { $0.outcome == "verifying" }.map(\.itemID))
+    let receipts = (try? store.receipts()) ?? []
+    let active = Set(receipts.filter { $0.outcome == "verifying" }.map(\.itemID))
+    // A refusal stands for the facts and authority it saw until either changes or a while
+    // passes.
+    let refused = Set(
+      receipts.filter {
+        $0.outcome == "refused" && now.timeIntervalSince($0.date) < Self.retryRefusalsAfter
+      }.compactMap { r in r.revision.map { [r.itemID, $0, r.authority].joined(separator: "@") } })
     var used = [AutopilotKind: Int]()
     for item in items where !active.contains(item.id) && !burning.contains(item.id) {
       let decision = AutopilotPolicy.decide(item, memory: memory)
       guard decision.status == .burn, let authority = decision.authority,
+        !refused.contains([item.id, item.revision, authority].joined(separator: "@")),
         used[item.kind, default: 0] < Self.maximumBurns[item.kind, default: 0]
       else { continue }
-      used[item.kind, default: 0] += 1
-      _ = await execute(item, authority: authority, why: why(item, decision, memory))
+      // Only burns count toward the bound; a refusal frees nothing.
+      let receipt = await execute(item, authority: authority, why: why(item, decision, memory))
+      if receipt.outcome != "refused" { used[item.kind, default: 0] += 1 }
     }
   }
 

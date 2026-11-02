@@ -189,6 +189,8 @@ public struct AutopilotReceipt: Codable, Sendable, Identifiable, Equatable {
   public var restore: AutopilotRestore?
   /// Process burns are verified by the monitor's cleanup event.
   public var eventID: UUID?
+  /// The item revision a refusal saw, so an unchanged item is not retried every tick.
+  public var revision: String?
   public init(
     id: UUID = UUID(), itemID: String, kind: AutopilotKind, name: String, authority: String,
     outcome: String, detail: String, bytes: UInt64 = 0, date: Date = Date(),
@@ -209,9 +211,11 @@ public struct AutopilotReceipt: Codable, Sendable, Identifiable, Equatable {
   public static func refused(_ item: AutopilotItem, authority: String, _ reason: String)
     -> AutopilotReceipt
   {
-    .init(
+    var receipt = AutopilotReceipt(
       itemID: item.id, kind: item.kind, name: item.name, authority: authority, outcome: "refused",
       detail: reason)
+    receipt.revision = item.revision
+    return receipt
   }
 }
 
