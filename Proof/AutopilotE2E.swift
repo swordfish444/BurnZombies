@@ -241,6 +241,7 @@ func autopilotPreview(inventory: URL?) async throws {
   }
   let unsure = items.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
   for q in AutopilotPolicy.proposeQuestions(unsure, memory: memory) {
-    print("Q: \(q.question) — \(q.why) e.g. \(q.examples.joined(separator: ", "))")
+    let card = AutopilotPolicy.card(q)
+    print("Q: \(card.headline) \(card.frees) · \(card.facts.joined(separator: " · "))")
   }
 }

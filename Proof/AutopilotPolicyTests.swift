@@ -159,8 +159,72 @@ func autopilotPolicyProof() throws {
     "a folder's real name keeps its case")
 
   let valued = AutopilotPolicy.proposeQuestions(many + few + crumbs, memory: AutopilotMemory())
-  equal(valued.first?.match["saved"], ["pushed"], "two 5 GB copies beat thirty 150 MB ones")
+  equal(valued.map(\.count), [32], "all old copies in one question")
   checkFalse(valued.contains { $0.kind == .disk }, "750 MB of folders isn't worth a question")
+
+  // One question per subject, as broad as it can be: three kinds of old copies make one
+  // question, and what makes some of them riskier shows as counts on its card.
+  let mixed =
+    (0..<6).map {
+      copy(
+        "merged-\($0)",
+        ["place": "sibling", "saved": "merged", "changes": "none", "stale": "day", "thread": "none"])
+    }
+    + (0..<3).map {
+      copy(
+        "pushed-\($0)",
+        ["place": "patrol6", "saved": "pushed", "changes": "none", "stale": "week", "thread": "none"])
+    }
+    + (0..<2).map {
+      copy(
+        "draft-\($0)",
+        ["place": "other", "saved": "local", "changes": "small", "stale": "month", "thread": "none"])
+    }
+  let single = AutopilotPolicy.proposeQuestions(mixed, memory: AutopilotMemory())
+  equal(single.count, 1, "old project copies get one question")
+  equal(single.first?.match, ["stale": ["day"]], "as broad as it can be")
+  equal(single.first?.count, 11, "a yes covers every copy left at least a day")
+  equal(single.first?.cautions, ["2 have work only on this Mac", "2 have unsaved changes"])
+  let singleCard = AutopilotPolicy.card(single.first!)
+  equal(singleCard.headline, "Burn 11 old project copies?")
+  equal(
+    singleCard.facts,
+    ["Unused since yesterday", "2 have work only on this Mac", "2 have unsaved changes"])
+  equal(singleCard.cautions, singleCard.facts, "all three need care")
+  // A no keeps the recent ones; the next question is about the older copies only.
+  var declined = AutopilotMemory()
+  declined.questions = single
+  declined.questions[0].answer = .no
+  declined.rules = [
+    AutopilotRule(
+      kind: .worktree, match: AutopilotPolicy.widen(single[0].match, verdict: .keep),
+      verdict: .keep, source: .operator, title: "")
+  ]
+  let narrower = AutopilotPolicy.proposeQuestions(
+    mixed.filter { AutopilotPolicy.decide($0, memory: declined).status == .unsure },
+    memory: declined)
+  equal(narrower.map(\.match), [["stale": ["week"]]], "older copies only")
+  equal(narrower.first?.count, 5)
+  // Programs: one question per kind of program, by how long they sat idle.
+  let javas =
+    (0..<2).map {
+      process(
+        "java-\($0)",
+        [
+          "family": "java", "orphaned": "yes", "thread": "none", "idle": "10m", "listening": "yes",
+          "agent": "codex",
+        ], bytes: 1 << 30)
+    } + [
+      process(
+        "java-old",
+        [
+          "family": "java", "orphaned": "yes", "thread": "none", "idle": "1h", "listening": "no",
+          "agent": "none",
+        ], bytes: 1 << 30)
+    ]
+  let javaQuestions = AutopilotPolicy.proposeQuestions(javas, memory: AutopilotMemory())
+  equal(javaQuestions.map(\.match), [["family": ["java"], "idle": ["10m"]]])
+  equal(javaQuestions.first?.cautions, ["2 are still running a server"])
 
   // Keep beats burn, for rules and for the operator's own keeps.
   let burnAll = AutopilotRule(
@@ -248,7 +312,7 @@ func autopilotPolicyProof() throws {
   equal(Set(questions.map(\.kind)), Set(AutopilotKind.allCases), "one per cluster")
   let copies = questions.first { $0.kind == .worktree }!
   equal(copies.count, 40, "covers the whole cluster")
-  equal(copies.match["saved"], ["local"], "primary fact included")
+  equal(copies.match, ["stale": ["older"]], "as broad as it can be")
   check(copies.question.hasPrefix("Can I burn old project copies"), copies.question)
   check(copies.question.contains("untouched"), "questions state recency: " + copies.question)
   check(copies.question.count <= 120, "kid-short: " + copies.question)
@@ -272,9 +336,15 @@ func autopilotPolicyProof() throws {
     "nothing touched today is asked about")
   memory.questions[0].answer = .yes
   memory.questions[0].answered = Date()
-  let next = AutopilotPolicy.proposeQuestions(unsure, memory: memory)
-  equal(next.count, 1, "one slot reopens")
+  let modulesLeft = (0..<3).map {
+    junk("modules-\($0)", ["folder": "node_modules", "home": "repo", "stale": "month"])
+  }
+  let next = AutopilotPolicy.proposeQuestions(unsure + modulesLeft, memory: memory)
+  equal(next.map(\.kind), [.disk], "one slot reopens, for another subject")
   checkFalse(next.map(\.id).contains(questions[0].id), "answered pattern never re-asked")
+  check(
+    AutopilotPolicy.proposeQuestions(unsure, memory: memory).isEmpty,
+    "the copies were asked about: no second question about them")
   memory.questions[1].answer = .skip
   memory.questions[1].snoozedUntil = Date().addingTimeInterval(86400)
   checkFalse(

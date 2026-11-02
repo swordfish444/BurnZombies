@@ -247,14 +247,14 @@ public actor Autopilot {
     try? store.updateMemory { memory in
       let unsure = items.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
       for i in memory.questions.indices where memory.questions[i].isOpen {
-        let rule = AutopilotRule(
-          kind: memory.questions[i].kind, match: memory.questions[i].match, verdict: .burn,
-          source: .operator, title: "")
+        let question = memory.questions[i]
+        let rule = AutopilotPolicy.coverage(question.kind, question.match)
         let matching = unsure.filter { AutopilotPolicy.matches(rule, $0) }
         memory.questions[i].count = matching.count
         memory.questions[i].bytes = matching.reduce(0) { $0 + $1.bytes }
         memory.questions[i].examples = Array(
           matching.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name))
+        memory.questions[i].cautions = AutopilotPolicy.mix(question.kind, matching)
       }
       // Once burns shrink a pattern below what a question is worth, it stops being asked.
       memory.questions.removeAll { $0.isOpen && $0.bytes < AutopilotPolicy.worthAsking }
@@ -583,31 +583,28 @@ public actor Autopilot {
       guard !memory.questions.contains(where: { $0.id == question.id }) else {
         throw StoreError.message("That pattern was already asked.")
       }
-      // An AI question supersedes open native questions about mostly the same items.
+      // One question at a time about the same things: BZ already asks one broad question per
+      // subject, and the AI may reword it (same match) but not add a second one.
       let unsure = items.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
       func covered(_ kind: AutopilotKind, _ match: [String: [String]]) -> Set<String> {
-        let rule = AutopilotRule(
-          kind: kind, match: match, verdict: .burn, source: .operator, title: "")
+        let rule = AutopilotPolicy.coverage(kind, match)
         return Set(unsure.filter { AutopilotPolicy.matches(rule, $0) }.map(\.id))
       }
       let asked = covered(question.kind, question.match)
-      memory.questions.removeAll { open in
-        guard open.isOpen, open.source == "native", open.kind == question.kind else {
-          return false
-        }
-        let theirs = covered(open.kind, open.match)
-        return !theirs.isEmpty && Double(theirs.intersection(asked).count) >= Double(theirs.count) * 0.5
+      let open = memory.questions.filter(\.isOpen).reduce(into: Set<String>()) {
+        $0.formUnion(covered($1.kind, $1.match))
+      }
+      guard Double(asked.intersection(open).count) < Double(max(1, asked.count)) * 0.5 else {
+        throw StoreError.message(
+          "I'm already asking about most of these. To improve that question's words, ask with its exact match."
+        )
       }
       guard memory.openQuestions.count < AutopilotPolicy.maximumOpenQuestions else {
         throw StoreError.message(
           "Three questions are already open. Replace one with `replace` or wait for answers.")
       }
-      let rule = AutopilotRule(
-        kind: question.kind, match: question.match, verdict: .burn, source: .operator, title: "")
-      let matching = items.filter {
-        AutopilotPolicy.decide($0, memory: memory).status == .unsure
-          && AutopilotPolicy.matches(rule, $0)
-      }
+      let rule = AutopilotPolicy.coverage(question.kind, question.match)
+      let matching = unsure.filter { AutopilotPolicy.matches(rule, $0) }
       guard !matching.isEmpty else {
         throw StoreError.message("No unsure items match that pattern.")
       }
@@ -620,6 +617,7 @@ public actor Autopilot {
       var q = question
       q.count = matching.count
       q.bytes = bytes
+      q.cautions = AutopilotPolicy.mix(question.kind, matching)
       if q.examples.isEmpty {
         q.examples = Array(matching.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name))
       }

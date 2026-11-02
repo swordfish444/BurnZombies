@@ -88,15 +88,10 @@ public enum AutopilotPolicy {
     }
   }
 
-  /// Facts a training question may be about, and the ones every question must include.
-  public static let questionFacts: [AutopilotKind: [String]] = [
-    .process: ["family", "orphaned", "thread", "agent", "idle", "listening"],
-    .worktree: ["place", "saved", "changes", "stale", "thread"],
-    .disk: ["folder", "home", "stale"],
-  ]
-  static let primaryFacts: [AutopilotKind: String] = [
-    .process: "family", .worktree: "saved", .disk: "folder",
-  ]
+  /// What BZ asks about, one question at a time: old copies, each kind of program and each
+  /// kind of folder. A question names only its subject and how long things sat unused, so a
+  /// yes covers as much as it safely can; what makes some of them riskier is counted on its card.
+  static let subjectFacts: [AutopilotKind: String] = [.process: "family", .disk: "folder"]
   /// Every question states how recently things were used, and nothing in use right now is
   /// asked about until it goes quiet.
   static let recencyFacts: [AutopilotKind: String] = [
@@ -129,115 +124,116 @@ public enum AutopilotPolicy {
     }
   }
 
-  /// Turns the largest clusters of unsure items into yes/no questions about a fact pattern.
-  /// Never re-asks an answered pattern, an open one, or one skipped until its snooze ends.
+  static func subject(_ kind: AutopilotKind, _ match: [String: [String]]) -> String {
+    kind.rawValue + ":" + (subjectFacts[kind].flatMap { match[$0]?.first } ?? "")
+  }
+
+  /// One yes/no question per subject with enough unsure things to be worth asking, biggest
+  /// first. A question covers the most recent use not decided yet and everything older, so one
+  /// answer can settle a whole subject; after a no the next question is about older things
+  /// only. Never re-asks an answered or open pattern; a skipped subject waits for its snooze.
   public static func proposeQuestions(
     _ unsure: [AutopilotItem], memory: AutopilotMemory, limit: Int = maximumOpenQuestions,
     now: Date = Date()
   ) -> [AutopilotQuestion] {
-    let open = memory.questions.filter {
-      $0.isOpen || $0.answer == .yes || $0.answer == .no
-        || ($0.answer == .skip && ($0.snoozedUntil ?? .distantFuture) > now)
+    let waiting = memory.questions.filter {
+      $0.isOpen || ($0.answer == .skip && ($0.snoozedUntil ?? .distantFuture) > now)
     }
-    let excluded = Set(open.map(\.id))
+    let excluded = Set(
+      memory.questions.filter { $0.answer == .yes || $0.answer == .no }.map(\.id)
+        + waiting.map(\.id))
     let slots = limit - memory.questions.filter(\.isOpen).count
     guard slots > 0 else { return [] }
-    struct Cluster {
-      var kind: AutopilotKind
-      var match: [String: [String]]
-      var items: [AutopilotItem] = []
-      var bytes: UInt64 = 0
-    }
-    var clusters = [String: Cluster]()
-    for item in unsure where item.protectedReason == nil {
-      guard let primary = primaryFacts[item.kind], let primaryValue = item.facts[primary],
-        primaryValue != "unknown", let recency = recencyFacts[item.kind],
-        let recent = item.facts[recency], recent != "unknown", !tooRecent.contains(recent)
-      else { continue }
-      let others = (questionFacts[item.kind] ?? []).filter {
-        $0 != primary && $0 != recency && item.facts[$0] != nil && item.facts[$0] != "unknown"
-      }
-      var subsets = [[String]()] + others.map { [$0] }
-      for i in others.indices {
-        for j in others.indices where j > i { subsets.append([others[i], others[j]]) }
-      }
-      for subset in subsets {
-        var match = [primary: [primaryValue], recency: [recent]]
-        for key in subset { match[key] = [item.facts[key]!] }
-        let id = AutopilotRule.key(kind: item.kind, match: match)
-        guard !excluded.contains(id) else { continue }
-        clusters[id, default: Cluster(kind: item.kind, match: match)].items.append(item)
-        clusters[id]!.bytes += item.bytes
-      }
-    }
-    // Questions go where the space is, and a pattern freeing little isn't worth one. Equal
-    // space: prefer patterns the wording can actually describe, then broader ones.
-    func clarity(_ c: Cluster) -> Int { min(2, describable(kind: c.kind, match: c.match)) }
-    let ranked = clusters.filter { $0.value.bytes >= worthAsking }.sorted {
-      $0.value.bytes != $1.value.bytes
-        ? $0.value.bytes > $1.value.bytes
-        : clarity($0.value) != clarity($1.value)
-          ? clarity($0.value) > clarity($1.value)
-          : $0.value.match.count != $1.value.match.count
-            ? $0.value.match.count < $1.value.match.count : $0.key < $1.key
-    }
-    var picked = [Cluster]()
+    let busy = Set(waiting.map { subject($0.kind, $0.match) })
     // Items an open question already asks about never get a second question.
-    var covered = Set<String>()
-    for open in memory.questions where open.isOpen {
-      let rule = AutopilotRule(
-        kind: open.kind, match: open.match, verdict: .burn, source: .operator, title: "")
-      covered.formUnion(unsure.filter { matches(rule, $0) }.map(\.id))
+    let covered = Set(
+      memory.questions.filter(\.isOpen).flatMap { open in
+        unsure.filter { matches(coverage(open.kind, open.match), $0) }.map(\.id)
+      })
+    var subjects = [String: [AutopilotItem]]()
+    for item in unsure where item.protectedReason == nil && !covered.contains(item.id) {
+      guard let recency = recencyFacts[item.kind], let recent = item.facts[recency],
+        recent != "unknown", !tooRecent.contains(recent),
+        subjectFacts[item.kind].map({ ![nil, "unknown"].contains(item.facts[$0]) }) ?? true
+      else { continue }
+      subjects[subject(item.kind, item.facts.mapValues { [$0] }), default: []].append(item)
     }
-    func take(_ cluster: Cluster) -> Bool {
-      let ids = Set(cluster.items.map(\.id))
-      guard picked.count < slots,
-        Double(ids.intersection(covered).count) < Double(ids.count) * 0.5
-      else { return false }
-      picked.append(cluster)
-      covered.formUnion(ids)
-      return true
+    var candidates = [AutopilotQuestion]()
+    for (name, items) in subjects where !busy.contains(name) {
+      let kind = items[0].kind
+      guard let recency = recencyFacts[kind] else { continue }
+      var base = [String: [String]]()
+      if let key = subjectFacts[kind], let value = items[0].facts[key] { base[key] = [value] }
+      let present = Set(items.compactMap { $0.facts[recency] })
+      // The broadest question not asked yet: the most recent use present and everything older.
+      guard
+        let recent = (safety[recency] ?? []).first(where: { value in
+          present.contains(value)
+            && !excluded.contains(
+              AutopilotRule.key(kind: kind, match: base.merging([recency: [value]]) { a, _ in a }))
+        })
+      else { continue }
+      var match = base
+      match[recency] = [recent]
+      let covering = items.filter { matches(coverage(kind, match), $0) }
+      if covering.reduce(0, { $0 + $1.bytes }) >= worthAsking {
+        candidates.append(question(kind, match: match, covering: covering, now: now))
+      }
     }
-    // The best question for each kind first, so programs and junk aren't drowned out by
-    // a large pile of old copies; then the rest by value.
-    let openKinds = Set(memory.questions.filter(\.isOpen).map(\.kind))
-    for kind in AutopilotKind.allCases where !openKinds.contains(kind) {
-      if let best = ranked.first(where: { $0.value.kind == kind }) { _ = take(best.value) }
-    }
-    for (_, cluster) in ranked { _ = take(cluster) }
-    return picked.map { cluster in
-      let programs = Set(cluster.items.compactMap { $0.facts["program"] })
-      let text = wording(
-        kind: cluster.kind, match: cluster.match,
-        program: programs.count == 1 ? programs.first : nil)
-      return AutopilotQuestion(
-        kind: cluster.kind, match: cluster.match, question: text,
-        why: "I found \(cluster.items.count) like this, using \(format(cluster.bytes))."
-          + (cluster.kind == .worktree ? " I back each one up first, so you can undo it." : ""),
-        examples: Array(
-          cluster.items.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name)),
-        count: cluster.items.count, bytes: cluster.bytes, asked: now)
-    }
+    return Array(
+      candidates.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
+        .prefix(slots))
   }
 
-  /// How many of a pattern's secondary facts the native wording puts into words.
-  static func describable(kind: AutopilotKind, match: [String: [String]]) -> Int {
-    let value = { (key: String) in match[key]?.first }
-    switch kind {
-    case .process:
-      return [
-        value("orphaned") == "yes", value("thread") == "ended",
-        ["10m", "1h", "6h", "1d"].contains(value("idle") ?? ""), value("listening") == "yes",
-        (value("agent") ?? "none") != "none",
-      ].filter { $0 }.count
-    case .worktree:
-      return ["place", "changes", "stale", "thread"].filter {
-        guard let v = value($0) else { return false }
-        return !["other", "none", "today", "unknown"].contains(v) || $0 == "changes"
-      }.count
-    case .disk:
-      return ["home", "stale"].filter { value($0) != nil && value($0) != "today" }.count
+  /// What a yes to a pattern burns: the pattern and everything safer.
+  static func coverage(_ kind: AutopilotKind, _ match: [String: [String]]) -> AutopilotRule {
+    AutopilotRule(
+      kind: kind, match: widen(match, verdict: .burn), verdict: .burn, source: .operator, title: "")
+  }
+
+  /// A question about the things a pattern covers, with their count, size and cautions.
+  static func question(
+    _ kind: AutopilotKind, match: [String: [String]], covering: [AutopilotItem], now: Date
+  ) -> AutopilotQuestion {
+    let bytes = covering.reduce(0) { $0 + $1.bytes }
+    let programs = Set(covering.compactMap { $0.facts["program"] })
+    var question = AutopilotQuestion(
+      kind: kind, match: match,
+      question: wording(
+        kind: kind, match: match, program: programs.count == 1 ? programs.first : nil),
+      why: "I found \(covering.count) like this, using \(format(bytes))."
+        + (kind == .worktree ? " I back each one up first, so you can undo it." : ""),
+      examples: Array(covering.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name)),
+      count: covering.count, bytes: bytes, asked: now)
+    question.cautions = mix(kind, covering)
+    return question
+  }
+
+  /// What makes some of the matches riskier, counted: "2 have work only on this Mac".
+  static func mix(_ kind: AutopilotKind, _ items: [AutopilotItem]) -> [String]? {
+    func count(_ test: (AutopilotItem) -> Bool, _ one: String, _ many: String) -> String? {
+      let n = items.filter(test).count
+      return n == 0 ? nil : "\(n) " + (n == 1 ? one : many)
     }
+    let found: [String?]
+    switch kind {
+    case .worktree:
+      found = [
+        count({ $0.facts["saved"] == "local" }, "has work only on this Mac", "have work only on this Mac"),
+        count(
+          { ["small", "large"].contains($0.facts["changes"] ?? "") }, "has unsaved changes",
+          "have unsaved changes"),
+      ]
+    case .process:
+      found = [
+        count(
+          { $0.facts["listening"] == "yes" }, "is still running a server",
+          "are still running a server")
+      ]
+    case .disk: found = []
+    }
+    let cautions = found.compactMap { $0 }
+    return cautions.isEmpty ? nil : cautions
   }
 
   /// Native wording, used until the AI rewrites a question.
@@ -495,11 +491,12 @@ extension AutopilotPolicy {
     case .process: note = one ? "It just gets asked to quit." : "They just get asked to quit."
     case .disk: note = one ? "Your tools rebuild it when needed." : "Your tools rebuild them when needed."
     }
+    let shown = facts(question.kind, match: question.match)
     return AutopilotCard(
       headline: "Burn \(question.count) \(one ? single : plural)?",
       frees: "Frees \(roughly(question.bytes))" + (question.kind == .process ? " of memory" : ""),
-      facts: facts(question.kind, match: question.match), note: note,
+      facts: shown + (question.cautions ?? []), note: note,
       yes: one ? "Yes, burn it" : "Yes, burn them", no: one ? "No, keep it" : "No, keep them",
-      cautions: facts(question.kind, match: question.match).filter(cautions.contains))
+      cautions: shown.filter(cautions.contains) + (question.cautions ?? []))
   }
 }

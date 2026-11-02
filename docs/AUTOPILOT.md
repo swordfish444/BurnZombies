@@ -23,10 +23,10 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 
 ## Training
 
-BurnZombies groups unsure items into patterns and asks about the one that frees the most first. A pattern must free at least 1 GB to be worth a question. At most three questions are open at a time, one big card at a time:
+BurnZombies asks one question per subject: old project copies, each kind of program (Node, Java, …) and each kind of folder (node_modules, tool caches, …). A question covers everything in its subject that sat unused at least as long as its most recent member, so one answer can settle the whole subject; what makes some of them riskier is counted on the card instead of becoming more questions. After a No, the next question is about the older ones only. It must free at least 1 GB to be asked; the biggest subjects come first, at most three at a time, one big card at a time:
 
 > **Burn 92 old project copies?**
-> **Frees 14.4 GB** · `Saved on GitHub` `Unused for a week` `Made by Patrol6 agents`
+> **Frees 14.4 GB** · `Unused for a week` `⚠ 12 have work only on this Mac`
 > Each one is backed up first, so you can undo it. — *Yes, burn them* · *No, keep them* · *Not sure — skip*
 
 Facts that make burning riskier (work only on this Mac, unsaved changes, still running a server, used since yesterday) show in amber. The header shows where you are in the current round of questions, never a percentage.

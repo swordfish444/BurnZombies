@@ -83,7 +83,13 @@ with tempfile.TemporaryDirectory(prefix="bz-ap-", dir="/tmp") as root:
         assert burned[0]["outcome"] == "burned" and took >= 7, (burned, took)
         assert burned[1]["outcome"] == "refused", "a listening server needs the owner"
 
-        error, question = call("autopilot_ask", {"kind": "process", "match": {"family": ["node"], "listening": ["yes"]},
+        # BZ already asks one question about the server: a second one is refused, rewording it is not.
+        error, overlap = call("autopilot_ask", {"kind": "process", "match": {"family": ["node"], "listening": ["yes"]},
+                                                "question": "Can I burn leftover dev servers from chats that already finished?"})
+        assert error and "already asking" in overlap.get("error", ""), overlap
+        error, page = call("autopilot_catalog", {"status": "unsure"})
+        native = next(q for q in page["openQuestions"] if q["kind"] == "process")
+        error, question = call("autopilot_ask", {"kind": "process", "match": native["match"],
                                                  "question": "Can I burn leftover dev servers from chats that already finished?"})
         assert not error and question["count"] == 1 and question["source"] == "ai", question
         error, bad = call("autopilot_ask", {"kind": "process", "match": {"family": ["node"]}, "question": "no question mark"})
@@ -91,7 +97,7 @@ with tempfile.TemporaryDirectory(prefix="bz-ap-", dir="/tmp") as root:
         error, done = call("autopilot_report", {"text": "Burned one old copy; asked about one dev server."})
         assert not error, done
         print("PASS autopilot MCP: six tools, compact catalog, inspect, refusal guidance, AI authority, "
-              f"{took:.1f}s burn past the 5s socket deadline, listening-server refusal, questions and report")
+              f"{took:.1f}s burn past the 5s socket deadline, listening-server refusal, one question per subject and report")
     finally:
         if server:
             server.terminate()

@@ -240,7 +240,8 @@ func autopilotSweepProof() async throws {
   let restarted = await engine.sweepState()
   checkFalse(restarted.running, "not stuck running after a restart")
 
-  // An AI question replaces an open native question about the same items.
+  // While BZ asks about something, the AI may reword that question but not add a second one
+  // about the same things.
   let askEngine = try Autopilot(
     root: directory.appendingPathComponent("ask"),
     sources: AutopilotSources(processes: { _ in [server] }))
@@ -250,16 +251,23 @@ func autopilotSweepProof() async throws {
     return
   }
   var aiAsk = AutopilotRequest(tool: "ask")
-  var input = AutopilotQuestionInput(
+  aiAsk.question = AutopilotQuestionInput(
     kind: .process, match: ["family": ["node"], "listening": ["yes"], "agent": ["none"]],
     question: "Can I stop the dev servers left behind by chats that finished?")
+  let (secondOK, secondJSON) = await askEngine.handle(aiAsk)
+  checkFalse(secondOK, "no second question about the same server")
+  check(secondJSON.contains("already asking"), secondJSON)
+  var reword = AutopilotRequest(tool: "ask")
+  var input = AutopilotQuestionInput(
+    kind: native.kind, match: native.match,
+    question: "Can I stop the dev servers left behind by chats that finished?")
   input.why = "They hold ports nobody uses."
-  aiAsk.question = input
-  let (replacedOK, replacedJSON) = await askEngine.handle(aiAsk)
-  check(replacedOK, replacedJSON)
+  reword.question = input
+  let (rewordOK, rewordJSON) = await askEngine.handle(reword)
+  check(rewordOK, rewordJSON)
   let after = await askEngine.snapshot()
-  checkFalse(after.questions.contains { $0.id == native.id }, "native duplicate removed")
-  equal(after.questions.filter { $0.source == "ai" }.count, 1, "AI wording kept")
+  equal(after.questions.count, 1, "still one question")
+  equal(after.questions.first?.source, "ai", "AI wording kept")
 
   // Commands.
   snapshot = try await engine.apply(.setInterval(minutes: 30))

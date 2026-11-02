@@ -134,6 +134,8 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
   public var answer: AutopilotAnswer?
   public var answered: Date?
   public var snoozedUntil: Date?
+  /// What makes some of the matches riskier, counted: "2 have work only on this Mac".
+  public var cautions: [String]?
   public init(
     kind: AutopilotKind, match: [String: [String]], question: String, why: String,
     examples: [String], count: Int, bytes: UInt64, asked: Date = Date(), source: String = "native"
