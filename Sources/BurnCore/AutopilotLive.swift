@@ -46,7 +46,10 @@ extension AutopilotSources {
       inspect: { AutopilotInspector.inspect($0) },
       coverageNotes: {
         FullDiskAccess.status(root: root).canScan
-          ? [] : ["Full Disk Access is off, so a few protected folders are skipped."]
+          ? []
+          : [
+            "Full Disk Access is off, so I can't refresh the list of old copies or look in protected folders. Leftover programs are still handled."
+          ]
       })
   }
 

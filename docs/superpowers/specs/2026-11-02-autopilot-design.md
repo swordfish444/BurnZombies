@@ -158,7 +158,7 @@ This handles shallow clones and LFS (content is stored in the snapshot) and does
 
 ## Full Disk Access
 
-Hunts no longer wait for it. Access is probed on launch and after each sweep; a successful probe is recorded automatically for the current build. Without it, protected folders are skipped and the UI shows a quiet "partial coverage" note with the existing Allow button.
+Autopilot no longer waits for it. Leftover programs need no special access. The worktree inventory and protected folders still follow the existing explicit setup (macOS ties the grant to the app's code signature, so an ad-hoc rebuild must be re-allowed). Without access, Autopilot keeps working from the last inventory and the UI shows a quiet coverage note with the existing Allow button.
 
 ## UI
 

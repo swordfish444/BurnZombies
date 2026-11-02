@@ -42,22 +42,11 @@ public enum FullDiskAccess {
   }
   // Injectable functions keep tests off protected user paths; production has no
   // environment variable or persisted Boolean that alone grants scan access.
-  private static var lastAutomaticProbe: Date?
   public static func status(root: URL, executableDigest: String?, probe: () -> FullDiskAccessStatus) -> FullDiskAccessStatus {
-    guard let executableDigest, let store = try? Store(root: root) else { return .init() }
-    let receipt = (try? store.read(root.appendingPathComponent("full-disk-access.json"), limit: 4096))
-      .flatMap { try? JSONDecoder().decode(Receipt.self, from: $0) }
-    guard let receipt, receipt.executableDigest == executableDigest, receipt.verified else {
-      // A rebuilt or reinstalled app keeps macOS's grant. Recheck the FDA-only folders
-      // (no prompts) at most every 10 minutes and record a positive result for this build.
-      guard lastAutomaticProbe.map({ Date().timeIntervalSince($0) >= 600 }) ?? true else { return .init() }
-      lastAutomaticProbe = Date()
-      let result = probe()
-      guard result.canScan else { return .init() }
-      try? store.write(JSONEncoder().encode(Receipt(executableDigest: executableDigest, verified: true)),
-        to: root.appendingPathComponent("full-disk-access.json"), limit: 4096)
-      return result
-    }
+    guard let executableDigest, let store = try? Store(root: root),
+      let data = try? store.read(root.appendingPathComponent("full-disk-access.json"), limit: 4096),
+      let receipt = try? JSONDecoder().decode(Receipt.self, from: data),
+      receipt.executableDigest == executableDigest, receipt.verified else { return .init() }
     let result = probe()
     if !result.canScan {
       // No repeated protected-path probes after denial. The next attempt requires
