@@ -128,30 +128,24 @@ public enum AutopilotDisk {
 
   /// Disk space a folder really uses (allocated blocks), never following links. Nil when the
   /// path is not a plain folder or the time limit passes first.
-  public static func allocatedSize(_ path: String, deadline: TimeInterval = 5) -> UInt64? {
+  /// Allocated bytes under `path` with the native read-only fts walker (no symlinks, no
+  /// other volumes, no hydration of online-only files); nil when it can't finish in time.
+  public static func allocatedSize(_ path: String, deadline: TimeInterval = 30) -> UInt64? {
     var info = stat()
-    guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
-    let limit = ProcessInfo.processInfo.systemUptime + deadline
-    let keys: [URLResourceKey] = [
-      .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .isSymbolicLinkKey,
-    ]
-    guard
-      let entries = FileManager.default.enumerator(
-        at: URL(fileURLWithPath: path),
-        includingPropertiesForKeys: keys, options: [], errorHandler: { _, _ in true })
+    guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
+      let walk = bz_disk_open(path, 1)
     else { return nil }
-    var total: UInt64 = 0
-    while let url = entries.nextObject() as? URL {
+    defer { bz_disk_close(walk) }
+    let limit = ProcessInfo.processInfo.systemUptime + deadline
+    while true {
       guard !Task.isCancelled, ProcessInfo.processInfo.systemUptime < limit else { return nil }
-      let values = try? url.resourceValues(forKeys: Set(keys))
-      if values?.isSymbolicLink == true {
-        entries.skipDescendants()
-        continue
-      }
-      let size = values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? 0
-      total += UInt64(max(0, size))
+      let step = bz_disk_step(walk, 5000)
+      if step < 0 { return nil }
+      if step == 1 { break }
     }
-    return total
+    var root = bz_disk_node()
+    guard bz_disk_count(walk) > 0, bz_disk_node_at(walk, 0, &root) == 1 else { return nil }
+    return root.allocated
   }
 
   /// Removes one junk folder after checking every rail again on the live path. Never throws;
@@ -217,7 +211,7 @@ public enum AutopilotDisk {
       // The space comes back when the Trash is emptied, so no bytes are claimed yet.
       return finish("burned", "Moved \(item.name) to the Trash. Empty the Trash to get the space back.")
     }
-    let bytes = allocatedSize(path) ?? 0
+    let bytes = allocatedSize(path) ?? item.bytes
     do {
       try FileManager.default.removeItem(atPath: path)
     } catch {
