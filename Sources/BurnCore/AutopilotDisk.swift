@@ -126,26 +126,37 @@ public enum AutopilotDisk {
     return found.values.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
   }
 
-  /// Disk space a folder really uses (allocated blocks), never following links. Nil when the
-  /// path is not a plain folder or the time limit passes first.
-  /// Allocated bytes under `path` with the native read-only fts walker (no symlinks, no
-  /// other volumes, no hydration of online-only files); nil when it can't finish in time.
+  /// Disk space a folder really uses (allocated blocks) with the native read-only fts walker:
+  /// no symlinks, no other volumes, no hydration of online-only files. Nil when the path is
+  /// not a plain folder or the time limit passes first.
   public static func allocatedSize(_ path: String, deadline: TimeInterval = 30) -> UInt64? {
+    walk(path, deadline: deadline, partial: false)
+  }
+
+  /// Like `allocatedSize`, but when the time limit passes it returns what it counted so far:
+  /// a lower bound, so a folder too big to measure in time never looks empty.
+  public static func countedSize(_ path: String, deadline: TimeInterval) -> UInt64? {
+    walk(path, deadline: deadline, partial: true)
+  }
+
+  private static func walk(_ path: String, deadline: TimeInterval, partial: Bool) -> UInt64? {
     var info = stat()
     guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
-      let walk = bz_disk_open(path, 1)
+      let handle = bz_disk_open(path, 1)
     else { return nil }
-    defer { bz_disk_close(walk) }
-    let limit = ProcessInfo.processInfo.systemUptime + deadline
-    while true {
-      guard !Task.isCancelled, ProcessInfo.processInfo.systemUptime < limit else { return nil }
-      let step = bz_disk_step(walk, 5000)
-      if step < 0 { return nil }
-      if step == 1 { break }
+    defer { bz_disk_close(handle) }
+    func total() -> UInt64? {
+      var root = bz_disk_node()
+      return bz_disk_count(handle) > 0 && bz_disk_node_at(handle, 0, &root) == 1
+        ? root.allocated : nil
     }
-    var root = bz_disk_node()
-    guard bz_disk_count(walk) > 0, bz_disk_node_at(walk, 0, &root) == 1 else { return nil }
-    return root.allocated
+    let limit = ProcessInfo.processInfo.systemUptime + deadline
+    while !Task.isCancelled, ProcessInfo.processInfo.systemUptime < limit {
+      let step = bz_disk_step(handle, 5000)
+      if step < 0 { return nil }
+      if step == 1 { return total() }
+    }
+    return partial ? total() ?? 0 : nil
   }
 
   /// Removes one junk folder after checking every rail again on the live path. Never throws;

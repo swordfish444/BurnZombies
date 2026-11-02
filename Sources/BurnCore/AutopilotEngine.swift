@@ -89,14 +89,20 @@ public actor Autopilot {
   public static let retryRefusalsAfter: TimeInterval = 6 * 3600
   let store: AutopilotStore
   let sources: AutopilotSources
+  /// Items freeing less are not part of the assessment; fixtures with tiny files lower it.
+  let minimumBytes: UInt64
   var catalog: AutopilotCatalog?
   var delivery: [String: AutopilotDelivery] = [:]
   var burning = Set<String>()
   var ticking = false
 
-  public init(root: URL = Store.defaultRoot, sources: AutopilotSources) throws {
+  public init(
+    root: URL = Store.defaultRoot, sources: AutopilotSources,
+    minimumBytes: UInt64 = AutopilotPolicy.worthBytes
+  ) throws {
     store = try AutopilotStore(root: root)
     self.sources = sources
+    self.minimumBytes = minimumBytes
     catalog = try? store.catalog()
   }
 
@@ -117,6 +123,7 @@ public actor Autopilot {
     items += copies.filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
       .map { Self.mentionChat($0, threads: threads, now: now) }
     items += sources.disk(records)
+    items = items.filter { AutopilotPolicy.worthAssessing($0, minimumBytes: minimumBytes) }
     catalog = AutopilotCatalog(
       observedAt: now, items: items, threads: threads, coverageNotes: sources.coverageNotes())
     try? store.save(catalog: catalog!)
@@ -144,12 +151,22 @@ public actor Autopilot {
     return copy
   }
 
+  /// Items stopping right now, or burned since the catalog was built. The next tick drops
+  /// them; until then nothing tries them again.
+  func spent(_ receipts: [AutopilotReceipt]) -> Set<String> {
+    let observed = catalog?.observedAt ?? .distantPast
+    return Set(
+      receipts.filter {
+        $0.outcome == "verifying" || ($0.outcome == "burned" && $0.date >= observed)
+      }.map(\.itemID))
+  }
+
   /// Burns every item the policy authorizes now, bounded per kind.
   func burnAuthorized(now: Date) async {
     guard let items = catalog?.items else { return }
     let memory = memory()
     let receipts = (try? store.receipts()) ?? []
-    let active = Set(receipts.filter { $0.outcome == "verifying" }.map(\.itemID))
+    let spent = spent(receipts)
     // A refusal stands for the facts and authority it saw until either changes or a while
     // passes.
     let refused = Set(
@@ -157,7 +174,7 @@ public actor Autopilot {
         $0.outcome == "refused" && now.timeIntervalSince($0.date) < Self.retryRefusalsAfter
       }.compactMap { r in r.revision.map { [r.itemID, $0, r.authority].joined(separator: "@") } })
     var used = [AutopilotKind: Int]()
-    for item in items where !active.contains(item.id) && !burning.contains(item.id) {
+    for item in items where !spent.contains(item.id) && !burning.contains(item.id) {
       let decision = AutopilotPolicy.decide(item, memory: memory)
       guard decision.status == .burn, let authority = decision.authority,
         !refused.contains([item.id, item.revision, authority].joined(separator: "@")),
@@ -367,6 +384,9 @@ public actor Autopilot {
         throw StoreError.message("I can't find that anymore. It may already be gone.")
       }
       if let reason = item.protectedReason { throw StoreError.message(reason) }
+      if spent((try? store.receipts()) ?? []).contains(id) {
+        throw StoreError.message("I already burned that.")
+      }
       let receipt = await execute(item, authority: "operator", why: "You asked me to burn it.")
       if receipt.outcome == "refused" { throw StoreError.message(receipt.detail) }
     case .keep(let id):
@@ -507,6 +527,10 @@ public actor Autopilot {
             detail: "Unknown item. Read the catalog again."))
         continue
       }
+      if spent((try? store.receipts()) ?? []).contains(id) {
+        receipts.append(.refused(item, authority: "ai", "Already burned."))
+        continue
+      }
       let decision = AutopilotPolicy.decide(item, memory: memory)
       guard decision.status == .burn, let authority = decision.authority else {
         receipts.append(
@@ -573,9 +597,15 @@ public actor Autopilot {
       guard !matching.isEmpty else {
         throw StoreError.message("No unsure items match that pattern.")
       }
+      let bytes = matching.reduce(0) { $0 + $1.bytes }
+      guard bytes >= AutopilotPolicy.worthAsking else {
+        throw StoreError.message(
+          "That pattern frees only \(AutopilotPolicy.format(bytes)). Ask only about patterns freeing 1 GB or more."
+        )
+      }
       var q = question
       q.count = matching.count
-      q.bytes = matching.reduce(0) { $0 + $1.bytes }
+      q.bytes = bytes
       if q.examples.isEmpty {
         q.examples = Array(matching.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name))
       }

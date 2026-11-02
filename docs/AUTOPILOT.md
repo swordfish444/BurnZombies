@@ -10,6 +10,8 @@ BurnZombies cleans up on its own. Every 15 minutes it looks for three kinds of l
 
 ## How it decides
 
+Only things worth it are looked at: anything freeing at least 100 MB of disk or memory, or a program keeping a CPU core at least a quarter busy. Smaller things are not shown, asked about, judged or burned. Old copies the worktree inventory never measured are sized a little each sweep before they count.
+
 Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: node_modules"). Then, in order:
 
 1. **Protected** — never touched, never asked about: macOS, your apps, agent harnesses, BurnZombies itself, anything a running chat is working in, your main project folders, copies something is using right now.
@@ -21,7 +23,7 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 
 ## Training
 
-BurnZombies groups unsure items into patterns and asks about the biggest one first — at most three questions at a time, one big card at a time:
+BurnZombies groups unsure items into patterns and asks about the one that frees the most first. A pattern must free at least 1 GB to be worth a question. At most three questions are open at a time, one big card at a time:
 
 > **Can I burn old copies of your projects that are already saved on GitHub?**
 > I found 212 like this, using 48 GB. — *Yes, burn them* · *No, keep them* · *Not sure — skip*

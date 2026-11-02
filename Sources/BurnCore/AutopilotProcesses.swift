@@ -203,12 +203,15 @@ public enum AutopilotProcesses {
       let orphaned = record.orphanSince != nil || leaderGone ? "yes" : "maybe"
       let quiet = members.map { idleSince($0, now: now) }.min() ?? 0
       let bytes = members.reduce(0) { $0 + $1.latest.rss }
+      // A quarter of a core or more over the last minute, across the whole tree.
+      let cpu = members.compactMap(\.cpuPercent).reduce(0, +) >= 25 ? "busy" : "calm"
       let repo = cwd.flatMap(repository) ?? "none"
       let program = o.name.lowercased()
       let facts = [
         "program": program, "family": family(o.executable), "orphaned": orphaned,
         "thread": thread, "agent": probe.agent(o.identity.pid) ?? "none",
-        "idle": idle(quiet), "listening": listening, "memory": memory(bytes), "repo": repo,
+        "idle": idle(quiet), "listening": listening, "memory": memory(bytes), "cpu": cpu,
+        "repo": repo,
       ]
       items.append(
         AutopilotItem(

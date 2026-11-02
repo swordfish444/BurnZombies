@@ -88,7 +88,7 @@ func autopilotSweepProof() async throws {
       "agent": "claude",
     ], processKey: "safe")
   let server = AutopilotItem(
-    id: "process:server", kind: .process, name: "vite", bytes: 300 << 20,
+    id: "process:server", kind: .process, name: "vite", bytes: 3 << 30,
     facts: [
       "family": "node", "orphaned": "yes", "thread": "none", "idle": "1d", "listening": "yes",
       "agent": "none",
@@ -294,6 +294,76 @@ func autopilotSweepProof() async throws {
   checkFalse(askOK, "a question must match unsure items")
   check(askJSON.contains("No unsure items"), askJSON)
 
+  // Small things are not part of the assessment: not shown, asked about, judged or burned.
+  func finishedCopy(_ name: String, bytes: UInt64) -> AutopilotItem {
+    AutopilotItem(
+      id: "worktree:" + name, kind: .worktree, name: name, bytes: bytes,
+      facts: [
+        "place": "sibling", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+        "thread": "none",
+      ])
+  }
+  let tinyCopy = finishedCopy("tiny", bytes: 20_000_000)
+  let bigCopy = finishedCopy("big", bytes: 2_000_000_000)
+  let valueBurns = Calls()
+  let valueEngine = try Autopilot(
+    root: directory.appendingPathComponent("value"),
+    sources: AutopilotSources(
+      worktrees: { _, _, d in ([tinyCopy, bigCopy], d) },
+      retireWorktree: { item, authority in
+        valueBurns.add(item.id)
+        return AutopilotReceipt(
+          itemID: item.id, kind: .worktree, name: item.name, authority: authority,
+          outcome: "burned", detail: "", bytes: item.bytes)
+      }))
+  let valued = await valueEngine.tick(now: now)
+  checkFalse(valued.entries.contains { $0.item.id == tinyCopy.id }, "a 20 MB copy isn't shown")
+  equal(valueBurns.all, [bigCopy.id], "only the big finished copy burns")
+  let modest = AutopilotItem(
+    id: "process:modest", kind: .process, name: "vite", bytes: 300 << 20,
+    facts: [
+      "family": "node", "orphaned": "yes", "thread": "none", "idle": "1d", "listening": "yes",
+      "agent": "none",
+    ], processKey: "modest")
+  let modestEngine = try Autopilot(
+    root: directory.appendingPathComponent("modest"),
+    sources: AutopilotSources(processes: { _ in [modest] }))
+  let modestly = await modestEngine.tick(now: now)
+  equal(modestly.count(.unsure), 1, "a 300 MB program is assessed")
+  equal(modestly.questions.count, 0, "but 300 MB isn't worth a question")
+  var smallAsk = AutopilotRequest(tool: "ask")
+  smallAsk.question = AutopilotQuestionInput(
+    kind: .process, match: ["family": ["node"], "listening": ["yes"]],
+    question: "Can I stop the small dev servers?")
+  let (smallOK, smallJSON) = await modestEngine.handle(smallAsk)
+  checkFalse(smallOK, "a pattern freeing under 1 GB isn't worth a question")
+  check(smallJSON.contains("1 GB"), smallJSON)
+
+  // Something burned since the catalog was built is gone: it is never tried again from the
+  // same catalog, whether by another pass, the AI or the owner, nor after a restart.
+  let onceCopy = finishedCopy("once", bytes: 2_000_000_000)
+  let onceRetired = Calls()
+  let onceSources = AutopilotSources(
+    worktrees: { _, _, d in ([onceCopy], d) },
+    retireWorktree: { item, authority in
+      onceRetired.add(item.id)
+      return AutopilotReceipt(
+        itemID: item.id, kind: .worktree, name: item.name, authority: authority,
+        outcome: "burned", detail: "", bytes: item.bytes)
+    })
+  let onceRoot = directory.appendingPathComponent("once")
+  let once = try Autopilot(root: onceRoot, sources: onceSources)
+  _ = await once.tick(now: Date())
+  equal(onceRetired.all, [onceCopy.id], "burned once by the starter rule")
+  let again = await once.burn([onceCopy.id])
+  equal(again.first?.outcome, "refused", "the AI can't burn it twice")
+  let relaunchedEngine = try Autopilot(root: onceRoot, sources: onceSources)
+  do {
+    _ = try await relaunchedEngine.apply(.burnNow(itemID: onceCopy.id))
+    failTest("burned a copy already burned since the saved catalog")
+  } catch {}
+  equal(onceRetired.all.count, 1, "never attempted twice")
+
   // A real Mac's first sweep spent nine minutes reading before it burned anything.
   equal(AutopilotSweeper.aiTimeout, 900, "the AI gets the review worker's full limit")
 
@@ -301,7 +371,7 @@ func autopilotSweepProof() async throws {
   // and unchanged refused copies are not retried every tick.
   func finished(_ n: Int) -> AutopilotItem {
     AutopilotItem(
-      id: "worktree:r\(n)", kind: .worktree, name: "copy-\(n)", bytes: 1 << 20,
+      id: "worktree:r\(n)", kind: .worktree, name: "copy-\(n)", bytes: 1 << 30,
       facts: [
         "place": "sibling", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
         "thread": "none",
@@ -368,7 +438,7 @@ func runAutopilotFixture(root: URL) async throws {
       "thread": "none",
     ])
   let server = AutopilotItem(
-    id: "process:fixture-server", kind: .process, name: "vite in atlas", bytes: 400 << 20,
+    id: "process:fixture-server", kind: .process, name: "vite in atlas", bytes: 1536 << 20,
     facts: [
       "family": "node", "orphaned": "yes", "thread": "ended", "idle": "1d", "listening": "yes",
       "agent": "claude",

@@ -118,7 +118,8 @@ func autopilotEndToEndProof(root: URL, harness: String, executable: String) asyn
       AutopilotDisk.reclaim(item, authority: authority, home: fixtures.path)
     },
     inspect: { AutopilotInspector.inspect($0) })
-  let engine = try Autopilot(root: root, sources: sources)
+  // Fixture copies hold a few kilobytes; real ones must be worth it.
+  let engine = try Autopilot(root: root, sources: sources, minimumBytes: 0)
   let service = AgentService(monitor: monitor, autopilot: engine)
   let listener = try AgentListener { request in await service.call(request) }
   defer { withExtendedLifetime(listener) {} }
@@ -182,11 +183,25 @@ func autopilotPreview(inventory: URL?) async throws {
     await monitor.autopilotRecords(), threads: threads,
     protectedPIDs: AgentSafety.ancestors(of: getpid()) ?? [],
     launchAgents: AutopilotSources.launchAgentPIDs())
-  items += AutopilotWorktrees.items(records, threads: threads, delivery: &delivery, budget: 2000)
-    .filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
+  // The live pipeline: size unmeasured copies, assess only what is worth it.
+  let sizingStarted = Date()
+  let sized = AutopilotSizes().fill(records, budget: 600)
+  print(
+    "Sized \(records.filter { $0.allocated == 0 }.count) unmeasured copies in \(Int(Date().timeIntervalSince(sizingStarted))) s; \(sized.filter { $0.allocated == 0 && !$0.missing }.count) still unmeasured"
+  )
+  items += AutopilotWorktrees.items(
+    sized.filter { $0.allocated >= AutopilotPolicy.worthBytes }, threads: threads,
+    delivery: &delivery, budget: 2000
+  )
+  .filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
   let junkStarted = Date()
   items += AutopilotDisk.items(worktrees: records)
   print("Junk-folder scan took \(Int(Date().timeIntervalSince(junkStarted))) s")
+  let small = items.filter { !AutopilotPolicy.worthAssessing($0) }
+  items.removeAll { !AutopilotPolicy.worthAssessing($0) }
+  print(
+    "Skipped as too small: \(small.count) programs and folders, plus \(sized.filter { $0.allocated > 0 && $0.allocated < AutopilotPolicy.worthBytes }.count) old copies"
+  )
   let memory = AutopilotMemory()
   var byStatus = [String: [AutopilotItem]]()
   for item in items {

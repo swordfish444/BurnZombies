@@ -104,6 +104,19 @@ public enum AutopilotPolicy {
   ]
   static let tooRecent: Set<String> = ["active", "today"]
 
+  /// Below this much disk or memory an item isn't worth the owner's attention or a sweep's
+  /// time: it is not shown, asked about, judged or burned.
+  public static let worthBytes: UInt64 = 100_000_000
+  /// A training question must free at least this much.
+  public static let worthAsking: UInt64 = 1_000_000_000
+
+  /// Worth assessing: frees at least `minimumBytes`, or is a program keeping a CPU busy.
+  public static func worthAssessing(_ item: AutopilotItem, minimumBytes: UInt64 = worthBytes)
+    -> Bool
+  {
+    item.bytes >= minimumBytes || item.facts["cpu"] == "busy"
+  }
+
   /// How long something sat untouched, named by its lower bound like the idle ages of
   /// programs: `today`, `day` (1+ day), `week` (7+ days), `month` (30+ days) or `older` (90+).
   static func stale(since date: Date, now: Date) -> String {
@@ -134,7 +147,6 @@ public enum AutopilotPolicy {
       var match: [String: [String]]
       var items: [AutopilotItem] = []
       var bytes: UInt64 = 0
-      var score: Double { Double(items.count) + Double(bytes) / 1e9 }
     }
     var clusters = [String: Cluster]()
     for item in unsure where item.protectedReason == nil {
@@ -158,11 +170,12 @@ public enum AutopilotPolicy {
         clusters[id]!.bytes += item.bytes
       }
     }
-    // Equal coverage: prefer patterns the wording can actually describe, then broader ones.
+    // Questions go where the space is, and a pattern freeing little isn't worth one. Equal
+    // space: prefer patterns the wording can actually describe, then broader ones.
     func clarity(_ c: Cluster) -> Int { min(2, describable(kind: c.kind, match: c.match)) }
-    let ranked = clusters.sorted {
-      $0.value.score != $1.value.score
-        ? $0.value.score > $1.value.score
+    let ranked = clusters.filter { $0.value.bytes >= worthAsking }.sorted {
+      $0.value.bytes != $1.value.bytes
+        ? $0.value.bytes > $1.value.bytes
         : clarity($0.value) != clarity($1.value)
           ? clarity($0.value) > clarity($1.value)
           : $0.value.match.count != $1.value.match.count

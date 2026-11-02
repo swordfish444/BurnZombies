@@ -255,6 +255,36 @@ private func adkSizeProof(base: String) throws {
   equal(AutopilotDisk.allocatedSize(folder, deadline: -1), nil, "an expired deadline gives no size")
   equal(AutopilotDisk.allocatedSize(base + "/missing"), nil, "a missing folder has no size")
   equal(AutopilotDisk.allocatedSize(folder + "/link"), nil, "a symlink is never measured")
+
+  // Counting stops at the deadline with what it found so far: a copy too big to measure in
+  // time still shows it is big, instead of looking empty.
+  equal(AutopilotDisk.countedSize(folder, deadline: 30), size, "a finished count is the size")
+  let early = AutopilotDisk.countedSize(folder, deadline: -1)
+  check(early != nil && early! <= size!, "an early stop is a lower bound: \(String(describing: early))")
+  equal(AutopilotDisk.countedSize(folder + "/data.bin", deadline: 30), nil, "a file is no folder")
+
+  // Old copies the inventory never measured get sized a bounded amount per tick and are
+  // remembered for a day.
+  var measured = [String]()
+  let sizes = AutopilotSizes { path, _ in
+    measured.append(path)
+    return path.hasSuffix("unreadable") ? nil : 7_000_000_000
+  }
+  func record(_ name: String, allocated: UInt64 = 0) -> WorktreeRecord {
+    var r = WorktreeRecord(id: "id-" + name, path: base + "/" + name, repository: base + "/repo")
+    r.allocated = allocated
+    return r
+  }
+  let now = Date()
+  let records = [record("known", allocated: 2_000_000), record("new"), record("unreadable")]
+  equal(sizes.fill(records, budget: 0, now: now).map(\.allocated), [2_000_000, 0, 0], "no budget")
+  equal(measured, [], "nothing measured without a budget")
+  equal(sizes.fill(records, now: now).map(\.allocated), [2_000_000, 7_000_000_000, 0])
+  equal(measured, [base + "/new", base + "/unreadable"], "only unmeasured copies are sized")
+  equal(sizes.fill(records, now: now.addingTimeInterval(3600)).map(\.allocated)[1], 7_000_000_000)
+  equal(measured.count, 3, "a size is remembered; an unreadable copy is tried again")
+  _ = sizes.fill(records, now: now.addingTimeInterval(2 * 86_400))
+  equal(measured.filter { $0.hasSuffix("/new") }.count, 2, "a day later it is measured again")
 }
 
 private func adkJunkProof(base: String, now: Date) throws {

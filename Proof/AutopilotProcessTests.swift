@@ -48,6 +48,27 @@ func autopilotProcessProof() async throws {
   defer {
     for pid in [fixture.shell] + fixture.children where alive(pid) { kill(pid, SIGKILL) }
   }
+  // A program keeping a CPU core busy is worth assessing even when it is small.
+  func spinning(_ cpuSeconds: Double) -> AutopilotItem? {
+    let pid: Int32 = 999_990
+    let first = Observation(
+      identity: ProcessIdentity(pid: pid, seconds: 1), executable: "/tmp/bz-spin/node",
+      rss: 30 << 20, cpuNS: 1_000_000_000, monotonic: 100)
+    var latest = first
+    latest.cpuNS += UInt64(cpuSeconds * 60 * 1e9)
+    latest.monotonic += 60
+    var record = Record(first)
+    record.latest = latest
+    record.samples = [first, latest]
+    let quiet = AutopilotProcessProbe(
+      listening: { _ in false }, agent: { _ in nil }, cwd: { _ in nil }, alive: { _ in false })
+    return AutopilotProcesses.items(
+      [record.id: record], threads: [], protectedPIDs: [], probe: quiet
+    ).first
+  }
+  equal(spinning(0.5)?.facts["cpu"], "busy", "half a core for a minute")
+  equal(spinning(0.05)?.facts["cpu"], "calm", "a twentieth of a core")
+
   let records = await monitor.autopilotRecords()
   let own = AgentSafety.ancestors(of: getpid()) ?? []
   let items = AutopilotProcesses.items(records, threads: [], protectedPIDs: own)

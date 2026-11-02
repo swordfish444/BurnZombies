@@ -72,6 +72,33 @@ func autopilotPolicyProof() throws {
     AutopilotPolicy.widen(["stale": ["day"]], verdict: .burn)["stale"],
     ["day", "week", "month", "older"], "a yes also covers copies left longer")
 
+  // Only things worth it are assessed: 100 MB or more, or a program keeping a CPU busy.
+  check(AutopilotPolicy.worthAssessing(copy("big", [:], bytes: 150_000_000)), "150 MB copy")
+  checkFalse(AutopilotPolicy.worthAssessing(copy("small", [:], bytes: 20_000_000)), "20 MB copy")
+  checkFalse(AutopilotPolicy.worthAssessing(copy("unmeasured", [:], bytes: 0)), "unmeasured copy")
+  checkFalse(AutopilotPolicy.worthAssessing(junk("crumbs", [:], bytes: 99_000_000)), "99 MB folder")
+  checkFalse(
+    AutopilotPolicy.worthAssessing(process("calm", ["cpu": "calm"], bytes: 30 << 20)),
+    "small quiet program")
+  check(
+    AutopilotPolicy.worthAssessing(process("hot", ["cpu": "busy"], bytes: 30 << 20)),
+    "small program keeping a CPU busy")
+
+  // Questions go where the space is, and a pattern freeing under 1 GB isn't worth one.
+  let finishedFacts = [
+    "place": "sibling", "saved": "merged", "changes": "none", "stale": "month", "thread": "none",
+  ]
+  var pushedFacts = finishedFacts
+  pushedFacts["saved"] = "pushed"
+  let many = (0..<30).map { copy("many\($0)", finishedFacts, bytes: 150_000_000) }
+  let few = (0..<2).map { copy("few\($0)", pushedFacts, bytes: 5_000_000_000) }
+  let crumbs = (0..<5).map {
+    junk("crumbs\($0)", ["folder": "node_modules", "home": "repo", "stale": "month"], bytes: 150_000_000)
+  }
+  let valued = AutopilotPolicy.proposeQuestions(many + few + crumbs, memory: AutopilotMemory())
+  equal(valued.first?.match["saved"], ["pushed"], "two 5 GB copies beat thirty 150 MB ones")
+  checkFalse(valued.contains { $0.kind == .disk }, "750 MB of folders isn't worth a question")
+
   // Keep beats burn, for rules and for the operator's own keeps.
   let burnAll = AutopilotRule(
     kind: .process, match: ["family": ["node"]], verdict: .burn, source: .operator,
@@ -148,7 +175,7 @@ func autopilotPolicyProof() throws {
         [
           "family": "python", "orphaned": "yes", "thread": "none", "idle": "1h",
           "listening": "yes", "agent": "none",
-        ]))
+        ], bytes: 200 << 20))
   }
   for i in 0..<5 {
     unsure.append(junk("cache-\(i)", ["folder": "package-cache", "home": "repo", "stale": "week"]))

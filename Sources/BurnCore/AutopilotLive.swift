@@ -7,6 +7,7 @@ extension AutopilotSources {
   public static func live(monitor: Monitor, root: URL = Store.defaultRoot) -> AutopilotSources {
     let home = NSHomeDirectory()
     let junk = AutopilotJunkCache()
+    let sizes = AutopilotSizes()
     return AutopilotSources(
       threads: { AgentThreads.index(home: home) },
       processes: { threads in
@@ -20,8 +21,10 @@ extension AutopilotSources {
       worktreeRecords: { await monitor.autopilotWorktreeRecords() },
       worktrees: { records, threads, cache in
         var delivery = cache
+        // Git checks go only to copies big enough to be worth assessing.
+        let worth = sizes.fill(records).filter { $0.allocated >= AutopilotPolicy.worthBytes }
         let items = AutopilotWorktrees.items(
-          records, threads: threads, delivery: &delivery, budget: 150)
+          worth, threads: threads, delivery: &delivery, budget: 150)
         return (items, delivery)
       },
       disk: { records in junk.items(records, home: home) },

@@ -84,6 +84,8 @@ Junk folders:
 | `stale` | as above |
 | `size` | `medium` (<1 GB), `large` (<10 GB), `huge` |
 
+Only items worth it are cataloged: at least 100 MB of disk or memory (`AutopilotPolicy.worthBytes`), or a program tree using at least 25% of a core (`cpu: busy`). Training questions rank patterns by bytes freed and need at least 1 GB (`worthAsking`), for native and AI questions alike.
+
 ## Autonomy contract
 
 `authority(item)` is evaluated natively, in this order, every time an item is about to be burned:

@@ -663,3 +663,42 @@ public enum AutopilotWorktrees {
     try git(path, args).split(separator: "\n").map(String.init)
   }
 }
+
+/// Sizes old copies the worktree inventory never measured, a bounded amount of time per tick,
+/// and remembers each size for a day. Until measured a copy counts as 0 bytes, so it waits
+/// outside the assessment; one too big to finish in time gets what was counted, a lower bound.
+public final class AutopilotSizes: @unchecked Sendable {
+  private let lock = NSLock()
+  private var known: [String: (bytes: UInt64, measured: Date)] = [:]
+  private let sizer: (String, TimeInterval) -> UInt64?
+  public init(
+    sizer: @escaping (String, TimeInterval) -> UInt64? = {
+      AutopilotDisk.countedSize($0, deadline: $1)
+    }
+  ) {
+    self.sizer = sizer
+  }
+
+  public func fill(_ records: [WorktreeRecord], budget: TimeInterval = 20, now: Date = Date())
+    -> [WorktreeRecord]
+  {
+    let limit = ProcessInfo.processInfo.systemUptime + budget
+    return records.map { record in
+      guard record.allocated == 0, !record.missing, !record.retired, !record.bare else {
+        return record
+      }
+      var sized = record
+      if let size = lock.withLock({ known[record.id] }),
+        now.timeIntervalSince(size.measured) < 86_400
+      {
+        sized.allocated = size.bytes
+        return sized
+      }
+      let left = limit - ProcessInfo.processInfo.systemUptime
+      guard left > 0, let bytes = sizer(record.path, min(30, left)) else { return sized }
+      lock.withLock { known[record.id] = (bytes, now) }
+      sized.allocated = bytes
+      return sized
+    }
+  }
+}
