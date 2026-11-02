@@ -166,10 +166,12 @@ public enum AutopilotProcesses {
       guard o.parent == 1, o.uid == getuid(), !o.zombie, o.identity.pid != getpid(),
         !launchAgents.contains(o.identity.pid)
       else { continue }
-      let tree = descendants(of: o.identity.pid, in: records)
-      let members = [record] + tree
       var reason = rail(
         record, protectedPIDs: protectedPIDs, preferences: preferences, now: now, home: home)
+      // macOS services, apps, harnesses and unreadable processes are not leftovers at all.
+      if let reason, reason != "You asked me to keep it." { continue }
+      let tree = descendants(of: o.identity.pid, in: records)
+      let members = [record] + tree
       if reason == nil,
         tree.contains(where: {
           rail($0, protectedPIDs: protectedPIDs, preferences: preferences, now: now, home: home)

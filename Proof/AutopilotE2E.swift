@@ -157,3 +157,70 @@ func autopilotEndToEndProof(root: URL, harness: String, executable: String) asyn
       FileManager.default.fileExists(atPath: retired.restore!.path), "restored old copy is back")
   }
 }
+
+/// Read-only preview on this Mac: what Autopilot would burn, keep and ask with no answers
+/// yet. Uses a copy of the worktree inventory and never burns anything.
+func autopilotPreview(inventory: URL?) async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-autopilot-preview-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  var records = [WorktreeRecord]()
+  if let inventory {
+    try FileManager.default.copyItem(at: inventory, to: root.appendingPathComponent("worktrees.sqlite"))
+    records = (try WorktreeStore(root: root).values(WorktreeRecord.self, kind: "record", limit: 50_000))
+  }
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: root.appendingPathComponent("observation"),
+    accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+  _ = await monitor.refresh()
+  let threads = AgentThreads.index()
+  var delivery = [String: AutopilotDelivery]()
+  var items = AutopilotProcesses.items(
+    await monitor.autopilotRecords(), threads: threads,
+    protectedPIDs: AgentSafety.ancestors(of: getpid()) ?? [],
+    launchAgents: AutopilotSources.launchAgentPIDs())
+  items += AutopilotWorktrees.items(records, threads: threads, delivery: &delivery, budget: 400)
+    .filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
+  let memory = AutopilotMemory()
+  var byStatus = [String: [AutopilotItem]]()
+  for item in items {
+    byStatus["\(item.kind.rawValue)/\(AutopilotPolicy.decide(item, memory: memory).status.rawValue)", default: []]
+      .append(item)
+  }
+  print("Threads: \(threads.count) (\(threads.filter(\.live).count) live)")
+  let processRecords = await monitor.autopilotRecords()
+  let own = AgentSafety.ancestors(of: getpid()) ?? []
+  var reasons = [String: Int]()
+  var culprits = [String: Int]()
+  for item in items where item.kind == .process {
+    guard let reason = item.protectedReason else { continue }
+    reasons[reason, default: 0] += 1
+    if reason.hasPrefix("Part of it"), let pid = item.pid {
+      for child in AutopilotProcesses.descendants(of: pid, in: processRecords) {
+        if let why = AutopilotProcesses.rail(child, protectedPIDs: own, preferences: Preferences()) {
+          culprits[child.latest.name + ": " + why, default: 0] += 1
+          break
+        }
+      }
+    } else if reason == "It's part of an app you use." || reason == "It's part of macOS." {
+      let path =
+        processRecords.values.first { $0.latest.identity.pid == item.pid }?.latest.executable ?? ""
+      culprits["root " + URL(fileURLWithPath: path).deletingLastPathComponent().path.suffix(70), default: 0] += 1
+    }
+  }
+  for (k, v) in reasons.sorted(by: { $0.value > $1.value }) { print("  reason \(v): \(k)") }
+  for (k, v) in culprits.sorted(by: { $0.value > $1.value }).prefix(15) { print("  culprit \(v): \(k)") }
+  for key in byStatus.keys.sorted() {
+    let group = byStatus[key]!
+    print(
+      "\(key): \(group.count) using \(AutopilotPolicy.format(group.reduce(0) { $0 + $1.bytes }))")
+    for item in group.sorted(by: { $0.bytes > $1.bytes }).prefix(4) {
+      print("   - \(item.name): \(item.facts.filter { $0.key != "kind" }.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))\(item.protectedReason.map { " [\($0)]" } ?? "")")
+    }
+  }
+  let unsure = items.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
+  for q in AutopilotPolicy.proposeQuestions(unsure, memory: memory) {
+    print("Q: \(q.question) — \(q.why) e.g. \(q.examples.joined(separator: ", "))")
+  }
+}

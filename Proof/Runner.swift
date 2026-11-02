@@ -74,6 +74,14 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       if failures == 0 { print("PASS Autopilot end-to-end with a real AI sweep") }
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--autopilot-preview" {
+      do {
+        try await autopilotPreview(
+          inventory: CommandLine.arguments.count == 3
+            ? URL(fileURLWithPath: CommandLine.arguments[2]) : nil)
+      } catch { failTest("Autopilot preview: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--autopilot-policy") {
       do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
       if failures == 0 { print("PASS Autopilot policy") }
