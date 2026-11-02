@@ -205,6 +205,21 @@ func autopilotSweepProof() async throws {
   isNil(sweep.retryAfter)
   check(sweep.lastAIDigest != nil, "digest remembered")
 
+  // The app quit in the middle of a sweep: a fresh app must not wait for it forever.
+  await engine.updateSweep { $0.running = true }
+  let relaunched = Calls()
+  let afterRestart = AutopilotCoordinator(
+    root: root, engine: engine, configuration: { config },
+    runner: { _, _ in
+      relaunched.add("sweep")
+      return "{}"
+    })
+  _ = await afterRestart.tick(now: Date(), manual: true)
+  await afterRestart.waitForAI()
+  equal(relaunched.all, ["sweep"], "an interrupted sweep doesn't block the next one")
+  let restarted = await engine.sweepState()
+  checkFalse(restarted.running, "not stuck running after a restart")
+
   // An AI question replaces an open native question about the same items.
   let askEngine = try Autopilot(
     root: directory.appendingPathComponent("ask"),
@@ -246,6 +261,12 @@ func autopilotSweepProof() async throws {
   request.status = "all"
   let (ok, json) = await engine.handle(request)
   check(ok && json.contains("\"items\""), "catalog over the bridge")
+  // A real Mac's full snapshot is bigger than a bridge reply may be.
+  var command = AutopilotRequest(tool: "command")
+  command.command = .setInterval(minutes: 15)
+  let (commandOK, commandJSON) = await engine.handle(command)
+  check(commandOK && commandJSON.contains("\"counts\""), commandJSON)
+  checkFalse(commandJSON.contains("\"entries\""), "commands reply with the compact summary")
   var ask = AutopilotRequest(tool: "ask")
   ask.question = AutopilotQuestionInput(
     kind: .worktree, match: ["saved": ["nothing-matches"]], question: "Can I burn nothing?")

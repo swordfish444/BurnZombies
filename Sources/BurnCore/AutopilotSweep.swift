@@ -217,6 +217,8 @@ public actor AutopilotCoordinator {
   let configuration: @Sendable () -> MachineReviewConfiguration?
   let runner: @Sendable (MachineReviewConfiguration, URL) throws -> String
   var aiTask: Task<Void, Never>?
+  /// Set on the first tick, before anything here can start a sweep.
+  var launched = false
 
   public init(
     root: URL = Store.defaultRoot, engine: Autopilot,
@@ -238,6 +240,17 @@ public actor AutopilotCoordinator {
   @discardableResult public func tick(now: Date = Date(), manual requestedNow: Bool = false) async
     -> AutopilotSnapshot
   {
+    // A sweep still marked running at launch was cut short when the app quit; left alone it
+    // would block every sweep after it.
+    if !launched {
+      launched = true
+      if await engine.sweepState().running {
+        await engine.updateSweep {
+          $0.running = false
+          $0.append("The last AI sweep was cut short when the app quit.")
+        }
+      }
+    }
     let state = await engine.sweepState()
     let manual = requestedNow || state.requested == true
     let snapshot =

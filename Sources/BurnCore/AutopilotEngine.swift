@@ -744,7 +744,7 @@ extension Autopilot {
         return (true, encode(AutopilotSummary(snapshot())))
       case "command":
         guard let command = request.command else { return failure("Pass command.") }
-        return (true, encode(try await apply(command)))
+        return (true, encode(AutopilotSummary(try await apply(command))))
       default:
         return failure("Unknown autopilot tool.")
       }
