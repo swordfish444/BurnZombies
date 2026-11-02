@@ -1,20 +1,409 @@
 import CBurn
+import Darwin
 import Foundation
 
 /// Junk folders: rebuildable output inside projects and old copies, and global developer
 /// caches. Only known rebuildable kinds are ever removed autonomously.
 public enum AutopilotDisk {
   /// Folder name → `folder` fact.
-  public static let rebuildable: [String: String] = [:]
+  public static let rebuildable: [String: String] = [
+    "node_modules": "node_modules",
+    ".build": "build-output", "build": "build-output", "dist": "build-output",
+    "target": "build-output", ".next": "build-output", ".nuxt": "build-output",
+    ".svelte-kit": "build-output", ".turbo": "build-output", ".parcel-cache": "build-output",
+    ".output": "build-output",
+    "DerivedData": "xcode-derived",
+    ".gradle": "package-cache", ".cache": "package-cache", "Pods": "package-cache",
+    ".venv": "python-env", "venv": "python-env", "__pycache__": "python-env",
+    ".pytest_cache": "python-env", ".mypy_cache": "python-env", ".ruff_cache": "python-env",
+    ".tox": "python-env",
+  ]
+
+  private static let kinds = Set(rebuildable.values)
+  private static let minimumBytes: UInt64 = 100_000_000
+  private static let staleAfter: TimeInterval = 14 * 86_400
+  private static let maximumDepth = 3
+  private static let directoryBudget = 5_000
+  private static let candidateLimit = 500
+  private static let timeBudget: TimeInterval = 60
+  /// Relative to the home folder. Nothing here is ever listed or removed.
+  private static let excluded = [
+    "Library/Mobile Documents", "Library/Mail", "Library/Messages", "Pictures", ".ssh", ".gnupg",
+    "Library/Keychains",
+  ]
+  /// Relative to the home folder. With `children`, each folder inside is its own item.
+  private static let globalCaches: [(path: String, folder: String, label: String, children: Bool)] =
+    [
+      ("Library/Developer/Xcode/DerivedData", "xcode-derived", "Xcode", true),
+      ("Library/Caches/ms-playwright", "package-cache", "Playwright", true),
+      (".npm/_cacache", "package-cache", "npm", false),
+      ("Library/Caches/Yarn", "package-cache", "Yarn", false),
+      ("Library/Caches/Homebrew", "package-cache", "Homebrew", false),
+      ("Library/Caches/pip", "package-cache", "pip", false),
+      (".cache/pip", "package-cache", "pip", false),
+      (".gradle/caches", "package-cache", "Gradle", false),
+      ("Library/Developer/CoreSimulator/Caches", "xcode-derived", "Simulator", false),
+    ]
+
+  private struct Checkout {
+    var path: String
+    var linked: Bool
+    var activity: Date?
+  }
+
+  /// Rebuildable folders of at least 100 MB: inside live checkouts (and the main checkout each
+  /// one belongs to) and in the global developer caches. Nothing outside `home`, no link, no
+  /// private area, nothing Git tracks. Work stops at a time budget; the rest comes next time.
   public static func items(
     worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), now: Date = Date(),
-    sizer: (String) -> UInt64? = { _ in nil }
+    sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) }
   ) -> [AutopilotItem] {
-    []
+    let base = WorkspaceSafety.canonical(home)
+    guard base.hasPrefix("/"), base != "/" else { return [] }
+    let deadline = Date().addingTimeInterval(timeBudget)
+    var found: [String: AutopilotItem] = [:]
+
+    for cache in globalCaches {
+      let location = base + "/" + cache.path
+      guard Date() < deadline, refusal(location, home: base) == nil else { continue }
+      var targets = [location]
+      if cache.children {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: location)) ?? []
+        targets = names.sorted().map { location + "/" + $0 }
+      }
+      for target in targets {
+        guard Date() < deadline, refusal(target, home: base) == nil, let bytes = sizer(target),
+          bytes >= minimumBytes, let touched = modified(target)
+        else { continue }
+        let child = leaf(target)
+        let name = cache.children ? child + " in " + cache.label : cache.label + " cache"
+        let subject = cache.children && cache.folder == "xcode-derived" ? child : cache.label
+        let item = AutopilotItem(
+          id: "disk:" + AutopilotItem.hash(target), kind: .disk, name: name,
+          detail: sentence(cache.folder, subject: subject), path: target, bytes: bytes,
+          facts: [
+            "folder": cache.folder, "home": "global-cache", "stale": age(touched, now: now),
+            "size": scale(bytes),
+          ], observedAt: now)
+        found[item.id] = item
+      }
+    }
+
+    for checkout in checkouts(worktrees, home: base) {
+      guard Date() < deadline else { break }
+      guard refusal(checkout.path, home: base) == nil else { continue }
+      let folders = rebuildableFolders(under: checkout.path).filter {
+        refusal($0.path, home: base) == nil
+      }
+      guard !folders.isEmpty,
+        let blocked = trackedFolders(folders.map { $0.path }, in: checkout.path)
+      else { continue }
+      let place = leaf(checkout.path)
+      let activity = checkout.linked ? checkout.activity : nil
+      let oldCopy = activity.map { now.timeIntervalSince($0) > staleAfter } ?? false
+      for folder in folders where !blocked.contains(folder.path) {
+        guard Date() < deadline else { break }
+        // Another repository inside the folder is somebody's project, not build output.
+        if exists(folder.path + "/.git") { continue }
+        guard let bytes = sizer(folder.path), bytes >= minimumBytes,
+          let touched = modified(folder.path)
+        else { continue }
+        let fact = rebuildable[folder.name] ?? "other"
+        let inside = parent(String(folder.path.dropFirst(checkout.path.count + 1)))
+        var name = folder.name + " in " + place
+        if !inside.isEmpty { name += "/" + inside }
+        let newest = activity.map { max($0, touched) } ?? touched
+        let item = AutopilotItem(
+          id: "disk:" + AutopilotItem.hash(folder.path), kind: .disk, name: name,
+          detail: sentence(fact, subject: place), path: folder.path, bytes: bytes,
+          facts: [
+            "folder": fact, "home": oldCopy ? "stale-worktree" : "repo",
+            "stale": age(newest, now: now), "size": scale(bytes),
+          ], observedAt: now)
+        found[item.id] = item
+      }
+    }
+    return found.values.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
   }
+
+  /// Disk space a folder really uses (allocated blocks), never following links. Nil when the
+  /// path is not a plain folder or the time limit passes first.
+  public static func allocatedSize(_ path: String, deadline: TimeInterval = 5) -> UInt64? {
+    var info = stat()
+    guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
+    let limit = ProcessInfo.processInfo.systemUptime + deadline
+    let keys: [URLResourceKey] = [
+      .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .isSymbolicLinkKey,
+    ]
+    guard
+      let entries = FileManager.default.enumerator(
+        at: URL(fileURLWithPath: path),
+        includingPropertiesForKeys: keys, options: [], errorHandler: { _, _ in true })
+    else { return nil }
+    var total: UInt64 = 0
+    while let url = entries.nextObject() as? URL {
+      guard !Task.isCancelled, ProcessInfo.processInfo.systemUptime < limit else { return nil }
+      let values = try? url.resourceValues(forKeys: Set(keys))
+      if values?.isSymbolicLink == true {
+        entries.skipDescendants()
+        continue
+      }
+      let size = values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? 0
+      total += UInt64(max(0, size))
+    }
+    return total
+  }
+
+  /// Removes one junk folder after checking every rail again on the live path. Never throws;
+  /// a refusal leaves the folder untouched. Known kinds are deleted and measured first; any
+  /// other folder goes to the Trash, and only for an operator rule or the operator.
   public static func reclaim(
-    _ item: AutopilotItem, authority: String, inUse: (String) -> Int32 = { bz_path_in_use($0) }
+    _ item: AutopilotItem, authority: String, home: String = NSHomeDirectory(),
+    inUse: (String) -> Int32 = { bz_path_in_use($0) }
   ) -> AutopilotReceipt {
-    .refused(item, authority: authority, "Not implemented.")
+    func refuse(_ reason: String) -> AutopilotReceipt {
+      .refused(item, authority: authority, reason)
+    }
+    func finish(_ outcome: String, _ detail: String, bytes: UInt64 = 0) -> AutopilotReceipt {
+      AutopilotReceipt(
+        itemID: item.id, kind: item.kind, name: item.name, authority: authority, outcome: outcome,
+        detail: detail, bytes: bytes)
+    }
+    guard item.kind == .disk, let path = item.path else {
+      return refuse("That isn't a junk folder, so I left it alone.")
+    }
+    let folder = item.facts["folder"] ?? "other"
+    let known = kinds.contains(folder)
+    guard known || authority.hasPrefix("rule:") || authority == "operator" else {
+      return refuse("I only move this kind of folder to the Trash when you've told me to.")
+    }
+    let base = WorkspaceSafety.canonical(home)
+    guard base.hasPrefix("/"), base != "/" else {
+      return refuse("I can't find your home folder, so I left this alone.")
+    }
+    if let reason = refusal(path, home: base) { return refuse(reason) }
+    if known && recognized(path, home: base) != folder {
+      return refuse("That doesn't look like a folder I know how to rebuild, so I left it alone.")
+    }
+    if exists(path + "/.git") {
+      return refuse("There's a project inside that folder, so I left it alone.")
+    }
+    if let root = enclosingCheckout(of: path, home: base) {
+      let relative = String(path.dropFirst(root.count + 1))
+      guard
+        let listing = try? WorktreeGit.run(
+          root, ["--literal-pathspecs", "ls-files", "-z", "--", relative])
+      else { return refuse("I couldn't ask Git about that folder, so I left it alone.") }
+      guard listing.isEmpty else {
+        return refuse("Git saves files in that folder, so they're part of your project. I left it alone.")
+      }
+    }
+    switch inUse(path) {
+    case 0: break
+    case 1: return refuse("Something is using that folder right now, so I left it alone.")
+    default: return refuse("I couldn't tell if something is using that folder, so I left it alone.")
+    }
+    // One last look right before removing it.
+    if let reason = refusal(path, home: base) { return refuse(reason) }
+    guard known else {
+      do {
+        try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+      } catch {
+        return finish("failed", "I couldn't move \(item.name) to the Trash, so I left it there.")
+      }
+      guard !exists(path) else {
+        return finish("failed", "\(item.name) is still where it was, so nothing moved.")
+      }
+      // The space comes back when the Trash is emptied, so no bytes are claimed yet.
+      return finish("burned", "Moved \(item.name) to the Trash. Empty the Trash to get the space back.")
+    }
+    let bytes = allocatedSize(path) ?? 0
+    do {
+      try FileManager.default.removeItem(atPath: path)
+    } catch {
+      return finish("failed", "I couldn't remove all of \(item.name), so some of it is still there.")
+    }
+    guard !exists(path) else {
+      return finish("failed", "\(item.name) is still there, so I'm not counting it as burned.")
+    }
+    return finish(
+      "burned", "Cleared \(item.name). Your tools will rebuild it when they need it.", bytes: bytes)
+  }
+
+  /// Why a path may not be touched, or nil when it is a real folder of this user inside the
+  /// home folder and clear of the private areas. `home` must already be canonical.
+  private static func refusal(_ path: String, home: String) -> String? {
+    var info = stat()
+    guard lstat(path, &info) == 0 else { return "That folder is already gone." }
+    guard info.st_mode & S_IFMT != S_IFLNK else {
+      return "That folder is a shortcut to somewhere else, so I left it alone."
+    }
+    guard info.st_mode & S_IFMT == S_IFDIR else {
+      return "That isn't a folder, so I left it alone."
+    }
+    let real = WorkspaceSafety.canonical(path)
+    guard real == path, real.hasPrefix(home + "/") else {
+      return "That folder isn't really inside your home folder, so I left it alone."
+    }
+    let relative = String(real.dropFirst(home.count + 1)).lowercased()
+    let guarded = excluded.contains {
+      relative == $0.lowercased() || relative.hasPrefix($0.lowercased() + "/")
+    }
+    guard !guarded else {
+      return "That folder is somewhere private (iCloud, Mail, Messages, Photos or keys), so I left it alone."
+    }
+    guard info.st_uid == getuid() else {
+      return "That folder belongs to someone else, so I left it alone."
+    }
+    return nil
+  }
+
+  /// The `folder` fact a live path earns by its place (global caches) or by its name inside a
+  /// checkout, or nil when it is not a known rebuildable kind. `home` must be canonical.
+  private static func recognized(_ path: String, home: String) -> String? {
+    let relative = String(path.dropFirst(home.count + 1))
+    for cache in globalCaches {
+      let match = cache.children ? (parent(relative) == cache.path) : (relative == cache.path)
+      if match { return cache.folder }
+    }
+    guard let folder = rebuildable[leaf(path)],
+      enclosingCheckout(of: path, home: home, levels: maximumDepth) != nil
+    else { return nil }
+    return folder
+  }
+
+  /// The nearest folder above `path` holding a `.git` entry, looking at most `levels` folders
+  /// up and never as far as the home folder itself. `home` must be canonical.
+  private static func enclosingCheckout(of path: String, home: String, levels: Int = 64)
+    -> String?
+  {
+    var directory = parent(path)
+    for _ in 0..<levels {
+      guard directory.hasPrefix(home + "/") else { return nil }
+      if exists(directory + "/.git") { return directory }
+      directory = parent(directory)
+    }
+    return nil
+  }
+
+  /// Live checkouts to search: each live record, plus the main checkout it belongs to.
+  /// A checkout that is also a main checkout is never counted as a linked copy.
+  private static func checkouts(_ worktrees: [WorktreeRecord], home: String) -> [Checkout] {
+    var byPath: [String: Checkout] = [:]
+    func consider(_ path: String, linked: Bool, activity: Date?) {
+      let real = WorkspaceSafety.canonical(path)
+      guard real.hasPrefix(home + "/") else { return }
+      if let known = byPath[real] {
+        byPath[real] = Checkout(
+          path: real, linked: known.linked && linked, activity: known.activity ?? activity)
+      } else {
+        byPath[real] = Checkout(path: real, linked: linked, activity: activity)
+      }
+    }
+    for record in worktrees where !record.missing && !record.retired && !record.bare {
+      let activity = [record.lastFileChange, record.lastCommitAt].compactMap { $0 }.max()
+      consider(record.path, linked: !record.main, activity: activity)
+      if record.repository.hasSuffix("/.git") {
+        consider(String(record.repository.dropLast(5)), linked: false, activity: nil)
+      }
+    }
+    return byPath.values.sorted { $0.path < $1.path }
+  }
+
+  /// Rebuildable folders up to three levels below a checkout root. Never enters `.git`, other
+  /// repositories, links or the folders it finds.
+  private static func rebuildableFolders(under root: String) -> [(path: String, name: String)] {
+    var found: [(path: String, name: String)] = []
+    var queue: [(path: String, depth: Int)] = [(path: root, depth: 0)]
+    var listed = 0
+    while !queue.isEmpty, listed < directoryBudget, found.count < candidateLimit {
+      let (directory, depth) = queue.removeFirst()
+      guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else {
+        continue
+      }
+      listed += 1
+      for name in names.sorted() where name != ".git" {
+        let path = directory + "/" + name
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { continue }
+        if rebuildable[name] != nil {
+          found.append((path: path, name: name))
+        } else if depth + 1 < maximumDepth && !exists(path + "/.git") {
+          queue.append((path: path, depth: depth + 1))
+        }
+      }
+    }
+    return found
+  }
+
+  /// Candidate folders in which Git tracks anything (a committed build/ is not junk), asked
+  /// in one call. Nil when Git cannot say, so nothing in that checkout is offered.
+  private static func trackedFolders(_ folders: [String], in root: String) -> Set<String>? {
+    let relatives = folders.map { String($0.dropFirst(root.count + 1)) }
+    guard
+      let listing = try? WorktreeGit.run(
+        root, ["--literal-pathspecs", "ls-files", "-z", "--"] + relatives)
+    else { return nil }
+    let files = listing.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+    var blocked = Set<String>()
+    for (folder, relative) in zip(folders, relatives)
+    where files.contains(where: { $0 == relative || $0.hasPrefix(relative + "/") }) {
+      blocked.insert(folder)
+    }
+    return blocked
+  }
+
+  private static func exists(_ path: String) -> Bool {
+    var info = stat()
+    return lstat(path, &info) == 0
+  }
+
+  private static func modified(_ path: String) -> Date? {
+    var info = stat()
+    guard lstat(path, &info) == 0 else { return nil }
+    let seconds =
+      TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9
+    return Date(timeIntervalSince1970: seconds)
+  }
+
+  private static func parent(_ path: String) -> String {
+    guard let slash = path.lastIndex(of: "/") else { return "" }
+    return slash == path.startIndex ? "/" : String(path[..<slash])
+  }
+
+  private static func leaf(_ path: String) -> String {
+    guard let slash = path.lastIndex(of: "/") else { return path }
+    return String(path[path.index(after: slash)...])
+  }
+
+  /// `today`, `week`, `month` or `older`, by how long ago the date was.
+  private static func age(_ date: Date, now: Date) -> String {
+    let seconds = now.timeIntervalSince(date)
+    if seconds < 86_400 { return "today" }
+    if seconds < 7 * 86_400 { return "week" }
+    if seconds < 30 * 86_400 { return "month" }
+    return "older"
+  }
+
+  /// `medium` under 1 GB, `large` under 10 GB, otherwise `huge`.
+  private static func scale(_ bytes: UInt64) -> String {
+    bytes < 1_000_000_000 ? "medium" : bytes < 10_000_000_000 ? "large" : "huge"
+  }
+
+  private static func sentence(_ folder: String, subject: String) -> String {
+    switch folder {
+    case "node_modules":
+      return "Downloaded packages for \(subject). npm rebuilds them when needed."
+    case "build-output":
+      return "Build files for \(subject). The project makes them again the next time it builds."
+    case "xcode-derived":
+      return "Xcode build files for \(subject). Xcode makes them again when you build."
+    case "package-cache":
+      return "Saved downloads for \(subject). They download again when needed."
+    case "python-env":
+      return "Python packages for \(subject). They install again when the project is set up."
+    default:
+      return "A folder in \(subject)."
+    }
   }
 }
