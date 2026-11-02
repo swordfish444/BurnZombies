@@ -29,6 +29,8 @@ public struct Observation: Codable, Sendable {
   public var metricsValid: Bool
   public var time: Date
   public var monotonic: Double
+  /// Process group. An orphan whose group leader is gone was left behind by a job.
+  public var pgid: Int32?
   public var name: String {
     URL(fileURLWithPath: executable).lastPathComponent.isEmpty
       ? (zombie ? "Exited child" : "Hidden process")
@@ -38,8 +40,9 @@ public struct Observation: Codable, Sendable {
     identity: ProcessIdentity, parent: Int32 = 1, uid: UInt32 = 501,
     executable: String = "/test/helper", rss: UInt64 = 0, cpuNS: UInt64 = 0, readBytes: UInt64 = 0,
     writeBytes: UInt64 = 0, fds: Int = 0, threads: Int = 1, zombie: Bool = false,
-    metricsValid: Bool = true, time: Date = Date(), monotonic: Double = 0
+    metricsValid: Bool = true, time: Date = Date(), monotonic: Double = 0, pgid: Int32? = nil
   ) {
+    self.pgid = pgid
     self.identity = identity
     self.parent = parent
     self.uid = uid
@@ -63,7 +66,10 @@ public struct Record: Codable, Identifiable, Sendable {
   public var latest: Observation
   public var samples: [Observation]
   public var missingSince: Date?
+  /// Set when the process was seen with a live parent and later reparented to launchd.
   public var orphanSince: Date?
+  /// Last observation with noticeable CPU use; nil means idle since first seen.
+  public var lastBusy: Date?
   public var protection: Bool = false
   public var ignoreUntil: Date?
   public var alertedAt: Date?

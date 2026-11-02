@@ -5,6 +5,10 @@ import MCP
 
 @main struct BurnMCP {
   static func main() async throws {
+    if ProcessInfo.processInfo.environment["BURNZOMBIES_AUTOPILOT"] == "1" {
+      try await AutopilotTools.serve()
+      return
+    }
     let reviewMode = ProcessInfo.processInfo.environment["BURNZOMBIES_REVIEW_MODE"] == "1"
     let reviewIDs = ProcessInfo.processInfo.environment["BURNZOMBIES_REVIEW_IDS"].flatMap {
       try? JSONDecoder().decode([String].self, from: Data($0.utf8))

@@ -53,9 +53,38 @@ public struct Native {
           parent: raw.ppid, uid: raw.uid, executable: path, rss: raw.rss, cpuNS: raw.cpu_ns,
           readBytes: raw.disk_read, writeBytes: raw.disk_write, fds: Int(raw.fds),
           threads: Int(raw.threads), zombie: raw.status == 5, metricsValid: raw.metrics_valid == 1,
-          time: now, monotonic: Double(bz_continuous_ns()) / 1e9))
+          time: now, monotonic: Double(bz_continuous_ns()) / 1e9, pgid: raw.pgid))
     default: return .unknown
     }
+  }
+  /// True when the process owns a listening TCP socket; nil when it cannot be inspected.
+  public func listening(_ pid: Int32) -> Bool? {
+    switch bz_listening(pid) {
+    case 1: return true
+    case 0: return false
+    default: return nil
+    }
+  }
+  /// Which agent harness launched the process, from environment variable names only.
+  public func agent(_ pid: Int32) -> String? {
+    let mask = bz_agent_markers(pid)
+    guard mask >= 0 else { return nil }
+    if mask & 1 != 0 { return "claude" }
+    if mask & 2 != 0 { return "codex" }
+    if mask & 4 != 0 { return "cursor" }
+    return "none"
+  }
+  /// The live command line for inspection. Never persisted.
+  public func commandLine(_ pid: Int32, limit: Int = 600) -> String? {
+    var buffer = [CChar](repeating: 0, count: limit + 1)
+    guard bz_command_line(pid, &buffer, Int32(buffer.count)) == 1 else { return nil }
+    return String(cString: buffer)
+  }
+  public func currentDirectory(_ pid: Int32) -> String? {
+    var buffer = [CChar](repeating: 0, count: 4096)
+    guard bz_cwd(pid, &buffer, Int32(buffer.count)) == 1 else { return nil }
+    let path = String(cString: buffer)
+    return path.isEmpty ? nil : path
   }
   public func ownerState(_ identity: ProcessIdentity) -> OwnerState {
     let boot = bz_boot()

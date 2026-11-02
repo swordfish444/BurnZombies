@@ -9,7 +9,7 @@ extern char **environ;
 // Supervise only the harness invocation we create. It has its own process group,
 // so cancellation cannot signal the user's terminal, app, or unrelated harnesses.
 int bz_review_worker(char *const argv[], int seconds) {
-    if (!argv || !argv[0] || seconds < 1 || seconds > 180) return 64;
+    if (!argv || !argv[0] || seconds < 1 || seconds > 900) return 64;
     posix_spawnattr_t attr;
     posix_spawnattr_init(&attr);
     sigset_t defaults, mask;

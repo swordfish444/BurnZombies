@@ -19,12 +19,14 @@ public struct AgentRequest: Codable, Sendable {
   public let reviewIDs: [String]?
   public let recordIDs: [String]?
   public let worktreeRequest: WorktreeRequest?
+  /// JSON body for operations with their own schema, such as `autopilot`.
+  public let payload: String?
   // Populated from the authenticated Unix peer, never from request JSON.
   public var callerPID: Int32 = -1
   enum CodingKeys: String, CodingKey {
     case operation, findingID, previewToken, processIDs, pids, offset, label, rationale, action,
       workToken, completionCondition, workspacePath, workspaceID, reviewIDs, recordIDs,
-      worktreeRequest
+      worktreeRequest, payload
   }
   public init(
     _ operation: String, findingID: String? = nil, previewToken: String? = nil,
@@ -32,8 +34,10 @@ public struct AgentRequest: Codable, Sendable {
     label: String? = nil, rationale: String? = nil, action: String? = nil,
     reviewIDs: [String]? = nil,
     workToken: String? = nil, completionCondition: String? = nil, workspacePath: String? = nil,
-    workspaceID: String? = nil, recordIDs: [String]? = nil, worktreeRequest: WorktreeRequest? = nil
+    workspaceID: String? = nil, recordIDs: [String]? = nil, worktreeRequest: WorktreeRequest? = nil,
+    payload: String? = nil
   ) {
+    self.payload = payload
     self.operation = operation
     self.findingID = findingID
     self.previewToken = previewToken
@@ -121,6 +125,7 @@ public struct AgentReply: Codable, Sendable {
   public var passiveCoverage: String?
   public var decisionContext: [String]?
   public var diskReclaimedBytes: UInt64 = 0
+  public var payload: String?
   public init(ok: Bool = true, message: String) {
     self.ok = ok
     self.message = message
@@ -165,8 +170,21 @@ public actor AgentService {
   private var diskPreviews: [String: (DiskCandidate, String, Date, ProcessIdentity)] = [:]
   private var workspacePreviews: [String: WorkspacePreview] = [:]
   private var previews: [String: Preview] = [:]
-  public init(monitor: Monitor) { self.monitor = monitor }
+  private let autopilot: Autopilot?
+  public init(monitor: Monitor, autopilot: Autopilot? = nil) {
+    self.monitor = monitor
+    self.autopilot = autopilot
+  }
   public func call(_ request: AgentRequest) async -> AgentReply {
+    if request.operation == "autopilot" {
+      guard let autopilot, let body = request.payload,
+        let input = try? JSONDecoder().decode(AutopilotRequest.self, from: Data(body.utf8))
+      else { return AgentReply(ok: false, message: "Autopilot is unavailable or the request is malformed.") }
+      let (ok, json) = await autopilot.handle(input)
+      var reply = AgentReply(ok: ok, message: ok ? "ok" : json)
+      reply.payload = json
+      return reply
+    }
     guard
       [
         "status", "findings", "access_status", "access_check", "inspect", "preview", "burn",

@@ -46,7 +46,11 @@ public enum AutopilotPolicy {
     status: AutopilotStatus, authority: String?
   ) {
     if item.protectedReason != nil { return (.protected, nil) }
-    if memory.keptItems.contains(item.id) { return (.keep, "operator") }
+    if memory.keptItems.contains(item.id)
+      || item.path.map({ memory.keptItems.contains("path:" + $0) }) == true
+    {
+      return (.keep, "operator")
+    }
     let rules = memory.rules.filter { $0.enabled && matches($0, item) }
     if let rule = rules.first(where: { $0.verdict == .keep }) { return (.keep, "rule:" + rule.id) }
     let judgment = memory.judgments[item.id].flatMap {

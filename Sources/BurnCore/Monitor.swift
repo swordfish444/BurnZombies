@@ -592,9 +592,19 @@ public actor Monitor {
         } else if r.samples.isEmpty {
           r.samples = [observation]
         }
+        if observation.parent == 1 {
+          if r.orphanSince == nil, r.latest.parent > 1 { r.orphanSince = now }
+        } else {
+          r.orphanSince = nil
+        }
+        if observation.monotonic > r.latest.monotonic, observation.cpuNS > r.latest.cpuNS,
+          Double(observation.cpuNS - r.latest.cpuNS) / 1e9
+            / (observation.monotonic - r.latest.monotonic) > 0.01
+        {
+          r.lastBusy = now
+        }
         r.latest = observation
         r.missingSince = nil
-        r.orphanSince = nil
         catalog.records[key] = r
       }
       if !scan.partial {
@@ -1539,6 +1549,76 @@ public actor Monitor {
         "A target has unreviewed live children. Inspect the tree or use its owner's teardown.")
     }
     return targets
+  }
+
+  // MARK: Autopilot
+
+  public func autopilotRecords() -> [String: Record] { catalog.records }
+  public func autopilotPreferences() -> Preferences { catalog.preferences }
+  public func autopilotWorktreeRecords() -> [WorktreeRecord] {
+    worktreeService?.autopilotRecords() ?? []
+  }
+  public func autopilotOutcome(_ id: UUID) -> (outcome: String, detail: String)? {
+    catalog.events.first { $0.id == id }.map { ($0.outcome, $0.detail) }
+  }
+  /// Graceful stop of one orphan root and its live descendants under Autopilot's rails.
+  /// Owner evidence is not required: Autopilot's policy is the authority. Every hard rail,
+  /// the still-orphaned check and the exact identity check at signal time still apply.
+  public func autopilotBurn(_ key: String, authority: String, label: String, rationale: String)
+    throws -> UUID
+  {
+    guard !busy else {
+      throw StoreError.message("Another cleanup is finishing. I'll try again next sweep.")
+    }
+    busy = true
+    defer { busy = false }
+    _ = refresh()
+    guard !state.partial else {
+      throw StoreError.message("I can't see every process right now, so I'm waiting.")
+    }
+    guard let root = catalog.records[key], root.missingSince == nil else {
+      throw StoreError.message("It already stopped.")
+    }
+    guard root.latest.parent == 1 else {
+      throw StoreError.message("Something started using it again.")
+    }
+    guard let protectedPIDs = AgentSafety.ancestors(of: getpid()) else {
+      throw StoreError.message("I can't confirm my own process tree right now.")
+    }
+    let tree = AutopilotProcesses.descendants(of: root.latest.identity.pid, in: catalog.records)
+    for r in [root] + tree {
+      if let reason = AutopilotProcesses.rail(
+        r, protectedPIDs: protectedPIDs, preferences: catalog.preferences)
+      {
+        throw StoreError.message("PID \(r.latest.identity.pid): \(reason)")
+      }
+    }
+    let targets = (tree + [root]).map(\.latest)
+    var event = CleanupEvent(
+      leaseID: UUID(), label: label, date: Date(), targets: targets.map(Member.init),
+      residentBefore: targets.reduce(0) { $0 + $1.rss }, outcome: "verifying",
+      detail: "Autopilot (\(authority)): \(rationale) Graceful stop requested; verifying exits.")
+    event.cpuSavingsRate = ImpactAccounting.cpuRate([root] + tree)
+    event.cpuObservedSeconds = event.cpuSavingsRate == nil ? nil : 0
+    event.cpuSecondsSavedEstimate = event.cpuSavingsRate == nil ? nil : 0
+    event.fixture = try FixtureProvenance.load(root: store.root).matches(
+      targets.map { $0.identity.key })
+    catalog.events.append(event)
+    try checkpoint()
+    var failures = [String]()
+    for target in targets {
+      let code = native.terminate(target)
+      if code != 0, code != ESTALE, code != ESRCH {
+        failures.append("PID \(target.identity.pid): errno \(code)")
+      }
+    }
+    if !failures.isEmpty, let i = catalog.events.lastIndex(where: { $0.id == event.id }) {
+      catalog.events[i].outcome = "partial"
+      catalog.events[i].detail = failures.joined(separator: "; ") + ". No benefit credited."
+    }
+    try checkpoint()
+    _ = refresh()
+    return event.id
   }
 
   public func burnTargets(

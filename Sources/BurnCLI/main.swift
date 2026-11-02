@@ -140,19 +140,49 @@ do {
         "Observer launch was acknowledged but its private connection did not become ready. No cleanup was requested."
       )
     }
+  case "autopilot":
+    // `burnzombies autopilot [snapshot|catalog|inspect ID|burn ID...|sweep]`, or one
+    // AutopilotRequest JSON object on stdin with `burnzombies autopilot -`.
+    var request = AutopilotRequest(tool: args.count > 1 ? args[1] : "snapshot")
+    if request.tool == "-" {
+      guard let data = try FileHandle.standardInput.read(upToCount: 1 << 20) else {
+        fail("Pass one autopilot request on stdin.")
+      }
+      request = try JSONDecoder().decode(AutopilotRequest.self, from: data)
+    } else if request.tool == "inspect", args.count == 3 {
+      request.id = args[2]
+    } else if request.tool == "burn" {
+      request.ids = Array(args.dropFirst(2))
+    } else if request.tool == "sweep" {
+      request.tool = "command"
+      request.command = .sweepNow
+    }
+    let body = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+    let raw = try await AgentConnection.callAsync(AgentRequest("autopilot", payload: body))
+    let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
+    print((object?["payload"] as? String) ?? raw)
+    if object?["ok"] as? Bool != true { exit(1) }
   case "review-codex":
     guard args.count == 2 || (args.count == 3 && args[2] == "--probe") else {
       fail("Internal Codex review requires a private plan.")
     }
     try CodexReview.run(URL(fileURLWithPath: args[1]), probeOnly: args.count == 3)
   case "review-worker":
-    guard args.count >= 3, args[1] == "--", args[2].hasPrefix("/") else {
+    // Optional `--seconds N` (1...900) precedes `--`; reviews default to 180 seconds.
+    var seconds: Int32 = 180
+    var rest = Array(args.dropFirst())
+    if rest.count >= 2, rest[0] == "--seconds", let value = Int32(rest[1]), (1...900).contains(value)
+    {
+      seconds = value
+      rest.removeFirst(2)
+    }
+    guard rest.count >= 2, rest[0] == "--", rest[1].hasPrefix("/") else {
       fail("Internal worker requires an absolute harness executable.")
     }
-    let words = args.dropFirst(2).map { strdup($0) }
+    let words = rest.dropFirst().map { strdup($0) }
     defer { words.forEach { free($0) } }
     var pointers = words + [nil]
-    exit(bz_review_worker(&pointers, 180))
+    exit(bz_review_worker(&pointers, seconds))
   case "lifecycle", "workspace":
     guard args.count == 1, let data = try FileHandle.standardInput.read(upToCount: 16385) else {
       fail("Pass one lifecycle JSON object on stdin.")

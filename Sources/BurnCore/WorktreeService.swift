@@ -271,6 +271,10 @@ public actor WorktreeService {
     try store.put(r, kind: "record", id: r.id)
     return r
   }
+  /// Every stored worktree record, for Autopilot's catalog. Read-only.
+  public nonisolated func autopilotRecords() -> [WorktreeRecord] {
+    (try? store.values(WorktreeRecord.self, kind: "record", limit: 50_000)) ?? []
+  }
   public func inspect(_ id: String) async throws -> WorktreeRecord {
     try requireAccess()
     let r = try record(id)
