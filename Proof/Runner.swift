@@ -82,6 +82,13 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       } catch { failTest("Autopilot preview: \(error)") }
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--autopilot-fixture" {
+      do { try await runAutopilotFixture(root: URL(fileURLWithPath: CommandLine.arguments[2])) } catch {
+        print("FAIL: \(error)")
+        exit(1)
+      }
+      exit(0)
+    }
     if CommandLine.arguments.contains("--autopilot-policy") {
       do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
       if failures == 0 { print("PASS Autopilot policy") }

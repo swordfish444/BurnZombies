@@ -517,6 +517,16 @@ public actor Autopilot {
       if let replacing {
         memory.questions.removeAll { $0.id == replacing && $0.isOpen }
       }
+      // The AI rewording a pattern BZ already asked natively improves that question.
+      if let i = memory.questions.firstIndex(where: {
+        $0.id == question.id && $0.isOpen && $0.source == "native"
+      }) {
+        memory.questions[i].question = question.question
+        if !question.why.isEmpty { memory.questions[i].why = question.why }
+        if !question.examples.isEmpty { memory.questions[i].examples = question.examples }
+        memory.questions[i].source = "ai"
+        return memory.questions[i]
+      }
       guard !memory.questions.contains(where: { $0.id == question.id }) else {
         throw StoreError.message("That pattern was already asked.")
       }

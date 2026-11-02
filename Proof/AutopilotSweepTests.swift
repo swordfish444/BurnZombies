@@ -232,3 +232,43 @@ func autopilotSweepProof() async throws {
   checkFalse(askOK, "a question must match unsure items")
   check(askJSON.contains("No unsure items"), askJSON)
 }
+
+/// A private app-side endpoint for the MCP protocol proof: an Autopilot engine with
+/// invented items behind the real agent socket. Burns are recorded, never executed, and
+/// the copy burn deliberately takes longer than the ordinary five-second socket deadline.
+func runAutopilotFixture(root: URL) async throws {
+  let copy = AutopilotItem(
+    id: "worktree:fixture-copy", kind: .worktree, name: "atlas-old", bytes: 3 << 30,
+    facts: [
+      "place": "other", "saved": "pushed", "changes": "none", "stale": "older", "inUse": "no",
+      "thread": "none",
+    ])
+  let server = AutopilotItem(
+    id: "process:fixture-server", kind: .process, name: "vite in atlas", bytes: 400 << 20,
+    facts: [
+      "family": "node", "orphaned": "yes", "thread": "ended", "idle": "1d", "listening": "yes",
+      "agent": "claude",
+    ], processKey: "fixture-server")
+  let engine = try Autopilot(
+    root: root,
+    sources: AutopilotSources(
+      processes: { _ in [server] },
+      worktrees: { _, _, d in ([copy], d) },
+      retireWorktree: { item, authority in
+        Thread.sleep(forTimeInterval: 7)
+        return AutopilotReceipt(
+          itemID: item.id, kind: .worktree, name: item.name, authority: authority,
+          outcome: "burned", detail: "Fixture only; nothing removed.", bytes: item.bytes)
+      },
+      inspect: { _ in ["commandLine": "node vite --port 5173"] }))
+  _ = try await engine.apply(.setStarter(ruleID: "starter-finished-copies", enabled: false))
+  _ = await engine.tick()
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: root.appendingPathComponent("observation"),
+    accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+  let service = AgentService(monitor: monitor, autopilot: engine)
+  let listener = try AgentListener(root: root) { await service.call($0) }
+  print("READY")
+  _ = FileHandle.standardInput.readDataToEndOfFile()
+  withExtendedLifetime(listener) {}
+}
