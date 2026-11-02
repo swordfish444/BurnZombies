@@ -55,6 +55,21 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       _ = munmap(region, page * pages)
       return
     }
+    for (flag, name, proof) in [
+      ("--autopilot-worktrees", "Autopilot worktrees", autopilotWorktreeProof),
+      ("--autopilot-disk", "Autopilot junk folders and threads", autopilotDiskProof),
+      ("--autopilot-process", "Autopilot processes", autopilotProcessProof),
+      ("--autopilot-sweep", "Autopilot sweep", autopilotSweepProof),
+    ] as [(String, String, () async throws -> Void)] where CommandLine.arguments.contains(flag) {
+      do { try await proof() } catch { failTest("\(name): \(error)") }
+      if failures == 0 { print("PASS \(name)") }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--autopilot-policy") {
+      do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
+      if failures == 0 { print("PASS Autopilot policy") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--disk-recovery") {
       do { try await diskRecoveryProof() } catch { failTest("Disk recovery: \(error)") }
       exit(failures == 0 ? 0 : 1)
@@ -458,6 +473,15 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await transportProof() } catch { failTest("Transport: \(error)") }
     do { try await agentBridgeProof() } catch { failTest("Agent bridge: \(error)") }
     if failures == beforeAgent { print("PASS private agent bridge, refusal and socket protection") }
+    let beforeAutopilot = failures
+    do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
+    do { try await autopilotWorktreeProof() } catch { failTest("Autopilot worktrees: \(error)") }
+    do { try await autopilotDiskProof() } catch { failTest("Autopilot junk folders: \(error)") }
+    do { try await autopilotProcessProof() } catch { failTest("Autopilot processes: \(error)") }
+    do { try await autopilotSweepProof() } catch { failTest("Autopilot sweep: \(error)") }
+    if failures == beforeAutopilot {
+      print("PASS autopilot policy, restorable retirement, junk folders, processes and sweep")
+    }
     let beforeMachine = failures
     do { try await machineReviewProof() } catch { failTest("Machine review: \(error)") }
     if failures == beforeMachine {
