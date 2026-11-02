@@ -5,8 +5,9 @@ public enum AutopilotSweeper {
   public static let aiTimeout: TimeInterval = 600
   public static let rejudgeInterval: TimeInterval = 4 * 3600
 
+  /// Cataloging runs even when Autopilot is off, so the UI can show what it would burn;
+  /// the engine only burns while enabled.
   public static func nativeDue(_ state: AutopilotSweepState, now: Date) -> Bool {
-    guard state.enabled else { return false }
     guard let last = state.lastTick else { return true }
     return now.timeIntervalSince(last) >= Double(state.intervalMinutes * 60) - 5
   }

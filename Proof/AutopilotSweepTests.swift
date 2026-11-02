@@ -18,7 +18,10 @@ func autopilotSweepProof() async throws {
   state.lastTick = now.addingTimeInterval(-15 * 60)
   check(AutopilotSweeper.nativeDue(state, now: now), "15 minutes")
   state.enabled = false
-  checkFalse(AutopilotSweeper.nativeDue(state, now: now), "off")
+  check(AutopilotSweeper.nativeDue(state, now: now), "off still catalogs")
+  checkFalse(
+    AutopilotSweeper.aiDue(state, snapshot: AutopilotSnapshot(), now: now, manual: false),
+    "off never starts the AI")
   equal(AutopilotSweeper.backoff(failures: 1), 15 * 60)
   equal(AutopilotSweeper.backoff(failures: 2), 30 * 60)
   equal(AutopilotSweeper.backoff(failures: 3), 60 * 60)
@@ -93,6 +96,22 @@ func autopilotSweepProof() async throws {
   check(
     snapshot.questions.allSatisfy { $0.question.hasSuffix("?") && $0.count > 0 },
     "questions are answerable")
+
+  // Off: catalog only, no burns, even for starter matches.
+  let offRoot = directory.appendingPathComponent("off")
+  let offCalls = Calls()
+  let off = try Autopilot(
+    root: offRoot,
+    sources: AutopilotSources(
+      processes: { _ in [safe] },
+      burnProcess: { item, _, _ in
+        offCalls.add(item.id)
+        return UUID()
+      }))
+  _ = try await off.apply(.setEnabled(false))
+  let offSnapshot = await off.tick(now: now)
+  equal(offCalls.all.count, 0, "disabled autopilot never burns")
+  equal(offSnapshot.count(.burn), 1, "but shows what it would burn")
 
   // The AI path: refused without a judgment, authorized with a confident one.
   let refused = await engine.burn([copy.id])
