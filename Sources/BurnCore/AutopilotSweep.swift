@@ -227,10 +227,11 @@ public actor AutopilotCoordinator {
 
   public var aiRunning: Bool { aiTask != nil }
 
-  @discardableResult public func tick(now: Date = Date(), manual: Bool = false) async
+  @discardableResult public func tick(now: Date = Date(), manual requestedNow: Bool = false) async
     -> AutopilotSnapshot
   {
     let state = await engine.sweepState()
+    let manual = requestedNow || state.requested == true
     let snapshot =
       manual || AutopilotSweeper.nativeDue(state, now: now)
       ? await engine.tick(now: now) : await engine.snapshot(now: now)
@@ -245,6 +246,7 @@ public actor AutopilotCoordinator {
     let digest = AutopilotSweeper.digest(snapshot)
     await engine.updateSweep {
       $0.running = true
+      $0.requested = nil
       $0.append(manual ? "Hunt started." : "AI sweep started.")
     }
     let runner = runner

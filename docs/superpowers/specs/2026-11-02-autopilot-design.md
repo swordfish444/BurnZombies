@@ -52,7 +52,7 @@ Processes:
 | `kind` | `process` |
 | `program` | executable basename, lowercased (`node`, `python3.12`, `chromium`) |
 | `family` | `node`, `python`, `ruby`, `java`, `browser`, `build`, `shell`, `other` |
-| `orphaned` | `yes` (parent is launchd and its process-group leader is gone, or reparenting was observed) / `no` |
+| `orphaned` | `yes` (reparenting to launchd was observed, or its process-group leader is gone) / `maybe` (first seen under launchd; could be a deliberate background service). Only orphan roots under launchd become items; LaunchAgents are excluded |
 | `thread` | `live` (descendant of, or cwd under, a live agent session) / `ended` / `none` |
 | `agent` | `claude`, `codex`, `cursor`, `none` (which harness launched it, when known) |
 | `idle` | `active`, `10m`, `1h`, `6h`, `1d` (CPU-idle duration bucket from samples) |

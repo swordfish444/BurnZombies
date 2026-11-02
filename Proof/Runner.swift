@@ -65,6 +65,15 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       if failures == 0 { print("PASS \(name)") }
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.count == 5 && CommandLine.arguments[1] == "--autopilot-e2e" {
+      do {
+        try await autopilotEndToEndProof(
+          root: URL(fileURLWithPath: CommandLine.arguments[2]), harness: CommandLine.arguments[3],
+          executable: CommandLine.arguments[4])
+      } catch { failTest("Autopilot end-to-end: \(error)") }
+      if failures == 0 { print("PASS Autopilot end-to-end with a real AI sweep") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--autopilot-policy") {
       do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
       if failures == 0 { print("PASS Autopilot policy") }

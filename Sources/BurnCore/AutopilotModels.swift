@@ -250,6 +250,8 @@ public struct AutopilotSweepState: Codable, Sendable, Equatable {
   public var retryAfter: Date?
   public var lastError: String?
   public var running = false
+  /// Set by "Hunt now" from the CLI or MCP; the coordinator starts an AI sweep next tick.
+  public var requested: Bool?
   public var log: [AutopilotLogEntry] = []
   public init() {}
   public mutating func append(_ message: String, date: Date = Date()) {

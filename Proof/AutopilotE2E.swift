@@ -1,0 +1,159 @@
+import BurnCore
+import Darwin
+import Foundation
+
+/// A real AI sweep against sacrificial fixtures only: an isolated home, a fixture-scoped
+/// catalog (only processes this proof starts, only repositories it creates), the real MCP
+/// server and the operator's installed harness login.
+func autopilotEndToEndProof(root: URL, harness: String, executable: String) async throws {
+  setenv("BURNZOMBIES_HOME", root.path, 1)
+  let fixtures = root.appendingPathComponent("fixtures")
+  try FileManager.default.createDirectory(at: fixtures, withIntermediateDirectories: true)
+  func sh(_ command: String, in folder: URL) throws {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/sh")
+    p.arguments = ["-c", command]
+    p.currentDirectoryURL = folder
+    p.environment = [
+      "PATH": "/usr/bin:/bin", "HOME": fixtures.path, "GIT_CONFIG_GLOBAL": "/dev/null",
+      "GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@example.com",
+      "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.com",
+    ]
+    try p.run()
+    p.waitUntilExit()
+    guard p.terminationStatus == 0 else { throw StoreError.message("fixture failed: \(command)") }
+  }
+
+  // Repositories: one origin, a main clone and three copies.
+  try sh(
+    """
+    git init -q --bare origin.git && git clone -q origin.git orbit-web && cd orbit-web && \
+    git checkout -q -b main && echo app > app.txt && printf 'node_modules/\\n.env\\n' > .gitignore && \
+    git add . && git commit -q -m init && git push -q origin main && \
+    git remote set-head origin main && \
+    git worktree add -q -b merged-fix ../orbit-merged main && \
+    git worktree add -q -b pushed-idea ../orbit-pushed main && \
+    git worktree add -q -b local-draft ../orbit-local main && \
+    cd ../orbit-pushed && echo idea > idea.txt && git add idea.txt && git commit -q -m idea && \
+    git push -q origin pushed-idea && cd ../orbit-local && echo draft > draft.txt && \
+    git add draft.txt && git commit -q -m draft && echo wip >> app.txt && \
+    mkdir -p ../orbit-merged/node_modules/left-pad && \
+    dd if=/dev/zero of=../orbit-merged/node_modules/left-pad/blob bs=1m count=120 2>/dev/null
+    """, in: fixtures)
+  let common = fixtures.appendingPathComponent("orbit-web/.git").path
+  let old = Date().addingTimeInterval(-60 * 86400)
+  func record(_ name: String, changes: Int) -> WorktreeRecord {
+    var r = WorktreeRecord(
+      id: AutopilotItem.hash(name), path: fixtures.appendingPathComponent(name).path,
+      repository: common)
+    r.branch = "refs/heads/" + name
+    r.status = "inspected"
+    r.changes = changes
+    r.consumer = "none observed"
+    r.allocated = 150 << 20
+    r.lastFileChange = old
+    r.lastCommitAt = old
+    return r
+  }
+  let records = [
+    record("orbit-merged", changes: 0), record("orbit-pushed", changes: 0),
+    record("orbit-local", changes: 1),
+  ]
+
+  // An orphaned helper tree in the fixture project.
+  let project = fixtures.appendingPathComponent("orbit-web")
+  try "sleep 900 &\nsleep 900 &\necho $$ > helper.pid\nwait\n".write(
+    to: project.appendingPathComponent("helper.sh"), atomically: true, encoding: .utf8)
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: root.appendingPathComponent("observation"),
+    accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+  let starter = Process()
+  starter.executableURL = URL(fileURLWithPath: "/bin/sh")
+  starter.arguments = ["-c", "/bin/sh helper.sh & sleep 2"]
+  starter.currentDirectoryURL = project
+  try starter.run()
+  usleep(800_000)
+  _ = await monitor.refresh()
+  starter.waitUntilExit()
+  usleep(300_000)
+  _ = await monitor.refresh()
+  let helperPID = Int32(
+    (try String(contentsOf: project.appendingPathComponent("helper.pid"), encoding: .utf8))
+      .trimmingCharacters(in: .whitespacesAndNewlines))!
+  defer { kill(helperPID, SIGKILL) }
+
+  let fixtureRoot = fixtures.resolvingSymlinksInPath().path
+  let sources = AutopilotSources(
+    processes: { threads in
+      AutopilotProcesses.items(
+        await monitor.autopilotRecords(), threads: threads,
+        protectedPIDs: AgentSafety.ancestors(of: getpid()) ?? []
+      ).filter { $0.pid == helperPID }
+    },
+    worktreeRecords: { records },
+    worktrees: { records, threads, cache in
+      var delivery = cache
+      return (
+        AutopilotWorktrees.items(records, threads: threads, delivery: &delivery, budget: 10),
+        delivery
+      )
+    },
+    disk: { records in
+      AutopilotDisk.items(worktrees: records, home: fixtures.path, sizer: { _ in 120 << 20 })
+        .filter { ($0.path ?? "").contains(fixtureRoot) || ($0.path ?? "").contains(fixtures.path) }
+    },
+    burnProcess: { item, authority, why in
+      guard item.pid == helperPID, let key = item.processKey else {
+        throw StoreError.message("Outside the fixture scope.")
+      }
+      return try await monitor.autopilotBurn(
+        key, authority: authority, label: item.name, rationale: why)
+    },
+    processOutcome: { await monitor.autopilotOutcome($0) },
+    retireWorktree: { item, authority in
+      AutopilotWorktrees.retire(item, authority: authority, root: root)
+    },
+    restoreWorktree: { try AutopilotWorktrees.restore($0) },
+    reclaimDisk: { item, authority in AutopilotDisk.reclaim(item, authority: authority) },
+    inspect: { AutopilotInspector.inspect($0) })
+  let engine = try Autopilot(root: root, sources: sources)
+  let service = AgentService(monitor: monitor, autopilot: engine)
+  let listener = try AgentListener { request in await service.call(request) }
+  defer { withExtendedLifetime(listener) {} }
+
+  var snapshot = await engine.tick()
+  print("E2E native tick:", snapshot.counts, "questions", snapshot.questions.count)
+  check(
+    !snapshot.receipts.isEmpty || snapshot.count(.unsure) > 0,
+    "starter rules acted or left work for the AI")
+
+  let binaries = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+  let config = MachineReviewConfiguration(
+    harness: harness, executable: executable,
+    launcher: binaries.appendingPathComponent("burnzombies").path,
+    server: binaries.appendingPathComponent("burnzombies-mcp").path)
+  let started = Date()
+  let output = try AutopilotHarness.run(config, root: root, timeout: 600)
+  print("E2E AI sweep finished in \(Int(Date().timeIntervalSince(started))) s")
+  snapshot = await engine.tick()
+  let memory = try AutopilotStore(root: root).memory()
+  print("E2E judgments:", memory.judgments.values.map { "\($0.label) → \($0.verdict) \($0.confidence)" })
+  print("E2E questions:", snapshot.questions.map(\.question))
+  print("E2E receipts:", snapshot.receipts.map { "\($0.name): \($0.outcome) by \($0.authority)" })
+  print("E2E log:", snapshot.sweep.log.suffix(6).map(\.message))
+  check(!memory.judgments.isEmpty, "the AI recorded verdicts")
+  check(snapshot.questions.count <= 3, "at most three open questions")
+  check(snapshot.questions.allSatisfy { $0.question.hasSuffix("?") }, "questions are questions")
+  check(output.contains("\"is_error\":false"), "harness reported success")
+  for receipt in snapshot.receipts where receipt.outcome == "burned" {
+    if let restore = receipt.restore {
+      check(restore.path.hasPrefix(fixtures.path), "only fixture copies retired")
+    }
+  }
+  // Anything the AI retired must restore.
+  if let retired = snapshot.receipts.first(where: { $0.restore != nil && $0.outcome == "burned" }) {
+    _ = try await engine.apply(.restore(receiptID: retired.id))
+    check(
+      FileManager.default.fileExists(atPath: retired.restore!.path), "restored old copy is back")
+  }
+}

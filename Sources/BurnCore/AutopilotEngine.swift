@@ -363,7 +363,7 @@ public actor Autopilot {
       }
       refreshQuestions(now: now)
     case .sweepNow:
-      break
+      try store.updateSweep { $0.requested = true }
     }
     return snapshot(now: now)
   }
