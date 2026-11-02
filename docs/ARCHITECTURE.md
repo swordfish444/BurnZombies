@@ -15,6 +15,22 @@ Private catalog ── menu-bar impact + burn log + live hunt progress
 
 Observation and scheduling belong to the computer, not a chat. One selected harness provides reasoning through a supervised, bounded invocation using its existing authentication. There is no fixed abandonment classifier or mandatory launch wrapper for user jobs. Default setup writes only BurnZombies configuration and installs no chat hooks.
 
+## Autopilot (0.13)
+
+```text
+Monitor + worktree inventory + agent threads + junk-folder scan
+          │ facts per item (native, no tokens)
+          ▼
+AutopilotPolicy ── rails → keeps → operator rules → starter rules → confident AI
+          │ burn / keep / unsure            │ unsure clusters → ≤3 yes/no questions
+          ▼                                 ▼
+Executors (SIGTERM tree · restorable worktree retire · rebuildable folder removal)
+          ▲
+Headless Claude Code / Codex sweep ── MCP: catalog · inspect · decide · burn · ask · report
+```
+
+`Autopilot` (actor, `AutopilotEngine.swift`) owns the catalog, memory (`autopilot/memory.json`: rules, questions, AI judgments, keeps), receipts and sweep state. `AutopilotCoordinator` runs a native tick every sweep interval (15 minutes by default) and an AI sweep only for unjudged unsure items (at most every 30 minutes, plus a 4-hour refresh, or on Hunt). `AutopilotProcesses`, `AutopilotWorktrees`, `AutopilotDisk` and `AgentThreads` build facts and execute; `AutopilotLive.swift` wires them to the monitor. The MCP server exposes only the autopilot tools when started with `BURNZOMBIES_AUTOPILOT=1`, and every call goes through the app's agent socket.
+
 ## Observation and storage
 
 One monitor owns a nonblocking private lock. It observes current-user processes every 60 seconds, or every 15 seconds while verifying a cleanup. It retains up to eight minute-spaced samples per identity. Monotonic time and wall time are separate; sampling gaps, sleep and incomplete coverage invalidate continuity.

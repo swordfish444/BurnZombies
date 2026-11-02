@@ -28,7 +28,7 @@ enum MachineSetup {
     // A reinstall never switches a previously selected provider, including when it is unavailable.
     let choices =
       selected == "auto" || selected == "all"
-      ? old.map { [$0.harness] } ?? ["codex", "claude"] : [selected]
+      ? old.map { [$0.harness] } ?? ["claude", "codex"] : [selected]
     guard let harness = choices.first(where: { MachineReviewConfiguration.detect($0) != nil }),
       let executable = MachineReviewConfiguration.detect(harness)
     else {
@@ -61,7 +61,7 @@ enum MachineSetup {
     try config.save(root: root)
     print(
       config.enabled
-        ? "BurnZombies will watch this Mac across all projects and sessions, using \(harness) for bounded background reviews."
+        ? "BurnZombies Autopilot will sweep this Mac every 15 minutes, using \(harness) to judge new leftovers."
         : "BurnZombies is configured for \(harness). AI reviews are off; native observation remains available."
     )
     print(
@@ -70,7 +70,7 @@ enum MachineSetup {
       "Reviews use your existing harness login and usage allowance. One provider; no automatic fallback."
     )
     print(
-      "Setup grants no new cleanup permission. Findings require approval or an explicitly granted scoped rule; existing native policies keep their original guards."
+      "Autopilot burns leftovers on its own with safe starter rules and what you teach it in Teach BZ. Old copies are always restorable. Turn it off in Settings → Autopilot."
     )
     print(
       "Model: \(config.model ?? "harness default") · Thinking: \(config.reasoningEffort ?? "harness default"). Change these in Settings."

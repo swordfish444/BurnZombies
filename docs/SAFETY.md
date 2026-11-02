@@ -1,5 +1,16 @@
 # Safety boundaries
 
+## Autopilot (0.13)
+
+Autopilot replaces "the owner must have released this helper" with a learned policy, while keeping every mechanical rail. In order: hard rails mark an item **protected** (never burned, never asked); the operator's keeps, a "No" answer or a confident AI keep always win; the operator's "Yes" rules burn; three switchable starter rules burn the obvious; the AI may burn on its own only at ≥ 0.85 confidence for low-risk items (orphaned programs with no listening port, copies not owned by Codex/Claude/Conductor that nothing uses, known junk folders). Everything else becomes a yes/no training question. See [Autopilot](AUTOPILOT.md).
+
+- **Programs.** Only orphan roots under launchd (observed reparenting or a dead job leader; LaunchAgents excluded) are candidates; live descendants are burned with them, deepest first. macOS, app bundles outside automation caches (Playwright/Puppeteer browsers, `node_modules`, temporary folders), harnesses, BurnZombies itself and anything a live chat is working in are protected. SIGTERM only, exact identity (boot, PID, start time, path) re-checked immediately before each signal, exit verified by the monitor. An open socket is a fact the policy sees, not a refusal.
+- **Old copies.** Before `git worktree remove --force`, every commit and local change (tracked, untracked and small ignored files outside rebuildable folders) is written to `refs/burnzombies/retired/<id>` in the repository and verified. Main checkouts, locked copies, in-progress merges/rebases, copies a process uses and dirty or unpushed submodules are refused. The saved/changes facts are recomputed at removal; a change refuses. Restore recreates the copy at its path and returns local changes as uncommitted.
+- **Junk folders.** Only known rebuildable kinds, untracked by git, outside private areas (iCloud Drive, Mail, Messages, Photos, `.ssh`, `.gnupg`, Keychains) and unused by any process. Anything else needs an operator rule and goes to the Trash.
+- **Bounds.** At most 50 programs, 20 copies and 20 junk folders per sweep. AI sweeps run headless with six MCP tools and read-only file tools, no shell; every burn is re-authorized natively. Failures back off 15 → 120 minutes and never pause the loop.
+
+The sections below describe the evidence-led reviewer and Findings inbox that remain available under Advanced.
+
 ## The harness decides; the native app executes narrowly
 
 BurnZombies no longer infers abandonment with fixed age/CPU/ownership heuristics. The user's agent combines live process evidence with ownership evidence across the computer. Cleanup must be within the user's authorization, including an ongoing hygiene request. The model can still misjudge ownership: uncertainty means leave it running, not force a reboot or bulk kill.
