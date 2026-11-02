@@ -339,12 +339,14 @@ public actor Autopilot {
           memory.questions[i].snoozedUntil = now.addingTimeInterval(86400)
         } else {
           let q = memory.questions[i]
-          memory.rules.removeAll { AutopilotRule.key(kind: $0.kind, match: $0.match) == q.id }
+          let verdict: AutopilotVerdict = answer == .yes ? .burn : .keep
+          memory.rules.removeAll { $0.questionID == q.id }
           memory.rules.append(
             AutopilotRule(
-              kind: q.kind, match: q.match, verdict: answer == .yes ? .burn : .keep,
-              source: .operator, title: AutopilotPolicy.ruleTitle(q, answer: answer),
-              created: now, questionID: q.id))
+              kind: q.kind, match: AutopilotPolicy.widen(q.match, verdict: verdict),
+              verdict: verdict, source: .operator,
+              title: AutopilotPolicy.ruleTitle(q, answer: answer), created: now,
+              questionID: q.id))
         }
       }
       refreshQuestions(now: now)

@@ -182,8 +182,11 @@ func autopilotPreview(inventory: URL?) async throws {
     await monitor.autopilotRecords(), threads: threads,
     protectedPIDs: AgentSafety.ancestors(of: getpid()) ?? [],
     launchAgents: AutopilotSources.launchAgentPIDs())
-  items += AutopilotWorktrees.items(records, threads: threads, delivery: &delivery, budget: 400)
+  items += AutopilotWorktrees.items(records, threads: threads, delivery: &delivery, budget: 2000)
     .filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
+  let junkStarted = Date()
+  items += AutopilotDisk.items(worktrees: records)
+  print("Junk-folder scan took \(Int(Date().timeIntervalSince(junkStarted))) s")
   let memory = AutopilotMemory()
   var byStatus = [String: [AutopilotItem]]()
   for item in items {
@@ -217,7 +220,7 @@ func autopilotPreview(inventory: URL?) async throws {
     let group = byStatus[key]!
     print(
       "\(key): \(group.count) using \(AutopilotPolicy.format(group.reduce(0) { $0 + $1.bytes }))")
-    for item in group.sorted(by: { $0.bytes > $1.bytes }).prefix(4) {
+    for item in group.sorted(by: { $0.bytes > $1.bytes }).prefix(6) {
       print("   - \(item.name): \(item.facts.filter { $0.key != "kind" }.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))\(item.protectedReason.map { " [\($0)]" } ?? "")")
     }
   }

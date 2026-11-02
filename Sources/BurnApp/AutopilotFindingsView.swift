@@ -16,7 +16,8 @@ enum AutopilotTab: String, CaseIterable, Identifiable {
     case .everything: return true
     case .willBurn: return status == .burn
     case .needsYou: return status == .unsure || status == .failed
-    case .keeping: return status == .keep
+    // Protected items are kept too, so the tab matches the summary sentence.
+    case .keeping: return status == .keep || status == .protected
     case .burned: return status == .burned
     }
   }
@@ -25,7 +26,7 @@ enum AutopilotTab: String, CaseIterable, Identifiable {
     case .everything: return snapshot.counts.values.reduce(0, +)
     case .willBurn: return snapshot.count(.burn)
     case .needsYou: return snapshot.count(.unsure) + snapshot.count(.failed)
-    case .keeping: return snapshot.count(.keep)
+    case .keeping: return snapshot.count(.keep) + snapshot.count(.protected)
     case .burned: return snapshot.count(.burned)
     }
   }

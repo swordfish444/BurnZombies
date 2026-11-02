@@ -184,6 +184,18 @@ func autopilotPolicyProof() throws {
   equal(AutopilotPolicy.coverage(entries), 0.5, "protected items do not count")
   equal(AutopilotPolicy.coverage([]), 1.0, "empty is fully covered")
 
+  // Answers widen toward safer values (yes) or riskier ones (no).
+  let wideBurn = AutopilotPolicy.widen(
+    ["family": ["node"], "idle": ["1h"], "saved": ["pushed"], "orphaned": ["maybe"]],
+    verdict: .burn)
+  equal(wideBurn["idle"], ["1h", "6h", "1d"], "idler is safer")
+  equal(wideBurn["saved"], ["pushed", "merged"], "merged is safer than pushed")
+  equal(wideBurn["orphaned"], ["maybe", "yes"], "a sure orphan is safer")
+  equal(wideBurn["family"], ["node"], "categories never widen")
+  let wideKeep = AutopilotPolicy.widen(["saved": ["pushed"], "changes": ["small"]], verdict: .keep)
+  equal(wideKeep["saved"], ["local", "pushed"], "keeping pushed work keeps local work")
+  equal(wideKeep["changes"], ["large", "small"], "keeping small changes keeps large ones")
+
   // Rule titles are plain English.
   let title = AutopilotPolicy.ruleTitle(copies, answer: .yes)
   check(title.hasPrefix("Burn: Old copies"), title)

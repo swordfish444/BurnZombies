@@ -313,6 +313,28 @@ public enum AutopilotPolicy {
     return Double(decidable.filter { $0.status != .unsure }.count) / Double(decidable.count)
   }
 
+  /// Fact values ordered from riskiest to safest to burn.
+  static let safety: [String: [String]] = [
+    "orphaned": ["maybe", "yes"], "thread": ["none", "ended"],
+    "idle": ["active", "10m", "1h", "6h", "1d"], "stale": ["today", "week", "month", "older"],
+    "saved": ["local", "pushed", "merged"], "listening": ["yes", "no"],
+    "changes": ["large", "small", "none"],
+  ]
+
+  /// An answer also covers strictly safer (yes) or strictly riskier (no) values of the same
+  /// facts, so each answer teaches as much as it safely can.
+  public static func widen(_ match: [String: [String]], verdict: AutopilotVerdict) -> [String: [
+    String
+  ]] {
+    var result = match
+    for (key, values) in match {
+      guard let order = safety[key], values.count == 1, let i = order.firstIndex(of: values[0])
+      else { continue }
+      result[key] = verdict == .burn ? Array(order[i...]) : Array(order[...i])
+    }
+    return result
+  }
+
   /// Plain-English title for the rule an answer creates.
   public static func ruleTitle(_ question: AutopilotQuestion, answer: AutopilotAnswer) -> String {
     let core = question.question.replacingOccurrences(of: "Can I burn ", with: "")

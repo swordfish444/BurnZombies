@@ -40,6 +40,8 @@ jobs:
         run: scripts/build-app.sh --universal
       - name: MCP client protocol proof
         run: python3 scripts/test-mcp.py
+      - name: Autopilot MCP tools over stdio against a private app endpoint
+        run: python3 scripts/test-autopilot-mcp.py
       - name: Storage discovery through the production MCP bridge
         run: python3 scripts/test-disk-discovery.py
       - name: Five-harness configuration proof
