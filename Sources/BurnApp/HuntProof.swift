@@ -76,7 +76,10 @@ import Vision
   let surface = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
   surface.contentView = host
   RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded()
-  let point = NSPoint(x: 210, y: 16)
+  // The button follows the status text, whose wording depends on Autopilot.
+  let status = BurnStatus(model: control, compact: true).status as NSString
+  let width = status.size(withAttributes: [.font: NSFont.systemFont(ofSize: 13)]).width
+  let point = NSPoint(x: 12 + 9 + width + 9 + 40, y: 16)
   guard let target = host.hitTest(point) else { throw StoreError.message("Hunt click target unavailable") }
   for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
     let event = NSEvent.mouseEvent(with: type, location: host.convert(point, to: nil), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: surface.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!

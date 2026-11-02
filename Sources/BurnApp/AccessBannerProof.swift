@@ -83,7 +83,7 @@ import Vision
     throw StoreError.message("Dismiss hit target did not persist independently of pane link")
   }
   let dismissed = try render("dismissed")
-  guard !dismissed.contains("Allow Full Disk Access"), dismissed.contains("Setup required") else {
+  guard !dismissed.contains("Allow Full Disk Access"), dismissed.contains("limited") else {
     throw StoreError.message("Dismissal hid access status or left the banner visible")
   }
   let reopened = AppModel(demo: true, accessPreferences: preferences, accessOpener: { _ in false })

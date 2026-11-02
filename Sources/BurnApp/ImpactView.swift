@@ -168,7 +168,8 @@ struct BurnStatus: View {
       if sweep.running || model.huntRunning { return "Hunting Zombies" }
       if !sweep.enabled { return "Autopilot off" }
       if let retry = sweep.retryAfter, retry > Date() { return "Autopilot · AI retrying soon" }
-      return "Autopilot on"
+      // Leftover programs need no special access; old copies and protected folders do.
+      return model.accessReady ? "Autopilot on" : "Autopilot on · limited"
     }
     if !model.accessReady { return "Setup required" }
     if model.state.error != nil { return "Needs attention" }

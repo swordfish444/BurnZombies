@@ -21,7 +21,11 @@ import Vision
         detail: "Enable Full Disk Access in System Settings, then check again.")
     }
 
-    if name == "paused" { model.machineReview.phase = "paused" }
+    // Autopilot never pauses for good: a failed AI sweep shows its retry instead.
+    if name == "paused" {
+      model.machineReview.phase = "paused"
+      model.autopilot.sweep.retryAfter = Date().addingTimeInterval(1800)
+    }
     if name == "quiet-day" {
       let today = Calendar.current.startOfDay(for: Date())
       model.state.catalog.events.removeAll { ($0.verificationDate ?? $0.date) >= today }
@@ -99,17 +103,20 @@ import Vision
       throw StoreError.message("Compact labels or footer clipped: \(visible)")
     }
     if name.hasPrefix("access-") {
-      guard visible.contains("Setup required"), visible.contains("Open System Settings"),
+      // Autopilot keeps cleaning leftover programs without Full Disk Access, so the status
+      // says so while the access card stays in view.
+      guard visible.contains("Autopilot on"), visible.contains("Open System Settings"),
         visible.contains("Allow Full Disk Access"), !visible.contains("Agent-led cleanup"),
-        !visible.contains("Still warming up"), !visible.contains("Ready for your first burn") else {
+        !visible.contains("Still warming up") else {
         throw StoreError.message("Access prerequisite missing or presented as active cleanup: \(visible)")
       }
       if name == "access-required-history" {
         guard view.numbers.count == 128, visible.contains("Last burn") else {
           throw StoreError.message("Requiring access erased verified history")
         }
-      } else if !visible.contains("Waiting for Full Disk Access") {
-        throw StoreError.message("New install claimed it was ready before access")
+      } else if !visible.contains("Ready for your first burn") {
+        // Autopilot is genuinely ready: leftover programs need no special access.
+        throw StoreError.message("New install hid that Autopilot is ready")
       }
     } else if name == "receipt-replay" {
       guard !view.numbers.boost.contains("-"), visible.contains(String(view.numbers.count)) else {
@@ -159,8 +166,11 @@ import Vision
         throw StoreError.message("Existing cleanup history presented as first use")
       }
     }
-    if name == "paused" && !visible.contains("Review paused") {
-      throw StoreError.message("Paused reviewer hidden by compact status")
+    if name == "paused" && !visible.contains("retrying soon") {
+      throw StoreError.message("Autopilot retry hidden by compact status: " + visible)
+    }
+    if name == "populated" && !visible.contains("quick question") {
+      throw StoreError.message("Open questions hidden from the menu: " + visible)
     }
     guard host.frame.size == MiniImpactView.size else { throw StoreError.message("Popover size changed") }
     print("PASS offscreen compact \(name): 360 × 550, readable labels and footer")
