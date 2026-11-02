@@ -250,6 +250,15 @@ public actor AutopilotCoordinator {
       $0.requested = nil
       $0.append(manual ? "Hunt started." : "AI sweep started.")
     }
+    var hunt = HuntSnapshot(startedAt: now)
+    hunt.detail = "Hunting zombies across this Mac."
+    hunt.append("info", manual ? "Manual hunt started." : "Scheduled hunt started.", date: now)
+    hunt.append(
+      "scanning",
+      "Reviewing \(snapshot.count(.unsure)) thing\(snapshot.count(.unsure) == 1 ? "" : "s") I'm unsure about with \(config.harnessName).",
+      date: now)
+    hunt.lane = "autopilot"
+    try? hunt.save(Store(root: root))
     let runner = runner
     let root = root
     aiTask = Task.detached { [weak self] in
@@ -285,7 +294,37 @@ public actor AutopilotCoordinator {
         $0.append(message + " I'll try again later; my rules keep working meanwhile.")
       }
     }
-    await engine.tick(now: now)
+    let after = await engine.tick(now: now)
+    if var hunt = try? HuntSnapshot.load(root: root), hunt.startedAt == started || hunt.isRunning {
+      let fresh = after.receipts.filter { $0.date >= hunt.startedAt && $0.outcome != "refused" }
+      for receipt in fresh {
+        switch receipt.kind {
+        case .process:
+          hunt.burned += 1
+          hunt.memoryReclaimed += receipt.bytes
+        case .worktree:
+          hunt.worktreesCleaned += 1
+          hunt.diskReclaimed += receipt.bytes
+        case .disk:
+          hunt.diskReclaimed += receipt.bytes
+        }
+        hunt.append("complete", "Burned \(receipt.name).", date: receipt.date)
+      }
+      if case .failure(let error) = result {
+        hunt.append("warning", error.localizedDescription + " I'll retry later.")
+      }
+      if !after.questions.isEmpty {
+        hunt.append(
+          "info",
+          "I have \(after.questions.count) quick question\(after.questions.count == 1 ? "" : "s") for you in Teach BZ."
+        )
+      }
+      hunt.phase = "completed"
+      hunt.finishedAt = now
+      hunt.detail = "Hunt complete. I'll keep sweeping every \(after.sweep.intervalMinutes) minutes."
+      hunt.append("complete", hunt.detail, date: now)
+      try? hunt.save(Store(root: root))
+    }
     aiTask = nil
   }
 
