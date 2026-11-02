@@ -339,6 +339,40 @@ func autopilotSweepProof() async throws {
   checkFalse(smallOK, "a pattern freeing under 1 GB isn't worth a question")
   check(smallJSON.contains("1 GB"), smallJSON)
 
+  // An open question whose matches shrink below 1 GB stops being worth asking.
+  let shrinking = Calls()
+  let shrinkEngine = try Autopilot(
+    root: directory.appendingPathComponent("shrink"),
+    sources: AutopilotSources(processes: { _ in
+      var big = modest
+      big.bytes = shrinking.all.isEmpty ? 3 << 30 : 300 << 20
+      return [big]
+    }))
+  let asked = await shrinkEngine.tick(now: now)
+  equal(asked.questions.count, 1, "a 3 GB program is worth a question")
+  shrinking.add("burned most of it")
+  let shrunk = await shrinkEngine.tick(now: now.addingTimeInterval(900))
+  equal(shrunk.questions.count, 0, "at 300 MB the question goes away")
+
+  // Rules show the same short words as the question that taught them, even rules taught
+  // before the words changed.
+  let titleRoot = directory.appendingPathComponent("titles")
+  let titleEngine = try Autopilot(
+    root: titleRoot, sources: AutopilotSources(processes: { _ in [server] }))
+  let titled = await titleEngine.tick(now: now)
+  guard let serverQuestion = titled.questions.first else {
+    failTest("a question for the 3 GB server")
+    return
+  }
+  _ = try await titleEngine.apply(.answer(questionID: serverQuestion.id, answer: .no))
+  try AutopilotStore(root: titleRoot).updateMemory { memory in
+    for i in memory.rules.indices { memory.rules[i].title = "Keep: An old, long sentence" }
+  }
+  let retitled = await titleEngine.snapshot()
+  equal(
+    retitled.rules.first { $0.source == .operator }?.title,
+    AutopilotPolicy.ruleTitle(serverQuestion, answer: .no), "short words for an older rule")
+
   // Something burned since the catalog was built is gone: it is never tried again from the
   // same catalog, whether by another pass, the AI or the owner, nor after a restart.
   let onceCopy = finishedCopy("once", bytes: 2_000_000_000)

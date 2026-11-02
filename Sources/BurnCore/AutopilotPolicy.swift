@@ -381,12 +381,118 @@ public enum AutopilotPolicy {
   }
 
   /// Plain-English title for the rule an answer creates.
+  /// The same short words as the question's card: "Burn: Old project copies · Saved on GitHub".
   public static func ruleTitle(_ question: AutopilotQuestion, answer: AutopilotAnswer) -> String {
-    let core = question.question.replacingOccurrences(of: "Can I burn ", with: "")
-      .replacingOccurrences(of: "Can I delete ", with: "")
-      .replacingOccurrences(of: "? They get rebuilt when needed.", with: "")
-      .replacingOccurrences(of: "?", with: "")
-    let first = core.prefix(1).uppercased() + core.dropFirst()
-    return (answer == .yes ? "Burn: " : "Keep: ") + first
+    let plural = noun(question.kind, match: question.match).1
+    let subject = plural.prefix(1).uppercased() + plural.dropFirst()
+    return (answer == .yes ? "Burn: " : "Keep: ")
+      + ([subject] + facts(question.kind, match: question.match)).joined(separator: " · ")
+  }
+}
+
+/// A training question as the owner sees it: a short headline with the count, what it frees,
+/// a few facts of two to four words and one reassuring line. Less to read than a sentence.
+public struct AutopilotCard: Equatable, Sendable {
+  public var headline: String
+  public var frees: String
+  public var facts: [String]
+  public var note: String
+  public var yes: String
+  public var no: String
+  /// The facts that make burning riskier, shown so they stand out.
+  public var cautions: [String] = []
+}
+
+extension AutopilotPolicy {
+  static let stalePhrases = [
+    "day": "Unused since yesterday", "week": "Unused for a week", "month": "Unused for a month",
+    "older": "Unused for 3+ months",
+  ]
+
+  /// What a question is about, singular and plural.
+  static func noun(_ kind: AutopilotKind, match: [String: [String]]) -> (String, String) {
+    let value = { (key: String) in match[key]?.first ?? "" }
+    switch kind {
+    case .worktree: return ("old project copy", "old project copies")
+    case .process:
+      return [
+        "node": ("leftover Node program", "leftover Node programs"),
+        "python": ("leftover Python program", "leftover Python programs"),
+        "ruby": ("leftover Ruby program", "leftover Ruby programs"),
+        "java": ("leftover Java helper", "leftover Java helpers"),
+        "browser": ("leftover robot browser", "leftover robot browsers"),
+        "build": ("leftover build tool", "leftover build tools"),
+        "shell": ("leftover script", "leftover scripts"),
+      ][value("family")] ?? ("leftover program", "leftover programs")
+    case .disk:
+      return [
+        "node_modules": ("node_modules folder", "node_modules folders"),
+        "build-output": ("build folder", "build folders"),
+        "xcode-derived": ("Xcode build folder", "Xcode build folders"),
+        "package-cache": ("tool cache", "tool caches"),
+        "python-env": ("Python environment", "Python environments"),
+      ][value("folder")] ?? ("folder", "folders")
+    }
+  }
+
+  /// A pattern's facts in two to four words each, most decisive first.
+  static func facts(_ kind: AutopilotKind, match: [String: [String]]) -> [String] {
+    let table: [(String, [String: String])]
+    switch kind {
+    case .worktree:
+      table = [
+        ("saved", ["merged": "Already merged", "pushed": "Saved on GitHub", "local": "Work only on this Mac"]),
+        ("changes", ["none": "No unsaved changes", "small": "Has unsaved changes", "large": "Has unsaved changes"]),
+        ("stale", stalePhrases),
+        ("place", ["patrol6": "Made by Patrol6 agents", "codex": "Made by Codex", "claude": "Made by Claude", "conductor": "Made by Conductor"]),
+        ("thread", ["ended": "Its chat is finished"]),
+      ]
+    case .process:
+      table = [
+        ("listening", ["yes": "Still running a server", "no": "Not serving anything"]),
+        ("idle", ["active": "Still busy", "10m": "Idle 10+ minutes", "1h": "Idle 1+ hour", "6h": "Idle 6+ hours", "1d": "Idle 1+ day"]),
+        ("orphaned", ["yes": "Its app is gone"]),
+        ("thread", ["ended": "Its chat is finished"]),
+        ("agent", ["codex": "Started by Codex", "claude": "Started by Claude", "cursor": "Started by Cursor"]),
+      ]
+    case .disk:
+      table = [
+        ("stale", stalePhrases),
+        ("home", ["stale-worktree": "Inside old project copies", "repo": "Inside your projects"]),
+      ]
+    }
+    return table.compactMap { key, words in match[key]?.first.flatMap { words[$0] } }
+  }
+
+  /// "14.4 GB" or "300 MB": one decimal is plenty for deciding.
+  static func roughly(_ bytes: UInt64) -> String {
+    bytes >= 1_000_000_000
+      ? String(format: "%.1f GB", Double(bytes) / 1e9) : String(format: "%.0f MB", Double(bytes) / 1e6)
+  }
+
+  /// Facts that make burning riskier: work that exists nowhere else, things still in use.
+  static let cautions: Set<String> = [
+    "Work only on this Mac", "Has unsaved changes", "Unused since yesterday",
+    "Still running a server", "Still busy", "Idle 10+ minutes",
+  ]
+
+  public static func card(_ question: AutopilotQuestion) -> AutopilotCard {
+    let one = question.count == 1
+    let (single, plural) = noun(question.kind, match: question.match)
+    let note: String
+    switch question.kind {
+    case .worktree:
+      note = one
+        ? "It's backed up first, so you can undo it."
+        : "Each one is backed up first, so you can undo it."
+    case .process: note = one ? "It just gets asked to quit." : "They just get asked to quit."
+    case .disk: note = one ? "Your tools rebuild it when needed." : "Your tools rebuild them when needed."
+    }
+    return AutopilotCard(
+      headline: "Burn \(question.count) \(one ? single : plural)?",
+      frees: "Frees \(roughly(question.bytes))" + (question.kind == .process ? " of memory" : ""),
+      facts: facts(question.kind, match: question.match), note: note,
+      yes: one ? "Yes, burn it" : "Yes, burn them", no: one ? "No, keep it" : "No, keep them",
+      cautions: facts(question.kind, match: question.match).filter(cautions.contains))
   }
 }

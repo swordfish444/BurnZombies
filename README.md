@@ -54,7 +54,7 @@ Installing through an agent? Tell it:
 
 ## Teach BZ in a dozen taps
 
-When Autopilot isn't sure, the menu shows **BZ has 3 quick questions**. Each one is a single card — "Can I burn old copies of your projects that are already saved on GitHub? I found 212 like this, using 48 GB." — with **Yes, burn them** and **No, keep them**. Yes burns the matches right away and every future match; No protects them for good. **Findings** shows everything in plain words: what it is, why BZ thinks so, and what happens if it burns it, with technical details tucked away. Settings → **What BZ has learned** lists every rule with a Forget button.
+When Autopilot isn't sure, the menu shows **BZ has 3 quick questions**. Each one is a single card — **Burn 92 old project copies?** **Frees 14.4 GB**, with a few short facts like "Saved on GitHub" and "Unused for a week" (risky ones in amber) — and **Yes, burn them** / **No, keep them**. BZ only asks about patterns that free at least 1 GB. Yes burns the matches right away and every future match; No protects them for good. **Findings** shows everything in plain words: what it is, why BZ thinks so, and what happens if it burns it, with technical details tucked away. Settings → **What BZ has learned** lists every rule with a Forget button.
 
 ## Dead weight. Gone.
 

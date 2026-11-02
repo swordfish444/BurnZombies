@@ -202,14 +202,52 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   // Teach BZ: one big question, then the empty state.
   let teach = try render(
     TeachView(model: model), size: TeachView.size, name: "teach", directory: directory)
-  try require(teach, ["Yes, burn them", "No, keep them", "trained"], in: "teach")
-  try check(teach.hasWords(of: questions[0].question), "teach is missing the question text. OCR saw: \(teach.raw)")
-  hint(teach, "teach", ["Question 1 of 3", "Not sure", questions[0].why])
+  let card = AutopilotPolicy.card(questions[0])
+  try require(teach, ["Frees", "Question 1 of 3"], in: "teach")
+  try check(teach.hasWords(of: card.headline), "teach is missing the headline. OCR saw: \(teach.raw)")
+  try check(teach.hasWords(of: card.yes), "teach is missing the yes button. OCR saw: \(teach.raw)")
+  for confusing in ["trained", "on my own", "%"] {
+    try check(!teach.raw.contains(confusing), "teach shows \"\(confusing)\". OCR saw: \(teach.raw)")
+  }
+  hint(teach, "teach", ["Not sure", card.note] + card.facts)
+  // Real questions carry up to four facts; every one stays readable on every kind of card.
+  for (name, question) in [
+    (
+      "teach-copies",
+      AutopilotQuestion(
+        kind: .worktree,
+        match: ["saved": ["local"], "changes": ["small"], "stale": ["week"], "place": ["patrol6"]],
+        question: "", why: "", examples: [], count: 245, bytes: 101_580_000_000)
+    ),
+    (
+      "teach-programs",
+      AutopilotQuestion(
+        kind: .process,
+        match: ["family": ["java"], "idle": ["1h"], "listening": ["yes"], "agent": ["codex"]],
+        question: "", why: "", examples: [], count: 4, bytes: 12_990_000_000)
+    ),
+    (
+      "teach-caches",
+      AutopilotQuestion(
+        kind: .disk, match: ["folder": ["package-cache"], "home": ["repo"], "stale": ["month"]],
+        question: "", why: "", examples: [], count: 5, bytes: 20_290_000_000)
+    ),
+  ] {
+    let busy = AppModel(demo: true)
+    busy.autopilot.questions = [question]
+    let shown = try render(
+      TeachView(model: busy), size: TeachView.size, name: name, directory: directory)
+    let busyCard = AutopilotPolicy.card(question)
+    for words in [busyCard.headline, busyCard.frees] + busyCard.facts {
+      try check(shown.hasWords(of: words), "\(name) lost \"\(words)\". OCR saw: \(shown.raw)")
+    }
+  }
   let quiet = AppModel(demo: true)
   quiet.autopilot.questions = []
   let teachEmpty = try render(
     TeachView(model: quiet), size: TeachView.size, name: "teach-empty", directory: directory)
-  try require(teachEmpty, ["All caught up", "trained"], in: "teach-empty")
+  try require(teachEmpty, ["All caught up"], in: "teach-empty")
+  try check(!teachEmpty.raw.contains("trained"), "caught-up shows a training percentage")
   let teachDone = try render(
     TeachView(
       model: model,

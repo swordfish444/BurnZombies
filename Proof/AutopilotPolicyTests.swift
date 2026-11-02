@@ -95,6 +95,49 @@ func autopilotPolicyProof() throws {
   let crumbs = (0..<5).map {
     junk("crumbs\($0)", ["folder": "node_modules", "home": "repo", "stale": "month"], bytes: 150_000_000)
   }
+  // A question reads as a short headline, what it frees, a few short facts and one line
+  // of reassurance: little to read and easy to decide.
+  let agentCopies = AutopilotQuestion(
+    kind: .worktree, match: ["saved": ["pushed"], "stale": ["week"], "place": ["patrol6"]],
+    question: "Can I burn old project copies made by Patrol6 agents?", why: "", examples: [],
+    count: 92, bytes: 14_390_000_000)
+  let copiesCard = AutopilotPolicy.card(agentCopies)
+  equal(copiesCard.headline, "Burn 92 old project copies?")
+  equal(copiesCard.frees, "Frees 14.4 GB")
+  equal(copiesCard.facts, ["Saved on GitHub", "Unused for a week", "Made by Patrol6 agents"])
+  equal(copiesCard.note, "Each one is backed up first, so you can undo it.")
+  equal([copiesCard.yes, copiesCard.no], ["Yes, burn them", "No, keep them"])
+  equal(copiesCard.cautions, [], "nothing risky about pushed copies left a week")
+  let draftCopies = AutopilotQuestion(
+    kind: .worktree, match: ["saved": ["local"], "changes": ["small"], "stale": ["day"]],
+    question: "", why: "", examples: [], count: 2, bytes: 57_300_000_000)
+  equal(
+    AutopilotPolicy.card(draftCopies).cautions,
+    ["Work only on this Mac", "Has unsaved changes", "Unused since yesterday"],
+    "what makes burning riskier stands out")
+  let lonelyServer = AutopilotQuestion(
+    kind: .process, match: ["family": ["node"], "idle": ["1d"], "listening": ["yes"]],
+    question: "", why: "", examples: [], count: 1, bytes: 3_200_000_000)
+  let serverCard = AutopilotPolicy.card(lonelyServer)
+  equal(serverCard.headline, "Burn 1 leftover Node program?")
+  equal(serverCard.frees, "Frees 3.2 GB of memory")
+  equal(serverCard.facts, ["Still running a server", "Idle 1+ day"])
+  equal(serverCard.note, "It just gets asked to quit.")
+  equal([serverCard.yes, serverCard.no], ["Yes, burn it", "No, keep it"])
+  let caches = AutopilotQuestion(
+    kind: .disk, match: ["folder": ["package-cache"], "home": ["global-cache"], "stale": ["day"]],
+    question: "", why: "", examples: [], count: 5, bytes: 20_290_000_000)
+  let cachesCard = AutopilotPolicy.card(caches)
+  equal(cachesCard.headline, "Burn 5 tool caches?")
+  equal(cachesCard.facts, ["Unused since yesterday"])
+  equal(cachesCard.note, "Your tools rebuild them when needed.")
+  equal(
+    AutopilotPolicy.ruleTitle(agentCopies, answer: .yes),
+    "Burn: Old project copies · Saved on GitHub · Unused for a week · Made by Patrol6 agents")
+  equal(
+    AutopilotPolicy.ruleTitle(lonelyServer, answer: .no),
+    "Keep: Leftover Node programs · Still running a server · Idle 1+ day")
+
   let valued = AutopilotPolicy.proposeQuestions(many + few + crumbs, memory: AutopilotMemory())
   equal(valued.first?.match["saved"], ["pushed"], "two 5 GB copies beat thirty 150 MB ones")
   checkFalse(valued.contains { $0.kind == .disk }, "750 MB of folders isn't worth a question")

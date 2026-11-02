@@ -3,7 +3,7 @@ import BurnCore
 import SwiftUI
 
 /// "Teach BZ": one big yes/no question at a time, in words a ten-year-old can follow.
-/// Each answer becomes a rule, so a dozen answers is usually enough for BZ to run alone.
+/// Each answer becomes a rule that BZ applies on its own from then on.
 struct TeachView: View {
   static let size = NSSize(width: 640, height: 560)
 
@@ -86,47 +86,48 @@ struct TeachView: View {
           .font(.system(size: 13)).foregroundStyle(BurnTheme.muted)
       }
       Spacer(minLength: 12)
-      HStack(spacing: 10) {
-        TrainingRing(progress: snapshot.trainingProgress)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(AutopilotText.trained(snapshot.trainingProgress))
-            .font(.system(size: 14, weight: .semibold))
-          if !snapshot.entries.isEmpty {
-            Text("I handle \(AutopilotText.percent(snapshot.coverage))% on my own")
-              .font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
-          }
-        }
-      }
+      progress
     }.padding(.horizontal, 28).padding(.vertical, 16)
   }
 
-  private func questionCard(_ question: AutopilotQuestion) -> some View {
-    VStack(spacing: 16) {
-      Text("Question \(answeredHere + 1) of \(answeredHere + waiting.count)")
-        .font(.system(size: 13, weight: .semibold)).foregroundStyle(BurnTheme.muted)
-      Text(AutopilotLook.emoji(question.kind)).font(.system(size: 50))
-      Text(question.question)
-        .font(.system(size: 26, weight: .bold, design: .rounded))
-        .multilineTextAlignment(.center).lineLimit(4).minimumScaleFactor(0.75)
-        .fixedSize(horizontal: false, vertical: true)
-      if !question.why.isEmpty {
-        Text(question.why).font(.system(size: 16)).foregroundStyle(BurnTheme.muted)
-          .multilineTextAlignment(.center)
-      }
-      if !question.examples.isEmpty {
-        HStack(spacing: 8) {
-          ForEach(Array(question.examples.prefix(3).enumerated()), id: \.offset) { pair in
-            AutopilotChip(text: pair.element)
+  /// Where this round of questions stands: one dot per question, filled once answered.
+  @ViewBuilder private var progress: some View {
+    let total = answeredHere + waiting.count
+    if total > 0 {
+      VStack(alignment: .trailing, spacing: 6) {
+        HStack(spacing: 6) {
+          ForEach(0..<min(total, 8), id: \.self) { index in
+            Circle().fill(index < answeredHere ? BurnTheme.orange : Color.white.opacity(0.2))
+              .overlay(Circle().strokeBorder(index == answeredHere ? BurnTheme.orange : .clear, lineWidth: 2))
+              .frame(width: 10, height: 10)
           }
         }
+        Text(waiting.isEmpty ? "All done" : "Question \(answeredHere + 1) of \(total)")
+          .font(.system(size: 13, weight: .semibold)).foregroundStyle(BurnTheme.muted)
       }
+    }
+  }
+
+  /// A short headline, what it frees, a few facts as chips and one reassuring line.
+  private func questionCard(_ question: AutopilotQuestion) -> some View {
+    let card = AutopilotPolicy.card(question)
+    return VStack(spacing: 14) {
+      Text(AutopilotLook.emoji(question.kind)).font(.system(size: 48))
+      Text(card.headline)
+        .font(.system(size: 32, weight: .bold, design: .rounded))
+        .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.8)
+      Text(card.frees)
+        .font(.system(size: 22, weight: .heavy, design: .rounded)).foregroundStyle(BurnTheme.orange)
+      facts(card.facts, cautions: Set(card.cautions))
+      Text(card.note).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
+        .multilineTextAlignment(.center)
       HStack(spacing: 14) {
         answerButton(
-          "Yes, burn them", fill: AutopilotTheme.green, text: Color.black.opacity(0.86),
+          card.yes, fill: AutopilotTheme.green, text: Color.black.opacity(0.86),
           stroke: Color.clear, id: "teach-yes"
         ) { answer(question, .yes) }
         answerButton(
-          "No, keep them", fill: Color.white.opacity(0.10), text: BurnTheme.cream,
+          card.no, fill: Color.white.opacity(0.10), text: BurnTheme.cream,
           stroke: Color.white.opacity(0.22), id: "teach-no"
         ) { answer(question, .no) }
       }
@@ -137,6 +138,28 @@ struct TeachView: View {
           .foregroundStyle(BurnTheme.muted)
       }.buttonStyle(.plain).clickPointer().accessibilityIdentifier("teach-skip")
     }.padding(.horizontal, 36).padding(.vertical, 18)
+  }
+
+  /// Two chips per row, so no fact is ever cut short; the risky ones stand out in amber.
+  private func facts(_ facts: [String], cautions: Set<String>) -> some View {
+    VStack(spacing: 8) {
+      ForEach(Array(stride(from: 0, to: facts.count, by: 2)), id: \.self) { start in
+        HStack(spacing: 8) {
+          ForEach(facts[start..<min(start + 2, facts.count)], id: \.self) { fact in
+            let caution = cautions.contains(fact)
+            HStack(spacing: 5) {
+              if caution { Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 11)) }
+              Text(fact)
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(caution ? Color.orange : BurnTheme.cream)
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .background(caution ? Color.orange.opacity(0.14) : Color.white.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(caution ? Color.orange.opacity(0.5) : BurnTheme.line))
+          }
+        }
+      }
+    }
   }
 
   private func answerButton(
@@ -168,16 +191,11 @@ struct TeachView: View {
     VStack(spacing: 14) {
       Text("🎉").font(.system(size: 60))
       Text("All caught up!").font(.system(size: 32, weight: .bold, design: .rounded))
-      Text("BZ doesn't need anything from you right now.")
+      Text("Nothing big needs you right now.")
         .font(.system(size: 18)).foregroundStyle(BurnTheme.muted)
         .multilineTextAlignment(.center)
-      Text("I'll let you know if I have new questions.")
+      Text("I'll ask when I find something worth it.")
         .font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
-      HStack(spacing: 10) {
-        TrainingRing(progress: snapshot.trainingProgress, size: 56)
-        Text(AutopilotText.trained(snapshot.trainingProgress))
-          .font(.system(size: 17, weight: .semibold))
-      }.padding(.top, 8)
     }.padding(36)
   }
 

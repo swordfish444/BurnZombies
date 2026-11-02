@@ -25,8 +25,11 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 
 BurnZombies groups unsure items into patterns and asks about the one that frees the most first. A pattern must free at least 1 GB to be worth a question. At most three questions are open at a time, one big card at a time:
 
-> **Can I burn old copies of your projects that are already saved on GitHub?**
-> I found 212 like this, using 48 GB. — *Yes, burn them* · *No, keep them* · *Not sure — skip*
+> **Burn 92 old project copies?**
+> **Frees 14.4 GB** · `Saved on GitHub` `Unused for a week` `Made by Patrol6 agents`
+> Each one is backed up first, so you can undo it. — *Yes, burn them* · *No, keep them* · *Not sure — skip*
+
+Facts that make burning riskier (work only on this Mac, unsaved changes, still running a server, used since yesterday) show in amber. The header shows where you are in the current round of questions, never a percentage.
 
 Yes and No become rules immediately (and burn right away for Yes). Skip hides the question for a day. Settings → **What BZ has learned** lists every rule in plain English with a Forget button; **Start training over** clears them.
 

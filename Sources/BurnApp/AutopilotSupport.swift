@@ -55,8 +55,6 @@ enum AutopilotText {
   static func number(_ n: Int) -> String { n.formatted() }
   static func things(_ n: Int) -> String { n == 1 ? "1 thing" : "\(n.formatted()) things" }
   static func size(_ bytes: UInt64) -> String { bytes == 0 ? "—" : AutopilotPolicy.format(bytes) }
-  static func percent(_ value: Double) -> Int { max(0, min(100, Int((value * 100).rounded()))) }
-  static func trained(_ progress: Double) -> String { "BZ is \(percent(progress))% trained" }
   static func questions(_ n: Int) -> String { "BZ has \(n) quick question" + (n == 1 ? "" : "s") }
 
   /// "I found 1,014 things. I'll burn 812 on my own, I'm keeping 199, and I need your help with 3."
@@ -322,23 +320,6 @@ struct AutopilotChip: View {
       .frame(maxWidth: 190)
       .background(Color.white.opacity(0.08), in: Capsule())
       .overlay(Capsule().strokeBorder(BurnTheme.line))
-  }
-}
-
-/// The training ring: how much of the way BZ is to running without help.
-struct TrainingRing: View {
-  let progress: Double
-  var size: CGFloat = 46
-  var body: some View {
-    let value = max(0.0, min(1.0, progress))
-    ZStack {
-      Circle().stroke(Color.white.opacity(0.12), lineWidth: 6)
-      Circle().trim(from: 0, to: max(0.004, value))
-        .stroke(BurnTheme.orange, style: StrokeStyle(lineWidth: 6, lineCap: .round))
-        .rotationEffect(.degrees(-90))
-      Text("\(AutopilotText.percent(progress))%")
-        .font(.system(size: size * 0.27, weight: .bold, design: .rounded)).monospacedDigit()
-    }.frame(width: size, height: size)
   }
 }
 

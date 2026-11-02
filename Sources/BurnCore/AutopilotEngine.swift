@@ -256,7 +256,8 @@ public actor Autopilot {
         memory.questions[i].examples = Array(
           matching.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name))
       }
-      memory.questions.removeAll { $0.isOpen && $0.count == 0 }
+      // Once burns shrink a pattern below what a question is worth, it stops being asked.
+      memory.questions.removeAll { $0.isOpen && $0.bytes < AutopilotPolicy.worthAsking }
       memory.questions += AutopilotPolicy.proposeQuestions(unsure, memory: memory, now: now)
     }
   }
@@ -333,8 +334,15 @@ public actor Autopilot {
       result.bytes[entry.status.rawValue, default: 0] += entry.item.bytes
     }
     result.questions = memory.openQuestions.filter { $0.count > 0 }
+    // Rules taught by a question read like its card, even rules taught with older words.
+    let taught = Dictionary(memory.questions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     result.rules =
-      memory.rules
+      memory.rules.map { rule in
+        guard let question = rule.questionID.flatMap({ taught[$0] }) else { return rule }
+        var shown = rule
+        shown.title = AutopilotPolicy.ruleTitle(question, answer: rule.verdict == .burn ? .yes : .no)
+        return shown
+      }
       + AutopilotPolicy.starterRules.map { rule in
         var copy = rule
         copy.enabled = !memory.starterDisabled.contains(rule.id)
