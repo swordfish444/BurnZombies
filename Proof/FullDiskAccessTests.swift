@@ -1,4 +1,5 @@
 import BurnCore
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -21,28 +22,28 @@ func fullDiskAccessProof() async throws {
     calls += 1
     return fixtureAccess()
   }
-  checkFalse(FullDiskAccess.status(root: root, executableDigest: "build-a", probe: allowed).canScan)
+  checkFalse(FullDiskAccess.status(root: root, identity: "build-a", probe: allowed).canScan)
   equal(calls, 0, "Cold setup must not touch protected paths")
   let confirmed = try FullDiskAccess.confirmSetup(
-    root: root, executableDigest: "build-a", probe: allowed)
+    root: root, identity: "build-a", probe: allowed)
   check(confirmed.canScan)
   equal(calls, 1)
-  check(FullDiskAccess.status(root: root, executableDigest: "build-a", probe: allowed).canScan)
+  check(FullDiskAccess.status(root: root, identity: "build-a", probe: allowed).canScan)
   equal(calls, 2, "Restart revalidates capability, not just the saved Boolean")
-  checkFalse(FullDiskAccess.status(root: root, executableDigest: "build-b", probe: allowed).canScan)
+  checkFalse(FullDiskAccess.status(root: root, identity: "build-b", probe: allowed).canScan)
   equal(calls, 2, "A new ad-hoc binary requires explicit setup confirmation before probing")
-  let revoked = FullDiskAccess.status(root: root, executableDigest: "build-a", probe: { .init() })
+  let revoked = FullDiskAccess.status(root: root, identity: "build-a", probe: { .init() })
   checkFalse(revoked.canScan)
-  checkFalse(FullDiskAccess.status(root: root, executableDigest: "build-a", probe: allowed).canScan)
+  checkFalse(FullDiskAccess.status(root: root, identity: "build-a", probe: allowed).canScan)
   equal(calls, 2, "Denied access must not repeatedly probe protected folders")
   let unidentified = try FullDiskAccess.confirmSetup(
-    root: root, executableDigest: nil, probe: allowed)
+    root: root, identity: nil, probe: allowed)
   checkFalse(unidentified.canScan)
   equal(calls, 2, "Unknown executable identity must not probe or allow scanning")
   let unknown = try FullDiskAccess.confirmSetup(
-    root: root, executableDigest: "build-a", probe: { .init(state: .unknown) })
+    root: root, identity: "build-a", probe: { .init(state: .unknown) })
   checkFalse(unknown.canScan)
-  checkFalse(FullDiskAccess.status(root: root, executableDigest: "build-a", probe: allowed).canScan)
+  checkFalse(FullDiskAccess.status(root: root, identity: "build-a", probe: allowed).canScan)
   equal(calls, 2)
   equal(
     FullDiskAccess.evaluate(paths: ["mail", "messages"], probe: { _ in .missing }).state, .unknown)
@@ -58,6 +59,30 @@ func fullDiskAccessProof() async throws {
     FullDiskAccess.evaluate(
       paths: ["mail", "messages"], probe: { $0 == "mail" ? .readable : .missing }
     ).state, .granted)
+
+  // macOS keeps a privacy grant for every build from the same signer, so BZ's record does too;
+  // each ad-hoc build is still a new app that needs explicit setup.
+  let signer = Data("certificate-a".utf8)
+  let firstBuild = FullDiskAccess.identity(certificate: signer, executable: Data("build-1".utf8))
+  let nextBuild = FullDiskAccess.identity(certificate: signer, executable: Data("build-2".utf8))
+  equal(firstBuild, nextBuild, "an update from the same signer is the same app")
+  checkFalse(
+    firstBuild
+      == FullDiskAccess.identity(
+        certificate: Data("certificate-b".utf8), executable: Data("build-1".utf8)),
+    "another signer is another app")
+  let adHoc = FullDiskAccess.identity(certificate: nil, executable: Data("build-1".utf8))
+  checkFalse(
+    adHoc == FullDiskAccess.identity(certificate: nil, executable: Data("build-2".utf8)),
+    "every ad-hoc build is a new app")
+  equal(
+    adHoc, SHA256.hash(data: Data("build-1".utf8)).map { String(format: "%02x", $0) }.joined(),
+    "ad-hoc identities are unchanged, so existing records still match")
+  let updated = root.appendingPathComponent("updated")
+  _ = try FullDiskAccess.confirmSetup(root: updated, identity: firstBuild, probe: allowed)
+  check(
+    FullDiskAccess.status(root: updated, identity: nextBuild, probe: allowed).canScan,
+    "access survives an update from the same signer")
 
   var catalog = Catalog()
   catalog.lifetimeVerified = 3

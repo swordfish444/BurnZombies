@@ -45,13 +45,23 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>BurnZombiesApp</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.13.0</string>
-<key>CFBundleVersion</key><string>35</string>
+<key>CFBundleVersion</key><string>36</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
-codesign --force --sign - "$bundle/Contents/MacOS/burnzombies"
-codesign --force --sign - "$bundle/Contents/MacOS/burnzombies-mcp"
-codesign --force --sign - "$bundle"
-echo "Built $bundle (local ad-hoc signature; not notarized)."
+# macOS keys privacy grants such as Full Disk Access to the signer. One stable identity keeps
+# them across updates; an ad-hoc signature makes every build a new app that must be allowed again.
+identity="${BURNZOMBIES_SIGNING_IDENTITY:-BurnZombies Local Signing}"
+if security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
+  signer="$identity"
+  signature="signed by \"$identity\", so macOS keeps Full Disk Access across updates"
+else
+  signer="-"
+  signature="local ad-hoc signature: macOS asks for Full Disk Access again after every update until you run scripts/ensure-signing-identity.sh once"
+fi
+codesign --force --sign "$signer" "$bundle/Contents/MacOS/burnzombies"
+codesign --force --sign "$signer" "$bundle/Contents/MacOS/burnzombies-mcp"
+codesign --force --sign "$signer" "$bundle"
+echo "Built $bundle ($signature; not notarized)."

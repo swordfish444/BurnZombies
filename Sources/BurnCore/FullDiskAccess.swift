@@ -2,6 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import OSLog
+import Security
 
 public enum FullDiskAccessState: String, Codable, Sendable { case required, unknown, granted }
 
@@ -23,26 +24,30 @@ public enum FullDiskAccess {
   }
   private static let lock = NSLock()
   private static let logger = Logger(subsystem: "io.burnzombies.app", category: "disk-access")
-  // A different ad-hoc build is a different privacy identity. Helpers bind to the
-  // same app executable, but verify their own inherited operational capability.
+  // macOS ties a privacy grant to the app's signer: every build signed with the same
+  // certificate is the same app, while each ad-hoc build is a new one. BZ's record follows
+  // the same rule. Helpers bind to the same app bundle, but verify their own inherited
+  // operational capability.
   private static let digest: String? = {
     var executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.resolvingSymlinksInPath()
     let macOS = executable.deletingLastPathComponent()
+    var bundle: URL?
     if macOS.lastPathComponent == "MacOS", macOS.deletingLastPathComponent().lastPathComponent == "Contents" {
       executable = macOS.appendingPathComponent("BurnZombiesApp")
+      bundle = macOS.deletingLastPathComponent().deletingLastPathComponent()
     }
     guard let data = try? Data(contentsOf: executable, options: .mappedIfSafe) else { return nil }
-    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    return identity(certificate: bundle.flatMap(leafCertificate), executable: data)
   }()
 
   public static func status(root: URL = Store.defaultRoot) -> FullDiskAccessStatus {
     lock.withLock {
-      status(root: root, executableDigest: digest, probe: probe)
+      status(root: root, identity: digest, probe: probe)
     }
   }
   // Injectable functions keep tests off protected user paths; production has no
   // environment variable or persisted Boolean that alone grants scan access.
-  public static func status(root: URL, executableDigest: String?, probe: () -> FullDiskAccessStatus) -> FullDiskAccessStatus {
+  public static func status(root: URL, identity executableDigest: String?, probe: () -> FullDiskAccessStatus) -> FullDiskAccessStatus {
     guard let executableDigest, let store = try? Store(root: root),
       let data = try? store.read(root.appendingPathComponent("full-disk-access.json"), limit: 4096),
       let receipt = try? JSONDecoder().decode(Receipt.self, from: data),
@@ -57,15 +62,38 @@ public enum FullDiskAccess {
     return result
   }
   public static func confirmSetup(root: URL = Store.defaultRoot) throws -> FullDiskAccessStatus {
-    try lock.withLock { try confirmSetup(root: root, executableDigest: digest, probe: probe) }
+    try lock.withLock { try confirmSetup(root: root, identity: digest, probe: probe) }
   }
-  public static func confirmSetup(root: URL, executableDigest: String?, probe: () -> FullDiskAccessStatus) throws -> FullDiskAccessStatus {
+  public static func confirmSetup(root: URL, identity executableDigest: String?, probe: () -> FullDiskAccessStatus) throws -> FullDiskAccessStatus {
     guard let executableDigest else { return .init(state: .unknown, detail: "This app build could not be verified. Reinstall BurnZombies before checking access.") }
     let store = try Store(root: root)
     let result = probe()
     try store.write(JSONEncoder().encode(Receipt(executableDigest: executableDigest, verified: result.canScan)),
       to: root.appendingPathComponent("full-disk-access.json"), limit: 4096)
     return result
+  }
+  /// The app's privacy identity: its signing certificate when it has one, so an update from
+  /// the same signer keeps access; otherwise the executable itself, as for any ad-hoc build.
+  public static func identity(certificate: Data?, executable: Data) -> String {
+    func hex(_ data: Data) -> String {
+      SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    return certificate.map { "signer:" + hex($0) } ?? hex(executable)
+  }
+
+  /// The leaf certificate a bundle is signed with; nil for an ad-hoc signature.
+  static func leafCertificate(_ bundle: URL) -> Data? {
+    var code: SecStaticCode?
+    guard SecStaticCodeCreateWithPath(bundle as CFURL, [], &code) == errSecSuccess, let code
+    else { return nil }
+    var information: CFDictionary?
+    guard
+      SecCodeCopySigningInformation(
+        code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+      let certificates = (information as? [String: Any])?[kSecCodeInfoCertificates as String]
+        as? [SecCertificate], let leaf = certificates.first
+    else { return nil }
+    return SecCertificateCopyData(leaf) as Data
   }
   public static func requireAccess(root: URL = Store.defaultRoot) throws {
     let access = status(root: root)
@@ -111,7 +139,7 @@ public enum FullDiskAccess {
       case .missing: break
       }
     }
-    if readable && !unavailable { return .init(state: .granted, detail: "Protected-folder access verified for this app build. Each cleanup still requires its own safety checks.") }
+    if readable && !unavailable { return .init(state: .granted, detail: "Protected-folder access verified for this app. Each cleanup still requires its own safety checks.") }
     return .init(state: .unknown, detail: "Access could not be verified on this Mac. Scans remain paused; confirm Full Disk Access in System Settings and check again.")
   }
 }

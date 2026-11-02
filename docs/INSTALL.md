@@ -26,7 +26,11 @@ Check setup from an agent without opening a window:
 ~/Applications/BurnZombies.app/Contents/MacOS/burnzombies access-status
 ```
 
-**After an update:** current releases are ad-hoc signed, so macOS may not recognize the updated executable as the app you previously approved. BurnZombies requires a fresh access check for a changed build. If the switch is already on but access fails, remove the old BurnZombies entry, add the installed app again and enable it, then reopen the app and check again. Stable Developer ID signing is still needed for reliable permission continuity between releases.
+**After an update:** macOS keys Full Disk Access to the app's signer. A build signed with the same certificate keeps the grant, and BurnZombies keeps its own access check with it. An ad-hoc build (the default without a certificate, including current releases) is a new app to macOS each time, so it needs the switch and a fresh access check after every update.
+
+**Keep access across your own builds:** run `scripts/ensure-signing-identity.sh` once. It creates a local "BurnZombies Local Signing" code-signing certificate in your login keychain, trusted for code signing only, and macOS asks for your password once. From then on `scripts/build-app.sh` signs every build with it; allow Full Disk Access one last time and later updates keep it. Set `BURNZOMBIES_SIGNING_IDENTITY` to use a certificate you already have. Releases need Developer ID signing for the same continuity.
+
+If the switch is already on but access fails, remove the old BurnZombies entry, add the installed app again and enable it, then reopen the app and check again.
 
 Full Disk Access enables inspection; it does not approve deletion, bypass ownership or retention checks, or remove all macOS restrictions. Incomplete visibility still blocks raw worktree and folder cleanup. See [Apple's access controls](https://support.apple.com/en-ca/guide/security/secddd1d86a6/web) and [Apple's explanation of access verification](https://developer.apple.com/forums/thread/835851).
 
