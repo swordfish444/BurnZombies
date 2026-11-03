@@ -3,6 +3,9 @@ import Foundation
 /// Private JSON documents under `<root>/autopilot/`, written atomically with bounded reads.
 public final class AutopilotStore: @unchecked Sendable {
   public static let maximumReceipts = 500
+  /// Refusals are kept apart from `maximumReceipts`: they only stop a copy from being tried again
+  /// on every tick.
+  public static let maximumRefusals = 500
   public static let maximumJudgments = 5000
   private let store: Store
   private let lock = NSLock()
@@ -72,15 +75,21 @@ public final class AutopilotStore: @unchecked Sendable {
     try lock.withLock {
       var all = try load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())
       try change(&all)
-      // Refusals go first, so a stream of them never pushes out a burn the owner may restore.
-      var excess = all.count - Self.maximumReceipts
-      all.removeAll { receipt in
-        guard excess > 0, receipt.outcome == "refused" else { return false }
-        excess -= 1
-        return true
-      }
-      if excess > 0 { all.removeFirst(excess) }
+      // Refusals and everything else are bounded apart, oldest first: a stream of refusals never
+      // pushes out a burn the owner may restore, and a full history of burns never erases the
+      // refusal that keeps a copy from being tried again on every tick.
+      Self.trim(&all, refusals: true, to: Self.maximumRefusals)
+      Self.trim(&all, refusals: false, to: Self.maximumReceipts)
       try save(all, "receipts.json", limit: 8 << 20)
+    }
+  }
+
+  private static func trim(_ all: inout [AutopilotReceipt], refusals: Bool, to limit: Int) {
+    var excess = all.count { ($0.outcome == "refused") == refusals } - limit
+    all.removeAll { receipt in
+      guard excess > 0, (receipt.outcome == "refused") == refusals else { return false }
+      excess -= 1
+      return true
     }
   }
 
