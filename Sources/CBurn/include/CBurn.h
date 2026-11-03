@@ -22,6 +22,7 @@ int bz_listening(int32_t pid);
 int bz_agent_markers(int32_t pid);
 int bz_command_line(int32_t pid, char *out, int capacity);
 int bz_path_in_use(const char *root);
+void bz_guard_paths(const char *const *paths, int count);
 int bz_worktree_pid_paths(int pid, void (*visit)(void *, const char *), void *context, char *gap, size_t gap_size);
 int bz_worktree_paths(void (*visit)(void *, const char *), void *context, char *gap, size_t gap_size);
 int bz_worktree_lsof_parse(const char *input, size_t size, int pid, const int *fds, int count,
@@ -59,6 +60,7 @@ typedef struct {
     int finished;
 } bz_disk_node;
 void *bz_disk_open(const char *path, int depth);
+int bz_disk_exclude(void *walk, const char *path);
 int bz_disk_step(void *walk, int entries);
 int bz_disk_count(void *walk);
 int bz_disk_node_at(void *walk, int index, bz_disk_node *out);

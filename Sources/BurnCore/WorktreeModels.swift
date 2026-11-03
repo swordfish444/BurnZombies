@@ -52,6 +52,7 @@ public struct WorktreeRecord: Codable, Identifiable, Sendable {
   public var readinessRevision: String?
   public var lastCommitAt: Date?
   public var lastFileChange: Date?
+  public var protectedPlace: String?
   public var apparentIdleDays: Int? {
     let dates = [lastCommitAt, lastFileChange].compactMap { $0 }
     guard let latest = dates.max(), latest <= Date() else { return nil }

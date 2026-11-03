@@ -2,12 +2,13 @@ import Foundation
 
 extension WorktreeService {
   public func tick() async throws -> [ReviewEvidence]? {
-    try requireAccess()
     try refreshDiscoveryRoots()
     // An existing flight owns publication. Do not replace its previous evidence
     // with a transient error, nor begin a second inspection batch.
     guard !scanning, !executing, !refreshingFindings else { return nil }
-    if !scanning, !executing, Date().timeIntervalSince(lastScan) >= 6 * 3600,
+    // Turning Full Disk Access on or off changes what a scan covers, so scan again.
+    let accessChanged = scannedUnrestricted != nil && scannedUnrestricted != scope().unrestricted
+    if !scanning, !executing, Date().timeIntervalSince(lastScan) >= 6 * 3600 || accessChanged,
       !(try policy().roots).isEmpty
         || FileManager.default.fileExists(
           atPath: store.root.appendingPathComponent("workspaces").path)
@@ -23,6 +24,7 @@ extension WorktreeService {
   /// native consumer snapshot, with a bounded inspection budget each tick.
   private func refreshKnownFindings() async throws {
     let p = try policy()
+    let protected = scope()
     let privateRoot = store.root.appendingPathComponent("workspaces").path
     func unblocked(_ row: WorktreeRecord) -> Bool {
       row.consumer == "none observed" && row.blockers.isEmpty && row.gaps.isEmpty
@@ -32,6 +34,7 @@ extension WorktreeService {
     }
     let candidates = try records().filter { row in
       !row.main && !row.bare && !row.retired && !row.kept && !row.ownerManaged
+        && protected.allows(row.path) && protected.allows(row.repository)
         && Date().timeIntervalSince(row.observedAt)
           >= (pending(row) ? 0 : unblocked(row) ? 120 : 900)
         && (p.roots.contains(where: { WorkspaceSafety.contains($0, row.path) })
@@ -111,7 +114,7 @@ extension WorktreeService {
       for row in rows {
         try Task.checkCancellation()
         guard ProcessInfo.processInfo.systemUptime < deadline else { break }
-        result.append(WorktreeInspection.inspect(row, visibility: visibility))
+        result.append(WorktreeInspection.inspect(row, visibility: visibility, protected: protected))
       }
       return result
     }
@@ -121,7 +124,6 @@ extension WorktreeService {
   /// Bypass only the observer cadence. Reuse a scan in flight and wait natively,
   /// leaving it owned by the service if the caller cancels or exhausts its budget.
   public func refreshForHunt(timeout: TimeInterval) async throws -> [ReviewEvidence] {
-    try requireAccess()
     try refreshDiscoveryRoots()
     let deadline = ProcessInfo.processInfo.systemUptime + max(0, timeout)
     func waitForReadiness() async throws {
@@ -152,6 +154,7 @@ extension WorktreeService {
     let p = try policy()
     let now = Date()
     let advice = try store.values(WorktreeAdvice.self, kind: "advice")
+    let protected = scope()
     var queue: [ReviewEvidence] = []
     let legacy = try legacyClaims()
     for c in legacy where c.state == "released" {
@@ -164,7 +167,9 @@ extension WorktreeService {
           processCount: 0))
     }
     for r in try records() where !r.retired && !r.kept && !r.main && !r.bare {
-      guard p.roots.contains(where: { WorkspaceSafety.contains($0, r.path) }) else { continue }
+      guard p.roots.contains(where: { WorkspaceSafety.contains($0, r.path) }),
+        protected.allows(r.path), protected.allows(r.repository)
+      else { continue }
       if legacy.contains(where: { $0.id == r.id }) { continue }
       if (try? eligible(r, dirty: false, automatic: true)) != nil {
         queue.append(

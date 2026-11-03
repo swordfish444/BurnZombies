@@ -47,7 +47,7 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         return result
     first = install("none")
-    assert 'Required setup:' in first.stdout and 'Full Disk Access' in first.stdout
+    assert 'Optional setup:' in first.stdout and 'Full Disk Access' in first.stdout
     app = destination / "BurnZombies.app"
     install("none")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)

@@ -938,7 +938,7 @@ struct Dashboard: View {
         ).font(.system(size: 25, weight: .semibold, design: .rounded))
         Text(
           !model.accessReady
-            ? "Grant Full Disk Access to begin whole-Mac discovery and background reviews."
+            ? "Turn on Full Disk Access to run background reviews and cover the places macOS protects."
             : attention == 0
               ? "Your connected agent reviews live evidence and decides what is safe to stop."
               : "\(attention) activities need a look. \(eligible) have enough ownership evidence to review for cleanup."
@@ -1148,7 +1148,7 @@ struct Dashboard: View {
       ForEach(Array(model.state.catalog.preferences.protectedExecutables).sorted(), id: \.self) {
         p in
         HStack {
-          Text(URL(fileURLWithPath: p).lastPathComponent).font(.callout)
+          Text((p as NSString).lastPathComponent).font(.callout)
           Spacer()
           Button("Remove") { model.unprotect(p) }.clickPointer()
         }

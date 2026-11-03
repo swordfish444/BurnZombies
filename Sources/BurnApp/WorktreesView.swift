@@ -134,7 +134,8 @@ struct WorktreesView: View {
       }
       if let error = model.state.worktreeError { Text(error).foregroundStyle(.orange).padding() }
       if !model.accessReady {
-        Text(model.state.fullDiskAccess.detail).foregroundStyle(.orange).padding()
+        Text(ProtectedLocations.note(skipped: [])).font(.caption).foregroundStyle(.secondary)
+          .padding(.horizontal, 20)
       }
       if tab == "Worktrees" {
         HSplitView {
@@ -160,12 +161,12 @@ struct WorktreesView: View {
               List(selection: $selected) {
                 ForEach(Array(Set(rows.map(\.repository))).sorted(), id: \.self) { repository in
                   Section(
-                    URL(fileURLWithPath: repository).deletingLastPathComponent().lastPathComponent
+                    ((repository as NSString).deletingLastPathComponent as NSString).lastPathComponent
                   ) {
                     ForEach(rows.filter { $0.repository == repository }) { row in
                       VStack(alignment: .leading, spacing: 5) {
                         HStack {
-                          Text(URL(fileURLWithPath: row.path).lastPathComponent).fontWeight(
+                          Text((row.path as NSString).lastPathComponent).fontWeight(
                             .semibold)
                           Spacer()
                           if row.kept { Image(systemName: "pin.fill") }
@@ -316,7 +317,7 @@ struct WorktreesView: View {
   }
   @ViewBuilder func detail(_ row: WorktreeRecord) -> some View {
     VStack(alignment: .leading, spacing: 18) {
-      Text(URL(fileURLWithPath: row.path).lastPathComponent).font(.title.bold())
+      Text((row.path as NSString).lastPathComponent).font(.title.bold())
       Text(row.state).font(.headline).foregroundStyle(BurnTheme.orange)
       Text(row.path).font(.caption.monospaced()).textSelection(.enabled)
       Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 12) {
@@ -461,7 +462,7 @@ struct WorktreesView: View {
     List(inventory.operations, id: \.id) { op in
       VStack(alignment: .leading, spacing: 8) {
         HStack {
-          Text(URL(fileURLWithPath: op.originalPath).lastPathComponent).font(.headline)
+          Text((op.originalPath as NSString).lastPathComponent).font(.headline)
           Spacer()
           Text(op.phase).foregroundStyle(
             op.phase == "completed" || op.phase == "rescued" ? .green : .orange)
@@ -531,7 +532,7 @@ struct WorktreesView: View {
     let panel = NSSavePanel()
     panel.title = "Restore as a new directory"
     panel.nameFieldStringValue =
-      URL(fileURLWithPath: op.originalPath).lastPathComponent + "-restored"
+      (op.originalPath as NSString).lastPathComponent + "-restored"
     if panel.runModal() == .OK, let url = panel.url {
       run(.init("restore", id: op.id, path: WorkspaceSafety.canonical(url.path)))
     }

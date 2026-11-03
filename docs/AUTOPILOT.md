@@ -21,6 +21,14 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program without an open port, a copy not owned by Codex/Claude/Conductor that nothing uses, or a known junk folder.
 6. Everything else is **unsure** and becomes training material.
 
+## Full Disk Access
+
+Optional. Without it, Autopilot handles all three kinds of leftovers everywhere except the places macOS protects: Desktop, Documents, Downloads, iCloud Drive and other cloud drives, Mail, Messages, Photos, other apps' data, and removable and network drives. It never looks inside them, so macOS never asks for access, and it never counts them as empty: copies there are not sized, judged, asked about or burned, and its coverage note says so plainly:
+
+> Full Disk Access is off, so I skip the places macOS protects: Desktop, Documents, Downloads, iCloud Drive, Mail, Messages, Photos, other apps' data and external drives. 1 old copy is in Documents. Turn on Full Disk Access to cover them too. Everything else is covered.
+
+Turn it on and the next inventory refresh brings those places in. Leftover programs are handled either way.
+
 ## Training
 
 BurnZombies asks one question per subject: old project copies, each kind of program (Node, Java, …) and each kind of folder (node_modules, tool caches, …). A question covers everything in its subject that sat unused at least as long as its most recent member, so one answer can settle the whole subject; what makes some of them riskier is counted on the card instead of becoming more questions. After a No, the next question is about the older ones only. It must free at least 1 GB to be asked; the biggest subjects come first, at most three at a time, one big card at a time:
@@ -42,6 +50,7 @@ Native code catalogs and applies rules without any model. When there is somethin
 - Exact identity check (boot, PID, start time, path) immediately before every signal; SIGTERM only.
 - Old copies are only removed after their restore point verifies; submodules with unsaved work, locked copies and in-progress merges/rebases are refused.
 - Junk folders must be a known rebuildable kind, untracked by git, outside private areas (iCloud, Mail, Messages, Photos, `.ssh`, Keychains), and unused by any process.
+- Without Full Disk Access, nothing in a place macOS protects is read, sized, judged or burned, and neither is a copy whose project lives in one.
 - At most 50 programs, 20 copies and 20 junk folders per sweep.
 
 ## Command line

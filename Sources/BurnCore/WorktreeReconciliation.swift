@@ -20,6 +20,8 @@ extension WorktreeService {
       throw StoreError.message("Select an uncertain operation and explicitly reconcile recovery.")
     }
     var row = try record(op.worktreeID)
+    try requireReach(row)
+    try requireRegistryReach(op.repository)
     executing = true
     defer { executing = false }
     let repositoryLock = try InstanceLock(
@@ -38,7 +40,7 @@ extension WorktreeService {
       }
       try FileManager.default.removeItem(atPath: check)
       if exists {
-        let fresh = WorktreeInspection.inspect(row, visibility: visibility)
+        let fresh = WorktreeInspection.inspect(row, visibility: visibility, protected: scope())
         guard fresh.identity == row.identity else {
           throw StoreError.message(
             "Original directory identity changed; preserve recovery and resolve ownership.")

@@ -240,7 +240,13 @@ public actor AgentService {
       if offset + 50 < total { reply.nextOffset = offset + 50 }
       return reply
     }
-    if request.operation != "status" {
+    // Worktree and storage work runs without Full Disk Access too: each request checks its own
+    // paths against the places macOS protects. Everything else still needs verified access.
+    let reachable: Set<String> = [
+      "worktrees", "worktrees_read", "disk_inspect", "disk_explore", "disk_recommend",
+      "disk_evidence", "disk_decide", "disk_preview", "disk_clean",
+    ]
+    if request.operation != "status" && !reachable.contains(request.operation) {
       do { try await monitor.requireFullDiskAccess() } catch {
         var reply = AgentReply(ok: false, message: error.localizedDescription)
         reply.fullDiskAccess = (await monitor.snapshot()).fullDiskAccess
@@ -549,14 +555,16 @@ public actor AgentService {
     reply.observedProcesses = state.processCount
     reply.observedAt = state.catalog.lastSample
     reply.partial = state.partial
+    let protected = await monitor.locations()
     reply.disk = Array(
-      (state.fullDiskAccess.canScan ? state.catalog.diskCandidates ?? [] : []).filter {
-        $0.bytes >= DiskCandidate.minimumReviewBytes
+      (state.catalog.diskCandidates ?? []).filter {
+        $0.bytes >= DiskCandidate.minimumReviewBytes && protected.allows($0.path)
           && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id))
       }.prefix(3))
-    reply.diskDiscovery = (state.fullDiskAccess.canScan ? state.catalog.diskDiscovery ?? [] : [])
-      .filter { request.reviewIDs == nil || request.reviewIDs!.contains($0.id) }.prefix(3).map(
-        DiskSpaceSummary.init)
+    reply.diskDiscovery = (state.catalog.diskDiscovery ?? [])
+      .filter {
+        protected.allows($0) && (request.reviewIDs == nil || request.reviewIDs!.contains($0.id))
+      }.prefix(3).map(DiskSpaceSummary.init)
     if !reply.disk.isEmpty || !reply.diskDiscovery.isEmpty || reply.managedCache != nil {
       reply.diskPolicy = (try? await monitor.diskPolicy()).map(DiskReviewPolicy.init)
     }

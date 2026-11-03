@@ -27,6 +27,8 @@ public actor WorktreeService {
   var scanning: Bool { scanFlight != nil }
   var executing = false
   var lastScan = Date.distantPast
+  /// Whether the last scan could look everywhere; a change of access starts a new one.
+  var scannedUnrestricted: Bool?
   var refreshingFindings = false
   var refreshCohort = 0
   var scanGaps: [String] = []
@@ -51,10 +53,13 @@ public actor WorktreeService {
       recoveryKey ?? { try WorktreeRecoveryKey.load(allowInteraction: true) }
     self.interactiveExistingKey =
       recoveryKey ?? { try WorktreeRecoveryKey.load(create: false, allowInteraction: true) }
-    self.scanRunner = scanRunner ?? (visibility == nil ? WorktreeScanRunner() : nil)
+    self.scanRunner =
+      scanRunner ?? (visibility == nil ? WorktreeScanRunner(home: discoveryHome?.path) : nil)
     self.discoveryHome = discoveryHome
     if let home = discoveryHome {
-      try Self.seedRoots(store: store, home: home)
+      try Self.seedRoots(
+        store: store, home: home,
+        protected: ProtectedLocations(access: access(), homes: [home.path]))
     }
     if !legacy.isEmpty {
       try store.put("pending", kind: "migration", id: "legacy")
@@ -128,7 +133,9 @@ public actor WorktreeService {
       }
     }
   }
-  private static func seedRoots(store: WorktreeStore, home: URL) throws {
+  private static func seedRoots(
+    store: WorktreeStore, home: URL, protected: ProtectedLocations
+  ) throws {
     var policy =
       try store.value(WorktreePolicy.self, kind: "policy", id: "current") ?? WorktreePolicy()
     let old = policy.revision
@@ -142,7 +149,8 @@ public actor WorktreeService {
     ]
     .map { home.appendingPathComponent($0).path }
     for path in diskRoots + known {
-      let canonical = WorkspaceSafety.canonical(path)
+      // Whether a protected folder exists is checked once access allows it.
+      guard let canonical = protected.resolve(path) else { continue }
       var directory: ObjCBool = false
       if policy.roots.count < 32, !(policy.removedDiscoveryRoots ?? []).contains(canonical),
         FileManager.default.fileExists(atPath: canonical, isDirectory: &directory),
@@ -158,11 +166,37 @@ public actor WorktreeService {
     if policy.revision != old { try store.put(policy, kind: "policy", id: "current") }
   }
   func refreshDiscoveryRoots() throws {
-    if let home = discoveryHome { try Self.seedRoots(store: store, home: home) }
+    if let home = discoveryHome { try Self.seedRoots(store: store, home: home, protected: scope()) }
   }
+  /// Verified Full Disk Access, for work that still needs it everywhere.
   func requireAccess() throws {
     let a = access()
     guard a.canScan else { throw StoreError.message(a.detail) }
+  }
+  /// What this service may look at now: everything with verified Full Disk Access, otherwise
+  /// all but the places macOS protects. Native consumer checks follow the same decision.
+  func scope() -> ProtectedLocations {
+    let protected = ProtectedLocations(access: access(), homes: discoveryHome.map { [$0.path] } ?? [])
+    protected.guardNativeChecks()
+    return protected
+  }
+  /// A checkout is worked on only when it, its Git pointer and its repository are within reach.
+  func requireReach(_ r: WorktreeRecord) throws {
+    let protected = scope()
+    if let place = protected.place(r.path) ?? protected.place(r.repository)
+      ?? protected.pointerPlace(r.path)
+    {
+      throw StoreError.message(ProtectedLocations.reason(place))
+    }
+  }
+  /// Git looks at every checkout a repository has registered before it adds, moves, removes,
+  /// repairs or lists one, so all of them must be within reach.
+  func requireRegistryReach(_ repository: String) throws {
+    guard let place = scope().registryPlace(repository) else { return }
+    throw StoreError.message(
+      "This repository has a copy in " + place
+        + ", which macOS protects, and Git checks every copy before it changes one. Turn on Full Disk Access to clean up its copies."
+    )
   }
   func intentLedger() throws -> IntentLedger {
     guard let intent else {
@@ -220,7 +254,18 @@ public actor WorktreeService {
     let alias =
       try store.value(
         String.self, kind: "location", id: WorkEvidence.hash(r.repository + "|" + r.path)) ?? r.id
-    if let old = try store.value(WorktreeRecord.self, kind: "record", id: alias) {
+    if let old = try store.value(WorktreeRecord.self, kind: "record", id: alias),
+      r.protectedPlace != nil
+    {
+      // A copy BurnZombies may not look at keeps what was last seen. Only the reason it was
+      // not checked changes, so ownership and decisions wait for access to return.
+      guard !old.retired else { return old }
+      var kept = old
+      kept.protectedPlace = r.protectedPlace
+      kept.gaps = r.gaps
+      kept.consumer = "unknown"
+      r = kept
+    } else if let old = try store.value(WorktreeRecord.self, kind: "record", id: alias) {
       if r.missing && r.identity == nil { r.identity = old.identity }
       if old.retired, let identity = r.identity, identity != old.identity {
         r.id = WorkEvidence.hash(old.id + "|" + identity.id)
@@ -276,15 +321,18 @@ public actor WorktreeService {
     (try? store.values(WorktreeRecord.self, kind: "record", limit: 50_000)) ?? []
   }
   public func inspect(_ id: String) async throws -> WorktreeRecord {
-    try requireAccess()
     let r = try record(id)
+    try requireReach(r)
     let visibility = visibility
+    let protected = scope()
     guard !r.retired else { return r }
     guard
       try policy().roots.contains(where: { WorkspaceSafety.contains($0, r.path) })
         || WorkspaceSafety.contains(store.root.appendingPathComponent("workspaces").path, r.path)
     else { return r }
-    let fresh = try await runWork { WorktreeInspection.inspect(r, visibility: visibility) }
+    let fresh = try await runWork {
+      WorktreeInspection.inspect(r, visibility: visibility, protected: protected)
+    }
     return try publish(fresh)
   }
   public func scan() async throws -> WorktreeReply {
@@ -296,7 +344,6 @@ public actor WorktreeService {
   }
   /// The service owns the flight, so a timed-out Hunt cannot cancel another caller's scan.
   func startScan() throws -> ScanFlight {
-    try requireAccess()
     guard !closing else { throw StoreError.message("Worktree service is closing.") }
     generation += 1
     let current = generation
@@ -321,6 +368,8 @@ public actor WorktreeService {
       roots.append(privateRoot)
     }
     let visibility = visibility
+    let protected = scope()
+    scannedUnrestricted = protected.unrestricted
     let result: WorktreeDiscoveryResult
     if let runner = scanRunner {
       let control = WorktreeScanControl()
@@ -338,7 +387,9 @@ public actor WorktreeService {
           keepGoing: { control.active })
       }
     } else {
-      result = try await runWork { WorktreeDiscovery.scan(roots: roots, visibility: visibility) }
+      result = try await runWork {
+        WorktreeDiscovery.scan(roots: roots, visibility: visibility, protected: protected)
+      }
     }
     guard generation == current else {
       throw StoreError.message("Discovery settings changed; stale scan discarded.")
@@ -524,7 +575,8 @@ public actor WorktreeService {
     }
     if q.action == "list" { return try snapshot(offset: q.offset ?? 0, selectedIDs: q.ids) }
     if q.action == "operations" { return try snapshot(operationOffset: q.offset ?? 0) }
-    try requireAccess()
+    // Full Disk Access is not required here: each action that reads a checkout checks that
+    // it is outside the places macOS protects, unless access is verified.
     guard !executing || ["keep", "retain"].contains(q.action) else {
       throw StoreError.message("A worktree operation is in progress.")
     }
@@ -570,6 +622,8 @@ public actor WorktreeService {
       return reply
     case "registration_advice":
       let row = try expected(q)
+      try requireReach(row)
+      try requireRegistryReach(row.repository)
       let dryRun = try WorktreeGit.text(
         row.repository, ["worktree", "prune", "--dry-run", "--verbose"])
       var reply = try snapshot()
@@ -579,6 +633,9 @@ public actor WorktreeService {
       return reply
     case "refresh_delivery":
       let row = try expected(q)
+      // A fetch can start Git's own housekeeping, which visits every registered copy.
+      try requireReach(row)
+      try requireRegistryReach(row.repository)
       let result = try await runWork { WorktreeOwner.fetch(row) }
       guard try record(row.id).head == row.head else {
         throw StoreError.message("HEAD changed during metadata refresh.")
@@ -606,7 +663,8 @@ public actor WorktreeService {
         kind: "advice", id: r.id)
     case "scan": return try await scan()
     case "add_root", "remove_root":
-      guard let path = q.path, path.hasPrefix("/"), path == WorkspaceSafety.canonical(path),
+      // A folder macOS protects is added by its spelling; scans skip it until access is on.
+      guard let path = q.path, path.hasPrefix("/"), path == scope().canonical(path),
         path != "/", path != NSHomeDirectory(), path.count < 4096
       else { throw StoreError.message("Choose an exact canonical discovery folder.") }
       var p = try policy()

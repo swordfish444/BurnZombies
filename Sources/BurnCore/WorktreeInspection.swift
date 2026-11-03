@@ -228,10 +228,21 @@ public enum WorktreeInspection {
     return (result.sorted { $0.path < $1.path }, allocated)
   }
   public static func inspect(
-    _ original: WorktreeRecord, visibility: (String) -> Int32 = { bz_path_in_use($0) }
+    _ original: WorktreeRecord, visibility: (String) -> Int32 = { bz_path_in_use($0) },
+    protected: ProtectedLocations = .limited()
   ) -> WorktreeRecord {
     var r = original
     r.observedAt = Date()
+    // Without Full Disk Access nothing in a protected place is read, not even whether it exists.
+    if let place = protected.place(r.path) ?? protected.place(r.repository)
+      ?? protected.pointerPlace(r.path)
+    {
+      r.protectedPlace = place
+      r.consumer = "unknown"
+      r.gaps = ["Not checked. " + ProtectedLocations.reason(place)]
+      return r
+    }
+    r.protectedPlace = nil
     r.blockers = []
     r.gaps = []
     r.consumer = "unknown"

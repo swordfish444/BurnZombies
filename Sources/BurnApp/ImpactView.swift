@@ -168,7 +168,7 @@ struct BurnStatus: View {
       if sweep.running || model.huntRunning { return "Hunting Zombies" }
       if !sweep.enabled { return "Autopilot off" }
       if let retry = sweep.retryAfter, retry > Date() { return "Autopilot · AI retrying soon" }
-      // Leftover programs need no special access; old copies and protected folders do.
+      // Without Full Disk Access Autopilot skips only the places macOS protects.
       return model.accessReady ? "Autopilot on" : "Autopilot on · limited"
     }
     if !model.accessReady { return "Setup required" }

@@ -105,18 +105,25 @@ func fullDiskAccessProof() async throws {
     (await monitor.snapshot()).catalog.lastSample, cold.catalog.lastSample,
     "access_status cannot trigger a scan")
   for operation in [
-    "disk_inspect", "disk_explore", "disk_evidence", "disk_clean", "workspace", "workspace_clean",
-    "owner_preview", "owner_stop", "cache_clean", "inspect", "preview", "burn", "lifecycle",
+    "workspace", "workspace_clean", "owner_preview", "owner_stop", "cache_clean", "inspect",
+    "preview", "burn", "lifecycle",
   ] {
     let reply = await service.call(.init(operation))
     checkFalse(reply.ok, "\(operation) bypassed access prerequisite")
     equal(reply.failureKind, "full_disk_access_required")
   }
+  // Storage work needs no Full Disk Access: each request checks its own paths against the
+  // places macOS protects instead, so these fail only for their missing evidence.
+  for operation in ["disk_inspect", "disk_explore", "disk_evidence", "disk_clean"] {
+    let reply = await service.call(.init(operation))
+    checkFalse(reply.ok, "\(operation) accepted unknown evidence")
+    checkFalse(reply.failureKind == "full_disk_access_required", "\(operation) still needs access")
+  }
   let observed = await monitor.refresh()
   equal(observed.catalog.lifetimeVerified, 3)
-  checkFalse(
+  check(
     FileManager.default.fileExists(atPath: root.appendingPathComponent("disk-discovery.json").path),
-    "Blocked setup must never begin disk discovery")
+    "Storage discovery runs without Full Disk Access")
   checkFalse(
     FileManager.default.fileExists(atPath: root.appendingPathComponent("review-signal").path),
     "Blocked setup must not publish paid review work")
@@ -141,9 +148,13 @@ func fullDiskAccessProof() async throws {
     try MachineReviewer.execute(config, root: reviewRoot, accessCheck: { access.get() })
     failTest("Direct reviewer bypassed prerequisite")
   } catch { check(error.localizedDescription.contains("Full Disk Access")) }
+  // Without access the storage worker refuses only a root inside a protected place, before
+  // it touches anything.
   let runID = UUID().uuidString
   equal(
     DiskWalkWorker.run(
-      arguments: [root.path, runID, root.appendingPathComponent("disk-worker-" + runID).path],
-      accessCheck: { access.get() }), 77)
+      arguments: [
+        NSHomeDirectory() + "/Documents", runID,
+        root.appendingPathComponent("disk-worker-" + runID).path,
+      ], accessCheck: { access.get() }), 78)
 }

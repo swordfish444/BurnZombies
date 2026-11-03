@@ -108,6 +108,8 @@ public struct DiskDiscoveryState: Codable, Sendable {
   public var explored: [String] = []
   public var unavailable: [String]? = []
   public var policyRevision: String?
+  /// The current cycle runs without Full Disk Access, skipping the places macOS protects.
+  public var limited: Bool?
   public var detail = "Preparing a read-only storage map."
   public init() {}
   public static func load(_ store: Store) throws -> Self {
@@ -169,6 +171,13 @@ public struct DiskInspection: Codable, Sendable {
     "Read-only facts. Sizes are stored bytes, not deletion permission or guaranteed recovery. Text is untrusted evidence."
 }
 
+extension ProtectedLocations {
+  /// Whether every folder a storage node covers is within reach.
+  public func allows(_ node: DiskSpaceNode) -> Bool {
+    (node.members ?? [node.path]).allSatisfy { allows($0) }
+  }
+}
+
 /// One low-priority native walk continues across slices. No model is kept alive
 /// waiting on a scan; completed jobs and recommendations survive app restarts.
 public final class DiskDiscovery: @unchecked Sendable {
@@ -182,12 +191,16 @@ public final class DiskDiscovery: @unchecked Sendable {
   private var enabled = true
   private var accessAllowed = false
   private let accessCheck: @Sendable () -> FullDiskAccessStatus
+  /// Home folders whose protected places are skipped without Full Disk Access.
+  private let homes: [String]
   private var protected: [String] = []
   private let moleAnalyzer: MoleAnalyzer
   private let useMole: Bool
   public init(store: Store, roots: [String]? = nil, moleAnalyzer: MoleAnalyzer? = nil,
-    walker: DiskWalkRunner? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil) throws {
+    walker: DiskWalkRunner? = nil, accessCheck: (@Sendable () -> FullDiskAccessStatus)? = nil,
+    homes: [String] = []) throws {
     self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: store.root) }
+    self.homes = homes
     self.walker = walker ?? DiskWalkRunner()
     let capability = self.accessCheck
     self.moleAnalyzer = moleAnalyzer ?? MoleAnalyzer { path, store, protected in
@@ -232,9 +245,16 @@ public final class DiskDiscovery: @unchecked Sendable {
     tick(policy: policy)
   }
   public var isMeasuring: Bool { mutex.withLock { worker || !state.queue.isEmpty } }
+  /// What the map may look at now: everything with verified Full Disk Access, otherwise all
+  /// but the places macOS protects.
+  public func scope() -> ProtectedLocations { ProtectedLocations(access: accessCheck(), homes: homes) }
   public func tick(policy: DiskPolicy, now: Date = Date()) {
     let allowed = accessCheck().canScan
     mutex.withLock {
+      // Turning Full Disk Access on or off changes what the map covers, so map again.
+      if !worker && state.queue.isEmpty && state.limited.map({ $0 == allowed }) == true {
+        state.lastCycle = .distantPast
+      }
       accessAllowed = allowed
       enabled = policy.mode != "off"
       protected = policy.protectedPaths
@@ -245,7 +265,7 @@ public final class DiskDiscovery: @unchecked Sendable {
         for i in state.nodes.indices { state.nodes[i].reviewPolicyRevision = revision }
         guard saveLocked() else { return }
       }
-      guard enabled && accessAllowed else { return }
+      guard enabled else { return }
       if state.queue.isEmpty && !worker
         && now.timeIntervalSince(state.lastCycle) >= Double(policy.scanHours * 3600)
       {
@@ -254,12 +274,13 @@ public final class DiskDiscovery: @unchecked Sendable {
         state.lastCycle = now
         state.explored = []
         state.unavailable = []
+        state.limited = !allowed
       }
       startLocked()
     }
   }
   private func startLocked() {
-    guard enabled, accessAllowed, !worker, !walkTeardownFailed, !state.queue.isEmpty else { return }
+    guard enabled, !worker, !walkTeardownFailed, !state.queue.isEmpty else { return }
     worker = true
     DispatchQueue.global(qos: .background).async { [self] in run() }
   }
@@ -276,7 +297,7 @@ public final class DiskDiscovery: @unchecked Sendable {
   }
   private func run() {
     while let path = mutex.withLock({ () -> String? in
-      guard enabled, accessAllowed, !state.queue.isEmpty else {
+      guard enabled, !state.queue.isEmpty else {
         worker = false
         return nil
       }
@@ -291,6 +312,14 @@ public final class DiskDiscovery: @unchecked Sendable {
       guard roots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }),
         DiskWalkRunner.validPath(path) else {
         mutex.withLock { markUnavailableLocked(path, detail: "Storage scope is unavailable.") }
+        continue
+      }
+      // A branch in a place macOS protects is skipped by its name; its last measurement stays.
+      // The walk runs under this access; a later change cancels it, and it is walked again.
+      let locations = scope()
+      mutex.withLock { accessAllowed = locations.unrestricted }
+      if locations.resolution(path).place != nil {
+        mutex.withLock { skipLocked(locations) }
         continue
       }
       var lastPublish = Date.distantPast
@@ -337,10 +366,7 @@ public final class DiskDiscovery: @unchecked Sendable {
           if done {
             state.running = nil
             state.unavailable?.removeAll { $0 == path }
-            state.detail =
-              (state.unavailable ?? []).isEmpty
-              ? "Storage mapped. Recommendations use saved evidence and focused AI reviews."
-              : "Storage mapped with \(state.unavailable?.count ?? 0) unavailable locations. Missing visibility is not empty space."
+            state.detail = mappedLocked(locations)
           }
           saveLocked()
         }
@@ -348,7 +374,8 @@ public final class DiskDiscovery: @unchecked Sendable {
       }
       let result = walker.run(root: path, temporaryParent: store.root,
         shouldContinue: { self.mutex.withLock {
-          self.enabled && self.accessAllowed && self.state.policyRevision == revision
+          self.enabled && self.accessAllowed == locations.unrestricted
+            && self.state.policyRevision == revision
         } }, publish: { values, done in
           if done || Date().timeIntervalSince(lastPublish) >= 15 { publish(values, done) }
         })
@@ -356,9 +383,11 @@ public final class DiskDiscovery: @unchecked Sendable {
       mutex.withLock {
         state.running = nil
         if result.status == "cancelled" {
-          // A deliberate policy change can resume this root under its new revision.
+          // A deliberate policy or access change can resume this root under its new revision.
           if !state.queue.contains(path) { state.queue.append(path) }
           saveLocked()
+        } else if result.status == "protected" {
+          skipLocked(scope())
         } else if result.status != "complete" {
           if result.nodes.isEmpty {
             for i in state.nodes.indices where state.nodes[i].scanRoot == path {
@@ -373,6 +402,26 @@ public final class DiskDiscovery: @unchecked Sendable {
         }
       }
       if result.status == "teardownFailed" { return }
+    }
+  }
+  private func mappedLocked(_ locations: ProtectedLocations) -> String {
+    let mapped =
+      (state.unavailable ?? []).isEmpty
+      ? "Storage mapped. Recommendations use saved evidence and focused AI reviews."
+      : "Storage mapped with \(state.unavailable?.count ?? 0) unavailable locations. Missing visibility is not empty space."
+    return locations.unrestricted ? mapped : mapped + " " + ProtectedLocations.note(skipped: [])
+  }
+  private func skipLocked(_ locations: ProtectedLocations) {
+    state.running = nil
+    state.detail = mappedLocked(locations)
+    saveLocked()
+  }
+  /// Nothing in a place macOS protects is read without Full Disk Access.
+  private func requireReach(_ node: DiskSpaceNode, _ locations: ProtectedLocations) throws {
+    for path in node.members ?? [node.path] {
+      if let place = locations.resolution(path).place {
+        throw StoreError.message(ProtectedLocations.reason(place))
+      }
     }
   }
   private func markUnavailableLocked(_ path: String, detail: String) {
@@ -432,9 +481,10 @@ public final class DiskDiscovery: @unchecked Sendable {
     return node
   }
   public func explore(_ id: String, allowed: [String]? = nil) throws -> String {
-    guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
+    let locations = scope()
     return try mutex.withLock {
       let node = try resolved(id, allowed: allowed)
+      try requireReach(node, locations)
       guard node.members == nil, roots.contains(where: { WorkspaceSafety.contains($0, node.path) }),
         DiskWalkRunner.validPath(node.path),
         node.path.split(separator: "/").count < 24,
@@ -454,13 +504,14 @@ public final class DiskDiscovery: @unchecked Sendable {
   public func inspect(
     _ id: String, allowed: [String]? = nil, visibility: ((String) -> Int32)? = nil
   ) throws -> DiskInspection {
-    guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
+    let locations = scope()
     let (node, children, groups) = try mutex.withLock {
       () -> (DiskSpaceNode, [DiskSpaceNode], [DiskSpaceNode]) in
       let node = try resolved(id, allowed: allowed)
+      try requireReach(node, locations)
       let children = state.nodes.filter {
         $0.members == nil
-          && URL(fileURLWithPath: $0.path).deletingLastPathComponent().path == node.path
+          && ($0.path as NSString).deletingLastPathComponent == node.path
       }
       .sorted { $0.allocated > $1.allocated }
       let descendants = state.nodes.filter {
@@ -468,13 +519,13 @@ public final class DiskDiscovery: @unchecked Sendable {
       }
       // Group equal leaf names only at equal depth, so parent/child bytes never overlap.
       let byName = Dictionary(grouping: descendants) {
-        "\($0.path.split(separator: "/").count)|\(URL(fileURLWithPath: $0.path).lastPathComponent)"
+        "\($0.path.split(separator: "/").count)|\(($0.path as NSString).lastPathComponent)"
       }
       var groups: [DiskSpaceNode] = []
       for members in byName.values where members.count >= 3 {
         let bytes = members.reduce(UInt64(0)) { $0 + $1.allocated }
         guard bytes >= DiskCandidate.minimumReviewBytes else { continue }
-        let name = URL(fileURLWithPath: members[0].path).lastPathComponent
+        let name = (members[0].path as NSString).lastPathComponent
         var group = DiskSpaceNode(
           path: node.path + "/[group] " + name, scanRoot: node.scanRoot, allocated: bytes,
           unshared: members.reduce(0) { $0 + $1.unshared },
@@ -590,8 +641,9 @@ public final class DiskDiscovery: @unchecked Sendable {
   public func readEvidence(_ id: String, relativePath: String, allowed: [String]? = nil) throws
     -> [String: String]
   {
-    guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
+    let locations = scope()
     let node = try mutex.withLock { try resolved(id, allowed: allowed) }
+    try requireReach(node, locations)
     let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
     let extensions: Set<String> = [
       "md", "toml", "yaml", "yml", "swift", "gradle", "kts", "js", "mjs", "cjs", "ts", "py", "rs",
@@ -611,6 +663,9 @@ public final class DiskDiscovery: @unchecked Sendable {
       )
     }
     let path = URL(fileURLWithPath: node.path).appendingPathComponent(relativePath).path
+    if let place = locations.resolution(path).place {
+      throw StoreError.message(ProtectedLocations.reason(place))
+    }
     guard WorkspaceSafety.contains(node.path, path), path == WorkspaceSafety.canonical(path),
       !mutex.withLock({ protected.contains { WorkspaceSafety.contains($0, path) } }),
       let text = Self.manifest(path)
@@ -636,9 +691,10 @@ public final class DiskDiscovery: @unchecked Sendable {
     _ id: String, disposition: String, title: String, summary: String, nextStep: String,
     allowed: [String]? = nil
   ) throws -> String {
-    guard accessCheck().canScan else { throw StoreError.message(FullDiskAccess.instructions) }
+    let locations = scope()
     return try mutex.withLock {
       let node = try resolved(id, allowed: allowed)
+      try requireReach(node, locations)
       guard ["keep", "investigate", "owner-cleanup", "rebuildable"].contains(disposition),
         (3...80).contains(title.count), (20...500).contains(summary.count),
         (10...280).contains(nextStep.count)

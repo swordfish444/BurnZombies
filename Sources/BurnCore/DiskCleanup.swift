@@ -54,7 +54,8 @@ public struct DiskPolicy: Codable, Sendable {
     WorkEvidence.hash(
       String(decoding: (try? JSONEncoder.sorted.encode(self)) ?? Data(), as: UTF8.self))
   }
-  public func validate() throws {
+  /// A folder in a place macOS protects is checked by its spelling until access is on.
+  public func validate(protected: ProtectedLocations = .limited()) throws {
     guard ["off", "recommend", "automatic"].contains(mode), (1...90).contains(minimumAgeDays),
       (1...20).contains(keepNewest),
       (1...24).contains(scanHours), (10...1000).contains(targetFreeGB),
@@ -65,7 +66,7 @@ public struct DiskPolicy: Codable, Sendable {
       throw StoreError.message("Disk settings exceed their supported bounds.")
     }
     for path in roots + protectedPaths + rules.map(\.path) {
-      guard path.hasPrefix("/"), path.count < 4096, path == WorkspaceSafety.canonical(path),
+      guard path.hasPrefix("/"), path.count < 4096, path == protected.canonical(path),
         path != "/", path != NSHomeDirectory()
       else {
         throw StoreError.message(
@@ -82,11 +83,11 @@ public struct DiskPolicy: Codable, Sendable {
     let url = store.root.appendingPathComponent("disk-policy.json")
     if !FileManager.default.fileExists(atPath: url.path) { return Self() }
     let value = try JSONDecoder().decode(Self.self, from: store.read(url, limit: 131072))
-    try value.validate()
+    try value.validate(protected: .current(root: store.root))
     return value
   }
   public func save(_ store: Store) throws {
-    try validate()
+    try validate(protected: .current(root: store.root))
     try store.write(
       JSONEncoder.sorted.encode(self), to: store.root.appendingPathComponent("disk-policy.json"),
       limit: 131072)
@@ -142,6 +143,8 @@ public struct DiskSnapshot: Codable, Sendable {
   public var policyRevision = ""
   public var candidates: [DiskCandidate] = []
   public var detail = "Waiting for a bounded disk inventory."
+  /// Taken without Full Disk Access, skipping the places macOS protects.
+  public var limited: Bool?
   public init() {}
   public static func load(_ store: Store) throws -> Self {
     let url = store.root.appendingPathComponent("disk-inventory.json")
@@ -252,8 +255,9 @@ public enum DiskInventory {
     result.fingerprint = digest.finalize().map { String(format: "%02x", $0) }.joined()
     return result
   }
-  public static func repositories(_ policy: DiskPolicy, deadline: Date = .distantFuture) -> [String]
-  {
+  public static func repositories(
+    _ policy: DiskPolicy, deadline: Date = .distantFuture, protected: ProtectedLocations = .limited()
+  ) -> [String] {
     var found = Set<String>()
     var visited = 0
     for root in policy.roots {
@@ -261,10 +265,14 @@ public enum DiskInventory {
       while !queue.isEmpty && visited < 10_000 && Date() < deadline {
         let (path, depth) = queue.removeFirst()
         visited += 1
-        guard access(path, R_OK | X_OK) == 0, let s = try? WorkspaceSafety.statAt(path),
-          s.st_mode & S_IFMT == S_IFDIR,
+        // A place macOS protects is skipped by its name. Links are refused before `access`,
+        // which would follow one, and a checkout whose Git data is protected is left alone.
+        guard protected.place(path) == nil, let s = try? WorkspaceSafety.statAt(path),
+          s.st_mode & S_IFMT == S_IFDIR, access(path, R_OK | X_OK) == 0,
           !policy.protectedPaths.contains(where: { WorkspaceSafety.contains($0, path) })
         else { continue }
+        var pointer = stat()
+        if lstat(path + "/.git", &pointer) == 0, protected.pointerPlace(path) != nil { continue }
         if FileManager.default.fileExists(atPath: path + "/.git") {
           found.insert(path)
           continue
@@ -282,8 +290,14 @@ public enum DiskInventory {
   public static func check(
     _ c: DiskCandidate, policy: DiskPolicy, now: Date = Date(),
     deadline: Date = Date().addingTimeInterval(15),
-    visibility: (String) -> Int32 = { bz_path_in_use($0) }
+    visibility: (String) -> Int32 = { bz_path_in_use($0) },
+    protected: ProtectedLocations = .limited()
   ) throws -> DiskManifest {
+    if let place = protected.resolution(c.path).place ?? protected.resolution(c.repository).place
+      ?? protected.pointerPlace(c.repository)
+    {
+      throw StoreError.message(ProtectedLocations.reason(place))
+    }
     guard c.kind != "worktree", policy.mode != "off",
       policy.roots.contains(where: { WorkspaceSafety.contains($0, c.path) }),
       !policy.protectedPaths.contains(where: {
@@ -375,11 +389,13 @@ public enum DiskInventory {
   }
   public static func scan(
     policy: DiskPolicy, previous: DiskSnapshot, now: Date = Date(), seconds: Double = 20,
-    visibility: (String) -> Int32 = { bz_path_in_use($0) }
+    visibility: (String) -> Int32 = { bz_path_in_use($0) },
+    protected: ProtectedLocations = .limited()
   ) -> DiskSnapshot {
     var snapshot = DiskSnapshot()
     snapshot.date = now
     snapshot.policyRevision = policy.revision
+    snapshot.limited = !protected.unrestricted
     snapshot.freeBytes = (try? WorkspaceSafety.freeBytes(NSHomeDirectory())) ?? 0
     guard policy.mode != "off" else {
       snapshot.detail = "Disk discovery paused."
@@ -387,7 +403,7 @@ public enum DiskInventory {
     }
     let deadline = Date().addingTimeInterval(seconds)
     var candidates: [DiskCandidate] = []
-    let repos = repositories(policy, deadline: deadline)
+    let repos = repositories(policy, deadline: deadline, protected: protected)
     // Rotate repository coverage so a large first checkout cannot starve the rest.
     let start =
       repos.isEmpty
@@ -397,7 +413,7 @@ public enum DiskInventory {
     for repo in ordered where Date() < deadline {
       scanned.insert(repo)
       var paths: [(String, String)] = generatedNames.sorted().map { (repo + "/" + $0, "generated") }
-      if access(repo + "/artifacts", R_OK | X_OK) == 0,
+      if protected.resolve(repo + "/artifacts") != nil, access(repo + "/artifacts", R_OK | X_OK) == 0,
         let children = try? FileManager.default.contentsOfDirectory(atPath: repo + "/artifacts")
       {
         paths += children.sorted().prefix(100).map { (repo + "/artifacts/" + $0, "evidence") }
@@ -434,7 +450,9 @@ public enum DiskInventory {
           c.guardReason = "Below your automatic cleanup size setting; available for review."
         } else if rule?.disposition == "regenerable" {
           do {
-            _ = try check(c, policy: policy, now: now, deadline: deadline, visibility: visibility)
+            _ = try check(
+              c, policy: policy, now: now, deadline: deadline, visibility: visibility,
+              protected: protected)
             c.reviewable = true
             c.guardReason = "Eligible for independent harness review; not a deletion verdict."
           } catch { c.guardReason = error.localizedDescription }
@@ -504,6 +522,10 @@ public enum DiskInventory {
     snapshot.candidates = Array(candidates.sorted { $0.bytes > $1.bytes }.prefix(1000))
     snapshot.detail =
       "Inspected \(scanned.count)/\(repos.count) repositories. Sizes are allocated-file candidates, not guaranteed recoverable space. Incomplete visibility blocks removal."
+    let skipped =
+      policy.roots.compactMap { protected.place($0) }
+      + policy.roots.flatMap { protected.excluded(under: $0).compactMap(protected.place) }
+    if !skipped.isEmpty { snapshot.detail += " " + ProtectedLocations.note(skipped: skipped) }
     return snapshot
   }
 }

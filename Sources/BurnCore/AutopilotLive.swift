@@ -4,10 +4,14 @@ import Foundation
 extension AutopilotSources {
   /// Production wiring: the monitor's process records and burns, the worktree inventory,
   /// agent threads, junk folders, and the three executors.
-  public static func live(monitor: Monitor, root: URL = Store.defaultRoot) -> AutopilotSources {
-    let home = NSHomeDirectory()
+  public static func live(
+    monitor: Monitor, root: URL = Store.defaultRoot, home: String = NSHomeDirectory()
+  ) -> AutopilotSources {
     let junk = AutopilotJunkCache()
     let sizes = AutopilotSizes()
+    let skipped = AutopilotSkipped()
+    // Without verified Full Disk Access, Autopilot leaves the places macOS protects alone.
+    @Sendable func scope() -> ProtectedLocations { .current(root: root, homes: [home]) }
     return AutopilotSources(
       threads: { AgentThreads.index(home: home) },
       processes: { threads in
@@ -18,7 +22,20 @@ extension AutopilotSources {
           launchAgents: launchAgentPIDs(), claimed: await monitor.autopilotClaimedKeys(),
           preferences: preferences, home: home)
       },
-      worktreeRecords: { await monitor.autopilotWorktreeRecords() },
+      worktreeRecords: {
+        let protected = scope()
+        var places: [String] = []
+        let records = await monitor.autopilotWorktreeRecords().filter { record in
+          guard
+            let place = protected.place(record.path) ?? protected.place(record.repository)
+              ?? protected.pointerPlace(record.path)
+          else { return true }
+          if !record.retired && !record.main && !record.bare { places.append(place) }
+          return false
+        }
+        skipped.set(places)
+        return records
+      },
       worktrees: { records, threads, cache in
         var delivery = cache
         // Git checks go only to copies big enough to be worth assessing.
@@ -27,7 +44,7 @@ extension AutopilotSources {
           worth, threads: threads, delivery: &delivery, budget: 150)
         return (items, delivery)
       },
-      disk: { records in junk.items(records, home: home) },
+      disk: { records in junk.items(records, home: home, protected: scope()) },
       burnProcess: { item, authority, why in
         guard let key = item.processKey else {
           throw StoreError.message("I lost track of which program that was.")
@@ -37,23 +54,33 @@ extension AutopilotSources {
       },
       processOutcome: { await monitor.autopilotOutcome($0) },
       retireWorktree: { item, authority in
-        let receipt = AutopilotWorktrees.retire(item, authority: authority, root: root)
+        let receipt = AutopilotWorktrees.retire(
+          item, authority: authority, root: root, protected: scope())
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt
       },
-      restoreWorktree: { try AutopilotWorktrees.restore($0) },
+      restoreWorktree: { try AutopilotWorktrees.restore($0, protected: scope()) },
       reclaimDisk: { item, authority in
-        let receipt = AutopilotDisk.reclaim(item, authority: authority)
+        let receipt = AutopilotDisk.reclaim(
+          item, authority: authority, home: home, protected: scope())
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt
       },
-      inspect: { AutopilotInspector.inspect($0) },
+      inspect: { AutopilotInspector.inspect($0, protected: scope()) },
       coverageNotes: {
-        FullDiskAccess.status(root: root).canScan
-          ? []
-          : [
-            "Full Disk Access is off, so I can't refresh the list of old copies or look in protected folders. Leftover programs are still handled."
-          ]
+        guard !scope().unrestricted else { return [] }
+        let places = skipped.get()
+        var note =
+          "Full Disk Access is off, so I skip the places macOS protects: "
+          + ProtectedLocations.summary + "."
+        if !places.isEmpty {
+          let names = places.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+          note +=
+            places.count == 1
+            ? " 1 old copy is in " + names[0] + "."
+            : " \(places.count) old copies are in " + ProtectedLocations.list(names) + "."
+        }
+        return [note + " Turn on Full Disk Access to cover them too. Everything else is covered."]
       })
   }
 
@@ -75,6 +102,14 @@ extension AutopilotSources {
   }
 }
 
+/// Old copies Autopilot skipped because they are in places macOS protects, by place.
+final class AutopilotSkipped: @unchecked Sendable {
+  private let lock = NSLock()
+  private var places: [String] = []
+  func set(_ value: [String]) { lock.withLock { places = value } }
+  func get() -> [String] { lock.withLock { places } }
+}
+
 /// Measuring junk folders is slow, so the list is refreshed at most every six hours in
 /// the background and pruned immediately after a burn.
 final class AutopilotJunkCache: @unchecked Sendable {
@@ -82,7 +117,9 @@ final class AutopilotJunkCache: @unchecked Sendable {
   private var cached: [AutopilotItem] = []
   private var refreshed: Date?
   private var running = false
-  func items(_ records: [WorktreeRecord], home: String) -> [AutopilotItem] {
+  func items(_ records: [WorktreeRecord], home: String, protected: ProtectedLocations)
+    -> [AutopilotItem]
+  {
     let due: Bool = lock.withLock {
       guard !running, refreshed.map({ Date().timeIntervalSince($0) >= 6 * 3600 }) ?? true else {
         return false
@@ -92,7 +129,7 @@ final class AutopilotJunkCache: @unchecked Sendable {
     }
     if due {
       Thread.detachNewThread { [self] in
-        let fresh = AutopilotDisk.items(worktrees: records, home: home)
+        let fresh = AutopilotDisk.items(worktrees: records, home: home, protected: protected)
         lock.withLock {
           cached = fresh
           refreshed = Date()
@@ -100,8 +137,12 @@ final class AutopilotJunkCache: @unchecked Sendable {
         }
       }
     }
+    // A folder listed before Full Disk Access was turned off is not looked at now.
     return lock.withLock {
-      cached.filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? false }
+      cached.filter {
+        $0.path.map { protected.resolve($0) != nil && FileManager.default.fileExists(atPath: $0) }
+          ?? false
+      }
     }
   }
   func forget(under path: String?) {
@@ -112,7 +153,14 @@ final class AutopilotJunkCache: @unchecked Sendable {
 
 /// Live detail for one item when the AI asks to look closely. Nothing here is stored.
 public enum AutopilotInspector {
-  public static func inspect(_ item: AutopilotItem) -> [String: String] {
+  public static func inspect(_ item: AutopilotItem, protected: ProtectedLocations = .limited())
+    -> [String: String]
+  {
+    if item.kind != .process, let path = item.path,
+      let place = protected.resolution(path).place ?? protected.pointerPlace(path)
+    {
+      return ["state": AutopilotDisk.protectedRefusal(place)]
+    }
     switch item.kind {
     case .process: return process(item)
     case .worktree: return worktree(item)

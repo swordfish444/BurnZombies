@@ -33,18 +33,21 @@ public final class DiskWalkRunner: @unchecked Sendable {
   private let progressTimeout: TimeInterval
   private let rootTimeout: TimeInterval
   private let teardownTimeout: TimeInterval
+  /// The home folder whose protected places the worker skips without Full Disk Access.
+  private let home: String
   private let lock = NSLock()
   private var unsafeToSpawn = false
 
   public init(executable: URL? = nil, argumentPrefix: [String] = ["--disk-walk-worker"],
     progressTimeout: TimeInterval = 30, rootTimeout: TimeInterval = 1800,
-    teardownTimeout: TimeInterval = 5) {
+    teardownTimeout: TimeInterval = 5, home: String? = nil) {
     self.executable = executable ?? URL(fileURLWithPath: CommandLine.arguments[0])
       .deletingLastPathComponent().appendingPathComponent("burnzombies")
     self.argumentPrefix = argumentPrefix
     self.progressTimeout = max(0.1, min(progressTimeout, 120))
     self.rootTimeout = max(0.1, min(rootTimeout, 1800))
     self.teardownTimeout = max(0.1, min(teardownTimeout, 5))
+    self.home = home ?? NSHomeDirectory()
   }
 
   // Lexical validation deliberately performs no filesystem resolution in the parent.
@@ -115,7 +118,7 @@ public final class DiskWalkRunner: @unchecked Sendable {
       let arguments = [executable.path] + argumentPrefix + [root, runID, directory.path]
       let words = arguments.map { strdup($0) }
       let environmentWords: [String] = ["PATH=/usr/bin:/bin", "LANG=en_US.UTF-8",
-        "BZ_DISK_PARENT_PID=\(getpid())"]
+        "HOME=" + home, "BZ_DISK_PARENT_PID=\(getpid())"]
       let environment = environmentWords.map { strdup($0) }
       defer { words.forEach { free($0) }; environment.forEach { free($0) } }
       var argv = words + [nil], env = environment + [nil]
@@ -174,7 +177,12 @@ public final class DiskWalkRunner: @unchecked Sendable {
           }
         } else if errno != ENOENT { throw StoreError.message("Storage worker checkpoint inaccessible.") }
         if reaped {
-          outcome = status == 0 && checkpoint?.complete == true ? "complete" : "failed"
+          // 77: access changed during the walk, so it is walked again with the new access.
+          // 78: the root is in a protected place and was never opened.
+          let code = status & 0x7f == 0 ? (status >> 8) & 0xff : -1
+          outcome =
+            status == 0 && checkpoint?.complete == true
+            ? "complete" : code == 77 ? "cancelled" : code == 78 ? "protected" : "failed"
           break
         }
         let now = ProcessInfo.processInfo.systemUptime
@@ -213,7 +221,10 @@ public enum DiskWalkWorker {
       directory.lastPathComponent == "disk-worker-" + runID,
       DiskWalkRunner.validPath(directory.path) else { return 64 }
     let checkAccess = accessCheck ?? { FullDiskAccess.status(root: directory.deletingLastPathComponent()) }
-    guard checkAccess().canScan else { return 77 }
+    // Without verified Full Disk Access the walk covers everything except the places macOS
+    // protects in its user's home, which the request names in HOME, and on other volumes.
+    let protected = ProtectedLocations(access: checkAccess())
+    guard protected.resolution(root).place == nil else { return 78 }
     var metadata = stat()
     guard lstat(directory.path, &metadata) == 0, metadata.st_uid == getuid(),
       metadata.st_mode & S_IFMT == S_IFDIR, metadata.st_mode & 0o077 == 0 else { return 64 }
@@ -226,13 +237,17 @@ public enum DiskWalkWorker {
       while true {
         Thread.sleep(forTimeInterval: 1)
         if getppid() != parent || ProcessInfo.processInfo.systemUptime - started > 1810 { _exit(124) }
-        if !checkAccess().canScan { _exit(77) }
+        // A walk that may enter protected places stops as soon as access is lost.
+        if protected.unrestricted && !checkAccess().canScan { _exit(77) }
       }
     }
     do {
       let store = try Store(root: directory)
-      guard root == WorkspaceSafety.canonical(root), let walk = bz_disk_open(root, 3) else { return 66 }
+      guard protected.resolve(root) == root, let walk = bz_disk_open(root, 3) else { return 66 }
       defer { bz_disk_close(walk) }
+      for path in protected.excluded(under: root) {
+        guard bz_disk_exclude(walk, path) == 0 else { return 66 }
+      }
       var sequence: UInt64 = 0, entries: UInt64 = 0
       func checkpoint(_ complete: Bool) throws {
         sequence += 1

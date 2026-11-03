@@ -140,6 +140,7 @@ extension WorktreeService {
     guard q.revision == r.revision, let identity = r.identity else {
       throw StoreError.message("Worktree changed; inspect and review again.")
     }
+    try requireRegistryReach(r.repository)
     try eligible(r, dirty: dirty, automatic: automatic)
     let proposal = try intentLedger().present(proposal(r, ready: true))
     try intentLedger().check(proposal, legacy: true)
@@ -181,6 +182,7 @@ extension WorktreeService {
     guard r.identity == plan.identity, r.revision == plan.revision else {
       throw StoreError.message("Checkout changed after preview.")
     }
+    try requireRegistryReach(r.repository)
     try eligible(r, dirty: plan.dirty, automatic: automatic)
     return r
   }
@@ -217,9 +219,11 @@ extension WorktreeService {
       let verified = op
       try await runWork { try WorktreeRecovery.verifySource(r, operation: verified, key: key) }
       // Preservation may outlast a preview's issue window. Its initial consumption was
-      // time-bound; current authority, identity and content are checked independently.
-      try requireAccess()
-      let fresh = WorktreeInspection.inspect(try record(r.id), visibility: visibility)
+      // time-bound; current reach, identity and content are checked independently.
+      try requireReach(r)
+      try requireRegistryReach(r.repository)
+      let fresh = WorktreeInspection.inspect(
+        try record(r.id), visibility: visibility, protected: scope())
       guard fresh.identity == plan.identity, fresh.revision == plan.revision,
         try claimRevision(r.id) == plan.claimRevision, try policy().revision == plan.policyRevision
       else { throw StoreError.message("Work changed during preservation; original retained.") }
@@ -353,6 +357,11 @@ extension WorktreeService {
     else {
       throw StoreError.message("Choose a verified unpurged recovery item and a new destination.")
     }
+    if let place = scope().resolution(path).place {
+      throw StoreError.message(
+        "That destination is in " + place
+          + ", which macOS protects. Choose another folder, or turn on Full Disk Access.")
+    }
     executing = true
     defer { executing = false }
     let captured = op
@@ -412,7 +421,8 @@ extension WorktreeService {
     r.path = path
     r.identity = identity
     r.retired = false
-    r = WorktreeInspection.inspect(r, visibility: visibility)
+    try requireRegistryReach(op.repository)
+    r = WorktreeInspection.inspect(r, visibility: visibility, protected: scope())
     guard r.identity == identity, r.gaps.isEmpty, r.blockers.isEmpty, r.consumer == "none observed",
       (try claims(r.id)).allSatisfy({ $0.state == "released" })
     else {
@@ -428,8 +438,8 @@ extension WorktreeService {
     let captured = op
     let row = r
     try await runWork { try WorktreeRecovery.verifySource(row, operation: captured, key: key) }
-    try requireAccess()
-    let final = WorktreeInspection.inspect(r, visibility: visibility)
+    try requireRegistryReach(op.repository)
+    let final = WorktreeInspection.inspect(r, visibility: visibility, protected: scope())
     guard final.identity == identity, final.revision == r.revision,
       final.consumer == "none observed", final.gaps.isEmpty,
       final.blockers.isEmpty, !((try record(r.id)).kept),

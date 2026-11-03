@@ -55,6 +55,21 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       _ = munmap(region, page * pages)
       return
     }
+    if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--protected-locations-child" {
+      do {
+        try await protectedLocationsChild(
+          home: CommandLine.arguments[2], state: CommandLine.arguments[3])
+      } catch { failTest("Run without Full Disk Access: \(error)") }
+      if failures == 0 {
+        print("PASS without Full Disk Access: ordinary folders covered, Documents never read")
+      }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--protected-locations") {
+      do { try await protectedLocationsProof() } catch { failTest("Protected locations: \(error)") }
+      print("Protected location checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     for (flag, name, proof) in [
       ("--autopilot-worktrees", "Autopilot worktrees", autopilotWorktreeProof),
       ("--autopilot-disk", "Autopilot junk folders and threads", autopilotDiskProof),
@@ -464,6 +479,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     }
     do { try worktreeVisibilityProof() } catch { failTest("Worktree visibility: \(error)") }
     do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
+    do { try await protectedLocationsProof() } catch { failTest("Protected locations: \(error)") }
     do { try await diskWorkerProof() } catch { failTest("Disk worker: \(error)") }
     do { try await gradleDaemonProof() } catch { failTest("Gradle daemon: \(error)") }
     do {

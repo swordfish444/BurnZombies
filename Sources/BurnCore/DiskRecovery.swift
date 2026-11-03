@@ -10,7 +10,7 @@ public enum DiskRecovery {
     let fallback = CleanupProposal(
       action: .disk, resources: [receipt.candidateID],
       revision: receipt.sourceFingerprint ?? receipt.id.uuidString,
-      title: URL(fileURLWithPath: receipt.path).lastPathComponent,
+      title: (receipt.path as NSString).lastPathComponent,
       detail: "Restoration requested for this exact output.", path: receipt.path,
       recovery: "Inspect its native recovery receipt.", ready: false,
       fixture: receipt.fixture == true)
@@ -73,7 +73,7 @@ public enum DiskRecovery {
           "Intact pending output is preserved at \(pending). Choose Restore intact pending output to return it without overwriting anything."
         )
       }
-      let parent = URL(fileURLWithPath: receipt.path).deletingLastPathComponent().path
+      let parent = (receipt.path as NSString).deletingLastPathComponent
       guard let parentMetadata = try metadata(parent), parentMetadata.st_mode & S_IFMT == S_IFDIR,
         visibility(pending) == 0, try metadata(receipt.path) == nil
       else {
@@ -92,7 +92,7 @@ public enum DiskRecovery {
       result.rationale =
         "Exact pending directory restored and its full original contents verified. No cleanup credit. A new decision is required."
     } else {
-      let parent = URL(fileURLWithPath: receipt.path).deletingLastPathComponent().path
+      let parent = (receipt.path as NSString).deletingLastPathComponent
       guard let value = try metadata(parent), value.st_mode & S_IFMT == S_IFDIR else {
         throw StoreError.message("Original parent is unavailable; absence cannot be reconciled.")
       }

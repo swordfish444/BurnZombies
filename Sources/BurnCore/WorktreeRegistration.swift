@@ -3,6 +3,11 @@ import Foundation
 extension WorktreeService {
   func repair(_ q: WorktreeRequest) async throws -> WorktreeRecord {
     let old = try expected(q)
+    try requireReach(old)
+    try requireRegistryReach(old.repository)
+    if let place = q.path.flatMap({ scope().resolution($0).place }) {
+      throw StoreError.message(ProtectedLocations.reason(place))
+    }
     guard old.missing, !old.main, !old.bare, !old.ownerManaged, !old.locked,
       let original = old.identity,
       let path = q.path, path == WorkspaceSafety.canonical(path),
@@ -47,7 +52,7 @@ extension WorktreeService {
       row.managed = false
       row.confirmedRevision = nil
       row.confirmedAt = nil
-      row = WorktreeInspection.inspect(row, visibility: visibility)
+      row = WorktreeInspection.inspect(row, visibility: visibility, protected: scope())
       guard row.identity == moved,
         !row.gaps.contains(where: { $0.contains("backlink") || $0.contains("registration") })
       else { throw StoreError.message("Registration repair did not verify.") }

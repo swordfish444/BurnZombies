@@ -6,10 +6,37 @@
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <pthread.h>
 int bz_worktree_resolve_fds(int pid, const int *fds, int count, int milliseconds,
                            void (*visit)(void *, const char *), void *context);
+
+// Places macOS protects that this process may not look inside. Executables there are
+// identified from kernel records only: resolving their names reads the protected folder.
+#define GUARDS 256
+static pthread_mutex_t guard_lock = PTHREAD_MUTEX_INITIALIZER;
+static char guards[GUARDS][1024];
+static int guard_count;
+void bz_guard_paths(const char *const *paths, int count) {
+    pthread_mutex_lock(&guard_lock);
+    guard_count = 0;
+    for (int i = 0; paths && i < count && guard_count < GUARDS; i++) {
+        if (paths[i] && strlen(paths[i]) < sizeof(guards[0])) strlcpy(guards[guard_count++], paths[i], sizeof(guards[0]));
+    }
+    pthread_mutex_unlock(&guard_lock);
+}
+static int guarded(const char *path) {
+    int found = 0;
+    pthread_mutex_lock(&guard_lock);
+    for (int i = 0; i < guard_count && !found; i++) {
+        size_t n = strlen(guards[i]);
+        found = strncasecmp(guards[i], path, n) == 0 && (path[n] == 0 || path[n] == '/');
+    }
+    pthread_mutex_unlock(&guard_lock);
+    return found;
+}
 
 static int gone(int pid) {
     if (kill(pid, 0) < 0 && errno == ESRCH) return 1;
@@ -77,7 +104,7 @@ static int collect_pid(int pid, void (*visit)(void *, const char *), void *conte
     if (b.pbi_uid != getuid()) { GAP("process ownership changed"); return -1; }
     if (b.pbi_status == 5) return 0;
     char exe[4096] = {0}, current_exe[4096];
-    if (proc_pidpath(pid, exe, sizeof(exe)) > 0 && realpath(exe, current_exe)) visit(context, current_exe);
+    if (proc_pidpath(pid, exe, sizeof(exe)) > 0 && !guarded(exe) && realpath(exe, current_exe)) visit(context, current_exe);
     else if (!gone(pid) && mapped_paths(pid, visit, context, deadline) != 0) GAP("executable and mapped-file paths unavailable");
     struct proc_vnodepathinfo cwd = {0};
     if (proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &cwd, sizeof(cwd)) == sizeof(cwd)) {

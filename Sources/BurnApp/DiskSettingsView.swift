@@ -130,14 +130,14 @@ struct DiskSettingsView: View {
         )
         .font(.caption).foregroundStyle(.secondary)
         if !accessReady {
-          Text("Discovery waits for Full Disk Access. Saved findings remain below.").font(.callout)
-            .foregroundStyle(orange)
-        } else if settings.policy.mode == "off" {
+          Text(ProtectedLocations.note(skipped: [])).font(.caption).foregroundStyle(.secondary)
+        }
+        if settings.policy.mode == "off" {
           Text("Disk review is off. Enable it in Advanced.").font(.callout)
         } else if !settings.reviewStatus.isEmpty {
           Text(settings.reviewStatus).font(.caption).foregroundStyle(.orange)
         }
-        if accessReady && (settings.discovery.running != nil || !settings.discovery.queue.isEmpty) {
+        if settings.discovery.running != nil || !settings.discovery.queue.isEmpty {
           Label(
             "Mapping your Mac · no AI tokens used for scanning",
             systemImage: "externaldrive.badge.magnifyingglass"
@@ -187,16 +187,16 @@ struct DiskSettingsView: View {
             ).foregroundStyle(.secondary)
           }.disclosureGroupStyle(ClickDisclosureStyle())
         }
+        // Without access, a branch measured earlier inside a protected place cannot be checked.
+        let reachable = ProtectedLocations(access: .init(state: accessReady ? .granted : .required))
         let opportunities = settings.discovery.opportunities.filter {
-          $0.unshared >= DiskCandidate.minimumReviewBytes
+          $0.unshared >= DiskCandidate.minimumReviewBytes && reachable.allows($0)
         }
         if opportunities.isEmpty && settings.candidates.isEmpty
           && (settings.managedCache?.eligibleBytes ?? 0) < DiskCandidate.minimumReviewBytes
         {
           Label(
-            !accessReady
-              ? "Complete setup to discover cleanup opportunities."
-              : settings.discovery.updated == .distantPast || settings.discovery.running != nil
+            settings.discovery.updated == .distantPast || settings.discovery.running != nil
                 ? "Looking for the biggest opportunities…"
                 : "No measured opportunities of 100 MB or more yet.", systemImage: "magnifyingglass"
           )
@@ -264,7 +264,7 @@ struct DiskSettingsView: View {
           Text("\(node.folderCount) folders").font(.caption).foregroundStyle(.secondary)
         }
       }
-      Text(advice?.title ?? URL(fileURLWithPath: node.path).lastPathComponent).font(
+      Text(advice?.title ?? (node.path as NSString).lastPathComponent).font(
         .callout.weight(.semibold)
       ).lineLimit(2)
       Text(
@@ -315,8 +315,10 @@ struct DiskSettingsView: View {
           )
           .font(.caption.weight(.medium)).foregroundStyle(.secondary)
         }
-        let url = URL(fileURLWithPath: candidate.path)
-        Text(url.deletingLastPathComponent().lastPathComponent + " / " + url.lastPathComponent)
+        let path = candidate.path as NSString
+        Text(
+          (path.deletingLastPathComponent as NSString).lastPathComponent + " / "
+            + path.lastPathComponent)
           .font(.callout.weight(.medium)).lineLimit(2).help(candidate.path)
         Text(
           candidate.userRule == "keep"

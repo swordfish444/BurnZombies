@@ -76,9 +76,12 @@ public enum WorktreeScanWorker {
     guard arguments.count >= 3, let run = arguments.first, UUID(uuidString: run) != nil,
       let cursor = Int(arguments[1]), (0...100_000).contains(cursor),
       arguments.count <= 35,
-      arguments.dropFirst(2).allSatisfy({ $0.hasPrefix("/") && $0.utf8.count < 4096 }),
-      access().canScan
+      arguments.dropFirst(2).allSatisfy({ $0.hasPrefix("/") && $0.utf8.count < 4096 })
     else { return 64 }
+    // Without verified Full Disk Access the worker covers everything except the places macOS
+    // protects in its user's home, which the request names in HOME, and on other volumes.
+    let protected = ProtectedLocations(access: access())
+    protected.guardNativeChecks()
     func emit(
       _ record: WorktreeRecord? = nil, gap: String? = nil, complete: Bool = false,
       cursor: Int? = nil, unavailablePath: String? = nil, inspecting: String? = nil,
@@ -96,6 +99,8 @@ public enum WorktreeScanWorker {
     let started = ProcessInfo.processInfo.systemUptime
     let knownOnly = ProcessInfo.processInfo.environment["BURNZOMBIES_WORKTREE_REFRESH"] == "1"
     let roots = Array(arguments.dropFirst(2))
+    // The consumer snapshot resolves its roots, so it never gets a protected one.
+    let watched = roots.filter { protected.resolve($0) != nil }
     if knownOnly {
       do {
         let store = try Store()
@@ -121,11 +126,11 @@ public enum WorktreeScanWorker {
               row,
               visibility: { path in
                 if consumers == nil {
-                  consumers = WorktreeConsumerSnapshot(roots: roots)
+                  consumers = WorktreeConsumerSnapshot(roots: watched)
                   if let gap = consumers?.gap { emit(gap: "Consumer coverage: " + gap) }
                 }
                 return consumers?.state(path) ?? -1
-              }))
+              }, protected: protected))
         }
         emit(complete: true, cursor: 0)
         return 0
@@ -134,14 +139,15 @@ public enum WorktreeScanWorker {
         return 65
       }
     }
-    let consumers = WorktreeConsumerSnapshot(roots: roots)
+    let consumers = WorktreeConsumerSnapshot(roots: watched)
     if let gap = consumers.gap { emit(gap: "Consumer coverage: " + gap) }
     let result = WorktreeDiscovery.scan(
       roots: roots,
       seconds: 240,
       visibility: { consumers.state($0) }, inspectOffset: cursor, publish: { emit($0) },
       progress: { emit() },
-      checkpoint: Store.defaultRoot.appendingPathComponent("worktree-discovery-cursor.json"))
+      checkpoint: Store.defaultRoot.appendingPathComponent("worktree-discovery-cursor.json"),
+      protected: protected)
     for (path, gap) in result.unavailablePaths { emit(gap: gap, unavailablePath: path) }
     for gap in result.gaps where !result.unavailablePaths.values.contains(gap) { emit(gap: gap) }
     emit(complete: true, cursor: result.nextInspection)
@@ -224,14 +230,19 @@ private final class WorktreeScanCapture {
 public final class WorktreeScanRunner: @unchecked Sendable {
   let executable: URL
   let prefix: [String]
+  /// The home folder whose protected places the worker skips without Full Disk Access.
+  let home: String
   private let lock = NSLock()
   private var unsafe = false
-  public init(executable: URL? = nil, prefix: [String] = ["--worktree-scan-worker"]) {
+  public init(
+    executable: URL? = nil, prefix: [String] = ["--worktree-scan-worker"], home: String? = nil
+  ) {
     self.executable =
       executable
       ?? URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
       .appendingPathComponent("burnzombies")
     self.prefix = prefix
+    self.home = home ?? NSHomeDirectory()
   }
   public func run(
     roots: [String], root: URL, inspectOffset: Int = 0,
@@ -273,7 +284,7 @@ public final class WorktreeScanRunner: @unchecked Sendable {
         value.withCString { strdup($0) }
       } + [nil]
     var environment =
-      (["PATH=/usr/bin:/bin", "HOME=" + NSHomeDirectory(), "BURNZOMBIES_HOME=" + root.path]
+      (["PATH=/usr/bin:/bin", "HOME=" + home, "BURNZOMBIES_HOME=" + root.path]
       + (knownRecords != nil ? ["BURNZOMBIES_WORKTREE_REFRESH=1"] : [])).map {
         (value: String) in
         value.withCString { strdup($0) }

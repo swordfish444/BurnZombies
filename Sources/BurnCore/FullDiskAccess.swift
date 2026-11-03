@@ -17,7 +17,7 @@ public struct FullDiskAccessStatus: Codable, Sendable, Equatable {
 }
 
 public enum FullDiskAccess {
-  public static let instructions = "Enable BurnZombies in System Settings → Privacy & Security → Full Disk Access, then check access in BurnZombies Settings. Scans and AI reviews wait until setup is complete."
+  public static let instructions = "AI hunts and the places macOS protects need Full Disk Access; everything else works without it. To add them, turn on BurnZombies in System Settings → Privacy & Security → Full Disk Access, then check access in BurnZombies Settings."
   private struct Receipt: Codable {
     var executableDigest: String
     var verified: Bool
@@ -140,6 +140,6 @@ public enum FullDiskAccess {
       }
     }
     if readable && !unavailable { return .init(state: .granted, detail: "Protected-folder access verified for this app. Each cleanup still requires its own safety checks.") }
-    return .init(state: .unknown, detail: "Access could not be verified on this Mac. Scans remain paused; confirm Full Disk Access in System Settings and check again.")
+    return .init(state: .unknown, detail: "Access could not be verified on this Mac, so BurnZombies keeps skipping the places macOS protects. Confirm Full Disk Access in System Settings and check again.")
   }
 }

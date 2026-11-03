@@ -6,19 +6,29 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 macOS 14+, Apple Silicon or Intel. The installer checks the release checksum and signature, installs `~/Applications/BurnZombies.app`, selects an available harness CLI, and starts the menu bar observer in the background. No active chat, special job wrapper or computer reboot is required.
 
-Complete the required Full Disk Access step below before protected-folder inspection and automatic reviews begin. The observer then scans visible processes owned by your macOS user across every project and session. Supported lifecycle and storage evidence feeds deep hunts from the selected harness, scheduled every four hours by default. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
+BurnZombies works as soon as it starts. The observer scans visible processes owned by your macOS user across every project and session, and Autopilot, worktree discovery and the storage map cover every folder except the places macOS protects. The optional Full Disk Access step below adds those places, plus deep hunts from the selected harness, scheduled every four hours by default. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
 
-## Required Full Disk Access
+## Optional Full Disk Access
+
+Without Full Disk Access, BurnZombies skips the places macOS guards with its privacy controls: Desktop, Documents, Downloads, iCloud Drive and other cloud drives (`~/Library/Mobile Documents`, `~/Library/CloudStorage`), Mail, Messages, Photos, other apps' data (`~/Library/Containers`, `~/Library/Group Containers`), and removable and network drives. It decides from the path alone and never reads inside them, so macOS never asks you for access to a folder. A skipped place is reported, never counted as empty: Autopilot's coverage note, the Worktrees window and the storage map say which places were skipped and that Full Disk Access covers them. A copy in one of those places stays listed as **not checked** and keeps its saved details until access returns; a copy whose project lives there is skipped.
+
+Turning Full Disk Access on adds:
+
+- those places to Autopilot, worktree discovery, inspection and cleanup, the storage map and the junk-folder inventory;
+- scheduled and manual hunts, background AI reviews and lifecycle evidence from harness sessions;
+- owner maintenance (Gradle daemons, BuildKit cache) and agent requests that inspect or stop programs.
+
+To turn it on:
 
 1. Click **Allow Full Disk Access** in the small menu-bar banner. It opens **System Settings → Privacy & Security → Full Disk Access** directly. The same link is always available under **Settings cog → Full Disk Access**.
 2. Add and enable **BurnZombies.app**. If it is not listed, use **Copy app path** in BurnZombies Settings, then **+**, **Command–Shift–G** and paste the path into the macOS chooser. The standard installer puts the app in `~/Applications`.
 3. Return to BurnZombies. After that explicit settings visit it checks access once automatically. If macOS asks, choose **Quit & Reopen**. The pending verification survives that restart and runs once automatically. **Check access** remains available in BurnZombies Settings if needed. No computer reboot is needed.
 
-The banner's **×** dismisses the reminder and remembers your choice across launches; it does not grant permission or enable scanning. You can finish setup at any time using the Settings cog. Verified access removes the banner and changes the Settings section to a muted **Complete** row with a green checkmark and a **Manage access** link. If previously verified access is lost, the reminder becomes available again. Opening the permission pane never marks setup complete by itself.
+The banner's **×** dismisses the reminder and remembers your choice across launches; it does not grant permission or widen what BurnZombies covers. You can finish setup at any time using the Settings cog. Verified access removes the banner and changes the Settings section to a muted **Complete** row with a green checkmark and a **Manage access** link. If previously verified access is lost, the reminder becomes available again. Opening the permission pane never marks setup complete by itself.
 
-Until the access check succeeds, BurnZombies shows **Setup required**, preserves your existing cleanup history, and does not start protected-folder inspection or AI reviews. It never opens System Settings, a Finder window or an onboarding window automatically. An agent can install and configure the app with the single command above, but macOS requires a person to grant this permission.
+Until the access check succeeds, BurnZombies keeps skipping the protected places, keeps hunts and background AI reviews paused, and preserves your existing cleanup history. It never opens System Settings, a Finder window or an onboarding window automatically. An agent can install and configure the app with the single command above, but macOS requires a person to grant this permission.
 
-The app verifies access capability without reading messages or mail: it checks directory access, then immediately closes the directory handle without enumerating its contents. macOS has no supported API that reports an authoritative Full Disk Access Boolean. Missing or inconclusive evidence keeps setup blocked. The check is performed by the running app; access inherited by a shell or Codex is not proof that BurnZombies has access.
+The app verifies access capability without reading messages or mail: it checks directory access, then immediately closes the directory handle without enumerating its contents. macOS has no supported API that reports an authoritative Full Disk Access Boolean. Missing or inconclusive evidence counts as no access. The check is performed by the running app; access inherited by a shell or Codex is not proof that BurnZombies has access.
 
 Check setup from an agent without opening a window:
 
@@ -26,7 +36,7 @@ Check setup from an agent without opening a window:
 ~/Applications/BurnZombies.app/Contents/MacOS/burnzombies access-status
 ```
 
-**After an update:** macOS keys Full Disk Access to the app's signer. A build signed with the same certificate keeps the grant, and BurnZombies keeps its own access check with it. An ad-hoc build (the default without a certificate, including current releases) is a new app to macOS each time, so it needs the switch and a fresh access check after every update.
+**After an update:** macOS keys Full Disk Access to the app's signer. A build signed with the same certificate keeps the grant, and BurnZombies keeps its own access check with it. An ad-hoc build (the default without a certificate, including current releases) is a new app to macOS each time, so it needs the switch and a fresh access check after every update. BurnZombies keeps working in the meantime; only the protected places and hunts wait for the new grant.
 
 **Keep access across your own builds:** run `scripts/ensure-signing-identity.sh` once. It creates a local "BurnZombies Local Signing" code-signing certificate in your login keychain, trusted for code signing only, and macOS asks for your password once. From then on `scripts/build-app.sh` signs every build with it; allow Full Disk Access one last time and later updates keep it. Set `BURNZOMBIES_SIGNING_IDENTITY` to use a certificate you already have. Releases need Developer ID signing for the same continuity.
 

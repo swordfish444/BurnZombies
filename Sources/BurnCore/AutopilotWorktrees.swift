@@ -227,12 +227,15 @@ public enum AutopilotWorktrees {
   /// outlives the call. Refusals leave the copy untouched.
   public static func retire(
     _ item: AutopilotItem, authority: String, root: URL,
-    inUse: (String) -> Int32 = { bz_path_in_use($0) }
+    inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil
   ) -> AutopilotReceipt {
     guard item.kind == .worktree, item.id.hasPrefix("worktree:"), let path = item.path else {
       return .refused(item, authority: authority, "This is not an old copy I can retire.")
     }
     if let reason = item.protectedReason { return .refused(item, authority: authority, reason) }
+    if let reason = refusal(path, protected ?? .current(root: root)) {
+      return .refused(item, authority: authority, reason)
+    }
     do {
       return try perform(item, path: path, authority: authority, root: root, inUse: inUse)
     } catch let refusal as Refusal {
@@ -241,6 +244,22 @@ public enum AutopilotWorktrees {
       return .refused(
         item, authority: authority, "I could not check it safely, so I left it alone.")
     }
+  }
+
+  /// Why Autopilot may not touch a copy without Full Disk Access: it, the project it belongs
+  /// to, or another copy of that project is in a place macOS protects, and Git looks at all
+  /// of them when it removes one.
+  static func refusal(_ path: String, _ protected: ProtectedLocations) -> String? {
+    guard !protected.unrestricted else { return nil }
+    let repository = protected.repository(of: path)
+    if let place = protected.resolution(path).place ?? repository.place {
+      return AutopilotDisk.protectedRefusal(place)
+    }
+    if let place = repository.common.flatMap(protected.registryPlace) {
+      return "Another copy of this project is in " + place
+        + ", which macOS protects, and Git checks every copy, so I left it alone. Turn on Full Disk Access to let me clean it up."
+    }
+    return nil
   }
 
   private static func perform(
@@ -567,9 +586,15 @@ public enum AutopilotWorktrees {
 
   /// Recreates the copy at its original path from the safety ref. Local changes come back
   /// uncommitted. Refuses to touch anything that already exists at that path. The ref stays.
-  public static func restore(_ receipt: AutopilotReceipt) throws {
+  public static func restore(_ receipt: AutopilotReceipt, protected: ProtectedLocations? = nil)
+    throws
+  {
     guard let info = receipt.restore else {
       throw StoreError.message("Nothing was saved for this copy, so there is nothing to restore.")
+    }
+    let protected = protected ?? .limited()
+    if let place = protected.resolution(info.path).place ?? protected.registryPlace(info.repository) {
+      throw StoreError.message(AutopilotDisk.protectedRefusal(place))
     }
     guard info.path.hasPrefix("/"), info.ref.hasPrefix(refPrefix) else {
       throw StoreError.message("This backup is not one I made, so I did not restore it.")
@@ -684,7 +709,9 @@ public final class AutopilotSizes: @unchecked Sendable {
   {
     let limit = ProcessInfo.processInfo.systemUptime + budget
     return records.map { record in
-      guard record.allocated == 0, !record.missing, !record.retired, !record.bare else {
+      guard record.allocated == 0, !record.missing, !record.retired, !record.bare,
+        record.protectedPlace == nil
+      else {
         return record
       }
       var sized = record

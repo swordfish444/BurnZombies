@@ -76,7 +76,7 @@ public enum AutopilotProcesses {
 
   public static func family(_ executable: String) -> String {
     let path = executable.lowercased()
-    let name = URL(fileURLWithPath: path).lastPathComponent
+    let name = (path as NSString).lastPathComponent
     if ["node", "nodejs", "bun", "deno", "npm", "npx", "pnpm", "yarn", "tsx", "ts-node",
       "next-server"].contains(name)
     {

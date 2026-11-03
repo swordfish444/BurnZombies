@@ -23,6 +23,8 @@ public struct ViewState: Sendable {
 
 public actor Monitor {
   private let accessCheck: @Sendable () -> FullDiskAccessStatus
+  /// Home folders whose protected places are skipped without Full Disk Access.
+  private let homes: [String]
   private let store: Store
   private let intent: IntentLedger?
   private var worktreeService: WorktreeService?
@@ -55,6 +57,7 @@ public actor Monitor {
   ) throws {
     self.workspaceVisibility = workspaceVisibility ?? { bz_path_in_use($0) }
     self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: root) }
+    homes = discoveryHome.map { [$0.path] } ?? []
     store = try Store(root: root)
     do {
       intent =
@@ -73,7 +76,9 @@ public actor Monitor {
         || (root.standardizedFileURL == Store.defaultRoot.standardizedFileURL
           && ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] == nil)
       ? try DiskDiscovery(
-        store: store, roots: discoveryRoots, walker: discoveryWalker, accessCheck: self.accessCheck)
+        store: store, roots: discoveryRoots,
+        walker: discoveryWalker ?? DiskWalkRunner(home: discoveryHome?.path),
+        accessCheck: self.accessCheck, homes: homes)
       : nil
     passive =
       root.standardizedFileURL == Store.defaultRoot.standardizedFileURL || passiveHome != nil
@@ -395,8 +400,10 @@ public actor Monitor {
       let candidate = diskSnapshot.candidates[index]
       let policy = try DiskPolicy.load(store)
       let visibility = workspaceVisibility
+      let protected = locations()
       _ = try await Task.detached(priority: .utility) {
-        try DiskInventory.check(candidate, policy: policy, visibility: visibility)
+        try DiskInventory.check(
+          candidate, policy: policy, visibility: visibility, protected: protected)
       }.value
       guard try DiskPolicy.load(store).revision == policy.revision,
         let currentIndex = diskSnapshot.candidates.firstIndex(where: {
@@ -469,7 +476,7 @@ public actor Monitor {
     return try await service.legacyClaims()
   }
   public func worktreeTick() async {
-    guard !busy, accessCheck().canScan, let service = worktreeService else { return }
+    guard !busy, let service = worktreeService else { return }
     await updateWorktreeEvidence(service)
   }
   private func updateWorktreeEvidence(_ service: WorktreeService, huntTimeout: TimeInterval? = nil)
@@ -494,7 +501,7 @@ public actor Monitor {
   public func worktreeRequest(_ request: WorktreeRequest, caller: String, management: Bool = true)
     async throws -> WorktreeReply
   {
-    try requireFullDiskAccess()
+    // Each worktree action checks its own checkout against the places macOS protects.
     let destructive = [
       "retire", "retire_dirty", "quarantine", "finish_quarantine", "batch_retire", "repair",
       "reconcile", "rescue", "restore", "purge",
@@ -514,6 +521,19 @@ public actor Monitor {
     state.fullDiskAccess = accessCheck()
     guard state.fullDiskAccess.canScan else {
       throw StoreError.message(state.fullDiskAccess.detail)
+    }
+  }
+  /// What the observer may look at now: everything with verified Full Disk Access, otherwise
+  /// all but the places macOS protects. Native consumer checks follow the same decision.
+  public func locations() -> ProtectedLocations {
+    let protected = ProtectedLocations(access: accessCheck(), homes: homes)
+    protected.guardNativeChecks()
+    return protected
+  }
+  private func requireReach(_ c: DiskCandidate) throws {
+    let protected = locations()
+    if let place = protected.resolution(c.path).place ?? protected.resolution(c.repository).place {
+      throw StoreError.message(ProtectedLocations.reason(place))
     }
   }
   public func resetContinuity() {
@@ -649,18 +669,19 @@ public actor Monitor {
           partial: scan.partial)
       }
       catalog.diskDiscovery = nil
+      // Storage discovery runs without Full Disk Access too, outside the places macOS protects.
+      let protected = ProtectedLocations(access: state.fullDiskAccess, homes: homes)
+      protected.guardNativeChecks()
       if let discovery {
         discovery.setAccessAllowed(state.fullDiskAccess.canScan)
-      }
-      if state.fullDiskAccess.canScan, let discovery {
         let policy = try DiskPolicy.load(store)
         discovery.tick(policy: policy)
-        catalog.diskDiscovery = policy.mode == "off" ? [] : discovery.snapshot().pending
+        catalog.diskDiscovery =
+          policy.mode == "off" ? [] : discovery.snapshot().pending.filter { protected.allows($0) }
       }
-      if state.fullDiskAccess.canScan
-        && (store.root.standardizedFileURL == Store.defaultRoot.standardizedFileURL
-          || FileManager.default.fileExists(
-            atPath: store.root.appendingPathComponent("disk-policy.json").path))
+      if store.root.standardizedFileURL == Store.defaultRoot.standardizedFileURL
+        || FileManager.default.fileExists(
+          atPath: store.root.appendingPathComponent("disk-policy.json").path)
       {
         let policy = try DiskPolicy.load(store)
         if !diskScanLoaded {
@@ -670,22 +691,19 @@ public actor Monitor {
         if !diskScanRunning
           && (diskSnapshot.recommendationVersion != 2
             || now.timeIntervalSince(diskSnapshot.date) >= Double(policy.scanHours * 3600)
-            || diskSnapshot.policyRevision != policy.revision)
+            || diskSnapshot.policyRevision != policy.revision
+            || diskSnapshot.limited.map { $0 == protected.unrestricted } == true)
         {
           diskScanRunning = true
           let previous = diskSnapshot
           let visibility = workspaceVisibility
           Task.detached(priority: .utility) { [self] in
-            guard self.accessCheck().canScan else {
-              await self.cancelDiskScan()
-              return
-            }
             let result = DiskInventory.scan(
-              policy: policy, previous: previous, visibility: visibility)
+              policy: policy, previous: previous, visibility: visibility, protected: protected)
             await self.acceptDiskScan(result)
           }
         }
-        if let ownerMaintenance {
+        if state.fullDiskAccess.canScan, let ownerMaintenance {
           ownerMaintenance.tick(
             records: catalog.records, policy: policy,
             complete: !scan.partial && scan.observations.count <= 4096, now: now)
@@ -703,6 +721,7 @@ public actor Monitor {
         }
         catalog.diskCandidates = diskSnapshot.candidates.filter {
           $0.pendingReview && diskSnapshot.freeBytes < UInt64(policy.targetFreeGB) * 1_000_000_000
+            && protected.allows($0.path)
         }
       }
       // Observation is factual. The connected harness owns diagnosis and target selection.
@@ -730,12 +749,10 @@ public actor Monitor {
     state.scanMS = (ProcessInfo.processInfo.systemUptime - start) * 1000
     return state
   }
-  private func cancelDiskScan() { diskScanRunning = false }
   private func acceptDiskScan(_ result: DiskSnapshot) {
     defer { diskScanRunning = false }
     do {
-      guard accessCheck().canScan, try DiskPolicy.load(store).revision == result.policyRevision
-      else { return }
+      guard try DiskPolicy.load(store).revision == result.policyRevision else { return }
       try result.save(store)
       diskSnapshot = result
     } catch { state.error = "Disk inventory could not be saved: " + error.localizedDescription }
@@ -900,7 +917,8 @@ public actor Monitor {
 
   public func diskPolicy() throws -> DiskPolicy { try DiskPolicy.load(store) }
   public func diskDiscoveryRequest(_ request: AgentRequest) async throws -> AgentReply {
-    try requireFullDiskAccess()
+    // Each request checks its branch against the places macOS protects.
+    let protected = locations()
     guard let discovery, try DiskPolicy.load(store).mode != "off" else {
       throw StoreError.message("Storage discovery is unavailable or disabled.")
     }
@@ -922,16 +940,16 @@ public actor Monitor {
         allowed: request.reviewIDs)
     default: throw StoreError.message("Unknown discovery operation.")
     }
-    catalog.diskDiscovery = discovery.snapshot().pending
+    catalog.diskDiscovery = discovery.snapshot().pending.filter { protected.allows($0) }
     state.catalog = catalog
     return reply
   }
   public func diskDecision(_ id: String, decision: String, rationale: String) throws -> String {
-    try requireFullDiskAccess()
     guard ["keep", "recommend"].contains(decision), (20...1200).contains(rationale.count),
       let i = diskSnapshot.candidates.firstIndex(where: { $0.id == id && $0.pendingReview }),
       try DiskPolicy.load(store).revision == diskSnapshot.policyRevision
     else { throw StoreError.message("Unknown disk candidate, changed policy or invalid decision.") }
+    try requireReach(diskSnapshot.candidates[i])
     diskSnapshot.candidates[i].decisionRevision = diskSnapshot.candidates[i].queueRevision
     diskSnapshot.candidates[i].decision = decision
     diskSnapshot.candidates[i].rationale = rationale
@@ -942,7 +960,6 @@ public actor Monitor {
       "AI recommendation saved in Settings. Nothing removed; removal permission and safety checks are separate."
   }
   public func previewDisk(_ id: String, manual: Bool = false) throws -> DiskCandidate {
-    try requireFullDiskAccess()
     let policy = try DiskPolicy.load(store)
     guard policy.mode == "automatic" || (manual && policy.mode == "recommend"),
       let c = diskSnapshot.candidates.first(where: { $0.id == id && $0.reviewable }),
@@ -951,6 +968,7 @@ public actor Monitor {
       throw StoreError.message(
         "Automatic mode, unchanged policy and a current candidate are required.")
     }
+    try requireReach(c)
     guard try WorkspaceSafety.freeBytes(c.path) < UInt64(policy.targetFreeGB) * 1_000_000_000 else {
       throw StoreError.message("Free-space target is already satisfied; no removal.")
     }
@@ -958,7 +976,8 @@ public actor Monitor {
     guard used + c.bytes <= UInt64(policy.maximumGBPerDay) * 1_000_000_000 else {
       throw StoreError.message("Daily disk cleanup cap reached; no removal.")
     }
-    _ = try DiskInventory.check(c, policy: policy, visibility: workspaceVisibility)
+    _ = try DiskInventory.check(
+      c, policy: policy, visibility: workspaceVisibility, protected: locations())
     let proposal = try intentLedger().present(.disk(c))
     try intentLedger().check(proposal, legacy: !manual)
     return c
@@ -966,7 +985,6 @@ public actor Monitor {
   public func cleanDisk(_ preview: DiskCandidate, rationale: String, manual: Bool = false) throws
     -> String
   {
-    try requireFullDiskAccess()
     guard !busy else { throw StoreError.message("A cleanup is already in progress.") }
     busy = true
     defer { busy = false }
@@ -998,7 +1016,8 @@ public actor Monitor {
       guard currentPolicy.mode == "automatic" || (manual && currentPolicy.mode == "recommend"),
         currentPolicy.revision == diskSnapshot.policyRevision
       else { throw StoreError.message("Disk policy changed.") }
-      _ = try DiskInventory.check(c, policy: currentPolicy, visibility: workspaceVisibility)
+      _ = try DiskInventory.check(
+        c, policy: currentPolicy, visibility: workspaceVisibility, protected: locations())
       let before = try WorkspaceSafety.freeBytes(store.root.path)
       let proposal = try intentLedger().present(.disk(c))
       try intentLedger().reserve(proposal, operationID: id.uuidString, legacy: !manual)

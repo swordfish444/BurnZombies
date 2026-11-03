@@ -20,7 +20,9 @@ extension CleanupProposal {
     return .init(
       action: .worktree, resources: ["worktree:" + value.id],
       revision: value.revision.isEmpty ? "pending" : value.revision,
-      title: URL(fileURLWithPath: value.path).lastPathComponent,
+      // A path's name is read from its spelling: a URL checks the disk, which can reach
+      // into a place macOS protects.
+      title: (value.path as NSString).lastPathComponent,
       detail: value.ownerManaged
         ? "Managed by its harness. Review the owning chat's worktree: preserve needed ignored files separately, then use that chat's Archive worktree action. BurnZombies cannot archive another chat's checkout."
         : ([
@@ -55,7 +57,7 @@ extension CleanupProposal {
   public static func disk(_ value: DiskCandidate) -> Self {
     .init(
       action: .disk, resources: [value.id], revision: value.revision,
-      title: URL(fileURLWithPath: value.path).lastPathComponent, detail: value.guardReason,
+      title: (value.path as NSString).lastPathComponent, detail: value.guardReason,
       path: value.path, recovery: "No undo. An exact regeneration and retention rule is required.",
       bytes: value.bytes, ready: value.reviewable, now: value.observedAt ?? .distantPast)
   }

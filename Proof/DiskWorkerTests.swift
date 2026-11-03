@@ -82,7 +82,9 @@ func diskWorkerProof() async throws {
   try control.run()
   defer {
     if control.isRunning { control.terminate() }
-    control.waitUntilExit()
+    // Foundation's waitUntilExit can stay blocked in an async proof after its child exits.
+    let deadline = Date().addingTimeInterval(10)
+    while control.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
   }
 
   var published: [DiskSpaceNode] = []

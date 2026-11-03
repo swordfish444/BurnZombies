@@ -5,17 +5,21 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
 #define DISK_NODES 4096
 #define DISK_HASH 8192
+#define DISK_EXCLUDED 256
 typedef struct {
     FTS *tree;
     char *paths[2];
     int depth, count, done, overflow;
     int table[DISK_HASH];
     bz_disk_node *nodes;
+    char *excluded[DISK_EXCLUDED];
+    int excluded_count;
 } disk_walk;
 struct __attribute__((packed, aligned(4))) private_reply {
     uint32_t length;
@@ -51,6 +55,18 @@ void *bz_disk_open(const char *path, int depth) {
     node_for(w,path);
     return w;
 }
+// A folder the walk must never read, such as one macOS protects. Volumes ignore case.
+int bz_disk_exclude(void *handle,const char *path) {
+    disk_walk *w=handle;
+    if(!w || !path || strlen(path)>=4096 || w->excluded_count==DISK_EXCLUDED)return -1;
+    if(!(w->excluded[w->excluded_count]=strdup(path)))return -1;
+    w->excluded_count++;
+    return 0;
+}
+static int excluded(disk_walk *w,const char *path) {
+    for(int i=0;i<w->excluded_count;i++)if(!strcasecmp(w->excluded[i],path))return 1;
+    return 0;
+}
 int bz_disk_step(void *handle,int entries) {
     disk_walk *w=handle;
     if(!w)return -1;
@@ -60,10 +76,23 @@ int bz_disk_step(void *handle,int entries) {
         errno=0;FTSENT *e=fts_read(w->tree);
         if(!e){if(errno)w->nodes[0].errors++;w->done=1;return 1;}
         if(e->fts_info==FTS_DP) {
-            if(e->fts_level<=w->depth){int i=node_for(w,e->fts_path);if(i>=0)w->nodes[i].finished=1;}
+            // fts revisits a skipped directory in post-order; an excluded one gets no node.
+            if(e->fts_level<=w->depth && !excluded(w,e->fts_path)){int i=node_for(w,e->fts_path);if(i>=0)w->nodes[i].finished=1;}
             continue;
         }
         if(e->fts_info==FTS_SL || e->fts_info==FTS_SLNONE)continue;
+        if(e->fts_info==FTS_D && excluded(w,e->fts_path)) {
+            // Skipped before it is read: no node of its own, and every measured folder
+            // above it carries the gap, so missing visibility never reads as empty.
+            for(FTSENT *a=e->fts_parent;a && a->fts_level>=0;a=a->fts_parent) {
+                if(a->fts_level<=w->depth && a->fts_pathlen<4096){
+                    char path[4096];memcpy(path,e->fts_path,a->fts_pathlen);path[a->fts_pathlen]=0;
+                    int i=node_for(w,path);if(i>=0)w->nodes[i].errors++;
+                }
+            }
+            fts_set(w->tree,e,FTS_SKIP);
+            continue;
+        }
         int indices[4],n=0;
         FTSENT *ancestor=e;
         if(e->fts_info!=FTS_D && e->fts_info!=FTS_DNR)ancestor=e->fts_parent;
@@ -122,5 +151,6 @@ int bz_disk_node_at(void *handle,int index,bz_disk_node *out) {
 void bz_disk_close(void *handle) {
     disk_walk *w=handle;if(!w)return;
     if(w->tree)fts_close(w->tree);
+    for(int i=0;i<w->excluded_count;i++)free(w->excluded[i]);
     free(w->paths[0]);free(w->nodes);free(w);
 }

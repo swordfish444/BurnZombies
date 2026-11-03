@@ -56,8 +56,10 @@ public enum AutopilotDisk {
   /// private area, nothing Git tracks. Work stops at a time budget; the rest comes next time.
   public static func items(
     worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), now: Date = Date(),
-    sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) }
+    sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) },
+    protected: ProtectedLocations? = nil
   ) -> [AutopilotItem] {
+    let protected = protected ?? .limited(homes: [home])
     let base = WorkspaceSafety.canonical(home)
     guard base.hasPrefix("/"), base != "/" else { return [] }
     let deadline = Date().addingTimeInterval(timeBudget)
@@ -65,14 +67,17 @@ public enum AutopilotDisk {
 
     for cache in globalCaches {
       let location = base + "/" + cache.path
-      guard Date() < deadline, refusal(location, home: base) == nil else { continue }
+      guard Date() < deadline, refusal(location, home: base, protected: protected) == nil else {
+        continue
+      }
       var targets = [location]
       if cache.children {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: location)) ?? []
         targets = names.sorted().map { location + "/" + $0 }
       }
       for target in targets {
-        guard Date() < deadline, refusal(target, home: base) == nil, let bytes = sizer(target),
+        guard Date() < deadline, refusal(target, home: base, protected: protected) == nil,
+          let bytes = sizer(target),
           bytes >= minimumBytes, let touched = modified(target)
         else { continue }
         let child = leaf(target)
@@ -89,11 +94,14 @@ public enum AutopilotDisk {
       }
     }
 
-    for checkout in checkouts(worktrees, home: base) {
+    for checkout in checkouts(worktrees, home: base, protected: protected) {
       guard Date() < deadline else { break }
-      guard refusal(checkout.path, home: base) == nil else { continue }
+      // Git is asked about the checkout, so its Git data must be within reach too.
+      guard refusal(checkout.path, home: base, protected: protected) == nil,
+        protected.pointerPlace(checkout.path) == nil
+      else { continue }
       let folders = rebuildableFolders(under: checkout.path).filter {
-        refusal($0.path, home: base) == nil
+        refusal($0.path, home: base, protected: protected) == nil
       }
       guard !folders.isEmpty,
         let blocked = trackedFolders(folders.map { $0.path }, in: checkout.path)
@@ -164,8 +172,9 @@ public enum AutopilotDisk {
   /// other folder goes to the Trash, and only for an operator rule or the operator.
   public static func reclaim(
     _ item: AutopilotItem, authority: String, home: String = NSHomeDirectory(),
-    inUse: (String) -> Int32 = { bz_path_in_use($0) }
+    inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil
   ) -> AutopilotReceipt {
+    let protected = protected ?? .limited(homes: [home])
     func refuse(_ reason: String) -> AutopilotReceipt {
       .refused(item, authority: authority, reason)
     }
@@ -186,7 +195,7 @@ public enum AutopilotDisk {
     guard base.hasPrefix("/"), base != "/" else {
       return refuse("I can't find your home folder, so I left this alone.")
     }
-    if let reason = refusal(path, home: base) { return refuse(reason) }
+    if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
     if known && recognized(path, home: base) != folder {
       return refuse("That doesn't look like a folder I know how to rebuild, so I left it alone.")
     }
@@ -194,6 +203,9 @@ public enum AutopilotDisk {
       return refuse("There's a project inside that folder, so I left it alone.")
     }
     if let root = enclosingCheckout(of: path, home: base) {
+      if let place = protected.pointerPlace(root) {
+        return refuse(Self.protectedRefusal(place))
+      }
       let relative = String(path.dropFirst(root.count + 1))
       guard
         let listing = try? WorktreeGit.run(
@@ -209,7 +221,7 @@ public enum AutopilotDisk {
     default: return refuse("I couldn't tell if something is using that folder, so I left it alone.")
     }
     // One last look right before removing it.
-    if let reason = refusal(path, home: base) { return refuse(reason) }
+    if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
     guard known else {
       do {
         try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
@@ -237,7 +249,11 @@ public enum AutopilotDisk {
 
   /// Why a path may not be touched, or nil when it is a real folder of this user inside the
   /// home folder and clear of the private areas. `home` must already be canonical.
-  private static func refusal(_ path: String, home: String) -> String? {
+  private static func refusal(_ path: String, home: String, protected: ProtectedLocations)
+    -> String?
+  {
+    // Without Full Disk Access a place macOS protects is never looked at.
+    if let place = protected.resolution(path).place { return protectedRefusal(place) }
     var info = stat()
     guard lstat(path, &info) == 0 else { return "That folder is already gone." }
     guard info.st_mode & S_IFMT != S_IFLNK else {
@@ -261,6 +277,10 @@ public enum AutopilotDisk {
       return "That folder belongs to someone else, so I left it alone."
     }
     return nil
+  }
+
+  static func protectedRefusal(_ place: String) -> String {
+    "That's in " + place + ", which macOS protects, so I left it alone. Turn on Full Disk Access to let me check it."
   }
 
   /// The `folder` fact a live path earns by its place (global caches) or by its name inside a
@@ -293,11 +313,13 @@ public enum AutopilotDisk {
 
   /// Live checkouts to search: each live record, plus the main checkout it belongs to.
   /// A checkout that is also a main checkout is never counted as a linked copy.
-  private static func checkouts(_ worktrees: [WorktreeRecord], home: String) -> [Checkout] {
+  private static func checkouts(
+    _ worktrees: [WorktreeRecord], home: String, protected: ProtectedLocations
+  ) -> [Checkout] {
     var byPath: [String: Checkout] = [:]
     func consider(_ path: String, linked: Bool, activity: Date?) {
-      let real = WorkspaceSafety.canonical(path)
-      guard real.hasPrefix(home + "/") else { return }
+      // A checkout in a place macOS protects is not even resolved without Full Disk Access.
+      guard let real = protected.resolve(path), real.hasPrefix(home + "/") else { return }
       if let known = byPath[real] {
         byPath[real] = Checkout(
           path: real, linked: known.linked && linked, activity: known.activity ?? activity)

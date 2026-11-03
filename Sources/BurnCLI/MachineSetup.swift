@@ -76,10 +76,10 @@ enum MachineSetup {
       "Model: \(config.model ?? "harness default") · Thinking: \(config.reasoningEffort ?? "harness default"). Change these in Settings."
     )
     print(
-      "Setup requires Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add and enable BurnZombies.app."
+      "Full Disk Access is optional: System Settings → Privacy & Security → Full Disk Access → add and enable BurnZombies.app."
     )
     print(
-      "Use Allow Full Disk Access in the menu-bar banner, then return to BurnZombies for an access check. Inspection and reviews wait until access is verified."
+      "Without it BurnZombies covers everything except the places macOS protects (Desktop, Documents, Downloads, iCloud Drive, Mail, Messages, Photos, other apps' data and external drives). With it, use Allow Full Disk Access in the menu-bar banner and return to BurnZombies for an access check; it adds those places and AI hunts."
     )
   }
 }
