@@ -21,7 +21,7 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program without an open port, a copy not owned by Codex/Claude/Conductor that nothing uses, or a known junk folder.
 6. Everything else is **unsure** and becomes training material.
 
-Copies made by Codex, Claude or Cursor are checked like any other, so your yes answers cover them too; the AI still never burns them on its own. A copy whose files BurnZombies could not finish reading gets no age, so no rule about how long things sat unused matches it.
+Copies made by Codex, Claude or Cursor are checked like any other, so your yes answers cover them too; the AI still never burns them on its own. A copy whose files BurnZombies could not finish reading gets no age, so no rule about how long things sat unused matches it. Clearing a junk folder inside a copy doesn't count as using the copy.
 
 ## Full Disk Access
 
@@ -40,6 +40,8 @@ BurnZombies asks one question per subject: old project copies, each kind of prog
 > Each one is backed up first, so you can undo it. — *Yes, burn them* · *No, keep them* · *Not sure — skip*
 
 Facts that make burning riskier (work only on this Mac, unsaved changes, still running a server, used since yesterday) show in amber. The header shows where you are in the current round of questions, never a percentage.
+
+The AI's questions follow the same rules: it may reword or replace the open question about a subject but never adds a second one, waits a day after you skip one, and never asks about things used today.
 
 Yes and No become rules immediately (and burn right away for Yes). Skip hides the question for a day. Settings → **What BZ has learned** lists every rule in plain English with a Forget button; **Start training over** clears them.
 

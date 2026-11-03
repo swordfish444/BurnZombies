@@ -224,7 +224,9 @@ public enum AutopilotDisk {
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
     guard known else {
       do {
-        try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        try keepingParentTime(of: path) {
+          try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        }
       } catch {
         return finish("failed", "I couldn't move \(item.name) to the Trash, so I left it there.")
       }
@@ -236,7 +238,7 @@ public enum AutopilotDisk {
     }
     let bytes = allocatedSize(path) ?? item.bytes
     do {
-      try FileManager.default.removeItem(atPath: path)
+      try keepingParentTime(of: path) { try FileManager.default.removeItem(atPath: path) }
     } catch {
       return finish("failed", "I couldn't remove all of \(item.name), so some of it is still there.")
     }
@@ -245,6 +247,21 @@ public enum AutopilotDisk {
     }
     return finish(
       "burned", "Cleared \(item.name). Your tools will rebuild it when they need it.", bytes: bytes)
+  }
+
+  /// Removing a folder stamps its parent with the current time, which would make the old copy
+  /// it sits in look worked in today. The parent keeps the time it had.
+  private static func keepingParentTime(of path: String, _ remove: () throws -> Void) rethrows {
+    let parent = (path as NSString).deletingLastPathComponent
+    var before = stat()
+    let directory = lstat(parent, &before) == 0 && before.st_mode & S_IFMT == S_IFDIR
+    defer {
+      if directory {
+        var times = [timespec(tv_sec: 0, tv_nsec: Int(UTIME_OMIT)), before.st_mtimespec]
+        _ = utimensat(AT_FDCWD, parent, &times, AT_SYMLINK_NOFOLLOW)
+      }
+    }
+    try remove()
   }
 
   /// Why a path may not be touched, or nil when it is a real folder of this user inside the

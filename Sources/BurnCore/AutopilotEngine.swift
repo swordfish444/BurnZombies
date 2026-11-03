@@ -258,6 +258,16 @@ public actor Autopilot {
       }
       // Once burns shrink a pattern below what a question is worth, it stops being asked.
       memory.questions.removeAll { $0.isOpen && $0.bytes < AutopilotPolicy.worthAsking }
+      // Questions asked before these rules held follow them too: only about things that went
+      // quiet, and one open per subject, the one that frees the most.
+      memory.questions.removeAll { $0.isOpen && !AutopilotPolicy.quiet($0.kind, $0.match) }
+      var subjects = Set<String>()
+      let kept = Set(
+        memory.questions.filter(\.isOpen)
+          .sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
+          .filter { subjects.insert(AutopilotPolicy.subject($0.kind, $0.match)).inserted }
+          .map(\.id))
+      memory.questions.removeAll { $0.isOpen && !kept.contains($0.id) }
       memory.questions += AutopilotPolicy.proposeQuestions(unsure, memory: memory, now: now)
     }
   }
@@ -583,8 +593,16 @@ public actor Autopilot {
       guard !memory.questions.contains(where: { $0.id == question.id }) else {
         throw StoreError.message("That pattern was already asked.")
       }
-      // One question at a time about the same things: BZ already asks one broad question per
-      // subject, and the AI may reword it (same match) but not add a second one.
+      // One question per subject at a time, the same as BZ's own: the AI may reword or replace
+      // the open one but not add a second one, nor ask again the day the owner skipped one.
+      let subject = AutopilotPolicy.subject(question.kind, question.match)
+      if AutopilotPolicy.busySubjects(memory, now: Date()).contains(subject) {
+        let noun = AutopilotPolicy.subjectNoun(question.kind, question.match)
+        throw StoreError.message(
+          memory.openQuestions.contains { AutopilotPolicy.subject($0.kind, $0.match) == subject }
+            ? "I'm already asking about \(noun). To improve that question, ask with `replace`."
+            : "The owner skipped a question about \(noun) today. Ask about them again tomorrow.")
+      }
       let unsure = items.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
       func covered(_ kind: AutopilotKind, _ match: [String: [String]]) -> Set<String> {
         let rule = AutopilotPolicy.coverage(kind, match)
@@ -612,6 +630,11 @@ public actor Autopilot {
       guard bytes >= AutopilotPolicy.worthAsking else {
         throw StoreError.message(
           "That pattern frees only \(AutopilotPolicy.format(bytes)). Ask only about patterns freeing 1 GB or more."
+        )
+      }
+      guard AutopilotPolicy.quiet(question.kind, question.match) else {
+        throw StoreError.message(
+          "Say how long they sat unused, and never ask about things used today or busy right now: a yes would also cover things still being worked on."
         )
       }
       var q = question

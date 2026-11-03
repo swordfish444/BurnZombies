@@ -570,4 +570,31 @@ private func adkJunkProof(base: String, now: Date) throws {
   equal(cleared.bytes, derivedBytes ?? 0, "global cache size")
   checkFalse(fm.fileExists(atPath: derived + "/MyApp-abc"), "DerivedData child should be gone")
   check(fm.fileExists(atPath: derived + "/Small-def/x.o"), "other DerivedData child was touched")
+
+  // Clearing junk must not make the copy it sits in look worked in today: removing a folder
+  // stamps its parent with the current time. On a real Mac two quiet copies looked used today.
+  let quiet = home + "/git/p6-bodycam-quiet"
+  try adkGit(repo, ["worktree", "add", "--detach", quiet])
+  for relative in ["node_modules/pkg/index.js", "packages/web/node_modules/dep/index.js"] {
+    try adkWrite(filler, to: quiet + "/" + relative)
+  }
+  for relative in (fm.enumerator(atPath: quiet)?.allObjects as? [String] ?? []) + [""] {
+    try fm.setAttributes(
+      [.modificationDate: staleDate], ofItemAtPath: relative.isEmpty ? quiet : quiet + "/" + relative)
+  }
+  func newest(_ path: String) throws -> Date? {
+    try WorktreeInspection.files(path, permitLinks: true).0.map {
+      Date(timeIntervalSince1970: Double($0.modified) + Double($0.nanos) / 1e9)
+    }.max()
+  }
+  let firstChange = try newest(quiet)
+  check(adkNear(firstChange, staleDate), "the quiet copy starts out untouched")
+  for relative in ["node_modules", "packages/web/node_modules"] {
+    let junk = burn(forged(quiet + "/" + relative, "node_modules"), starter, 0)
+    equal(junk.outcome, "burned", "junk in a quiet copy: \(junk.detail)")
+  }
+  let lastChange = try newest(quiet)
+  check(
+    adkNear(lastChange, staleDate),
+    "clearing junk counted as using the copy: \(String(describing: lastChange))")
 }

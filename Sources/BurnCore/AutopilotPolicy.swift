@@ -128,6 +128,29 @@ public enum AutopilotPolicy {
     kind.rawValue + ":" + (subjectFacts[kind].flatMap { match[$0]?.first } ?? "")
   }
 
+  /// What a subject is called: "old project copies", "leftover Node programs".
+  static func subjectNoun(_ kind: AutopilotKind, _ match: [String: [String]]) -> String {
+    noun(kind, match: subjectFacts[kind].flatMap { key in match[key].map { [key: $0] } } ?? [:]).1
+  }
+
+  /// A question holds its subject while it is open, and for a day after the owner skips it.
+  static func waits(_ question: AutopilotQuestion, now: Date) -> Bool {
+    question.isOpen || (question.answer == .skip && (question.snoozedUntil ?? .distantFuture) > now)
+  }
+
+  /// Subjects that get no other question for now, however it would be asked.
+  static func busySubjects(_ memory: AutopilotMemory, now: Date) -> Set<String> {
+    Set(memory.questions.filter { waits($0, now: now) }.map { subject($0.kind, $0.match) })
+  }
+
+  /// Whether a pattern says how long things sat unused and leaves out anything used today or
+  /// busy right now: a yes would otherwise cover things still being worked on.
+  static func quiet(_ kind: AutopilotKind, _ match: [String: [String]]) -> Bool {
+    guard let recency = recencyFacts[kind], let values = match[recency], !values.isEmpty
+    else { return false }
+    return !values.contains(where: tooRecent.contains)
+  }
+
   /// One yes/no question per subject with enough unsure things to be worth asking, biggest
   /// first. A question covers the most recent use not decided yet and everything older, so one
   /// answer can settle a whole subject; after a no the next question is about older things
@@ -136,15 +159,13 @@ public enum AutopilotPolicy {
     _ unsure: [AutopilotItem], memory: AutopilotMemory, limit: Int = maximumOpenQuestions,
     now: Date = Date()
   ) -> [AutopilotQuestion] {
-    let waiting = memory.questions.filter {
-      $0.isOpen || ($0.answer == .skip && ($0.snoozedUntil ?? .distantFuture) > now)
-    }
+    let waiting = memory.questions.filter { waits($0, now: now) }
     let excluded = Set(
       memory.questions.filter { $0.answer == .yes || $0.answer == .no }.map(\.id)
         + waiting.map(\.id))
     let slots = limit - memory.questions.filter(\.isOpen).count
     guard slots > 0 else { return [] }
-    let busy = Set(waiting.map { subject($0.kind, $0.match) })
+    let busy = busySubjects(memory, now: now)
     // Items an open question already asks about never get a second question.
     let covered = Set(
       memory.questions.filter(\.isOpen).flatMap { open in

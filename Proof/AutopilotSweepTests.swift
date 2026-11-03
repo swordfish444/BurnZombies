@@ -375,6 +375,83 @@ func autopilotSweepProof() async throws {
   checkFalse(uncheckedOK, "a question can't rest on an unchecked fact")
   check(uncheckedJSON.contains("checked"), uncheckedJSON)
 
+  // The AI asks by BZ's own rules: one question per subject at a time, saying how long things
+  // sat unused, never about things used today. On a real Mac it opened three questions about
+  // old copies, two of them about copies used that day.
+  func unsureCopy(_ name: String, saved: String, stale: String, gigabytes: UInt64)
+    -> AutopilotItem
+  {
+    AutopilotItem(
+      id: "worktree:" + name, kind: .worktree, name: name, bytes: gigabytes * 1_000_000_000,
+      facts: [
+        "place": "codex", "saved": saved, "changes": "small", "stale": stale, "inUse": "no",
+        "thread": "none",
+      ])
+  }
+  let localWeek = unsureCopy("local-week", saved: "local", stale: "week", gigabytes: 3)
+  let mergedDay = unsureCopy("merged-day", saved: "merged", stale: "day", gigabytes: 5)
+  let mergedToday = unsureCopy("merged-today", saved: "merged", stale: "today", gigabytes: 4)
+  let localWeekMatch = ["saved": ["local"], "stale": ["week"]]
+  let mergedDayMatch = ["saved": ["merged"], "stale": ["day"]]
+  let mergedTodayMatch = ["saved": ["merged"], "stale": ["today"]]
+  // Questions the AI opened before these rules held.
+  func copiesEngine(_ name: String, _ copies: [AutopilotItem], open: [[String: [String]]])
+    throws -> Autopilot
+  {
+    let root = directory.appendingPathComponent(name)
+    try AutopilotStore(root: root).updateMemory { memory in
+      memory.questions += open.map {
+        AutopilotQuestion(
+          kind: .worktree, match: $0, question: "Can I burn these old copies?", why: "",
+          examples: [], count: 0, bytes: 0, source: "ai")
+      }
+    }
+    return try Autopilot(
+      root: root, sources: AutopilotSources(worktrees: { _, _, d in (copies, d) }))
+  }
+  func askAbout(_ engine: Autopilot, _ match: [String: [String]]) async -> (Bool, String) {
+    var request = AutopilotRequest(tool: "ask")
+    request.question = AutopilotQuestionInput(
+      kind: .worktree, match: match, question: "Can I burn these old copies?")
+    return await engine.handle(request)
+  }
+
+  let subjectEngine = try copiesEngine("ask-subject", [localWeek, mergedDay], open: [localWeekMatch])
+  _ = await subjectEngine.tick(now: now)
+  let (otherOK, otherJSON) = await askAbout(subjectEngine, mergedDayMatch)
+  checkFalse(otherOK, "no second question about old copies while one is open")
+  check(otherJSON.contains("old project copies"), otherJSON)
+  let stillOne = await subjectEngine.snapshot()
+  equal(stillOne.questions.map(\.match), [localWeekMatch], "one question about old copies")
+
+  let todayEngine = try copiesEngine("ask-today", [mergedToday], open: [])
+  _ = await todayEngine.tick(now: now)
+  let (todayOK, todayJSON) = await askAbout(todayEngine, mergedTodayMatch)
+  checkFalse(todayOK, "no question about copies used today")
+  check(todayJSON.contains("today"), todayJSON)
+  let (agelessOK, agelessJSON) = await askAbout(todayEngine, ["saved": ["merged"]])
+  checkFalse(agelessOK, "a question says how long things sat unused")
+  check(agelessJSON.contains("unused"), agelessJSON)
+
+  let cleanEngine = try copiesEngine(
+    "ask-clean", [localWeek, mergedDay, mergedToday],
+    open: [localWeekMatch, mergedDayMatch, mergedTodayMatch])
+  let cleaned = await cleanEngine.tick(now: now)
+  equal(
+    cleaned.questions.map(\.match), [mergedDayMatch],
+    "questions opened before the rules: one per subject, the biggest about quiet copies")
+
+  let skipEngine = try copiesEngine("ask-skip", [localWeek, mergedDay], open: [localWeekMatch])
+  let skipping = await skipEngine.tick(now: now)
+  guard let skippedQuestion = skipping.questions.first else {
+    failTest("an open question about old copies to skip")
+    return
+  }
+  _ = try await skipEngine.apply(.answer(questionID: skippedQuestion.id, answer: .skip))
+  let (afterSkipOK, afterSkipJSON) = await askAbout(skipEngine, mergedDayMatch)
+  checkFalse(afterSkipOK, "no new question about old copies the day the owner skipped one")
+  check(afterSkipJSON.contains("old project copies"), afterSkipJSON)
+
   // An open question whose matches shrink below 1 GB stops being worth asking.
   let shrinking = Calls()
   let shrinkEngine = try Autopilot(

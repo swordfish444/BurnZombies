@@ -74,7 +74,7 @@ enum AutopilotTools {
     Tool(
       name: "autopilot_ask", title: "Ask the owner one yes/no question",
       description:
-        "Open a training question about a fact pattern (fact name to allowed values) that covers unsure items. One short sentence a 10-year-old understands, ending with ?. At most 3 open; use replace to improve an open one.",
+        "Open a training question about a fact pattern (fact name to allowed values) that covers unsure items. One short sentence a 10-year-old understands, ending with ?. One open question per subject (old copies, each kind of program, each kind of folder); use replace to improve the open one. Say how long things sat unused (stale or idle) and never ask about things used today.",
       inputSchema: .object([
         "type": "object",
         "properties": .object([
