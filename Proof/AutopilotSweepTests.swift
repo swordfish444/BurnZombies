@@ -492,12 +492,43 @@ func autopilotSweepProof() async throws {
     itemID: "worktree:keep", kind: .worktree, name: "keep", authority: "operator",
     outcome: "burned", detail: "", bytes: 1)
   try receiptStore.append(keeper)
-  for n in 0..<AutopilotStore.maximumReceipts {
+  for n in 0...AutopilotStore.maximumRefusals {
     try receiptStore.append(.refused(finished(n), authority: "ai:0.90", "refusal \(n)"))
   }
   let kept = try receiptStore.receipts()
-  equal(kept.count, AutopilotStore.maximumReceipts, "receipts stay bounded")
+  let refusals = kept.filter { $0.outcome == "refused" }
+  equal(refusals.count, AutopilotStore.maximumRefusals, "refusals stay bounded")
+  equal(refusals.first?.detail, "refusal 1", "the oldest refusal goes first")
   check(kept.contains { $0.id == keeper.id }, "a restorable burn outlives a stream of refusals")
+
+  // A full history of burns never erases a refusal. On a Mac with 500 burns, the same few
+  // copies were refused again on every tick.
+  let fullRoot = directory.appendingPathComponent("full")
+  let fullStore = try AutopilotStore(root: fullRoot)
+  for n in 0..<AutopilotStore.maximumReceipts {
+    try fullStore.append(
+      AutopilotReceipt(
+        itemID: "worktree:old\(n)", kind: .worktree, name: "old-\(n)", authority: "operator",
+        outcome: "burned", detail: "", bytes: 1))
+  }
+  let unchecked = finished(7)
+  let uncheckedAttempts = Calls()
+  let full = try Autopilot(
+    root: fullRoot,
+    sources: AutopilotSources(
+      worktrees: { _, _, d in ([unchecked], d) },
+      retireWorktree: { item, authority in
+        uncheckedAttempts.add(item.id)
+        return .refused(
+          item, authority: authority,
+          "I hadn't finished checking this copy, so I'll judge it again.")
+      }))
+  _ = await full.tick(now: now)
+  _ = await full.tick(now: now.addingTimeInterval(900))
+  equal(uncheckedAttempts.all.count, 1, "a refusal is remembered when receipts are full of burns")
+  equal(
+    try fullStore.receipts().filter { $0.outcome == "burned" }.count,
+    AutopilotStore.maximumReceipts, "every restorable burn is kept")
 }
 
 /// A private app-side endpoint for the MCP protocol proof: an Autopilot engine with
