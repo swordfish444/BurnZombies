@@ -21,6 +21,8 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program without an open port, a copy not owned by Codex/Claude/Conductor that nothing uses, or a known junk folder.
 6. Everything else is **unsure** and becomes training material.
 
+Copies made by Codex, Claude or Cursor are checked like any other, so your yes answers cover them too; the AI still never burns them on its own. A copy whose files BurnZombies could not finish reading gets no age, so no rule about how long things sat unused matches it.
+
 ## Full Disk Access
 
 Optional. Without it, Autopilot handles all three kinds of leftovers everywhere except the places macOS protects: Desktop, Documents, Downloads, iCloud Drive and other cloud drives, Mail, Messages, Photos, other apps' data, and removable and network drives. It never looks inside them, so macOS never asks for access, and it never counts them as empty: copies there are not sized, judged, asked about or burned, and its coverage note says so plainly:

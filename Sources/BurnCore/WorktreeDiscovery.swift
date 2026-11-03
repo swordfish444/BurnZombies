@@ -319,14 +319,15 @@ public enum WorktreeDiscovery {
         let rows = try listing(seed, common: common, protected: protected)
         registeredPaths.formUnion(rows.map(\.path))
         for var row in rows {
+          // A copy Codex or Claude manages is measured like any other, so Autopilot can judge
+          // it; its manual cleanup stays with the owning application.
+          if row.ownerManaged {
+            row.blockers = ["Use the owning application's supported archive/restore workflow."]
+          }
           if let place = row.protectedPlace {
             row.gaps = ["Not checked. " + ProtectedLocations.reason(place)]
-          } else if row.main || row.bare || row.ownerManaged {
-            row.blockers = [
-              row.ownerManaged
-                ? "Use the owning application's supported archive/restore workflow."
-                : "Main and bare repository anchors are protected."
-            ]
+          } else if row.main || row.bare {
+            row.blockers = ["Main and bare repository anchors are protected."]
             row.gaps = [
               "Protected inventory: file and consumer details are not measured automatically. Use Inspect for current details."
             ]
@@ -353,7 +354,7 @@ public enum WorktreeDiscovery {
     // Deferred details remain explicit and the next round starts at the cursor.
     let detailed = roundRobinRepositories(
       result.records.filter { row in
-        !row.main && !row.bare && !row.ownerManaged && row.protectedPlace == nil
+        !row.main && !row.bare && row.protectedPlace == nil
           && roots.contains(where: { WorkspaceSafety.contains($0, row.path) })
       })
     let positions = Dictionary(

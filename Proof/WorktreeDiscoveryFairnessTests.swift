@@ -43,24 +43,64 @@ func worktreeDiscoveryFairnessProof() throws {
       inspectedPaths.append($0)
       return 0
     })
-  equal(inspectedPaths.count, 13)
+  equal(inspectedPaths.count, 14)
   let firstRound = result.records.filter { inspectedPaths.prefix(2).contains($0.path) }
   equal(
     Set(firstRound.map(\.repository)).count, 2,
     "The larger repository monopolized the first detail round")
-  let anchors = result.records.filter { $0.main || $0.bare || $0.ownerManaged }
-  equal(anchors.count, 4)
+  let anchors = result.records.filter { $0.main || $0.bare }
+  equal(anchors.count, 3)
   for row in anchors {
     check(row.consumer == "unknown" && row.revision.isEmpty && !row.blockers.isEmpty)
     check(row.gaps.contains { $0.contains("not measured automatically") })
     checkFalse(inspectedPaths.contains(row.path))
   }
-  let owner = anchors.first { $0.path == protected.path }!
-  let explicit = WorktreeInspection.inspect(owner, visibility: { _ in 0 })
+  // A copy Codex or Claude manages is measured like any other, so Autopilot can judge it, and
+  // stays unapprovable in the manual cleanup.
+  let owner = result.records.first { $0.path == protected.path }!
+  check(owner.ownerManaged && inspectedPaths.contains(owner.path), "owner-managed copy unmeasured")
   check(
-    !explicit.revision.isEmpty && explicit.blockers.contains { $0.contains("owning application") },
-    "Explicit inspection lost either current detail or harness protection")
+    !owner.revision.isEmpty && owner.consumer == "none observed"
+      && owner.blockers.contains { $0.contains("owning application") },
+    "An owner-managed copy lost either its measurement or its harness protection")
   print(
-    "PASS repository-fair first detail round, protected anchors remain unmeasured and unapprovable, explicit inspection retains protection"
+    "PASS repository-fair first detail round, protected anchors remain unmeasured and unapprovable, owner-managed copies are measured and stay unapprovable"
   )
+}
+
+/// Autopilot judges a copy Codex manages from the same facts as any other copy, so the
+/// between-scan refresh keeps them current too.
+func ownerManagedRefreshProof() async throws {
+  let base = URL(fileURLWithPath: "/private/tmp/bz-owner-refresh-" + UUID().uuidString)
+  let fm = FileManager.default
+  defer { try? fm.removeItem(at: base) }
+  let home = base.appendingPathComponent("home")
+  let repository = home.appendingPathComponent("git/project")
+  let copy = home.appendingPathComponent(".codex/worktrees/a1b2/project")
+  try fm.createDirectory(at: repository, withIntermediateDirectories: true)
+  try fm.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+  _ = try WorktreeGit.run(repository.path, ["init", "--initial-branch=main"])
+  try Data("fixture\n".utf8).write(to: repository.appendingPathComponent("source"))
+  _ = try WorktreeGit.run(repository.path, ["add", "."])
+  _ = try WorktreeGit.run(
+    repository.path,
+    [
+      "-c", "user.name=Proof", "-c", "user.email=proof@example.invalid", "commit", "-m",
+      "fixture",
+    ])
+  _ = try WorktreeGit.run(repository.path, ["worktree", "add", "--detach", copy.path])
+  let root = base.appendingPathComponent("state")
+  let service = try WorktreeService(
+    root: root, visibility: { _ in 0 }, access: fixtureAccess, discoveryHome: home)
+  _ = try await service.tick()
+  var row = try await service.snapshot().records.first { $0.path == copy.path }!
+  check(row.ownerManaged && !row.revision.isEmpty, "the full scan left the Codex copy unmeasured")
+  equal(row.changes, 0)
+  try Data("edit\n".utf8).write(to: copy.appendingPathComponent("notes"))
+  row.observedAt = Date().addingTimeInterval(-20 * 60)
+  try WorktreeStore(root: root).put(row, kind: "record", id: row.id)
+  _ = try await service.tick()
+  row = try await service.snapshot().records.first { $0.path == copy.path }!
+  equal(row.changes, 1, "the refresh between scans skipped the Codex copy")
+  print("PASS owner-managed copies are measured by full scans and refreshed between them")
 }

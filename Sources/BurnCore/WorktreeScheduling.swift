@@ -33,7 +33,7 @@ extension WorktreeService {
       row.revision.isEmpty && row.gaps == ["Detailed inspection pending."]
     }
     let candidates = try records().filter { row in
-      !row.main && !row.bare && !row.retired && !row.kept && !row.ownerManaged
+      !row.main && !row.bare && !row.retired && !row.kept
         && protected.allows(row.path) && protected.allows(row.repository)
         && Date().timeIntervalSince(row.observedAt)
           >= (pending(row) ? 0 : unblocked(row) ? 120 : 900)

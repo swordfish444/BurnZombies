@@ -6,6 +6,7 @@ func nativeWorktreeRefreshProof() async throws {
   let initialFailures = failures
   try await nativeWorktreeRediscoveryProof()
   try worktreeDiscoveryFairnessProof()
+  try await ownerManagedRefreshProof()
   let base = URL(fileURLWithPath: "/private/tmp/bz-refresh-native-" + UUID().uuidString)
   let repository = base.appendingPathComponent("repository")
   let root = base.appendingPathComponent("state")

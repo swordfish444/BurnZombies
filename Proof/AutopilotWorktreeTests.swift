@@ -217,6 +217,12 @@ private func apDirectProof() {
   equal(stale(40), "month")
   equal(stale(100), "older")
   equal(stale(nil), "unknown", "no dates at all")
+  // Without the file walk, an old commit can't say a copy sat unused: its files may be newer.
+  var unwalked = record("s")
+  unwalked.lastFileChange = nil
+  unwalked.lastCommitAt = now.addingTimeInterval(-60 * 86_400)
+  equal(one(unwalked).facts["stale"], "unknown", "only an old commit, no file dates")
+  checkFalse(one(unwalked).detail.contains("untouched"), "no age claimed without file dates")
   let ended = AgentThread(
     id: "t2", agent: "codex", cwd: "/bz-test/git/project-s", live: false,
     lastActive: now.addingTimeInterval(-3600))

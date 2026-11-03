@@ -57,8 +57,10 @@ public enum AutopilotWorktrees {
       let chat = AgentThreads.state(for: record.path, threads: threads)
       let saved = savedFact(record, cache: &cache, now: now, budget: &remaining)
       let changes = record.status.isEmpty ? "unknown" : changesBucket(record.changes)
+      // Only the file walk tells when a copy was last worked in; without it, an old commit could
+      // hide newer edits.
       let dates: [Date?] = [record.lastFileChange, record.lastCommitAt, chat.lastActive]
-      let newest = dates.compactMap { $0 }.max()
+      let newest = record.lastFileChange == nil ? nil : dates.compactMap { $0 }.max()
       let repo = repoName(record)
       let facts: [String: String] = [
         "place": placeFact(record), "repo": repo, "saved": saved, "changes": changes,
