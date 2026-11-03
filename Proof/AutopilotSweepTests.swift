@@ -225,6 +225,25 @@ func autopilotSweepProof() async throws {
   isNil(sweep.retryAfter)
   check((sweep.lastAISweep ?? .distantPast) >= busyStart, "the sweep counts as done")
 
+  // Ticks that pile up behind a slow catalog resume together; only one may start a sweep. On
+  // a real Mac four started at once.
+  let pileRoot = directory.appendingPathComponent("pile")
+  let pileEngine = try Autopilot(
+    root: pileRoot, sources: AutopilotSources(processes: { _ in [server] }))
+  let pileSweeps = Calls()
+  let pile = AutopilotCoordinator(
+    root: pileRoot, engine: pileEngine, configuration: { config },
+    runner: { _, _ in
+      pileSweeps.add("sweep")
+      Thread.sleep(forTimeInterval: 0.3)
+      return "{}"
+    })
+  await withTaskGroup(of: Void.self) { group in
+    for _ in 0..<4 { group.addTask { _ = await pile.tick(now: Date(), manual: true) } }
+  }
+  await pile.waitForAI()
+  equal(pileSweeps.all.count, 1, "overlapping ticks start one sweep")
+
   // The app quit in the middle of a sweep: a fresh app must not wait for it forever.
   await engine.updateSweep { $0.running = true }
   let relaunched = Calls()
