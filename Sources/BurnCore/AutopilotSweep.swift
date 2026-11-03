@@ -220,6 +220,9 @@ public actor AutopilotCoordinator {
   var aiTask: Task<Void, Never>?
   /// Set on the first tick, before anything here can start a sweep.
   var launched = false
+  /// Claimed in the same step as the check, before anything awaits: ticks that pile up behind a
+  /// slow catalog resume together, and each would otherwise start its own sweep.
+  var starting = false
 
   public init(
     root: URL = Store.defaultRoot, engine: Autopilot,
@@ -258,9 +261,11 @@ public actor AutopilotCoordinator {
       manual || AutopilotSweeper.nativeDue(state, now: now)
       ? await engine.tick(now: now) : await engine.snapshot(now: now)
     let latest = await engine.sweepState()
-    guard aiTask == nil,
+    guard aiTask == nil, !starting,
       AutopilotSweeper.aiDue(latest, snapshot: snapshot, now: now, manual: manual)
     else { return snapshot }
+    starting = true
+    defer { starting = false }
     guard let config = configuration(), config.enabled || manual else {
       await engine.updateSweep { $0.lastError = "Choose an AI in Settings to judge new things." }
       return await engine.snapshot(now: now)
