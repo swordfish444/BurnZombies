@@ -251,6 +251,8 @@ import UserNotifications
   @Published var technical = [String]()
   @Published var impactTab = "Impact"
   @Published var impactPeriod = ImpactPeriod.today
+  /// The menu bar popup's own period, so its tabs never move the Impact window's.
+  @Published var miniImpactPeriod = ImpactPeriod.today
   @Published var pressure = "—"
   var openImpact: (() -> Void)?
   var openLog: (() -> Void)?

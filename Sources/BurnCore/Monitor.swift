@@ -11,6 +11,8 @@ public struct ViewState: Sendable {
   public var fullDiskAccess = FullDiskAccessStatus()
   public var findings: [Finding] = []
   public var catalog = Catalog()
+  /// Autopilot's own cleanups, which never pass through the catalog.
+  public var autopilotImpact: AutopilotImpact?
   public var processCount = 0
   public var hiddenCount = 0
   public var partial = false
@@ -33,6 +35,8 @@ public actor Monitor {
   private let passive: PassiveCollector?
   private let discovery: DiskDiscovery?
   private let ownerMaintenance: OwnerMaintenance?
+  /// Reads the tally of Autopilot's cleanups; only Autopilot writes it.
+  private let autopilot: AutopilotStore?
   private var diskScanRunning = false
   private var diskSnapshot = DiskSnapshot()
   private var diskScanLoaded = false
@@ -59,6 +63,7 @@ public actor Monitor {
     self.accessCheck = accessCheck ?? { FullDiskAccess.status(root: root) }
     homes = discoveryHome.map { [$0.path] } ?? []
     store = try Store(root: root)
+    autopilot = try? AutopilotStore(root: root)
     do {
       intent =
         try legacyAuthority.map { try IntentLedger(root: root, legacyAuthority: $0) }
@@ -153,6 +158,7 @@ public actor Monitor {
   public func accessStatus() -> FullDiskAccessStatus { state.fullDiskAccess }
   public func snapshot() async -> ViewState {
     var projected = state
+    projected.autopilotImpact = try? autopilot?.impact()
     if let service = worktreeService {
       do {
         projected.worktrees = try await service.snapshot()

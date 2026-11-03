@@ -18,7 +18,7 @@ The observer schedules bounded background reviews using one selected installed h
 
 ## Menu bar and impact
 
-The flame opens today's impact. **View impact** opens the larger display; **Burn Log** shows receipts. **Hunt Zombies** starts a deep review now without sending a chat message. While it runs, **Hunting Zombies →** opens the live hunt scene and activity log. No computer reboot, harness restart or special job wrapper is required.
+The flame opens today's impact; the **Today**, **7 days** and **All time** tabs switch its four totals. **View impact** opens the larger display; **Burn Log** shows receipts. **Hunt Zombies** starts a deep review now without sending a chat message. While it runs, **Hunting Zombies →** opens the live hunt scene and activity log. No computer reboot, harness restart or special job wrapper is required.
 
 ## Zombie hunts
 
@@ -36,7 +36,7 @@ Use **Settings → Zombie hunts** to control automatic hunts and enable **Start 
 
 ## What the numbers mean
 
-The main views show zombies burned, memory released, disk reclaimed and worktrees cleaned. Only verified exits add to burned helpers and released memory. Worktree receipts add to disk/worktree counters only after guarded native removal. Click Worktrees cleaned to discover and review linked checkouts, explicitly manage eligible existing worktrees, and restore verified encrypted snapshots. Codex-managed checkouts remain with Codex. [Worktree safety and recovery](WORKTREE-CLEANUP.md). CPU time remains in impact details. CPU time saved accumulates from observed pre-stop CPU use during awake observation after verified exit, up to 24 hours per cleanup. Sleep, downtime, reboot and detected replacement helpers add no credit. Previously credited one-hour estimates remain intact until observed time catches up. Agent speed stays neutral when local timing samples are noisy, unchanged or slower. Pending, uncertain or recurring work gets no verified-cleanup credit.
+The main views show zombies burned, memory released, disk reclaimed and worktrees cleaned. Only verified exits add to burned helpers and released memory. Worktree receipts add to disk/worktree counters only after guarded native removal. Old copies and junk folders Autopilot burns count too, and a restore takes its share back out. Click Worktrees cleaned to discover and review linked checkouts, explicitly manage eligible existing worktrees, and restore verified encrypted snapshots. Codex-managed checkouts remain with Codex. [Worktree safety and recovery](WORKTREE-CLEANUP.md). CPU time remains in impact details. CPU time saved accumulates from observed pre-stop CPU use during awake observation after verified exit, up to 24 hours per cleanup. Sleep, downtime, reboot and detected replacement helpers add no credit. Previously credited one-hour estimates remain intact until observed time catches up. Agent speed stays neutral when local timing samples are noisy, unchanged or slower. Pending, uncertain or recurring work gets no verified-cleanup credit.
 
 The Burn Log shows the lifecycle and ownership rationale. A true OS zombie is already exited and must be reaped by its parent; killing that child cannot release memory.
 

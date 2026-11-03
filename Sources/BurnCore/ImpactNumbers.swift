@@ -61,7 +61,8 @@ public struct ImpactNumbers: Sendable {
   }
 
   public static func make(
-    catalog: Catalog, period: ImpactPeriod, now: Date = Date(), calendar: Calendar = .current
+    catalog: Catalog, autopilot: AutopilotImpact? = nil, period: ImpactPeriod, now: Date = Date(),
+    calendar: Calendar = .current
   ) -> Self {
     let start = period.start(now: now, calendar: calendar)
     let verified = catalog.events.filter {
@@ -80,6 +81,7 @@ public struct ImpactNumbers: Sendable {
     let diskOutputs = (catalog.diskReceipts ?? []).filter {
       $0.outcome == "verified" && $0.fixture != true && $0.date >= start && $0.date <= now
     }
+    let cleanups = (autopilot?.cleanups ?? []).filter { $0.date >= start && $0.date <= now }
     let workspace = workspaces.last
     let latestIsWorkspace =
       (workspace?.verifiedAt ?? .distantPast)
@@ -91,11 +93,14 @@ public struct ImpactNumbers: Sendable {
         ? (catalog.lifetimeResidentReleased ?? verified.reduce(0) { $0 + $1.residentBefore })
         : verified.reduce(0) { $0 + $1.residentBefore },
       disk: period == .all
-        ? (catalog.lifetimeDiskReclaimedBytes ?? 0)
+        ? (catalog.lifetimeDiskReclaimedBytes ?? 0) + (autopilot?.bytes ?? 0)
         : workspaces.reduce(0) { $0 + $1.diskReclaimedBytes }
-          + diskOutputs.reduce(0) { $0 + $1.diskReclaimedBytes },
-      worktrees: period == .all ? (catalog.lifetimeWorktreesCleaned ?? 0) : workspaces.count,
-      lifetimeWorktrees: catalog.lifetimeWorktreesCleaned ?? 0,
+          + diskOutputs.reduce(0) { $0 + $1.diskReclaimedBytes }
+          + cleanups.reduce(0) { $0 + $1.bytes },
+      worktrees: period == .all
+        ? (catalog.lifetimeWorktreesCleaned ?? 0) + (autopilot?.worktrees ?? 0)
+        : workspaces.count + cleanups.filter(\.worktree).count,
+      lifetimeWorktrees: (catalog.lifetimeWorktreesCleaned ?? 0) + (autopilot?.worktrees ?? 0),
       latestIsWorkspace: latestIsWorkspace,
       latestDisk: latestIsWorkspace ? (workspace?.diskReclaimedBytes ?? 0) : 0,
       cpuSeconds: period == .all

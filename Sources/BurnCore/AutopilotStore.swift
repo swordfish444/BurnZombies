@@ -75,12 +75,33 @@ public final class AutopilotStore: @unchecked Sendable {
     try lock.withLock {
       var all = try load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())
       try change(&all)
+      // Counted before trimming, so no burn is trimmed away uncounted.
+      var impact = try load("impact.json", limit: 4 << 20, empty: AutopilotImpact())
+      let counted = impact
+      impact.count(all)
       // Refusals and everything else are bounded apart, oldest first: a stream of refusals never
       // pushes out a burn the owner may restore, and a full history of burns never erases the
       // refusal that keeps a copy from being tried again on every tick.
       Self.trim(&all, refusals: true, to: Self.maximumRefusals)
       Self.trim(&all, refusals: false, to: Self.maximumReceipts)
+      impact.prune(keeping: all, now: Date())
       try save(all, "receipts.json", limit: 8 << 20)
+      if impact != counted { try save(impact, "impact.json", limit: 4 << 20) }
+    }
+  }
+
+  public func impact() throws -> AutopilotImpact {
+    try lock.withLock { try load("impact.json", limit: 4 << 20, empty: AutopilotImpact()) }
+  }
+  /// Counts burns made before the tally existed; later ones are counted as they are written.
+  public func refreshImpact() throws {
+    try lock.withLock {
+      let all = try load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())
+      var impact = try load("impact.json", limit: 4 << 20, empty: AutopilotImpact())
+      let counted = impact
+      impact.count(all)
+      impact.prune(keeping: all, now: Date())
+      if impact != counted { try save(impact, "impact.json", limit: 4 << 20) }
     }
   }
 

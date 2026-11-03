@@ -74,4 +74,91 @@ func impactPeriodProof() throws {
     equal(ImpactNumbers.make(catalog: demo, period: period, now: now, calendar: calendar).count, count + 18,
       "A new receipt must update every applicable period once")
   }
+  // Autopilot's cleanups count like any other: copies as worktrees cleaned, copies and junk
+  // folders as disk reclaimed. On a real Mac both read 0 while Autopilot freed hundreds of GB.
+  var autopilot = AutopilotImpact()
+  autopilot.worktrees = 40
+  autopilot.bytes = 900_000_000_000
+  autopilot.cleanups = [
+    .init(receiptID: UUID(), date: now, worktree: true, bytes: 3_000_000_000),
+    .init(receiptID: UUID(), date: today, worktree: false, bytes: 1_000_000_000),
+    .init(receiptID: UUID(), date: week, worktree: true, bytes: 5_000_000_000),
+    .init(receiptID: UUID(), date: week.addingTimeInterval(-1), worktree: true, bytes: 7_000_000_000),
+    .init(receiptID: UUID(), date: now.addingTimeInterval(1), worktree: true, bytes: 11_000_000_000),
+  ]
+  var manual = Catalog()
+  manual.lifetimeWorktreesCleaned = 2
+  manual.lifetimeDiskReclaimedBytes = 80_000
+  func cleaned(_ period: ImpactPeriod) -> ImpactNumbers {
+    ImpactNumbers.make(catalog: manual, autopilot: autopilot, period: period, now: now, calendar: calendar)
+  }
+  equal(cleaned(.today).worktrees, 1, "Autopilot's copies count as worktrees cleaned today")
+  equal(cleaned(.today).disk, 4_000_000_000, "its copies and junk folders count as disk reclaimed today")
+  equal(cleaned(.week).worktrees, 2, "7 days")
+  equal(cleaned(.week).disk, 9_000_000_000, "7 days")
+  equal(cleaned(.all).worktrees, 42, "all time adds Autopilot's tally to earlier cleanups")
+  equal(cleaned(.all).disk, 900_000_080_000, "all time")
+  equal(cleaned(.all).lifetimeWorktrees, 42)
+  try autopilotImpactProof()
+}
+
+/// Autopilot's cleanups are tallied apart from its receipts, which keep only the latest 500, so
+/// the totals never go down when old receipts are trimmed.
+func autopilotImpactProof() throws {
+  let fm = FileManager.default
+  let root = fm.temporaryDirectory.appendingPathComponent("bz-autopilot-impact-" + UUID().uuidString)
+  defer { try? fm.removeItem(at: root) }
+  let now = Date()
+  let day: TimeInterval = 86_400
+  func receipt(_ kind: AutopilotKind, _ outcome: String, _ bytes: UInt64, _ date: Date) -> AutopilotReceipt {
+    AutopilotReceipt(
+      itemID: kind.rawValue + ":" + UUID().uuidString, kind: kind, name: "fixture",
+      authority: "rule:fixture", outcome: outcome, detail: "", bytes: bytes, date: date)
+  }
+  // An install that burned things before the tally existed: each burn counts once.
+  let old = receipt(.worktree, "burned", 1_000_000_000, now.addingTimeInterval(-10 * day))
+  let copy = receipt(.worktree, "burned", 3_000_000_000, now.addingTimeInterval(-3 * day))
+  let folder = receipt(.disk, "burned", 1_000_000_000, now)
+  let earlier = [
+    old, copy, folder, receipt(.worktree, "refused", 9_000_000_000, now),
+    receipt(.worktree, "failed", 9_000_000_000, now), receipt(.process, "burned", 9_000_000_000, now),
+  ]
+  let directory = root.appendingPathComponent("autopilot", isDirectory: true)
+  try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+  try JSONEncoder().encode(earlier).write(to: directory.appendingPathComponent("receipts.json"))
+  let store = try AutopilotStore(root: root)
+  try store.refreshImpact()
+  var impact = try store.impact()
+  equal(impact.worktrees, 2, "burned copies count as worktrees cleaned")
+  equal(
+    impact.bytes, 5_000_000_000,
+    "burned copies and junk folders count as disk reclaimed; refusals, failures and programs don't")
+  try store.refreshImpact()
+  equal(try store.impact(), impact, "counting again changes nothing")
+
+  // Trimming old receipts never lowers the totals, and a week of cleanups stays for 7 days.
+  let junk = UInt64(AutopilotStore.maximumReceipts) * 1_000_000
+  try store.updateReceipts { all in
+    for _ in 0..<AutopilotStore.maximumReceipts { all.append(receipt(.disk, "burned", 1_000_000, now)) }
+  }
+  let kept = try store.receipts()
+  checkFalse(kept.contains { $0.id == copy.id }, "the oldest burns were trimmed")
+  impact = try store.impact()
+  equal(impact.worktrees, 2, "trimming kept the copies")
+  equal(impact.bytes, 5_000_000_000 + junk, "trimming kept the bytes")
+  check(impact.cleanups.contains { $0.receiptID == copy.id }, "a 3-day-old cleanup stays for 7 days")
+  checkFalse(
+    impact.cleanups.contains { $0.receiptID == old.id },
+    "a 10-day-old cleanup whose receipt is gone is no longer listed")
+
+  // A restore takes its share back.
+  let restored = receipt(.worktree, "burned", 2_000_000_000, now)
+  try store.append(restored)
+  equal(try store.impact().worktrees, 3, "a new burn counts at once")
+  try store.updateReceipts { all in
+    if let i = all.firstIndex(where: { $0.id == restored.id }) { all[i].outcome = "restored" }
+  }
+  impact = try store.impact()
+  equal(impact.worktrees, 2, "a restored copy is no longer counted")
+  equal(impact.bytes, 5_000_000_000 + junk, "nor are its bytes")
 }

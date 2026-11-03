@@ -104,6 +104,7 @@ public actor Autopilot {
     self.sources = sources
     self.minimumBytes = minimumBytes
     catalog = try? store.catalog()
+    try? store.refreshImpact()
   }
 
   /// Refresh the catalog and burn everything already authorized. Uses no AI.

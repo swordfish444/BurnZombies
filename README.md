@@ -65,7 +65,7 @@ Everything that matters in one small panel: **zombies burned, memory released, d
   <img src="docs/media/menu-bar.png" width="360" alt="BurnZombies compact menu after cleanups: four counters in a compact two-by-two grid, smaller units, reclaimed memory and helpers cleared, memory pressure and links to Impact and Burn Log.">
 </p>
 
-**Small by default. More when you need it.** Open Impact for Today, 7 days or All time. Burn Log keeps the cleanup receipts one click away.
+**Small by default. More when you need it.** Switch the panel between Today, 7 days and All time, or open Impact for the bigger view. Burn Log keeps the cleanup receipts one click away.
 
 ### Hunt Zombies
 

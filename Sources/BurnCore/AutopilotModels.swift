@@ -154,6 +154,59 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
   public var isOpen: Bool { answer == nil }
 }
 
+/// What Autopilot's cleanups freed. Kept apart from the receipts, which keep only the latest 500,
+/// so the totals never go down when old receipts are trimmed.
+public struct AutopilotImpact: Codable, Sendable, Equatable {
+  public struct Cleanup: Codable, Sendable, Equatable {
+    public var receiptID: UUID
+    public var date: Date
+    public var worktree: Bool
+    public var bytes: UInt64
+    public init(receiptID: UUID, date: Date, worktree: Bool, bytes: UInt64) {
+      self.receiptID = receiptID
+      self.date = date
+      self.worktree = worktree
+      self.bytes = bytes
+    }
+  }
+  /// Old project copies burned, all time.
+  public var worktrees = 0
+  /// Disk freed by copies and junk folders together, all time.
+  public var bytes: UInt64 = 0
+  /// Cleanups of the last week, and older ones whose receipt is still kept.
+  public var cleanups: [Cleanup] = []
+  public init() {}
+
+  /// Counts burned copies and junk folders not counted yet, and takes restored ones back out.
+  public mutating func count(_ receipts: [AutopilotReceipt]) {
+    var counted = Set(cleanups.map(\.receiptID))
+    for r in receipts
+    where r.outcome == "burned" && [.worktree, .disk].contains(r.kind) && !counted.contains(r.id) {
+      counted.insert(r.id)
+      cleanups.append(
+        .init(receiptID: r.id, date: r.date, worktree: r.kind == .worktree, bytes: r.bytes))
+      worktrees += r.kind == .worktree ? 1 : 0
+      bytes += r.bytes
+    }
+    let restored = Set(receipts.filter { $0.outcome == "restored" }.map(\.id))
+    cleanups.removeAll { cleanup in
+      guard restored.contains(cleanup.receiptID) else { return false }
+      worktrees -= cleanup.worktree ? 1 : 0
+      bytes -= min(bytes, cleanup.bytes)
+      return true
+    }
+  }
+
+  /// Keeps a week of cleanups for the 7-day total, and every one whose receipt is still kept so
+  /// none is counted twice.
+  public mutating func prune(keeping receipts: [AutopilotReceipt], now: Date) {
+    let kept = Set(receipts.map(\.id))
+    cleanups.removeAll {
+      now.timeIntervalSince($0.date) >= 8 * 86_400 && !kept.contains($0.receiptID)
+    }
+  }
+}
+
 public struct AutopilotRestore: Codable, Sendable, Equatable {
   /// Git common directory that holds the safety ref.
   public var repository: String

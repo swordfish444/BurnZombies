@@ -106,7 +106,7 @@ struct Flame: View {
 }
 extension ImpactNumbers {
   @MainActor static func make(_ model: AppModel, period: ImpactPeriod) -> Self {
-    make(catalog: model.state.catalog, period: period)
+    make(catalog: model.state.catalog, autopilot: model.state.autopilotImpact, period: period)
   }
   static func bytes(_ n: UInt64) -> String {
     if n == 0 { return "0 GB" }
@@ -247,9 +247,11 @@ struct MemoryPressureRow: View {
 }
 struct MiniImpactView: View {
   static let size = NSSize(width: 360, height: 550)
+  static let tabWidth: CGFloat = 72
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject var model: AppModel
   var numbers: ImpactNumbers { .make(model, period: .today) }
+  var totals: ImpactNumbers { .make(model, period: model.miniImpactPeriod) }
   var lastBurn: String {
     let history = ImpactNumbers.make(model, period: .all)
     if history.last != nil { return "Last burn \(history.age)" }
@@ -292,24 +294,38 @@ struct MiniImpactView: View {
         Text("Dead weight. Gone.").font(BurnTheme.display(28))
           .frame(height: 40, alignment: .leading).padding(.top, 16)
       }
-      Text("TODAY").font(.system(size: 11, weight: .semibold)).tracking(0.5)
-        .foregroundStyle(BurnTheme.muted).frame(height: 14).padding(.top, 12)
+      // The tabs take the old TODAY label's row and switch only the four totals below.
+      HStack(spacing: 0) {
+        ForEach(ImpactPeriod.allCases, id: \.self) { option in
+          Button {
+            model.miniImpactPeriod = option
+          } label: {
+            Text(option.rawValue.uppercased()).font(.system(size: 11, weight: .semibold))
+              .tracking(0.5)
+              .foregroundStyle(model.miniImpactPeriod == option ? BurnTheme.cream : BurnTheme.muted)
+              .frame(width: Self.tabWidth, height: 14, alignment: .leading)
+              .contentShape(Rectangle())
+          }.clickPointer().accessibilityIdentifier("mini-period-" + option.rawValue)
+            .accessibilityValue(model.miniImpactPeriod == option ? "Selected" : "Not selected")
+        }
+      }.frame(height: 14).padding(.top, 12)
       VStack(spacing: 10) {
         HStack(spacing: 18) {
-          miniMetric("\(numbers.count)", "Zombies burned", flame: true)
+          miniMetric("\(totals.count)", "Zombies burned", flame: true)
           Rectangle().fill(BurnTheme.line).frame(width: 1, height: 50)
-          miniMetric(ImpactNumbers.bytes(numbers.memory), "Memory released")
+          miniMetric(ImpactNumbers.bytes(totals.memory), "Memory released")
         }
         HStack(spacing: 18) {
-          miniMetric(ImpactNumbers.bytes(numbers.disk), "Disk reclaimed")
+          miniMetric(ImpactNumbers.bytes(totals.disk), "Disk reclaimed")
           Rectangle().fill(BurnTheme.line).frame(width: 1, height: 50)
           Button {
             model.openWorktrees?()
           } label: {
-            miniMetric("\(numbers.worktrees)", "Worktrees cleaned")
+            miniMetric("\(totals.worktrees)", "Worktrees cleaned")
           }.clickPointer().help("Open worktree inventory and recovery")
         }
-      }.frame(height: 120).padding(.top, 6)
+        // A tab switch replaces the totals immediately; new burns within a period still tick up.
+      }.id(model.miniImpactPeriod).frame(height: 120).padding(.top, 6)
       Group {
         if model.showsAccessBanner { accessCard } else { speedCard }
       }.padding(.top, 25)

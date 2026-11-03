@@ -175,5 +175,85 @@ import Vision
     guard host.frame.size == MiniImpactView.size else { throw StoreError.message("Popover size changed") }
     print("PASS offscreen compact \(name): 360 × 550, readable labels and footer")
   }
+  if catalog == nil { try miniPeriodsProof(directory: directory) }
+}
+
+/// The popup's tabs switch its four totals, Autopilot's cleanups included, and nothing else: the
+/// boost card stays on today and the Impact window keeps its own period.
+@MainActor func miniPeriodsProof(directory: URL) throws {
+  let model = AppModel(demo: true)
+  var autopilot = AutopilotImpact()
+  autopilot.worktrees = 30
+  autopilot.bytes = 600_000_000_000
+  autopilot.cleanups = [.init(receiptID: UUID(), date: Date(), worktree: true, bytes: 5_000_000_000)]
+  model.state.autopilotImpact = autopilot
+  let view = MiniImpactView(model: model)
+  let host = NSHostingView(rootView: view)
+  host.frame = NSRect(origin: .zero, size: MiniImpactView.size)
+  let surface = NSWindow(contentRect: host.frame, styleMask: .borderless,
+    backing: .buffered, defer: false)
+  surface.contentView = host
+  func settle() {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    host.layoutSubtreeIfNeeded()
+    host.displayIfNeeded()
+  }
+  func click(_ option: ImpactPeriod) throws {
+    settle()
+    let index = ImpactPeriod.allCases.firstIndex(of: option)!
+    // The tab row sits where the TODAY label was: 162 pt from the top, after the 30 pt margin.
+    let x = 30 + CGFloat(index) * MiniImpactView.tabWidth + 12
+    let point = NSPoint(x: x, y: host.isFlipped ? 162 : MiniImpactView.size.height - 162)
+    guard let target = host.hitTest(point) else { throw StoreError.message("No tab hit target") }
+    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+      guard let event = NSEvent.mouseEvent(with: type, location: host.convert(point, to: nil),
+        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: surface.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else {
+        throw StoreError.message("Tab event unavailable")
+      }
+      if type == .leftMouseDown { target.mouseDown(with: event) } else { target.mouseUp(with: event) }
+    }
+    settle()
+    guard model.miniImpactPeriod == option else {
+      throw StoreError.message("Clicking \(option.rawValue) did not select it")
+    }
+  }
+  func render(_ name: String) throws -> String {
+    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+      pixelsWide: Int(host.bounds.width * 2), pixelsHigh: Int(host.bounds.height * 2),
+      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+      throw StoreError.message("Compact render unavailable")
+    }
+    bitmap.size = host.bounds.size
+    host.cacheDisplay(in: host.bounds, to: bitmap)
+    guard let cgImage = bitmap.cgImage,
+      let png = bitmap.representation(using: .png, properties: [:])
+    else { throw StoreError.message("Compact PNG unavailable") }
+    try png.write(to: directory.appendingPathComponent(name + ".png"))
+    let recognition = VNRecognizeTextRequest()
+    recognition.recognitionLevel = .accurate
+    try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([recognition])
+    return (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+      .joined(separator: "\n")
+  }
+  let card = view.numbers
+  for option in [ImpactPeriod.all, .week, .today] {
+    try click(option)
+    let expected = ImpactNumbers.make(model, period: option)
+    let earlier = ImpactNumbers.make(catalog: model.state.catalog, period: option)
+    let mine = option == .all ? (30, UInt64(600_000_000_000)) : (1, UInt64(5_000_000_000))
+    guard view.totals.count == expected.count, view.totals.memory == expected.memory,
+      view.totals.worktrees == earlier.worktrees + mine.0, view.totals.disk == earlier.disk + mine.1
+    else { throw StoreError.message("The \(option.rawValue) tab shows the wrong totals") }
+    guard view.numbers.count == card.count, view.numbers.memory == card.memory,
+      model.impactPeriod == .today
+    else { throw StoreError.message("The \(option.rawValue) tab changed more than the totals") }
+    let visible = try render("periods-" + option.rawValue.lowercased().replacingOccurrences(of: " ", with: "-"))
+    guard ["TODAY", "7 DAYS", "ALL TIME", "Disk reclaimed", "Worktrees cleaned",
+      String(view.totals.worktrees)].allSatisfy(visible.contains)
+    else { throw StoreError.message("The \(option.rawValue) tab isn't readable: \(visible)") }
+  }
+  print("PASS offscreen compact periods: tabs switch the four totals and nothing else")
 }
 #endif
