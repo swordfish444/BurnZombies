@@ -233,7 +233,8 @@ public enum AutopilotWorktrees {
       return .refused(item, authority: authority, "This is not an old copy I can retire.")
     }
     if let reason = item.protectedReason { return .refused(item, authority: authority, reason) }
-    if let reason = refusal(path, protected ?? .current(root: root)) {
+    // `root` is scratch space, not a store, so no access record is read from it.
+    if let reason = refusal(path, protected ?? .limited()) {
       return .refused(item, authority: authority, reason)
     }
     do {
