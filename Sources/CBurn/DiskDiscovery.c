@@ -55,7 +55,8 @@ void *bz_disk_open(const char *path, int depth) {
     node_for(w,path);
     return w;
 }
-// A folder the walk must never read, such as one macOS protects. Volumes ignore case.
+// A folder the walk must never read, such as one macOS protects. Volumes ignore case. A
+// leading `*` matches the end of a folder name instead, for places that can be anywhere.
 int bz_disk_exclude(void *handle,const char *path) {
     disk_walk *w=handle;
     if(!w || !path || strlen(path)>=4096 || w->excluded_count==DISK_EXCLUDED)return -1;
@@ -64,7 +65,14 @@ int bz_disk_exclude(void *handle,const char *path) {
     return 0;
 }
 static int excluded(disk_walk *w,const char *path) {
-    for(int i=0;i<w->excluded_count;i++)if(!strcasecmp(w->excluded[i],path))return 1;
+    for(int i=0;i<w->excluded_count;i++) {
+        const char *rule=w->excluded[i];
+        if(rule[0]=='*') {
+            const char *name=strrchr(path,'/');name=name?name+1:path;
+            size_t n=strlen(name),m=strlen(rule+1);
+            if(n>m && !strcasecmp(name+n-m,rule+1))return 1;
+        } else if(!strcasecmp(rule,path))return 1;
+    }
     return 0;
 }
 int bz_disk_step(void *handle,int entries) {

@@ -99,7 +99,8 @@ public enum WorktreeScanWorker {
     let started = ProcessInfo.processInfo.systemUptime
     let knownOnly = ProcessInfo.processInfo.environment["BURNZOMBIES_WORKTREE_REFRESH"] == "1"
     let roots = Array(arguments.dropFirst(2))
-    // The consumer snapshot resolves its roots, so it never gets a protected one.
+    // The consumer snapshot resolves its roots, so it never gets a protected one; with no root
+    // left it would read every process's files, so there is none then.
     let watched = roots.filter { protected.resolve($0) != nil }
     if knownOnly {
       do {
@@ -125,7 +126,7 @@ public enum WorktreeScanWorker {
             WorktreeInspection.inspect(
               row,
               visibility: { path in
-                if consumers == nil {
+                if consumers == nil && !watched.isEmpty {
                   consumers = WorktreeConsumerSnapshot(roots: watched)
                   if let gap = consumers?.gap { emit(gap: "Consumer coverage: " + gap) }
                 }
@@ -139,12 +140,12 @@ public enum WorktreeScanWorker {
         return 65
       }
     }
-    let consumers = WorktreeConsumerSnapshot(roots: watched)
-    if let gap = consumers.gap { emit(gap: "Consumer coverage: " + gap) }
+    let consumers = watched.isEmpty ? nil : WorktreeConsumerSnapshot(roots: watched)
+    if let gap = consumers?.gap { emit(gap: "Consumer coverage: " + gap) }
     let result = WorktreeDiscovery.scan(
       roots: roots,
       seconds: 240,
-      visibility: { consumers.state($0) }, inspectOffset: cursor, publish: { emit($0) },
+      visibility: { consumers?.state($0) ?? -1 }, inspectOffset: cursor, publish: { emit($0) },
       progress: { emit() },
       checkpoint: Store.defaultRoot.appendingPathComponent("worktree-discovery-cursor.json"),
       protected: protected)

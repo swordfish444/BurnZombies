@@ -264,6 +264,7 @@ public actor WorktreeService {
       kept.protectedPlace = r.protectedPlace
       kept.gaps = r.gaps
       kept.consumer = "unknown"
+      kept.observedAt = r.observedAt
       r = kept
     } else if let old = try store.value(WorktreeRecord.self, kind: "record", id: alias) {
       if r.missing && r.identity == nil { r.identity = old.identity }
@@ -425,10 +426,23 @@ public actor WorktreeService {
     var reply = WorktreeReply()
     reply.policy = try policy()
     let privateRoot = store.root.appendingPathComponent("workspaces").path
+    // A copy seen with access whose place is now out of reach is shown as not checked, never
+    // as ready.
+    let protected = scope()
+    func current(_ row: WorktreeRecord) -> WorktreeRecord {
+      guard row.protectedPlace == nil,
+        let place = protected.place(row.path) ?? protected.place(row.repository)
+      else { return row }
+      var shown = row
+      shown.protectedPlace = place
+      shown.consumer = "unknown"
+      shown.gaps = ["Not checked. " + ProtectedLocations.reason(place)]
+      return shown
+    }
     let inventory = try records().filter { r in
       reply.policy.roots.contains { WorkspaceSafety.contains($0, r.path) }
         || WorkspaceSafety.contains(privateRoot, r.path)
-    }.sorted { $0.path < $1.path }
+    }.map(current).sorted { $0.path < $1.path }
     reply.totalRecords = inventory.count
     if let intent {
       reply.intentError = intent.suspensionReason
@@ -476,7 +490,7 @@ public actor WorktreeService {
     reply.lastScan = try store.value(Date.self, kind: "scan", id: "last")
     reply.scanning = scanning
     let rows =
-      try selectedIDs.map { try $0.map { try record($0) } }
+      try selectedIDs.map { try $0.map { current(try record($0)) } }
       ?? Array(inventory.dropFirst(offset).prefix(101))
     reply.records = Array(rows.prefix(100))
     if reply.policy.roots.isEmpty {

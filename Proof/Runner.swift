@@ -55,10 +55,14 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       _ = munmap(region, page * pages)
       return
     }
-    if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--protected-locations-child" {
+    if CommandLine.arguments.count == 5 && CommandLine.arguments[1] == "--protected-locations-child" {
       do {
-        try await protectedLocationsChild(
-          home: CommandLine.arguments[2], state: CommandLine.arguments[3])
+        let (home, state) = (CommandLine.arguments[2], CommandLine.arguments[3])
+        if CommandLine.arguments[4] == "resident" {
+          try await protectedLocationsResidentChild(home: home, state: state)
+        } else {
+          try await protectedLocationsChild(home: home, state: state)
+        }
       } catch { failTest("Run without Full Disk Access: \(error)") }
       if failures == 0 {
         print("PASS without Full Disk Access: ordinary folders covered, Documents never read")

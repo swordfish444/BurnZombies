@@ -119,16 +119,20 @@ public enum AutopilotProcesses {
     bytes < 100 << 20 ? "small" : bytes < 1 << 30 ? "medium" : "large"
   }
 
-  /// Folder name of the git checkout containing `path`, or nil.
-  public static func repository(_ path: String) -> String? {
-    var url = URL(fileURLWithPath: path)
+  /// Folder name of the git checkout containing `path`, or nil. Nothing in a place macOS
+  /// protects is looked at without Full Disk Access.
+  public static func repository(_ path: String, protected: ProtectedLocations = .limited())
+    -> String?
+  {
+    var directory = path
     for _ in 0..<24 {
-      if FileManager.default.fileExists(atPath: url.appendingPathComponent(".git").path) {
-        return url.lastPathComponent
+      guard directory.hasPrefix("/"), protected.allows(directory) else { return nil }
+      if FileManager.default.fileExists(atPath: directory + "/.git") {
+        return (directory as NSString).lastPathComponent
       }
-      let parent = url.deletingLastPathComponent()
-      guard parent.path != url.path else { return nil }
-      url = parent
+      let parent = (directory as NSString).deletingLastPathComponent
+      guard parent != directory else { return nil }
+      directory = parent
     }
     return nil
   }
@@ -159,7 +163,8 @@ public enum AutopilotProcesses {
     _ records: [String: Record], threads: [AgentThread], protectedPIDs: Set<Int32>,
     launchAgents: Set<Int32> = [], claimed: Set<String> = [],
     preferences: Preferences = Preferences(), now: Date = Date(),
-    probe: AutopilotProcessProbe = .live, home: String = NSHomeDirectory()
+    probe: AutopilotProcessProbe = .live, home: String = NSHomeDirectory(),
+    protected: ProtectedLocations = .limited()
   ) -> [AutopilotItem] {
     var items = [AutopilotItem]()
     for record in records.values where record.missingSince == nil {
@@ -205,7 +210,7 @@ public enum AutopilotProcesses {
       let bytes = members.reduce(0) { $0 + $1.latest.rss }
       // A quarter of a core or more over the last minute, across the whole tree.
       let cpu = members.compactMap(\.cpuPercent).reduce(0, +) >= 25 ? "busy" : "calm"
-      let repo = cwd.flatMap(repository) ?? "none"
+      let repo = cwd.flatMap { repository($0, protected: protected) } ?? "none"
       let program = o.name.lowercased()
       let facts = [
         "program": program, "family": family(o.executable), "orphaned": orphaned,

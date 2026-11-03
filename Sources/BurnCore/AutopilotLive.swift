@@ -20,7 +20,7 @@ extension AutopilotSources {
         return AutopilotProcesses.items(
           records, threads: threads, protectedPIDs: AgentSafety.ancestors(of: getpid()) ?? [],
           launchAgents: launchAgentPIDs(), claimed: await monitor.autopilotClaimedKeys(),
-          preferences: preferences, home: home)
+          preferences: preferences, home: home, protected: scope())
       },
       worktreeRecords: {
         let protected = scope()

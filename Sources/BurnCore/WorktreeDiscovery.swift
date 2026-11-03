@@ -308,7 +308,7 @@ public enum WorktreeDiscovery {
       // Git follows a checkout's pointer to its repository, so check where it leads first.
       if let place = protected.pointerPlace(seed) {
         result.gaps.append(
-          "Skipped " + seed + ": its repository is in " + place
+          "Skipped " + seed + ": its Git data is in " + place
             + ", which macOS protects. Turn on Full Disk Access so BurnZombies can check it.")
         continue
       }

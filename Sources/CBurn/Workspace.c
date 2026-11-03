@@ -104,7 +104,10 @@ static int collect_pid(int pid, void (*visit)(void *, const char *), void *conte
     if (b.pbi_uid != getuid()) { GAP("process ownership changed"); return -1; }
     if (b.pbi_status == 5) return 0;
     char exe[4096] = {0}, current_exe[4096];
-    if (proc_pidpath(pid, exe, sizeof(exe)) > 0 && !guarded(exe) && realpath(exe, current_exe)) visit(context, current_exe);
+    if (proc_pidpath(pid, exe, sizeof(exe)) > 0 && guarded(exe)) {
+        // An executable in a place macOS protects is never inside a folder BurnZombies may
+        // check, so it is neither resolved nor mapped.
+    } else if (exe[0] && realpath(exe, current_exe)) visit(context, current_exe);
     else if (!gone(pid) && mapped_paths(pid, visit, context, deadline) != 0) GAP("executable and mapped-file paths unavailable");
     struct proc_vnodepathinfo cwd = {0};
     if (proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &cwd, sizeof(cwd)) == sizeof(cwd)) {

@@ -31,10 +31,11 @@ public struct Observation: Codable, Sendable {
   public var monotonic: Double
   /// Process group. An orphan whose group leader is gone was left behind by a job.
   public var pgid: Int32?
+  /// From the path's spelling: a file URL would look at the file, which can be in a place
+  /// macOS protects.
   public var name: String {
-    URL(fileURLWithPath: executable).lastPathComponent.isEmpty
-      ? (zombie ? "Exited child" : "Hidden process")
-      : URL(fileURLWithPath: executable).lastPathComponent
+    let name = (executable as NSString).lastPathComponent
+    return name.isEmpty || executable.isEmpty ? (zombie ? "Exited child" : "Hidden process") : name
   }
   public init(
     identity: ProcessIdentity, parent: Int32 = 1, uid: UInt32 = 501,

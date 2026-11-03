@@ -80,14 +80,30 @@ public struct DiskPolicy: Codable, Sendable {
     else { throw StoreError.message("Invalid or duplicate disk rule.") }
   }
   public static func load(_ store: Store) throws -> Self {
-    let url = store.root.appendingPathComponent("disk-policy.json")
-    if !FileManager.default.fileExists(atPath: url.path) { return Self() }
-    let value = try JSONDecoder().decode(Self.self, from: store.read(url, limit: 131072))
+    guard let value = try stored(store) else { return Self() }
     try value.validate(protected: .current(root: store.root))
     return value
   }
+  private static func stored(_ store: Store) throws -> Self? {
+    let url = store.root.appendingPathComponent("disk-policy.json")
+    if !FileManager.default.fileExists(atPath: url.path) { return nil }
+    return try JSONDecoder().decode(Self.self, from: store.read(url, limit: 131072))
+  }
   public func save(_ store: Store) throws {
-    try validate(protected: .current(root: store.root))
+    let protected = ProtectedLocations.current(root: store.root)
+    // Without access a new folder in a protected place cannot be checked, so it waits for
+    // access; folders saved with access stay as they are.
+    let saved = (try? Self.stored(store)).flatMap { $0 }.map {
+      Set($0.roots + $0.protectedPaths + $0.rules.map(\.path))
+    } ?? []
+    for path in roots + protectedPaths + rules.map(\.path) where !saved.contains(path) {
+      if let place = protected.resolution(path).place {
+        throw StoreError.message(
+          path + " is in " + place
+            + ", which macOS protects. Turn on Full Disk Access to add it.")
+      }
+    }
+    try validate(protected: protected)
     try store.write(
       JSONEncoder.sorted.encode(self), to: store.root.appendingPathComponent("disk-policy.json"),
       limit: 131072)
@@ -516,7 +532,9 @@ public enum DiskInventory {
       var c = old
       c.reviewable = false
       c.recommendationEligible = false
-      c.guardReason = "Awaiting fresh bounded inspection."
+      c.guardReason =
+        protected.resolution(old.path).place.map { "Not checked. " + ProtectedLocations.reason($0) }
+        ?? "Awaiting fresh bounded inspection."
       return c
     }
     snapshot.candidates = Array(candidates.sorted { $0.bytes > $1.bytes }.prefix(1000))

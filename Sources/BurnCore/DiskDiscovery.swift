@@ -252,7 +252,7 @@ public final class DiskDiscovery: @unchecked Sendable {
     let allowed = accessCheck().canScan
     mutex.withLock {
       // Turning Full Disk Access on or off changes what the map covers, so map again.
-      if !worker && state.queue.isEmpty && state.limited.map({ $0 == allowed }) == true {
+      if !worker && state.queue.isEmpty && (state.limited ?? false) == allowed {
         state.lastCycle = .distantPast
       }
       accessAllowed = allowed
@@ -561,17 +561,20 @@ public final class DiskDiscovery: @unchecked Sendable {
           if entries.count >= 32 { break }
         }
       }
-      var parent = URL(fileURLWithPath: path)
+      var parent = path
       for _ in 0..<4 {
-        guard roots.contains(where: { WorkspaceSafety.contains($0, parent.path) }) else { break }
+        guard roots.contains(where: { WorkspaceSafety.contains($0, parent) }) else { break }
         for name in [
           "package.json", "manifest.json", ".gitignore", "Cargo.toml", "pyproject.toml",
           "Package.swift", "build.gradle", "build.gradle.kts", "CMakeLists.txt",
         ] where evidence.count < 4 {
-          let file = parent.appendingPathComponent(name)
-          if let text = Self.manifest(file.path) { evidence[file.path] = text }
+          // A manifest can be a link into a protected place; it is read only after that check.
+          let file = parent + "/" + name
+          if locations.resolve(file) != nil, let text = Self.manifest(file) {
+            evidence[file] = text
+          }
         }
-        parent.deleteLastPathComponent()
+        parent = (parent as NSString).deletingLastPathComponent
       }
     }
     // A group can contain hundreds of paths; do not claim complete consumer visibility
@@ -662,7 +665,7 @@ public final class DiskDiscovery: @unchecked Sendable {
         "Read only a bounded source, build manifest or retention document inside the measured branch. Private state and transcripts are excluded."
       )
     }
-    let path = URL(fileURLWithPath: node.path).appendingPathComponent(relativePath).path
+    let path = node.path + "/" + relativePath
     if let place = locations.resolution(path).place {
       throw StoreError.message(ProtectedLocations.reason(place))
     }

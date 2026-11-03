@@ -3,14 +3,16 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// Stricter than macOS privacy protection: the folder itself may be looked at, as on a real
+/// Stricter than macOS privacy protection: each folder itself may be looked at, as on a real
 /// Mac, but listing it or touching anything inside kills the process. Where a real Mac would
 /// ask the user for access, this fixture fails the proof.
-func privacyTripwire(_ folder: String) -> String {
+func privacyTripwire(_ folders: [String]) -> String {
   "(version 1)(allow default)"
-    + "(deny file-read* file-write* (require-all (subpath \"\(folder)\")"
-    + " (require-not (literal \"\(folder)\"))) (with send-signal SIGKILL))"
-    + "(deny file-read-data file-write* (literal \"\(folder)\") (with send-signal SIGKILL))"
+    + folders.map { folder in
+      "(deny file-read* file-write* (require-all (subpath \"\(folder)\")"
+        + " (require-not (literal \"\(folder)\"))) (with send-signal SIGKILL))"
+        + "(deny file-read-data file-write* (literal \"\(folder)\") (with send-signal SIGKILL))"
+    }.joined()
 }
 
 private func fixtureGit(_ path: String, _ args: [String]) throws {
@@ -69,7 +71,7 @@ func protectedLocationsProof() async throws {
   isNil(full.place(documents + "/GitHub/notes"))
   check(limited.excluded(under: home).contains(documents))
   check(limited.excluded(under: home + "/Library").contains(home + "/Library/Mail"))
-  equal(limited.excluded(under: home + "/git"), [])
+  equal(limited.excluded(under: home + "/git"), ["*.photoslibrary"])
   equal(full.excluded(under: home), [])
 
   // ~/git/project has one copy beside it and one in Documents. ~/Documents/GitHub/notes is
@@ -87,15 +89,36 @@ func protectedLocationsProof() async throws {
     ["worktree", "add", "--detach", home + "/.codex/worktrees/a1/notes"])
   try fixtureJunk(home + "/git/project/dist")
   try fixtureJunk(documents + "/GitHub/notes/dist")
-  // A link from an ordinary folder into Documents is never followed.
+  // A second Photos library outside the default place.
+  let photos = home + "/Pictures/Old.photoslibrary"
+  try fixtureJunk(photos + "/originals")
+  equal(limited.place(photos + "/originals"), "Photos")
+  // A link from an ordinary folder into Documents is never followed, nor one reached by
+  // spelling through a missing folder.
   try fm.createSymbolicLink(atPath: home + "/linked", withDestinationPath: documents + "/GitHub")
   isNil(limited.resolve(home + "/linked/notes"))
+  isNil(limited.resolve(home + "/gone/../linked/notes"))
   equal(limited.resolve(home + "/git/project"), home + "/git/project")
+  equal(
+    limited.resolve(home + "/git/absent/file"), WorkspaceSafety.canonical(home + "/git/absent/file"),
+    "an ordinary missing path resolves exactly as before")
   equal(limited.pointerPlace(home + "/.codex/worktrees/a1/notes"), "Documents")
   isNil(limited.pointerPlace(home + "/git/project-copy"))
+  // Git also reads the objects a repository borrows from another one.
+  try fixtureRepository(home + "/git/borrower")
+  try (documents + "/GitHub/notes/.git/objects\n").write(
+    toFile: home + "/git/borrower/.git/objects/info/alternates", atomically: true, encoding: .utf8)
+  equal(limited.pointerPlace(home + "/git/borrower"), "Documents")
+  // Autopilot names the project a program works in, but not from inside a protected place.
+  equal(AutopilotProcesses.repository(home + "/git/project/src", protected: limited), "project")
+  isNil(AutopilotProcesses.repository(documents + "/GitHub/notes", protected: limited))
+  // A build manifest linked into Documents.
+  try fm.createSymbolicLink(
+    atPath: home + "/git/package.json", withDestinationPath: documents + "/GitHub/notes/source")
 
   // Saved settings and storage evidence that name Documents, as after an earlier run with
-  // access: a junk-folder root there, a measured branch there and a queued walk of it.
+  // access: a junk-folder root there, a measured branch and a junk folder there, and a queued
+  // walk of it.
   let state = base + "/state"
   let store = try Store(root: URL(fileURLWithPath: state))
   var policy = DiskPolicy(home: URL(fileURLWithPath: home))
@@ -114,12 +137,44 @@ func protectedLocationsProof() async throws {
   map.lastCycle = measured
   map.policyRevision = policy.revision
   try map.save(store)
+  var junk = DiskSnapshot()
+  junk.date = measured
+  junk.policyRevision = policy.revision
+  junk.candidates = [
+    try JSONDecoder().decode(
+      DiskCandidate.self,
+      from: JSONSerialization.data(withJSONObject: [
+        "id": "disk:earlier", "path": documents + "/GitHub/notes/dist",
+        "repository": documents + "/GitHub/notes", "kind": "generated", "bytes": 2_000_000,
+        "newest": measured.timeIntervalSinceReferenceDate, "fingerprint": "earlier",
+        "complete": true, "guardReason": "Measured with access.", "reviewable": false,
+        "userRule": "review", "policyRevision": policy.revision,
+      ]))
+  ]
+  try junk.save(store)
+
+  // An earlier run with Full Disk Access saw every copy, including the ones in Documents.
+  let key = SymmetricKey(data: Data(repeating: 41, count: 32))
+  func service() throws -> WorktreeService {
+    try WorktreeService(
+      legacyAuthority: true, root: URL(fileURLWithPath: state), access: { fixtureAccess() },
+      recoveryKey: { key },
+      scanRunner: WorktreeScanRunner(executable: URL(fileURLWithPath: CommandLine.arguments[0])),
+      discoveryHome: URL(fileURLWithPath: home))
+  }
+  let earlier = try service()
+  let seen = try await earlier.request(.init("scan"), caller: "fixture")
+  await earlier.shutdown()
+  check(
+    seen.records.contains { $0.path == documents + "/GitHub/project-copy" && !$0.revision.isEmpty },
+    "the run with access did not inspect Documents")
 
   // The tripwire itself: reading inside Documents is fatal, looking at the folder is not.
+  let tripwire = privacyTripwire([documents, photos])
   func tripped(_ path: String) throws -> Bool {
     let probe = Process()
     probe.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-    probe.arguments = ["-p", privacyTripwire(documents), "/usr/bin/stat", path]
+    probe.arguments = ["-p", tripwire, "/usr/bin/stat", path]
     probe.standardOutput = FileHandle.nullDevice
     probe.standardError = FileHandle.nullDevice
     try probe.run()
@@ -132,52 +187,72 @@ func protectedLocationsProof() async throws {
   checkFalse(lookedAt, "the tripwire stops what macOS allows")
 
   // Without Full Disk Access the production observer and workers cover everything else, and
-  // nothing reads inside Documents: the tripwire kills any process that does.
-  let child = Process()
-  child.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-  child.arguments = [
-    "-p", privacyTripwire(documents), CommandLine.arguments[0], "--protected-locations-child",
-    home, state,
-  ]
-  child.environment = ["PATH": "/usr/bin:/bin", "HOME": home, "BURNZOMBIES_HOME": state]
-  let pipe = Pipe()
-  child.standardOutput = pipe
-  child.standardError = pipe
-  try child.run()
-  let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-  print(output, terminator: "")
-  guard finished(child, within: 60) else {
-    throw StoreError.message("The run without Full Disk Access did not finish.")
+  // nothing reads inside Documents or the Photos library: the tripwire kills any process that
+  // does.
+  func runWithoutAccess(_ phase: String) throws {
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+    child.arguments = [
+      "-p", tripwire, CommandLine.arguments[0], "--protected-locations-child", home, state, phase,
+    ]
+    child.environment = ["PATH": "/usr/bin:/bin", "HOME": home, "BURNZOMBIES_HOME": state]
+    let pipe = Pipe()
+    child.standardOutput = pipe
+    child.standardError = pipe
+    try child.run()
+    let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    print(output, terminator: "")
+    guard finished(child, within: 60) else {
+      throw StoreError.message("The run without Full Disk Access did not finish: " + phase)
+    }
+    check(
+      child.terminationReason == .exit,
+      "the run without Full Disk Access read inside a protected place: " + phase)
+    equal(child.terminationStatus, 0, "the run without Full Disk Access failed: " + phase)
   }
-  check(
-    child.terminationReason == .exit,
-    "the run without Full Disk Access read inside Documents and the tripwire stopped it")
-  equal(child.terminationStatus, 0, "the run without Full Disk Access failed")
+  try runWithoutAccess("main")
+
+  // Then with a program running from Documents and working there, as a dev server can be.
+  // The tripwire also stops the kernel from describing that program's own folder to a
+  // consumer check, which macOS itself does not treat as reading the folder, so this run
+  // keeps to the steps that only name programs, weigh Findings, or scan nothing reachable.
+  try fm.createDirectory(atPath: documents + "/GitHub/notes/tool", withIntermediateDirectories: true)
+  try fm.copyItem(atPath: CommandLine.arguments[0], toPath: documents + "/GitHub/notes/tool/resident")
+  let resident = Process()
+  resident.executableURL = URL(fileURLWithPath: documents + "/GitHub/notes/tool/resident")
+  resident.arguments = ["--passive-child"]
+  resident.currentDirectoryURL = URL(fileURLWithPath: documents + "/GitHub/notes")
+  try resident.run()
+  defer {
+    if resident.isRunning { resident.terminate() }
+    _ = finished(resident, within: 10)
+  }
+  Thread.sleep(forTimeInterval: 0.5)
+  check(resident.isRunning, "the program in Documents did not start")
+  try runWithoutAccess("resident")
+  resident.terminate()
+  _ = finished(resident, within: 10)
 
   // With Full Disk Access verified, the same places are covered exactly as before.
-  let key = SymmetricKey(data: Data(repeating: 41, count: 32))
-  let service = try WorktreeService(
-    legacyAuthority: true, root: URL(fileURLWithPath: state), access: { fixtureAccess() },
-    recoveryKey: { key },
-    scanRunner: WorktreeScanRunner(executable: URL(fileURLWithPath: CommandLine.arguments[0])),
-    discoveryHome: URL(fileURLWithPath: home))
-  let covered = try await service.request(.init("scan"), caller: "fixture")
+  let later = try service()
+  let covered = try await later.request(.init("scan"), caller: "fixture")
   let copy = covered.records.first { $0.path == documents + "/GitHub/project-copy" }
   isNil(copy?.protectedPlace)
   check(
     copy.map { !$0.revision.isEmpty && $0.gaps.isEmpty } == true,
     "with access, Documents is inspected: " + (copy?.gaps ?? ["no row"]).joined(separator: " "))
   check(
-    covered.records.contains { $0.path == home + "/.codex/worktrees/a1/notes" },
-    "with access, a copy whose project is in Documents is listed")
+    covered.records.contains { $0.path == home + "/.codex/worktrees/a1/notes" && $0.protectedPlace == nil },
+    "with access, a copy whose project is in Documents is checked")
   checkFalse(
     covered.gaps.joined().contains("Full Disk Access"), covered.gaps.joined(separator: " "))
-  await service.shutdown()
+  await later.shutdown()
 }
 
 /// The run without Full Disk Access, inside the tripwire, through production entry points: the
 /// observer and its `burnzombies` workers, the storage map, the junk-folder inventory, the
-/// agent bridge and Autopilot. No access record exists, so nothing is granted.
+/// agent bridge, Findings, settings and Autopilot. No access record exists, so nothing is
+/// granted.
 func protectedLocationsChild(home: String, state: String) async throws {
   let documents = home + "/Documents"
   let root = URL(fileURLWithPath: state)
@@ -196,6 +271,7 @@ func protectedLocationsChild(home: String, state: String) async throws {
   let gaps = scan.gaps.joined(separator: " ")
   checkFalse(gaps.contains("interrupted"), "the worker stopped early: " + gaps)
   check(gaps.contains("Documents") && gaps.contains("Full Disk Access"), "unexplained skip: " + gaps)
+  check(gaps.contains(home + "/git/borrower"), "a repository borrowing from Documents was opened")
   guard let copy = scan.records.first(where: { $0.path == home + "/git/project-copy" }) else {
     throw StoreError.message("An ordinary copy was not discovered: " + gaps)
   }
@@ -205,33 +281,38 @@ func protectedLocationsChild(home: String, state: String) async throws {
   checkFalse(
     copy.gaps.contains { $0.contains("Full Disk Access") || $0.contains("Detailed inspection pending") },
     "an ordinary copy was not checked: " + copy.gaps.joined(separator: " | "))
-  guard let skipped = scan.records.first(where: { $0.path == documents + "/GitHub/project-copy" })
-  else { throw StoreError.message("A registered copy in Documents was dropped, not reported.") }
-  equal(skipped.protectedPlace, "Documents")
-  checkFalse(skipped.missing, "a skipped copy is reported missing")
-  check(skipped.revision.isEmpty, "a copy in Documents was inspected")
-  let reason = (skipped.gaps + skipped.blockers).joined(separator: " ")
-  check(reason.contains("Documents") && reason.contains("Full Disk Access"), reason)
-  checkFalse(
-    scan.records.contains { $0.path == home + "/.codex/worktrees/a1/notes" },
-    "a copy whose project is in Documents was opened")
+  // A copy in Documents, and one whose project is there, are reported as not checked: never
+  // missing, and what the earlier run with access saw is kept.
+  for path in [documents + "/GitHub/project-copy", home + "/.codex/worktrees/a1/notes"] {
+    guard let skipped = scan.records.first(where: { $0.path == path }) else {
+      failTest("a copy was dropped instead of reported: " + path)
+      continue
+    }
+    equal(skipped.protectedPlace, "Documents", path)
+    checkFalse(skipped.missing, "a skipped copy is reported missing")
+    equal(skipped.state, "Inspection blocked", "a skipped copy looks ready")
+    let reason = skipped.gaps.joined(separator: " ")
+    check(reason.contains("Documents") && reason.contains("Full Disk Access"), reason)
+  }
+  let skipped = scan.records.first { $0.path == documents + "/GitHub/project-copy" }!
+  // Codex owns its copies, so only the Documents copy was inspected with access.
+  check(!skipped.revision.isEmpty, "a skipped copy lost what was seen with access")
   do {
     _ = try await worktrees(.init("inspect", id: skipped.id))
     failTest("a copy in Documents was inspected without Full Disk Access")
   } catch {
     check(error.localizedDescription.contains("Full Disk Access"), error.localizedDescription)
   }
-  // The bounded refresh of known copies leaves it alone too.
+  // The bounded refresh of known copies leaves them alone too.
   await monitor.worktreeTick()
 
-  // The storage map measures the home folder, skips Documents and says so.
+  // The storage map measures the home folder, skips Documents and the Photos library, and says
+  // so.
   _ = await monitor.refresh()
   var map = try DiskDiscoveryState.load(store)
   var junk = try DiskSnapshot.load(store)
   let deadline = Date().addingTimeInterval(120)
-  while (map.running != nil || !map.queue.isEmpty || junk.date == .distantPast)
-    && Date() < deadline
-  {
+  while (map.running != nil || !map.queue.isEmpty || junk.limited != true) && Date() < deadline {
     try await Task.sleep(nanoseconds: 200_000_000)
     map = try DiskDiscoveryState.load(store)
     junk = try DiskSnapshot.load(store)
@@ -240,18 +321,23 @@ func protectedLocationsChild(home: String, state: String) async throws {
   check(
     map.nodes.contains { $0.path == home + "/git" && $0.files > 0 }, "ordinary folders unmeasured")
   let measuredInside = map.nodes.filter {
-    WorkspaceSafety.contains(documents, $0.path) && $0.path != documents + "/GitHub"
+    (WorkspaceSafety.contains(documents, $0.path) && $0.path != documents + "/GitHub")
+      || $0.path.hasSuffix(".photoslibrary")
   }
-  check(measuredInside.isEmpty, "Documents was measured: " + measuredInside.map(\.path).joined(separator: ", "))
+  check(measuredInside.isEmpty, "a protected place was measured: " + measuredInside.map(\.path).joined(separator: ", "))
   check((map.nodes.first { $0.path == home }?.errors ?? 0) > 0, "a skipped place counted as empty")
   equal(map.unavailable ?? [], [], "a storage walk failed")
   check(map.detail.contains("Documents") && map.detail.contains("Full Disk Access"), map.detail)
 
-  // The junk-folder inventory covers ~/git and skips Documents.
+  // The junk-folder inventory covers ~/git and skips Documents; the junk folder measured there
+  // earlier stays on record but cannot be reviewed.
   check(
     junk.candidates.contains { $0.path == home + "/git/project/dist" },
     "junk outside Documents missed: " + junk.detail)
-  checkFalse(junk.candidates.contains { WorkspaceSafety.contains(documents, $0.path) })
+  for kept in junk.candidates where WorkspaceSafety.contains(documents, kept.path) {
+    checkFalse(kept.reviewable || kept.recommendationEligible == true, "junk in Documents is reviewable")
+    check(kept.guardReason.contains("Full Disk Access"), kept.guardReason)
+  }
   check(junk.detail.contains("Documents") && junk.detail.contains("Full Disk Access"), junk.detail)
 
   // The agent bridge offers storage evidence outside Documents and refuses the rest.
@@ -272,8 +358,23 @@ func protectedLocationsChild(home: String, state: String) async throws {
     let inspected = await bridge.call(.init("disk_inspect", findingID: visible.id))
     check(inspected.ok, inspected.message)
   }
+  if let homeNode = map.nodes.first(where: { $0.path == home }) {
+    let reached = await bridge.call(
+      .init("disk_evidence", findingID: homeNode.id, workspacePath: "Documents/GitHub/notes/README.md"))
+    checkFalse(reached.ok, "evidence was read from Documents")
+    check(reached.message.contains("Full Disk Access"), reached.message)
+  } else {
+    failTest("the home folder was not measured")
+  }
 
-  // Autopilot judges only copies it can check, and its note says what it skipped.
+  // A program is named from its path's spelling, never by looking at its file.
+  let program = Observation(
+    identity: .init(pid: 99_999, seconds: 1), executable: documents + "/GitHub/notes/source")
+  equal(program.name, "source")
+  _ = AutopilotProcesses.family(program.executable)
+
+  // Autopilot judges only copies it can check, names programs without looking at their files,
+  // and its note says what it skipped.
   let sources = AutopilotSources.live(monitor: monitor, root: root, home: home)
   let records = await sources.worktreeRecords()
   check(records.contains { $0.path == home + "/git/project-copy" }, "Autopilot lost a copy")
@@ -291,5 +392,59 @@ func protectedLocationsChild(home: String, state: String) async throws {
     id: "disk:fixture", kind: .disk, name: "dist", path: documents + "/GitHub/notes/dist",
     bytes: 1, facts: [:])
   equal(sources.reclaimDisk(folder, "fixture").outcome, "refused")
+
+  // A new junk-folder root in Documents cannot be checked, so it is refused; the one saved
+  // with access stays.
+  var adding = try DiskPolicy.load(store)
+  adding.roots.append(documents + "/Archive")
+  do {
+    try adding.save(store)
+    failTest("a new folder in Documents was saved without being checked")
+  } catch {
+    check(error.localizedDescription.contains("Full Disk Access"), error.localizedDescription)
+  }
+  var tuned = try DiskPolicy.load(store)
+  tuned.minimumAgeDays = 20
+  try tuned.save(store)
+  let saved = try DiskPolicy.load(store).roots
+  check(saved.contains(documents + "/GitHub"), "a saved root was dropped")
+
+  await monitor.shutdownWorktrees()
+}
+
+/// The second run without Full Disk Access, while a program runs from Documents and works
+/// there: naming programs, weighing Findings and a scan with no reachable root look at none of
+/// its files.
+func protectedLocationsResidentChild(home: String, state: String) async throws {
+  let documents = home + "/Documents"
+  let root = URL(fileURLWithPath: state)
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: URL(fileURLWithPath: home), root: root,
+    discoveryRoots: [home])
+  // The observer names every program from the kernel's record of it.
+  _ = await monitor.refresh()
+  let observed = await monitor.snapshot()
+  check(
+    observed.catalog.records.values.contains { $0.latest.executable.hasPrefix(documents) },
+    "the program in Documents was not observed")
+  // Findings weigh every stored candidate without looking at the ones in Documents.
+  let findings = try await monitor.findingPage(offset: 0)
+  check(
+    findings.proposals.contains { $0.resources == ["disk:earlier"] && !$0.ready },
+    "the junk folder measured in Documents was not weighed: " + (findings.error ?? ""))
+  // Autopilot names programs and the projects they work in without opening their folders.
+  let sources = AutopilotSources.live(monitor: monitor, root: root, home: home)
+  _ = await sources.processes(sources.threads())
+  // With only a protected root left, a scan reads no other program's files either.
+  func worktrees(_ q: WorktreeRequest) async throws -> WorktreeReply {
+    try await monitor.worktreeRequest(q, caller: "fixture")
+  }
+  _ = try await worktrees(.init("remove_root", path: home + "/git"))
+  _ = try await worktrees(.init("remove_root", path: home + "/.codex/worktrees"))
+  let only = try await worktrees(.init("scan"))
+  checkFalse(
+    only.gaps.joined().contains("interrupted"), "the worker stopped early: " + only.gaps.joined())
+  _ = try await worktrees(.init("add_root", path: home + "/git"))
+  _ = try await worktrees(.init("add_root", path: home + "/.codex/worktrees"))
   await monitor.shutdownWorktrees()
 }

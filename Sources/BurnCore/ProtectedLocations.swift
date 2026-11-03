@@ -75,7 +75,7 @@ public struct ProtectedLocations: Sendable {
   public func allows(_ path: String) -> Bool { place(path) == nil }
 
   /// The protected places strictly inside `root`, spelled as a walk of `root` meets them, so a
-  /// walk can skip each one before reading it.
+  /// walk can skip each one before reading it, and `*`-name patterns for ones found anywhere.
   public func excluded(under root: String) -> [String] {
     guard !unrestricted else { return [] }
     let base = Self.lexical(root).lowercased()
@@ -89,6 +89,8 @@ public struct ProtectedLocations: Sendable {
     }
     for mount in mounts where mount != base && Self.inside(base, mount) { result.insert(mount) }
     if base == "/" { result.insert("/Volumes") }
+    // A Photos library can live anywhere; the walk matches this one by name.
+    result.insert("*.photoslibrary")
     return result.sorted()
   }
 
@@ -131,7 +133,7 @@ public struct ProtectedLocations: Sendable {
     guard lstat(pointer, &info) == 0 else { return (nil, nil) }
     let target: String
     switch info.st_mode & S_IFMT {
-    case S_IFDIR: return (pointer, nil)  // A directory holds the data itself.
+    case S_IFDIR: return borrowing(pointer)  // A directory holds the data itself.
     case S_IFLNK:
       guard let link = Self.link(pointer) else { return (nil, nil) }
       target = link
@@ -143,9 +145,21 @@ public struct ProtectedLocations: Sendable {
     let gitdir = walk(target.hasPrefix("/") ? target : real + "/" + target)
     guard let data = gitdir.real else { return (nil, gitdir.place) }
     // A linked checkout's data names the shared repository in `commondir`.
-    guard let common = Self.text(data + "/commondir") else { return (data, nil) }
+    guard let common = Self.text(data + "/commondir") else { return borrowing(data) }
     let shared = walk(common.hasPrefix("/") ? common : data + "/" + common)
-    return (shared.real, shared.place)
+    guard let repository = shared.real else { return (nil, shared.place) }
+    return borrowing(repository)
+  }
+  /// Git also reads the objects a repository borrows through `objects/info/alternates`.
+  private func borrowing(_ common: String) -> (common: String?, place: String?) {
+    guard let list = Self.text(common + "/objects/info/alternates") else { return (common, nil) }
+    for line in list.split(separator: "\n") where !line.hasPrefix("#") && !line.isEmpty {
+      let path = String(line)
+      if let place = walk(path.hasPrefix("/") ? path : common + "/objects/" + path).place {
+        return (nil, place)
+      }
+    }
+    return (common, nil)
   }
 
   /// One plain sentence naming what was skipped and how to cover it.
@@ -163,9 +177,21 @@ public struct ProtectedLocations: Sendable {
   private func walk(_ path: String) -> (real: String?, place: String?) {
     if let place = place(path) { return (nil, place) }
     guard !unrestricted else { return (WorkspaceSafety.canonical(path), nil) }
+    switch reach(path) {
+    case .protected(let place): return (nil, place)
+    case .unresolvable: return (nil, nil)
+    // Every link on the way stays outside the protected places, so realpath only reads those
+    // and the result is exactly what it always was.
+    case .clear: return checked(WorkspaceSafety.canonical(path))
+    }
+  }
+  private enum Reach { case clear, protected(String), unresolvable }
+  /// Follows `path` one component at a time, reading each link and checking its target
+  /// before going on, as realpath would.
+  private func reach(_ path: String, links: Int = 0) -> Reach {
     var pending = path.split(separator: "/").map(String.init)
     var walked = ""
-    var links = 0
+    var links = links
     while !pending.isEmpty {
       let part = pending.removeFirst()
       if part.isEmpty || part == "." { continue }
@@ -174,25 +200,25 @@ public struct ProtectedLocations: Sendable {
         continue
       }
       let next = walked + "/" + part
-      if let place = place(next) { return (nil, place) }
+      if let place = place(next) { return .protected(place) }
       var info = stat()
       guard lstat(next, &info) == 0 else {
-        // Nothing exists below a missing folder, so the rest is only spelling.
+        // Nothing exists below a missing folder, but a later `..` can climb back out of it:
+        // only spelling decides where that lands, so that spelling is followed again.
         let rest = Self.lexical(([next] + pending).joined(separator: "/"))
-        if let place = place(rest) { return (nil, place) }
-        return checked(WorkspaceSafety.canonical(rest))
+        if pending.contains("..") { return reach(rest, links: links) }
+        return place(rest).map { .protected($0) } ?? .clear
       }
       guard info.st_mode & S_IFMT == S_IFLNK else {
         walked = next
         continue
       }
       links += 1
-      guard links <= 32, let target = Self.link(next) else { return (nil, nil) }
+      guard links <= 32, let target = Self.link(next) else { return .unresolvable }
       if target.hasPrefix("/") { walked = "" }
       pending = target.split(separator: "/").map(String.init) + pending
     }
-    // Every component is checked and none is a link, so realpath only reads those.
-    return checked(WorkspaceSafety.canonical(walked.isEmpty ? "/" : walked))
+    return .clear
   }
   private func checked(_ real: String) -> (real: String?, place: String?) {
     let blocked = place(real)

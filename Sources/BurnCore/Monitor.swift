@@ -179,9 +179,13 @@ public actor Monitor {
         }.map(ownerProposal)
         let diskPolicy = try DiskPolicy.load(store)
         let used = managedUsedToday()
+        let reachable = locations()
         for candidate in diskSnapshot.candidates where candidate.kind != "worktree" {
           var p = CleanupProposal.disk(candidate)
-          if diskPolicy.mode == "off"
+          if let place = reachable.resolution(candidate.path).place {
+            p.ready = false
+            p.detail += " Not checked. " + ProtectedLocations.reason(place)
+          } else if diskPolicy.mode == "off"
             || used + candidate.bytes > UInt64(diskPolicy.maximumGBPerDay) * 1_000_000_000
             || (try? WorkspaceSafety.freeBytes(candidate.path)) ?? UInt64.max >= UInt64(
               diskPolicy.targetFreeGB) * 1_000_000_000
@@ -692,7 +696,7 @@ public actor Monitor {
           && (diskSnapshot.recommendationVersion != 2
             || now.timeIntervalSince(diskSnapshot.date) >= Double(policy.scanHours * 3600)
             || diskSnapshot.policyRevision != policy.revision
-            || diskSnapshot.limited.map { $0 == protected.unrestricted } == true)
+            || (diskSnapshot.limited ?? false) == protected.unrestricted)
         {
           diskScanRunning = true
           let previous = diskSnapshot
