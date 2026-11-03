@@ -176,7 +176,7 @@ import Vision
   let accessModel = AppModel(demo: true)
   for accessState in [FullDiskAccessState.required, .unknown, .granted] {
     accessModel.state.fullDiskAccess = .init(state: accessState,
-      detail: accessState == .unknown ? "Access could not be verified. Enable BurnZombies in System Settings, then check again." : "Full Disk Access is required before discovery.")
+      detail: accessState == .unknown ? "Access could not be verified. Enable BurnZombies in System Settings, then check again." : FullDiskAccess.instructions)
     let accessHost = NSHostingView(rootView: FullDiskAccessView(model: accessModel).padding(20)
       .frame(width: 440).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
     accessHost.frame = NSRect(x: 0, y: 0, width: 440, height: accessState == .granted ? 120 : 580)
@@ -199,15 +199,16 @@ import Vision
       throw StoreError.message("Required access controls clipped: \(visible)")
     }
     if accessState != .granted {
-      guard visible.contains("Required"), visible.contains("Check access"), visible.contains("whole-Mac") || visible.contains("Whole-Mac") else {
-        throw StoreError.message("Setup requirement or explicit confirmation missing: \(visible)")
+      guard visible.contains("Optional"), !visible.contains("Required"), visible.contains("Check access"),
+        visible.contains("macOS protects") else {
+        throw StoreError.message("Optional setup, what it adds or explicit confirmation missing: \(visible)")
       }
     } else if !visible.contains("Complete") { throw StoreError.message("Granted access state missing") }
     guard NSApp.windows.allSatisfy({ !$0.isVisible && !$0.isKeyWindow }) else {
       throw StoreError.message("Access setup proof showed a window")
     }
   }
-  print("PASS inline required/unknown/available access setup renders without opening System Settings or showing a window")
+  print("PASS inline optional/unknown/available access setup renders without opening System Settings or showing a window")
   print("PASS offscreen native Settings render, draft/save/reopen, disabled-state preservation, invalid-input refusal and default reset")
 }
 #endif

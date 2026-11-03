@@ -2,7 +2,7 @@ import AppKit
 import BurnCore
 import SwiftUI
 
-/// An inline prerequisite; a completed setup recedes into a quiet status row.
+/// An inline optional setup; a completed setup recedes into a quiet status row.
 struct FullDiskAccessView: View {
   @ObservedObject var model: AppModel
   var body: some View {
@@ -13,7 +13,7 @@ struct FullDiskAccessView: View {
         Text("Full Disk Access").font(.headline)
           .foregroundStyle(model.accessReady ? Color.secondary : Color.primary)
         Spacer(minLength: 4)
-        Text(model.accessReady ? "Complete" : "Required")
+        Text(model.accessReady ? "Complete" : "Optional")
           .font(.caption.weight(.semibold)).foregroundStyle(model.accessReady ? Color.secondary : BurnTheme.orange)
       }
       if model.accessReady {
@@ -25,7 +25,7 @@ struct FullDiskAccessView: View {
             .accessibilityIdentifier("manage-full-disk-access")
         }
       } else {
-        Text("Optional. Covers the folders macOS protects.").font(.callout.weight(.semibold))
+        Text("Covers the folders macOS protects.").font(.callout.weight(.semibold))
         Text(
           "BurnZombies already works everywhere else. Full Disk Access adds "
             + ProtectedLocations.summary + ", and lets AI hunts run.")
