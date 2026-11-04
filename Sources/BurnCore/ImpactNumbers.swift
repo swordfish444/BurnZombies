@@ -86,21 +86,25 @@ public struct ImpactNumbers: Sendable {
     let latestIsWorkspace =
       (workspace?.verifiedAt ?? .distantPast)
       > (latest?.verificationDate ?? latest?.date ?? .distantPast)
+    // Autopilot's own cleanups count in every period; kept as small typed steps for the compiler.
+    let periodDisk: UInt64 = workspaces.reduce(0) { $0 + $1.diskReclaimedBytes }
+    let outputDisk: UInt64 = diskOutputs.reduce(0) { $0 + $1.diskReclaimedBytes }
+    let cleanupDisk: UInt64 = cleanups.reduce(0) { $0 + $1.bytes }
+    let lifetimeDisk: UInt64 = (catalog.lifetimeDiskReclaimedBytes ?? 0) + (autopilot?.bytes ?? 0)
+    let lifetimeWorktrees: Int = (catalog.lifetimeWorktreesCleaned ?? 0) + (autopilot?.worktrees ?? 0)
+    let periodWorktrees: Int = workspaces.count + cleanups.filter(\.worktree).count
+    let latestDate: Date? =
+      latestIsWorkspace ? workspace?.verifiedAt : latest?.verificationDate ?? latest?.date
+    let cleanupDate: Date? = cleanups.map(\.date).max()
     return Self(
       count: period == .all
         ? catalog.lifetimeVerified : verified.reduce(0) { $0 + $1.verifiedCount },
       memory: period == .all
         ? (catalog.lifetimeResidentReleased ?? verified.reduce(0) { $0 + $1.residentBefore })
         : verified.reduce(0) { $0 + $1.residentBefore },
-      disk: period == .all
-        ? (catalog.lifetimeDiskReclaimedBytes ?? 0) + (autopilot?.bytes ?? 0)
-        : workspaces.reduce(0) { $0 + $1.diskReclaimedBytes }
-          + diskOutputs.reduce(0) { $0 + $1.diskReclaimedBytes }
-          + cleanups.reduce(0) { $0 + $1.bytes },
-      worktrees: period == .all
-        ? (catalog.lifetimeWorktreesCleaned ?? 0) + (autopilot?.worktrees ?? 0)
-        : workspaces.count + cleanups.filter(\.worktree).count,
-      lifetimeWorktrees: (catalog.lifetimeWorktreesCleaned ?? 0) + (autopilot?.worktrees ?? 0),
+      disk: period == .all ? lifetimeDisk : periodDisk + outputDisk + cleanupDisk,
+      worktrees: period == .all ? lifetimeWorktrees : periodWorktrees,
+      lifetimeWorktrees: lifetimeWorktrees,
       latestIsWorkspace: latestIsWorkspace,
       latestDisk: latestIsWorkspace ? (workspace?.diskReclaimedBytes ?? 0) : 0,
       cpuSeconds: period == .all
@@ -108,7 +112,7 @@ public struct ImpactNumbers: Sendable {
         : (cpu.isEmpty && !verified.isEmpty ? nil : cpu.reduce(0, +)),
       before: comparison?.before ?? measured?.responseBeforeMS,
       after: comparison?.after ?? measured?.responseAfterMS,
-      last: latestIsWorkspace ? workspace?.verifiedAt : latest?.verificationDate ?? latest?.date,
+      last: [latestDate, cleanupDate].compactMap { $0 }.max(),
       latestCount: latest?.verifiedCount ?? 0,
       latestMemory: latest?.residentBefore ?? 0,
       latestLabel: latestIsWorkspace

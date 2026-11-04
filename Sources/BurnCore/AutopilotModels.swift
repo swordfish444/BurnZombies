@@ -181,7 +181,9 @@ public struct AutopilotImpact: Codable, Sendable, Equatable {
   public mutating func count(_ receipts: [AutopilotReceipt]) {
     var counted = Set(cleanups.map(\.receiptID))
     for r in receipts
-    where r.outcome == "burned" && [.worktree, .disk].contains(r.kind) && !counted.contains(r.id) {
+    where r.outcome == "burned" && (r.kind == .worktree || r.kind == .disk)
+      && !counted.contains(r.id)
+    {
       counted.insert(r.id)
       cleanups.append(
         .init(receiptID: r.id, date: r.date, worktree: r.kind == .worktree, bytes: r.bytes))
@@ -301,6 +303,8 @@ public struct AutopilotLogEntry: Codable, Sendable, Identifiable, Equatable {
 public struct AutopilotSweepState: Codable, Sendable, Equatable {
   public var enabled = true
   public var intervalMinutes = 15
+  /// The very first tick of this install; it looks every minute for a while after it.
+  public var firstTick: Date?
   public var lastTick: Date?
   public var lastAISweep: Date?
   /// Digest of unsure item revisions and rules the AI last judged.

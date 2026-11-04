@@ -48,6 +48,9 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         initialized = send("initialize", {"protocolVersion": "2025-11-25", "capabilities": {"experimental": {"codex/auth-change": {}}},
                                          "clientInfo": {"name": "BurnZombies proof", "version": "1"}})
         assert initialized["result"]["serverInfo"]["name"] == "BurnZombies"
+        # Clients see the app's own version, never a stale copy of it.
+        app_version = Path(__file__).resolve().parents[1].joinpath("Sources/BurnCore/BuildIdentity.swift").read_text().split('version = "')[1].split('"')[0]
+        assert initialized["result"]["serverInfo"]["version"] == app_version, initialized["result"]["serverInfo"]
         send("notifications/initialized", notification=True)
         tools = send("tools/list")["result"]["tools"]
         assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint", "burnzombies_work", "burnzombies_lifecycle", "burnzombies_workspace", "burnzombies_workspace_preview", "burnzombies_workspace_clean", "burnzombies_worktrees", "burnzombies_disk_decide", "burnzombies_disk_preview", "burnzombies_disk_clean", "burnzombies_disk_inspect", "burnzombies_disk_explore", "burnzombies_disk_evidence", "burnzombies_disk_recommend", "burnzombies_owner_preview", "burnzombies_owner_stop", "burnzombies_cache_preview", "burnzombies_cache_clean"}

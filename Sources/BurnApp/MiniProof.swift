@@ -11,11 +11,17 @@ import Vision
   BurnTheme.registerFonts()
   let directory = URL(fileURLWithPath: output, isDirectory: true)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  let cases = catalog == nil ? ["empty", "populated", "paused", "quiet-day", "pruned", "unmeasured", "zero-memory", "legacy-negative", "slower", "noisy", "disk", "worktrees", "access-required", "access-unknown", "access-required-history"] : ["receipt-replay"]
+  let cases = catalog == nil ? ["empty", "populated", "paused", "quiet-day", "pruned", "unmeasured", "zero-memory", "legacy-negative", "slower", "noisy", "disk", "worktrees", "access-required", "access-unknown", "access-required-history", "newcomer"] : ["receipt-replay"]
   for name in cases {
     let model = AppModel(demo: true)
     if let catalog { model.state.catalog = catalog }
-    if name == "empty" || name == "paused" || name == "access-required" || name == "access-unknown" { model.state.catalog = Catalog() }
+    if name == "empty" || name == "paused" || name == "access-required" || name == "access-unknown" || name == "newcomer" { model.state.catalog = Catalog() }
+    // Nothing found yet, unlike the demo's leftovers.
+    if name == "empty" { model.autopilot = AutopilotSnapshot() }
+    if name == "newcomer" {
+      model.state.fullDiskAccess = .init(state: .required,
+        detail: "Enable Full Disk Access in System Settings, then check again.")
+    }
     if name.hasPrefix("access-") {
       model.state.fullDiskAccess = .init(state: name == "access-unknown" ? .unknown : .required,
         detail: "Enable Full Disk Access in System Settings, then check again.")
@@ -114,10 +120,18 @@ import Vision
         guard view.numbers.count == 128, visible.contains("Last burn") else {
           throw StoreError.message("Requiring access erased verified history")
         }
-      } else if !visible.contains("Ready for your first burn") {
+      } else if !visible.contains("Ready for your first burn") && !visible.contains("of leftovers") {
         // Autopilot is genuinely ready: leftover programs need no special access.
         throw StoreError.message("New install hid that Autopilot is ready")
       }
+    } else if name == "newcomer" {
+      // Before the first burn a newcomer sees what BZ found and what answering frees, in plain
+      // words: the access banner already says what's skipped.
+      let found = ImpactNumbers.bytes(view.found)
+      let asked = ImpactNumbers.bytes(model.autopilot.questions.reduce(0) { $0 + $1.bytes })
+      guard visible.contains("Found \(found) of leftovers"), visible.contains(asked),
+        visible.contains("Autopilot on"), !visible.contains("limited")
+      else { throw StoreError.message("Newcomer panel hides what BZ found: \(visible)") }
     } else if name == "receipt-replay" {
       guard !view.numbers.boost.contains("-"), visible.contains(String(view.numbers.count)) else {
         throw StoreError.message("Receipt replay failed: \(visible)")
@@ -155,10 +169,11 @@ import Vision
         throw StoreError.message("Verified cleanup presented as no benefit: \(visible)")
       }
     }
-    if name == "access-required" || name == "access-unknown" {
+    if name == "access-required" || name == "access-unknown" || name == "newcomer" {
       guard view.numbers.count == 0 else { throw StoreError.message("Access state changed totals") }
     } else if name == "empty" || name == "paused" {
-      guard view.numbers.count == 0, visible.contains("Ready for your first burn") else {
+      guard view.numbers.count == 0,
+        visible.contains("Ready for your first burn") || visible.contains("of leftovers") else {
         throw StoreError.message("First-burn empty state not displayed")
       }
     } else if name != "pruned" {
@@ -242,9 +257,11 @@ import Vision
     try click(option)
     let expected = ImpactNumbers.make(model, period: option)
     let earlier = ImpactNumbers.make(catalog: model.state.catalog, period: option)
-    let mine = option == .all ? (30, UInt64(600_000_000_000)) : (1, UInt64(5_000_000_000))
+    let mineWorktrees: Int = option == .all ? 30 : 1
+    let mineBytes: UInt64 = option == .all ? 600_000_000_000 : 5_000_000_000
     guard view.totals.count == expected.count, view.totals.memory == expected.memory,
-      view.totals.worktrees == earlier.worktrees + mine.0, view.totals.disk == earlier.disk + mine.1
+      view.totals.worktrees == earlier.worktrees + mineWorktrees,
+      view.totals.disk == earlier.disk + mineBytes
     else { throw StoreError.message("The \(option.rawValue) tab shows the wrong totals") }
     guard view.numbers.count == card.count, view.numbers.memory == card.memory,
       model.impactPeriod == .today

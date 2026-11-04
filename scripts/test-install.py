@@ -36,7 +36,9 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     (stubs / "codex").chmod(0o755)
     config = root / "config"; config.mkdir()
     destination = root / "Applications with spaces"
-    env = dict(os.environ, PATH=str(stubs) + os.pathsep + os.environ["PATH"],
+    # Only the stubs count as installed tools, whatever this Mac has.
+    empty = root / "no-harness-bin"; empty.mkdir()
+    env = dict(os.environ, PATH=str(stubs) + os.pathsep + "/usr/bin:/bin", BURNZOMBIES_HARNESS_DIRS=str(empty),
                BZ_TEST_REMOTE=str(remote), BZ_TEST_CONFIG=str(config),
                BURNZOMBIES_HOME=str(root / "observer-state"), BURNZOMBIES_SKILL_HOME=str(root / "skill-home"),
                BURNZOMBIES_INSTALL_DIR=str(destination))
@@ -47,7 +49,9 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         return result
     first = install("none")
-    assert 'Optional setup:' in first.stdout and 'Full Disk Access' in first.stdout
+    assert 'Full Disk Access' in first.stdout
+    # A newcomer reads a few lines saying what happens next, not a manual.
+    assert len(first.stdout.splitlines()) <= 7, first.stdout
     app = destination / "BurnZombies.app"
     install("none")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
@@ -64,6 +68,15 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     assert json.loads((root / "observer-state/machine-review.json").read_text()) == configured
     install("codex", observe=True)
     assert json.loads((root / "observer-state/machine-review.json").read_text())['enabled'] is False
+    # Without Claude Code or Codex the default install still succeeds, with AI judging off.
+    bare = dict(env, BURNZOMBIES_HOME=str(root / "bare-state"), BURNZOMBIES_INSTALL_DIR=str(root / "Bare Applications"))
+    (stubs / "codex").unlink()
+    plain = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--no-open"], env=bare,
+                           capture_output=True, text=True, timeout=60)
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    assert 'No Claude Code or Codex found' in plain.stdout, plain.stdout
+    assert (root / "Bare Applications/BurnZombies.app/Contents/MacOS/burnzombies").exists()
+    assert not (root / "bare-state/machine-review.json").exists()
     with (remote / asset).open("ab") as file: file.write(b"bad download")
     assert "checksum failed" in install("none", success=False).stderr
     assert (app / "Contents/MacOS/BurnZombiesApp").read_bytes() == original_binary

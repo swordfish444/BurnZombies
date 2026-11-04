@@ -35,7 +35,9 @@ enum LifecycleSkillInstall {
       try data.write(to: file.deletingLastPathComponent().appendingPathComponent("retired-instructions.txt"), options: .atomic)
       try fm.removeItem(at: file); try fm.removeItem(at: marker)
     }
-    print("Passive observation configured. No automatic BurnZombies instructions in working chats.")
+    if !removals.isEmpty {
+      print("Removed the old per-chat BurnZombies instructions; your chats carry nothing extra.")
+    }
   }
   static func run(_ args: [String]) throws {
     func option(_ flag: String) throws -> String? {

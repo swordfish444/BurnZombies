@@ -28,7 +28,7 @@ struct FullDiskAccessView: View {
         Text("Covers the folders macOS protects.").font(.callout.weight(.semibold))
         Text(
           "BurnZombies already works everywhere else. Full Disk Access adds "
-            + ProtectedLocations.summary + ", and lets AI hunts run.")
+            + ProtectedLocations.summary + ".")
           .font(.caption).foregroundStyle(.secondary)
         VStack(alignment: .leading, spacing: 7) {
           Text("1. Open Privacy & Security → Full Disk Access.")
