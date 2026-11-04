@@ -1,14 +1,15 @@
 import BurnCore
 import Foundation
 
-/// What answers teach, how BZ guesses before asking, the replay that shows it improving, and the
-/// question card an owner decides on.
+/// What answers teach, how BZ guesses before asking, the replay that shows it improving, the
+/// question card an owner decides on, and what BZ does on its own once it is sure.
 func autopilotLearningProof() async throws {
   try await lessonsProof()
   try guessProof()
   try await migrationProof()
   try await groupsProof()
   try await cardProof()
+  try await tellProof()
 }
 
 private func copy(_ id: String, _ facts: [String: String], bytes: UInt64 = 1 << 30)

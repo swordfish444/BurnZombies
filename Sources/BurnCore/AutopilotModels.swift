@@ -241,6 +241,50 @@ public struct AutopilotScore: Codable, Sendable, Equatable {
   }
 }
 
+/// What BZ did on its own: a question it was sure the owner would say yes to, answered yes and
+/// burned without asking, then shown to the owner with Good call and Undo.
+public struct AutopilotTell: Codable, Sendable, Identifiable, Equatable {
+  public var id: String
+  /// The question BZ answered itself.
+  public var questionID: String
+  /// The lesson that answer taught, which authorized the burns.
+  public var ruleID: String
+  public var kind: AutopilotKind
+  public var count: Int
+  public var bytes: UInt64
+  /// What its card names, as on a question card.
+  public var rows: [AutopilotQuestionRow]
+  /// "You said yes to 6 like these."
+  public var why: String
+  public var date: Date
+  /// "open", "good", "undone" or "expired".
+  public var state: String
+  /// Why an undo couldn't bring everything back.
+  public var note: String?
+  /// What the owner's lessons that the new lesson took in had done, by their ids. An undo gives it
+  /// back to them when they are learned again.
+  public var absorbed: [String: AutopilotTally]?
+  public init(
+    id: String, questionID: String, ruleID: String, kind: AutopilotKind, count: Int,
+    bytes: UInt64, rows: [AutopilotQuestionRow], why: String, date: Date,
+    state: String = "open", note: String? = nil, absorbed: [String: AutopilotTally]? = nil
+  ) {
+    self.id = id
+    self.questionID = questionID
+    self.ruleID = ruleID
+    self.kind = kind
+    self.count = count
+    self.bytes = bytes
+    self.rows = rows
+    self.why = why
+    self.date = date
+    self.state = state
+    self.note = note
+    self.absorbed = absorbed
+  }
+  public var isOpen: Bool { state == "open" }
+}
+
 /// What one lesson has done: the burns it authorized, what they freed, and how many the owner
 /// undid. Counted as burns are recorded, because receipts.json keeps only the latest 500.
 public struct AutopilotTally: Codable, Sendable, Equatable {
@@ -410,6 +454,10 @@ public struct AutopilotMemory: Codable, Sendable, Equatable {
   public var scores: [AutopilotScore] = []
   /// What each lesson has done, by lesson id.
   public var tallies: [String: AutopilotTally] = [:]
+  /// What BZ did on its own, oldest first; the open ones wait for Good call or Undo.
+  public var tells: [AutopilotTell] = []
+  /// Act on its own when sure (Settings → Autopilot). Off, sure questions are asked like any other.
+  public var actsOnItsOwn = true
   public init() {}
   /// Memory saved before a field existed still loads. The original fields are required as they
   /// always were; every field added since is decoded with `decodeIfPresent` and falls back to its
@@ -424,6 +472,8 @@ public struct AutopilotMemory: Codable, Sendable, Equatable {
     judgments = try values.decode([String: AutopilotJudgment].self, forKey: .judgments)
     scores = try values.decodeIfPresent([AutopilotScore].self, forKey: .scores) ?? []
     tallies = try values.decodeIfPresent([String: AutopilotTally].self, forKey: .tallies) ?? [:]
+    tells = try values.decodeIfPresent([AutopilotTell].self, forKey: .tells) ?? []
+    actsOnItsOwn = try values.decodeIfPresent(Bool.self, forKey: .actsOnItsOwn) ?? true
   }
   public var answers: Int { questions.filter { $0.answer == .yes || $0.answer == .no }.count }
   public var openQuestions: [AutopilotQuestion] { questions.filter(\.isOpen) }
@@ -543,6 +593,8 @@ public struct AutopilotSnapshot: Codable, Sendable, Equatable {
   public var lessons: [AutopilotLessonGroup] = []
   /// How I'm doing (`AutopilotPolicy.progress`).
   public var progress = AutopilotProgress()
+  /// What BZ did on its own that the owner hasn't called good or undone yet, oldest first.
+  public var tells: [AutopilotTell] = []
   public init() {}
   public func count(_ status: AutopilotStatus) -> Int { counts[status.rawValue] ?? 0 }
 }
@@ -576,4 +628,12 @@ public enum AutopilotCommand: Codable, Sendable, Equatable {
   case setInterval(minutes: Int)
   case resetTraining
   case sweepNow
+  /// The owner agrees with what BZ did on its own: the tell closes and BZ's guess scores right.
+  case tellGood(id: String)
+  /// The owner undoes what BZ did on its own: copies come back, the lesson becomes a keep and the
+  /// guess scores wrong.
+  case tellUndo(id: String)
+  case setActsOnItsOwn(Bool)
+  /// Forgets every lesson of a group, as Settings shows them.
+  case forgetLesson(ruleIDs: [String])
 }

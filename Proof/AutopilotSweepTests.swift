@@ -1,7 +1,8 @@
 import BurnCore
 import Foundation
 
-private final class Calls: @unchecked Sendable {
+/// What fake sources were asked to do, in order. Shared by the Autopilot engine proofs.
+final class Calls: @unchecked Sendable {
   private let lock = NSLock()
   private var values: [String] = []
   func add(_ value: String) { lock.withLock { values.append(value) } }

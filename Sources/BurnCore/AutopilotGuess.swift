@@ -342,12 +342,8 @@ public enum AutopilotEval {
       lean = guess?.answer
       outcome = guess?.sure == true ? "acted" : "asked"
       if outcome == "asked", let lean {
-        memory.scores.append(
-          AutopilotScore(
-            questionID: question.id, subject: subject, guess: lean, answer: owner,
-            right: lean == owner, date: date, replayed: true))
-        let excess = memory.scores.count - AutopilotPolicy.maximumScores
-        if excess > 0 { memory.scores.removeFirst(excess) }
+        AutopilotPolicy.score(
+          question, guess: lean, answer: owner, into: &memory, date: date, replayed: true)
       }
     }
     let verdict: AutopilotVerdict = owner == .yes ? .burn : .keep

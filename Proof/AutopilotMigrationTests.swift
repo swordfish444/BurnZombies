@@ -84,6 +84,7 @@ func migrationProof() async throws {
   try migrationStoreProof(v1)
   try await tallyEngineProof()
   try await firstTickProof()
+  try await restoreSeededProof()
 }
 
 /// A version-1 file migrates when the engine starts, before a tick changes any receipt, so a stop
@@ -173,6 +174,15 @@ private func roundTripProof() throws {
       date: Date(timeIntervalSinceReferenceDate: 6_000), replayed: true)
   ]
   full.tallies = ["lesson": AutopilotTally(count: 3, bytes: 4, undone: 1)]
+  full.tells = [
+    AutopilotTell(
+      id: "tell", questionID: "q-full", ruleID: "lesson", kind: .worktree, count: 2, bytes: 3,
+      rows: question.rows ?? [], why: "You said yes to 1 like this.",
+      date: Date(timeIntervalSinceReferenceDate: 8_000), state: "undone",
+      note: "Stopped programs and deleted folders can't come back; I'll ask next time.",
+      absorbed: ["old-lesson": AutopilotTally(count: 1, bytes: 2, undone: 0)])
+  ]
+  full.actsOnItsOwn = false
   let defaults = Array(Mirror(reflecting: AutopilotMemory()).children)
   let filled = Array(Mirror(reflecting: full).children)
   equal(filled.count, defaults.count)
@@ -184,6 +194,41 @@ private func roundTripProof() throws {
   }
   let decoded = try JSONDecoder().decode(AutopilotMemory.self, from: JSONEncoder().encode(full))
   equal(decoded, full, "every field round-trips")
+  // Memory saved before tells: none open, and BZ acts on its own when sure, the default.
+  let older =
+    #"{"judgments":{},"keptItems":[],"questions":[],"rules":[],"starterDisabled":[],"version":2}"#
+  let before = try JSONDecoder().decode(AutopilotMemory.self, from: Data(older.utf8))
+  equal(before.tells, [], "memory without tells")
+  check(before.actsOnItsOwn, "acts on its own by default")
+}
+
+/// A restore that reads version-1 memory migrates it then, and the migration counts the restored
+/// burn from receipts.json, burn and undo both: the restore doesn't mark it undone a second time.
+private func restoreSeededProof() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-autopilot-restore-seeded-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let store = try AutopilotStore(root: root)
+  let receipts = store.directory.appendingPathComponent("receipts.json")
+  try Data("not receipts".utf8).write(to: receipts)
+  try JSONEncoder().encode(teachHistoryVersion1(try teachHistory())).write(
+    to: store.directory.appendingPathComponent("memory.json"))
+  let engine = try Autopilot(root: root, sources: AutopilotSources(restoreWorktree: { _ in }))
+  equal(try store.memory().version, 1, "receipts.json can't be read yet")
+  let backup = AutopilotRestore(
+    repository: "/fixture/.git", path: "/fixture/old", ref: "refs/fixture/old",
+    head: String(repeating: "0", count: 40), branch: nil, snapshot: false)
+  let burned = AutopilotReceipt(
+    itemID: "worktree:old", kind: .worktree, name: "old", authority: "rule:" + TeachLessons.q07ID,
+    outcome: "burned", detail: "", bytes: 2_000_000_000, restore: backup)
+  try JSONEncoder().encode([burned]).write(to: receipts)
+  _ = try await engine.apply(.restore(receiptID: burned.id))
+  let memory = try store.memory()
+  equal(memory.version, 2, "the restore's read migrated")
+  equal(
+    memory.tallies[TeachLessons.copiesDayID],
+    AutopilotTally(count: 1, bytes: 2_000_000_000, undone: 1),
+    "the restored burn counts once and is undone once")
 }
 
 private func modified(_ url: URL) -> Date? {
