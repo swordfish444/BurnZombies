@@ -105,6 +105,94 @@ extension AutopilotPolicy {
     return AutopilotGuess(answer: lean, sure: sure, why: why, source: "native")
   }
 
+  /// How I'm doing (spec 4.2): plain counts, each line only when it has something to say.
+  /// 1. Guesses right among the last 10 scores, replayed ones included.
+  /// 2. Questions shown to the owner this week and what BZ burned on its own, and last week's when
+  ///    it had any.
+  /// 3. Burns the owner undid, out of `totalBurns` (the durable count, as receipts.json is capped)
+  ///    or, without it, the burns still in `receipts`.
+  /// 4. The replay of the owner's answers, once there are 5.
+  public static func progress(
+    _ memory: AutopilotMemory, receipts: [AutopilotReceipt], totalBurns: Int?, now: Date
+  ) -> AutopilotProgress {
+    let lines: [String?] = [
+      guessedLine(memory.scores), weekLine(memory.questions, receipts, now: now),
+      undoneLine(receipts, totalBurns: totalBurns), replayLine(memory.questions),
+    ]
+    return AutopilotProgress(lines: lines.compactMap { $0 })
+  }
+
+  /// "I guessed 9 of your last 10 answers right."
+  static func guessedLine(_ scores: [AutopilotScore]) -> String? {
+    let recent = scores.suffix(10)
+    let right = recent.filter(\.right).count
+    switch recent.count {
+    case 0: return nil
+    case 1: return right == 1 ? "I guessed your last answer right." : "I missed your last answer."
+    default: return "I guessed \(right) of your last \(recent.count) answers right."
+    }
+  }
+
+  /// "This week: 2 questions, 120.0 GB burned on my own. Last week: 9 questions, 80.0 GB."
+  static func weekLine(_ questions: [AutopilotQuestion], _ receipts: [AutopilotReceipt], now: Date)
+    -> String?
+  {
+    let weekAgo = now.addingTimeInterval(-7 * 86_400)
+    let twoWeeksAgo = weekAgo.addingTimeInterval(-7 * 86_400)
+    let this = week(questions, receipts, after: weekAgo, through: now)
+    let last = week(questions, receipts, after: twoWeeksAgo, through: weekAgo)
+    let lastHadAny = last.questions > 0 || last.bytes > 0
+    guard this.questions > 0 || this.bytes > 0 || lastHadAny else { return nil }
+    let shown: String = AutopilotEval.plural(this.questions, "question")
+    let burned: String = roughly(this.bytes)
+    var line: String = "This week: " + shown + ", " + burned + " burned on my own."
+    if lastHadAny {
+      let before: String = AutopilotEval.plural(last.questions, "question")
+      let freed: String = roughly(last.bytes)
+      line += " Last week: " + before + ", " + freed + "."
+    }
+    return line
+  }
+
+  /// Questions shown to the owner in a window (BZ's own calls aren't shown), and what burns not
+  /// asked for by the owner's Burn now freed in it.
+  static func week(
+    _ questions: [AutopilotQuestion], _ receipts: [AutopilotReceipt], after start: Date,
+    through end: Date
+  ) -> (questions: Int, bytes: UInt64) {
+    let shown = questions.filter { question in
+      question.answeredBy != "bz" && question.asked > start && question.asked <= end
+    }
+    var bytes: UInt64 = 0
+    for receipt in receipts where receipt.outcome == "burned" && receipt.authority != "operator" {
+      if receipt.date > start && receipt.date <= end { bytes += receipt.bytes }
+    }
+    return (shown.count, bytes)
+  }
+
+  /// "You undid 0 of my 498 burns."
+  static func undoneLine(_ receipts: [AutopilotReceipt], totalBurns: Int?) -> String? {
+    let undone = receipts.filter { $0.outcome == "restored" }.count
+    let kept = receipts.filter { $0.outcome == "burned" || $0.outcome == "restored" }.count
+    let burns = totalBurns ?? kept
+    guard burns > 0 else { return nil }
+    return "You undid \(undone) of my " + AutopilotEval.plural(burns, "burn") + "."
+  }
+
+  /// "Replaying your 27 answers, I'd have asked 17 and handled the other 10 on my own the way you
+  /// would have."
+  static func replayLine(_ questions: [AutopilotQuestion]) -> String? {
+    let summary = AutopilotEval.replay(questions).summary
+    guard summary.answers >= 5 else { return nil }
+    let handled = summary.settled + summary.acted
+    let wrong = summary.wrongSettled + summary.wrongActed
+    let start =
+      "Replaying your \(summary.answers) answers, I'd have asked \(summary.asked)"
+      + " and handled the other \(handled) on my own"
+    guard wrong > 0 else { return start + " the way you would have." }
+    return start + ", \(wrong) of them not the way you would have."
+  }
+
   /// "1 like this", "6 like these".
   static func like(_ count: Int) -> String {
     count == 1 ? "1 like this" : "\(count) like these"

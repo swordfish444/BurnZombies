@@ -405,7 +405,19 @@ public actor Autopilot {
     result.receipts = Array(receipts.suffix(100).reversed())
     result.coverageNotes = catalog?.coverageNotes ?? []
     result.observedAt = catalog?.observedAt
+    result.lessons = AutopilotPolicy.lessonGroups(memory)
+    result.progress = AutopilotPolicy.progress(
+      memory, receipts: receipts, totalBurns: totalBurns(receipts), now: now)
     return result
+  }
+
+  /// Burns BZ made, for "You undid …": the durable impact tally, since receipts.json keeps only
+  /// the latest burns. The tally counts copies, and takes restored ones back out, so the restores
+  /// the receipts still hold are added back. nil when the tally can't be read.
+  func totalBurns(_ receipts: [AutopilotReceipt]) -> Int? {
+    guard let impact = try? store.impact() else { return nil }
+    let restored = receipts.filter { $0.outcome == "restored" }.count
+    return impact.worktrees + restored
   }
 
   /// Applies an operator command and returns the new snapshot.

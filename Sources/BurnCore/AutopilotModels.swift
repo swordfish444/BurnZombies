@@ -439,6 +439,38 @@ public struct AutopilotEntry: Codable, Sendable, Identifiable, Equatable {
   }
 }
 
+/// Lessons as Settings shows them: one sentence for a group of lessons, with what they rest on and
+/// what they did. Forgetting the group forgets every lesson in `ruleIDs`.
+public struct AutopilotLessonGroup: Codable, Sendable, Equatable, Identifiable {
+  /// "worktree:burn:day", "worktree:burn:projects", "process:burn", "disk:burn:day", or
+  /// "rule:<id>" for a keep.
+  public var id: String
+  public var kind: AutopilotKind
+  public var verdict: AutopilotVerdict
+  /// "Copies nobody touched since yesterday are done, even with unsaved work."
+  public var sentence: String
+  /// "From 11 answers · burned 364 copies, 396.0 GB · undone 0"
+  public var evidence: String
+  public var ruleIDs: [String]
+  public init(
+    id: String, kind: AutopilotKind, verdict: AutopilotVerdict, sentence: String,
+    evidence: String, ruleIDs: [String]
+  ) {
+    self.id = id
+    self.kind = kind
+    self.verdict = verdict
+    self.sentence = sentence
+    self.evidence = evidence
+    self.ruleIDs = ruleIDs
+  }
+}
+
+/// How I'm doing: plain counts, one sentence each.
+public struct AutopilotProgress: Codable, Sendable, Equatable {
+  public var lines: [String] = []
+  public init(lines: [String] = []) { self.lines = lines }
+}
+
 public struct AutopilotSnapshot: Codable, Sendable, Equatable {
   public var entries: [AutopilotEntry] = []
   public var questions: [AutopilotQuestion] = []
@@ -454,6 +486,11 @@ public struct AutopilotSnapshot: Codable, Sendable, Equatable {
   public var receipts: [AutopilotReceipt] = []
   public var coverageNotes: [String] = []
   public var observedAt: Date?
+  /// The owner's lessons as sentences (`AutopilotPolicy.lessonGroups`); starter rules stay in
+  /// `rules`.
+  public var lessons: [AutopilotLessonGroup] = []
+  /// How I'm doing (`AutopilotPolicy.progress`).
+  public var progress = AutopilotProgress()
   public init() {}
   public func count(_ status: AutopilotStatus) -> Int { counts[status.rawValue] ?? 0 }
 }
