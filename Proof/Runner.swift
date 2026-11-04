@@ -79,6 +79,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       ("--autopilot-disk", "Autopilot junk folders and threads", autopilotDiskProof),
       ("--autopilot-process", "Autopilot processes", autopilotProcessProof),
       ("--autopilot-sweep", "Autopilot sweep", autopilotSweepProof),
+      ("--autopilot-look-only", "Autopilot look-only", lookOnlyProof),
     ] as [(String, String, () async throws -> Void)] where CommandLine.arguments.contains(flag) {
       do { try await proof() } catch { failTest("\(name): \(error)") }
       if failures == 0 { print("PASS \(name)") }
@@ -93,9 +94,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       if failures == 0 { print("PASS Autopilot end-to-end with a real AI sweep") }
       exit(failures == 0 ? 0 : 1)
     }
-    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--newcomer" {
+    if CommandLine.arguments.count >= 3 && CommandLine.arguments[1] == "--newcomer" {
       do {
-        try await newcomerProof(root: URL(fileURLWithPath: CommandLine.arguments[2]))
+        try await newcomerProof(
+          root: URL(fileURLWithPath: CommandLine.arguments[2]),
+          lookOnly: CommandLine.arguments.contains("--look-only"))
       } catch { failTest("Newcomer: \(error)") }
       exit(failures == 0 ? 0 : 1)
     }
@@ -529,15 +532,18 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await autopilotDiskProof() } catch { failTest("Autopilot junk folders: \(error)") }
     do { try await autopilotProcessProof() } catch { failTest("Autopilot processes: \(error)") }
     do { try await autopilotSweepProof() } catch { failTest("Autopilot sweep: \(error)") }
-    do {
-      let newcomer = FileManager.default.temporaryDirectory.appendingPathComponent(
-        "bz-newcomer-" + UUID().uuidString)
-      defer { try? FileManager.default.removeItem(at: newcomer) }
-      try await newcomerProof(root: newcomer)
-    } catch { failTest("Newcomer first run: \(error)") }
+    do { try await lookOnlyProof() } catch { failTest("Autopilot look-only: \(error)") }
+    for lookOnly in [false, true] {
+      do {
+        let newcomer = FileManager.default.temporaryDirectory.appendingPathComponent(
+          "bz-newcomer-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: newcomer) }
+        try await newcomerProof(root: newcomer, lookOnly: lookOnly)
+      } catch { failTest("Newcomer first run\(lookOnly ? " with look-only" : ""): \(error)") }
+    }
     if failures == beforeAutopilot {
       print(
-        "PASS autopilot policy, restorable retirement, junk folders, processes, sweep and a newcomer's first two minutes"
+        "PASS autopilot policy, restorable retirement, junk folders, processes, sweep, look-only and a newcomer's first two minutes, with and without look-only"
       )
     }
     let beforeMachine = failures

@@ -6,7 +6,7 @@ Requires macOS 14+, Apple Silicon or Intel. Claude Code or Codex is optional: wi
 
 ## Rules
 
-- Install and configure only what the operator asked for. Setup is not cleanup: never start a sweep (Hunt Zombies, Sweep now, `autopilot sweep`), answer a question, burn, restore or stop anything as an installation test.
+- Install and configure only what the operator asked for. Setup is not cleanup: never start a sweep (Hunt Zombies, Sweep now, `autopilot sweep`), answer a question, burn, restore or stop anything as an installation test. Never turn look-only off: Start burning is the operator's decision.
 - Do not change credentials, account routing, global MCP configuration, chat hooks or shell profiles. Preserve the operator's tool, model and thinking choices.
 - If a login, usage limit or permission is refused, stop and report it. Never fall back to another tool or account.
 - Never disable Gatekeeper, remove quarantine metadata or grant macOS permissions yourself. Report steps that need the human.
@@ -24,7 +24,8 @@ rm "$installer"
 
 - Default (`--mcp auto`): Claude Code if installed, otherwise Codex. If the operator named one, add `--mcp claude` or `--mcp codex`.
 - Neither installed: run the same command. AI judging stays off. Once the operator installs and signs in to one, run `"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" setup`.
-- `--observe-only`: AI judging off. Add it only if the operator asks; `burnzombies setup --with-ai` turns it back on.
+- `--look-only`: BZ finds, sizes and asks as usual but burns nothing until the operator chooses Start burning in the menu (or switches off Settings → Autopilot → Look only). Add it if the operator wants to see what BZ would burn first. Works with every `--mcp` choice.
+- `--observe-only`: AI judging off. Not a dry run: the starter rules and the operator's answers still burn. Add it only if the operator asks; `burnzombies setup --with-ai` turns it back on.
 - `--no-open`: install without starting the app.
 
 The installer checks the release checksum, archive paths and bundle signature, installs `~/Applications/BurnZombies.app` (or `$BURNZOMBIES_INSTALL_DIR`; substitute that path below if the operator set it) and starts it in the menu bar. No account, API key or sudo. Releases are not notarized; if macOS blocks opening, report the exact prompt.
@@ -41,12 +42,13 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
 
 - `doctor`: `appResponding` and `runningAppMatchesCLI` must be true. `configuredHarness` is `claude`, `codex` or `none`; `backgroundReviewsEnabled` says whether AI judging is on. It never starts the AI or a burn, and can't prove a login. An old or mismatched running app is not a verified update.
 - `access-status`: Full Disk Access state.
-- `autopilot`: snapshot of counts, open questions and rules; changes nothing. Empty counts in the first minute are not a failure; the first look may still be running.
+- `autopilot`: snapshot of counts, open questions and rules; changes nothing. Empty counts in the first minute are not a failure; the first look may still be running. `lookOnly: true` means every burn is held.
 
 ## Tell the operator what happens next
 
 - BZ looks right away and every minute for its first half hour. Within about a minute the menu-bar panel (the skull) shows how much it found, and "BZ has N quick questions" when something needs a decision.
-- From the first minute, starter rules burn on their own (each can be switched off in Settings → Autopilot):
+- Installed with `--look-only`, nothing burns on its own (not the rules below, not yes answers, not the AI) until the operator chooses Start burning in the menu-bar panel; then everything waiting burns right away. The panel says "Look-only · nothing burns" and how much it would burn.
+- Otherwise, from the first minute, starter rules burn on their own (each can be switched off in Settings → Autopilot):
   - programs whose app or chat is gone, idle 6+ hours, with no open port (a program that has barely used the CPU since it started counts as idle from its start);
   - old project copies (git worktrees) already merged, unchanged and untouched for a month, always backed up first;
   - rebuildable folders (node_modules, build output) inside copies untouched for two weeks.
@@ -65,7 +67,7 @@ Without it, BZ covers everything except the places macOS protects (Desktop, Docu
 
 ## Update
 
-Read `version`, `doctor` and `access-status` first. Rerun the inspected installer without `--mcp`: it keeps the selected tool, model, thinking level and on/off state. Add `--observe-only` only if the operator asks. If the selected tool is missing, setup stops; it never switches tools. The installer closes only its own previous app and refuses a forced replacement.
+Read `version`, `doctor` and `access-status` first. Rerun the inspected installer without `--mcp`: it keeps the selected tool, model, thinking level, on/off state and look-only. Add `--observe-only` or `--look-only` only if the operator asks. If the selected tool is missing, setup stops; it never switches tools. The installer closes only its own previous app and refuses a forced replacement.
 
 On an explicit request to change tool or model:
 

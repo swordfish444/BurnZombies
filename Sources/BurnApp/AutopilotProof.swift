@@ -181,10 +181,13 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   off.enabled = false
   var paused = snapshot.sweep
   paused.retryAfter = Date().addingTimeInterval(1800)
+  var looking = snapshot.sweep
+  looking.lookOnly = true
   try check(
     AutopilotText.sweepLine(off, now: Date()) == "Autopilot off"
-      && AutopilotText.sweepLine(paused, now: Date()).hasPrefix("Autopilot paused — retrying at "),
-    "The menu line should cover off and paused")
+      && AutopilotText.sweepLine(paused, now: Date()).hasPrefix("Autopilot paused — retrying at ")
+      && AutopilotText.sweepLine(looking, now: Date()).hasPrefix("Look-only · next sweep in"),
+    "The menu line should cover off, paused and look-only")
   print("PASS autopilot UI demo data: \(snapshot.entries.count) entries across every status and kind, 3 questions, 2 learned and 3 starter rules")
 
   // Menu: the Details view with the Autopilot block at the top.
@@ -320,7 +323,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       .frame(maxHeight: .infinity, alignment: .top).background(AutopilotTheme.window)
       .environment(\.colorScheme, .dark),
     size: NSSize(width: 440, height: 780), name: "settings", directory: directory)
-  try require(settings, ["What BZ has learned", "Start training over"], in: "settings")
+  try require(settings, ["What BZ has learned", "Start training over", "Look only"], in: "settings")
   hint(settings, "settings", ["Sweep every", "Starter rules", "Forget"])
   print("PASS autopilot UI Settings render: learned rules, starter rules and Start training over")
 
@@ -462,6 +465,19 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       && abs(sweep.autopilot.sweep.lastTick?.timeIntervalSinceNow ?? -1000) < 5
       && AutopilotText.sweepLine(sweep.autopilot.sweep, now: Date()).contains("30 min"),
     "Sweep interval or Sweep now did not apply")
+  // Look-only: the menu line and the Findings sentence say nothing burns yet; switching it off
+  // in Settings, or Start burning on the panel, brings Autopilot back.
+  sweep.setLookOnly(true)
+  try check(
+    AutopilotText.sweepLine(sweep.autopilot.sweep, now: Date()).hasPrefix("Look-only")
+      && AutopilotText.summary(sweep.autopilot).contains("once you start burning")
+      && !AutopilotText.summary(sweep.autopilot).contains("on my own"),
+    "Look-only did not show in the menu line and Findings")
+  sweep.setLookOnly(false)
+  try check(
+    sweep.autopilot.sweep.lookOnly == nil
+      && AutopilotText.sweepLine(sweep.autopilot.sweep, now: Date()).hasPrefix("Autopilot on"),
+    "Start burning did not turn look-only off")
 
   // With an engine attached, every command goes through it and its snapshot wins.
   var sent = [AutopilotCommand]()
@@ -484,6 +500,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   wired.forgetRule(rule)
   wired.setStarter("starter-finished-copies", enabled: false)
   wired.setAutopilot(enabled: false)
+  wired.setLookOnly(false)
   wired.setSweepInterval(minutes: 60)
   wired.resetTraining()
   wired.sweepNow()
@@ -491,7 +508,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     .answer(questionID: q.id, answer: .no), .burnNow(itemID: e.id), .keep(itemID: e.id),
     .restore(receiptID: rcpt.id), .forgetRule(ruleID: rule.id),
     .setStarter(ruleID: "starter-finished-copies", enabled: false), .setEnabled(false),
-    .setInterval(minutes: 60), .resetTraining, .sweepNow,
+    .setLookOnly(false), .setInterval(minutes: 60), .resetTraining, .sweepNow,
   ]
   let deadline = Date().addingTimeInterval(3)
   while (sent.count < expected.count || wired.autopilot != marker) && Date() < deadline {
@@ -510,6 +527,6 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   try check(
     failing.message != nil && failing.autopilot == before,
     "A failed engine command should say so and change nothing")
-  print("PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, starter switch, reset, interval, sweep now, and engine hand-off")
+  print("PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, starter switch, reset, interval, sweep now, look-only and engine hand-off")
 }
 #endif

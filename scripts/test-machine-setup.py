@@ -77,6 +77,31 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
             assert json.loads((state/'machine-review.json').read_text())['enabled'] is False
             subprocess.run(command+['--with-ai'], env=env, check=True, capture_output=True)
             assert json.loads((state/'machine-review.json').read_text())['enabled'] is True
+    # Look-only belongs to Autopilot, not the AI: setup turns it on with or without AI judging, keeps
+    # the AI choice as it was and says so in one more line; a reinstall without it leaves it on.
+    for harness in ['claude', 'none']:
+        state = root/f'look-only-{harness}'
+        command = [str(cli), 'setup', '--harness', harness, '--root', str(state)]
+        subprocess.run(command, env=env, check=True, capture_output=True)
+        before = (state/'machine-review.json').read_bytes() if harness != 'none' else None
+        looked = subprocess.run(command + ['--look-only'], env=env, check=True, capture_output=True, text=True)
+        lines = looked.stdout.splitlines()
+        assert len(lines) == 2 and lines[1].startswith('Look-only is on'), looked.stdout
+        assert 'still burns' not in looked.stdout, 'Setup promised burns while look-only: ' + looked.stdout
+        assert json.loads((state/'autopilot/sweep.json').read_text())['lookOnly'] is True
+        if before is None:
+            assert not (state/'machine-review.json').exists(), 'Look-only without AI set up AI'
+        else:
+            assert (state/'machine-review.json').read_bytes() == before, 'Look-only changed the AI choice'
+        subprocess.run(command, env=env, check=True, capture_output=True)
+        assert json.loads((state/'autopilot/sweep.json').read_text())['lookOnly'] is True, 'A reinstall started burning'
+    # The installer's path when it skips AI setup (--mcp none): with no app running, straight to the state folder.
+    state = root/'look-only-autopilot'
+    looked = subprocess.run([str(cli), 'autopilot', 'look-only'], env=dict(env, BURNZOMBIES_HOME=str(state)),
+                            check=True, capture_output=True, text=True, timeout=15)
+    assert looked.stdout.startswith('Look-only is on'), looked.stdout
+    assert json.loads((state/'autopilot/sweep.json').read_text())['lookOnly'] is True
+    assert not (state/'machine-review.json').exists(), 'Look-only without AI set up AI'
     # Installer setup and app migration use the same exclusive migration lock.
     for iteration in range(50):
         state=root/f'concurrent-migration-{iteration}'
@@ -129,4 +154,12 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
     assert not (state/'machine-review.json').exists(), 'Setup without a harness wrote an AI configuration'
     named = subprocess.run([str(cli), 'setup', '--harness', 'codex', '--root', str(state)], env=bare, capture_output=True, text=True)
     assert named.returncode != 0 and not (state/'machine-review.json').exists()
-print('PASS five-provider setup, model/effort subprocess arguments, reinstall persistence, defaults, private config, owned cancellation and setup without a harness')
+    # Look-only needs no AI tool; a setup that fails turns nothing on.
+    refused = subprocess.run([str(cli), 'setup', '--harness', 'codex', '--look-only', '--root', str(state)], env=bare, capture_output=True, text=True)
+    assert refused.returncode != 0 and not (state/'autopilot/sweep.json').exists(), 'A failed setup turned look-only on'
+    looked = subprocess.run([str(cli), 'setup', '--look-only', '--root', str(state)], env=bare, capture_output=True, text=True)
+    assert looked.returncode == 0 and looked.stdout.splitlines()[-1].startswith('Look-only is on'), looked.stdout + looked.stderr
+    assert 'still burns' not in looked.stdout, looked.stdout
+    assert json.loads((state/'autopilot/sweep.json').read_text())['lookOnly'] is True
+    assert not (state/'machine-review.json').exists()
+print('PASS five-provider setup, model/effort subprocess arguments, reinstall persistence, defaults, private config, owned cancellation, setup without a harness and look-only')

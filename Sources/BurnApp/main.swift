@@ -149,7 +149,10 @@ import UserNotifications
         message = "Choose Claude Code or Codex in Settings so BZ can think through new things."
         return
       }
-      message = "Hunting now. I'll burn what's safe and ask if I'm unsure."
+      message =
+        autopilot.sweep.lookOnly == true
+        ? "Hunting now. Look-only: I'll judge and ask, but burn nothing."
+        : "Hunting now. I'll burn what's safe and ask if I'm unsure."
       openHunt?()
       Task { autopilot = await runtime.tick(manual: true) }
       return
@@ -783,6 +786,10 @@ import UserNotifications
   }
   func setAutopilot(enabled: Bool) {
     sendAutopilot(.setEnabled(enabled)) { $0.sweep.enabled = enabled }
+  }
+  /// Look-only holds every burn BZ would make on its own; turning it off starts burning.
+  func setLookOnly(_ on: Bool) {
+    sendAutopilot(.setLookOnly(on)) { $0.sweep.lookOnly = on ? true : nil }
   }
   func setSweepInterval(minutes: Int) {
     sendAutopilot(.setInterval(minutes: minutes)) { $0.sweep.intervalMinutes = minutes }

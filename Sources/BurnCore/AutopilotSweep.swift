@@ -82,6 +82,7 @@ public enum AutopilotHarness {
     - Owner rules (earlier answers) and starter rules already burn their matches before you run. Never second-guess an owner's answer.
     - Your burn verdict with confidence >= 0.85 authorizes a burn only for: zombie programs that are orphaned or whose chat ended and that are not serving a port; old copies not made by Codex, Claude or Conductor that nothing is using; known junk folders. Everything else needs an owner rule, so ask.
     - A confident keep verdict blocks burning. Protected items are never burned.
+    - Look-only: when the catalog summary says lookOnly, the owner is previewing. Judge and ask as usual but skip autopilot_burn: nothing burns until the owner turns burning on, and your confident verdicts burn then.
 
     How to judge:
     - Zombie program: its app or chat is gone. Burn leftover test runners, build watchers, headless browsers, language servers, dev servers from finished chats and stuck scripts. Keep databases, things the owner clearly runs on purpose (ollama, postgres, redis, tunnels, sync tools), anything recently active, and anything you cannot identify.

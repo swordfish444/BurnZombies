@@ -17,7 +17,7 @@
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-<p align="center"><sub>macOS 14+ · no account, API key or sudo · free and open source (MIT) · signed, not yet notarized by Apple · <a href="install.sh">read the script first</a><br>If Claude Code or Codex is signed in, BZ also runs AI sweeps on your login, about $0.30–$1.20 each at API prices. To skip them, use <code>| bash -s -- --observe-only</code> instead of <code>| bash</code>.</sub></p>
+<p align="center"><sub>macOS 14+ · no account, API key or sudo · free and open source (MIT) · signed, not yet notarized by Apple · <a href="install.sh">read the script first</a><br>Want to look first? Use <code>| bash -s -- --look-only</code> instead of <code>| bash</code>: BZ finds and asks but burns nothing until you choose <b>Start burning</b>.<br>If Claude Code or Codex is signed in, BZ also runs AI sweeps on your login, about $0.30–$1.20 each at API prices. To skip them, add <code>--observe-only</code> the same way.</sub></p>
 
 ## How it works
 
@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 ## What happens next
 
-- **Minute one:** BZ shows what it found, burns what's clearly safe and asks about the rest.
+- **Minute one:** BZ shows what it found, burns what's clearly safe and asks about the rest. With `--look-only` it shows and asks but burns nothing until you choose **Start burning**.
 - **Around minute 10:** if Claude Code or Codex is signed in, the first AI sweep judges what the rules don't cover.
 - **From then on:** BZ looks every 15 minutes, quietly. AI sweeps run only when there's something new to judge, at most every 30 minutes.
 - **After a restart:** BZ comes back only if **Start at login** is on in Settings, so switch it on once.
@@ -86,7 +86,9 @@ The plain facts BZ gathered about each item, like where it is, its size and what
 <details>
 <summary><b>Can I see what it would burn before it burns anything?</b></summary>
 
-**Findings** lists everything BZ found, why, and what burning it would do. There's no look-only mode yet: the starter rules start in the first minute. Everything they burn is backed up (worktrees), rebuildable (junk) or an orphaned program that sat idle for 6 hours. `--observe-only` turns off only the AI.
+Yes: install with `--look-only` (`curl … | bash -s -- --look-only`). BZ finds, sizes and asks exactly as usual, and **Findings** lists everything it found, why, and what burning it would do. Nothing burns on its own: not the starter rules, not your yes answers, not the AI. The menu says **Look-only · nothing burns** and how much it would burn. When you're ready, choose **Start burning** there, or switch off **Look only** in **Settings → Autopilot**, and what waited burns right away. A **Burn now** you click on one item still burns that item.
+
+Already installed? Switch on **Look only** in **Settings → Autopilot**. `--observe-only` is not a dry run: it only turns the AI off, and the rules keep burning.
 
 </details>
 

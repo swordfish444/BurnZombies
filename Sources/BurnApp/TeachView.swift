@@ -203,7 +203,9 @@ struct TeachView: View {
     switch answer {
     case .yes:
       confirmation = Confirmation(
-        text: "Got it! I'll burn these on my own from now on.", symbol: "flame.fill")
+        text: model.autopilot.sweep.lookOnly == true
+          ? "Got it! I'll burn these once you start burning."
+          : "Got it! I'll burn these on my own from now on.", symbol: "flame.fill")
     case .no:
       confirmation = Confirmation(
         text: "Got it! I'll leave these alone.", symbol: "hand.raised.fill")

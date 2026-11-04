@@ -302,6 +302,9 @@ public struct AutopilotLogEntry: Codable, Sendable, Identifiable, Equatable {
 
 public struct AutopilotSweepState: Codable, Sendable, Equatable {
   public var enabled = true
+  /// Look-only: Autopilot finds, sizes and asks as usual but burns nothing on its own, whatever
+  /// a starter rule, an answer or the AI says, until the owner turns burning on.
+  public var lookOnly: Bool?
   public var intervalMinutes = 15
   /// The very first tick of this install; it looks every minute for a while after it.
   public var firstTick: Date?
@@ -397,6 +400,7 @@ public enum AutopilotCommand: Codable, Sendable, Equatable {
   case forgetRule(ruleID: String)
   case setStarter(ruleID: String, enabled: Bool)
   case setEnabled(Bool)
+  case setLookOnly(Bool)
   case setInterval(minutes: Int)
   case resetTraining
   case sweepNow

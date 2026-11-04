@@ -25,12 +25,13 @@ Only Claude Code and Codex run AI sweeps. BZ reuses your login without copying o
 Options pass through the pipe:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash -s -- --observe-only
+curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash -s -- --look-only
 ```
 
 | Option | What it does |
 | --- | --- |
-| `--observe-only` | AI judging off. BZ still burns what its starter rules and your answers cover. Turn it on later with `burnzombies setup --with-ai`. |
+| `--look-only` | Look first. BZ finds, sizes and asks as usual but burns nothing until you choose **Start burning** in the menu, or switch off **Settings → Autopilot → Look only**. Works with every `--mcp` choice, `none` included. |
+| `--observe-only` | AI judging off. It isn't a dry run: BZ still burns what its starter rules and your answers cover. Turn AI on later with `burnzombies setup --with-ai`. |
 | `--no-open` | Installs without starting the app. |
 | `--mcp claude` or `--mcp codex` | Uses that tool for AI judging. The default, `auto`, picks Claude Code, then Codex. |
 | `--mcp none` | Skips AI setup. |
@@ -42,6 +43,8 @@ From v0.13.0, releases are signed with BurnZombies' own certificate (not an Appl
 ## The first minutes
 
 BZ takes its first look right away and keeps looking every minute for its first half hour, then every 15 minutes (change that with **Settings → Autopilot → Sweep every**). Within about a minute the panel shows how much it found, like **Found 4.2 GB of leftovers**, and **BZ has N quick questions** when there's something to decide. Safe starter rules burn from the first minute. With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. [What BZ burns on its own →](AUTOPILOT.md)
+
+Installed with `--look-only`, nothing burns: not the starter rules, not your yes answers, not the AI. The panel says **Look-only · nothing burns** and shows how much BZ would burn, like **I'd burn 5.6 GB**; **Findings** shows what and why. Answers still become rules. When you're ready, choose **Start burning** on the panel and everything waiting burns right away. To go back to looking, switch **Look only** on in **Settings → Autopilot**.
 
 ## Optional Full Disk Access
 
@@ -79,7 +82,7 @@ Click **Hunt Zombies** in the menu bar to start an AI sweep now; it needs Claude
 
 On its own, BZ starts an AI sweep when there's something new to judge, at most every 30 minutes, and rechecks every 4 hours. The first waits about 10 minutes after install, until the first look is complete. A sweep takes a few minutes and is capped at 15; one that runs out of time after judging some things counts as done, and the next picks up the rest. If a sweep fails, BZ waits 15, 30, 60, then 120 minutes before trying again (at least an hour after a login or usage-limit problem). It never stops for good, and your rules keep working meanwhile. Scheduled sweeps never open a window or take focus.
 
-**Settings → Autopilot** turns Autopilot, AI included, off and on; sets how often BZ looks (**Sweep every**, 15 minutes by default); starts a sweep (**Sweep now**); and lists the starter rules and **What BZ has learned**.
+**Settings → Autopilot** turns Autopilot, AI included, off and on; holds every burn with **Look only**; sets how often BZ looks (**Sweep every**, 15 minutes by default); starts a sweep (**Sweep now**); and lists the starter rules and **What BZ has learned**.
 
 ## Model and cost
 

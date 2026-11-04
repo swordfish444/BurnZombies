@@ -17,7 +17,7 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 1. **Protected** — never touched, never asked about: macOS, your apps, your AI tools, BurnZombies itself, anything a running chat is working in, your main project folders, copies something is using right now.
 2. **Your keeps win.** "Keep forever" on an item, a "No, keep them" answer, or a confident AI "keep" always blocks burning.
 3. **Your yes answers** burn every matching item, now and later.
-4. **Starter rules** burn the obvious from the first minute. Switch each off in **Settings → Autopilot**:
+4. **Starter rules** burn the obvious from the first minute (with look-only, once you start burning). Switch each off in **Settings → Autopilot**:
    - programs whose app or chat is gone, idle for 6+ hours, with no open port. A program that has barely used the CPU since it started counts as idle from its start, so old leftovers go right away;
    - old copies already merged, unchanged and untouched for a month (not ones made by Codex, Claude or Conductor). They are always backed up first;
    - rebuildable folders (`node_modules`, build output, Xcode build folders) inside copies untouched for two weeks.
@@ -25,6 +25,15 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 6. Everything else is **unsure** and becomes a question.
 
 Copies made by Codex, Claude or Conductor are checked like any other copy, so your yes answers cover them too; the starter rules and the AI never burn them on their own. A copy whose files BurnZombies could not finish reading gets no age, so no rule about how long things sat unused matches it. Clearing a junk folder inside a copy doesn't count as using the copy.
+
+## Look-only
+
+Install with `--look-only`, or switch on **Settings → Autopilot → Look only**, to see what BurnZombies would burn before it burns anything. It finds, sizes, asks and judges exactly as above, but nothing burns on its own: not the starter rules, not your yes answers, not the AI. The menu says **Look-only · nothing burns** and shows how much it would burn; **Findings** says what and why, with *I'd burn N once you start burning* on top.
+
+- Your answers still become rules, and AI sweeps still run on their usual schedule, at the usual cost. When a sweep asks to burn something, the app holds it without a receipt; its verdicts burn once you start.
+- **Start burning** in the menu, or switching **Look only** off, burns everything waiting right away instead of at the next look.
+- **Burn now** on one item in **Findings** is you deciding, so it still burns that item.
+- Reinstalling keeps look-only as it is: `--look-only` turns it on, and only you turn it off.
 
 ## Full Disk Access
 
@@ -46,7 +55,7 @@ Facts that make burning riskier (work only on this Mac, unsaved changes, still r
 
 The AI's questions follow the same rules: it may reword or replace the open question about a subject but never adds a second one, waits a day after you skip one, and never asks about things used today.
 
-Yes and No become rules immediately, and Yes starts burning the matches right away. Skip hides the question for a day. **Settings → Autopilot → What BZ has learned** lists every rule in plain English with a Forget button; **Start training over** clears them.
+Yes and No become rules immediately, and Yes starts burning the matches right away (with look-only, once you start burning). Skip hides the question for a day. **Settings → Autopilot → What BZ has learned** lists every rule in plain English with a Forget button; **Start training over** clears them.
 
 ## The AI sweep
 
@@ -59,7 +68,7 @@ Native code catalogs and applies rules without any model. With Claude Code or Co
 - **Failures** back off 15 → 30 → 60 → 120 minutes (at least an hour after a login or usage-limit problem). The loop never stops for good, and your rules keep working while the AI is unavailable.
 - **Cost.** Roughly $0.30–$1.20 a sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Usage & estimated cost** shows what sweeps used.
 
-Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover. **Settings → Autopilot** turns Autopilot, AI included, off.
+Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). **Settings → Autopilot** turns Autopilot, AI included, off.
 
 ## Undo
 
@@ -89,4 +98,5 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
 "$bz" autopilot catalog      # items, unsure first
 "$bz" autopilot inspect ID   # live detail for one item
 "$bz" autopilot sweep        # run an AI sweep now
+"$bz" autopilot look-only    # hold every burn until you choose Start burning
 ```

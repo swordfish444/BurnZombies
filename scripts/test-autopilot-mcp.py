@@ -96,8 +96,28 @@ with tempfile.TemporaryDirectory(prefix="bz-ap-", dir="/tmp") as root:
         assert error, "questions must be questions"
         error, done = call("autopilot_report", {"text": "Burned one old copy; asked about one dev server."})
         assert not error, done
+
+        # Look-only from the command line reaches the running app through its socket. A yes then
+        # authorizes the server, yet the AI's burn of it is held, with no receipt.
+        bz = dict(os.environ, BURNZOMBIES_HOME=root)
+        looked = subprocess.run([str(binary / "burnzombies"), "autopilot", "look-only"], env=bz,
+                                capture_output=True, text=True, timeout=30)
+        assert looked.returncode == 0 and looked.stdout.startswith("Look-only is on"), looked.stdout + looked.stderr
+        error, page = call("autopilot_catalog", {"status": "unsure"})
+        assert page["summary"].get("lookOnly") == "true", page["summary"]
+        receipts = Path(root) / "autopilot/receipts.json"
+        before = json.loads(receipts.read_text())
+        answer = {"tool": "command", "command": {"answer": {"questionID": question["id"], "answer": "yes"}}}
+        answered = subprocess.run([str(binary / "burnzombies"), "autopilot", "-"], env=bz, input=json.dumps(answer),
+                                  capture_output=True, text=True, timeout=30)
+        assert answered.returncode == 0, answered.stdout + answered.stderr
+        error, held = call("autopilot_burn", {"ids": ["process:fixture-server"]})
+        assert held[0]["outcome"] == "refused" and held[0]["detail"].startswith("Look-only"), held
+        time.sleep(0.5)
+        assert json.loads(receipts.read_text()) == before, "a held burn left a receipt"
         print("PASS autopilot MCP: six tools, compact catalog, inspect, refusal guidance, AI authority, "
-              f"{took:.1f}s burn past the 5s socket deadline, listening-server refusal, one question per subject and report")
+              f"{took:.1f}s burn past the 5s socket deadline, listening-server refusal, one question per subject, report "
+              "and look-only through the running app")
     finally:
         if server:
             server.terminate()

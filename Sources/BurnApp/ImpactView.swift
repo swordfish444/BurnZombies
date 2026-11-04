@@ -167,6 +167,7 @@ struct BurnStatus: View {
       let sweep = model.autopilot.sweep
       if sweep.running || model.huntRunning { return "Hunting Zombies" }
       if !sweep.enabled { return "Autopilot off" }
+      if sweep.lookOnly == true { return "Look-only · nothing burns" }
       if let retry = sweep.retryAfter, retry > Date() { return "Autopilot · AI retrying soon" }
       // Without Full Disk Access Autopilot skips only the places macOS protects; the banner says
       // so in plain words, and once it's dismissed the status keeps saying it.
@@ -258,6 +259,15 @@ struct MiniImpactView: View {
     model.autopilot.entries.filter { $0.status == .unsure || $0.status == .burn }
       .reduce(0) { $0 + $1.item.bytes }
   }
+  /// Look-only on a running Autopilot: the card says so and offers the one tap that starts burning.
+  var lookOnly: Bool {
+    model.autopilotAvailable && model.autopilot.sweep.enabled
+      && model.autopilot.sweep.lookOnly == true
+  }
+  /// What BZ would burn on its own the moment burning starts.
+  var wouldBurn: UInt64 {
+    model.autopilot.entries.filter { $0.status == .burn }.reduce(0) { $0 + $1.item.bytes }
+  }
   var lastBurn: String {
     let history = ImpactNumbers.make(model, period: .all)
     if history.last != nil { return "Last burn \(history.age)" }
@@ -338,7 +348,14 @@ struct MiniImpactView: View {
         // A tab switch replaces the totals immediately; new burns within a period still tick up.
       }.id(model.miniImpactPeriod).frame(height: 120).padding(.top, 6)
       Group {
-        if model.showsAccessBanner { accessCard } else { speedCard }
+        // Look-only comes first: nothing else on the panel says burning waits for a tap.
+        if lookOnly {
+          lookOnlyCard
+        } else if model.showsAccessBanner {
+          accessCard
+        } else {
+          speedCard
+        }
       }.padding(.top, 25)
       line.padding(.top, 16)
       MemoryPressureRow(model: model, compact: true).frame(height: 18).padding(.top, 12)
@@ -407,6 +424,38 @@ struct MiniImpactView: View {
       .overlay(
         RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.55)).allowsHitTesting(
           false))
+  }
+  var lookOnlyCard: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("LOOK-ONLY · NOTHING BURNS YET").font(.system(size: 10.5, weight: .bold)).tracking(0.3)
+        .foregroundStyle(BurnTheme.orange)
+      HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(wouldBurn > 0 ? "I'd burn \(ImpactNumbers.bytes(wouldBurn))." : "Nothing to burn yet.")
+            .font(.system(size: 13, weight: .semibold))
+          Button {
+            model.openFindings?()
+          } label: {
+            Text("See what in Findings").font(.system(size: 11)).foregroundStyle(BurnTheme.muted)
+          }.clickPointer().help("See everything BZ found and what it would burn")
+        }.lineLimit(1).minimumScaleFactor(0.85)
+        Spacer(minLength: 0)
+        Button {
+          model.setLookOnly(false)
+        } label: {
+          Text("Start burning").font(.system(size: 12.5, weight: .bold))
+            .foregroundStyle(Color.black.opacity(0.86)).padding(.horizontal, 14).frame(height: 32)
+            .background(BurnTheme.orange, in: RoundedRectangle(cornerRadius: 9))
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+        }.clickPointer().help("Let BZ burn what it found, starting now")
+          .accessibilityIdentifier("start-burning")
+      }
+    }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14)
+      .frame(height: 84)
+      .background(BurnTheme.orange.opacity(0.085), in: RoundedRectangle(cornerRadius: 7))
+      .overlay(
+        RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.75))
+          .allowsHitTesting(false))
   }
   var speedCard: some View {
     Button {

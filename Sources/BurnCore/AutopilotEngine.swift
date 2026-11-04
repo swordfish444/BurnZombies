@@ -189,9 +189,20 @@ public actor Autopilot {
     return "Waiting after a refusal: \(refusal.detail) I'll try again \(when), or sooner if it changes."
   }
 
+  /// Look-only holds every burn BZ would make on its own. A sweep state it can't read holds them
+  /// too, so a damaged file never turns look-only off.
+  func holdsBurns() -> Bool {
+    guard let sweep = try? store.sweep() else { return true }
+    return sweep.lookOnly == true
+  }
+
+  /// What the AI hears when it asks to burn something while look-only is on.
+  static let lookOnlyHold =
+    "Look-only: the owner hasn't turned burning on, so nothing burns yet. Your verdicts are kept and burn once they do; don't burn again this sweep."
+
   /// Burns every item the policy authorizes now, bounded per kind.
   func burnAuthorized(now: Date) async {
-    guard let items = catalog?.items else { return }
+    guard let items = catalog?.items, !holdsBurns() else { return }
     let memory = memory()
     let receipts = (try? store.receipts()) ?? []
     let spent = spent(receipts)
@@ -210,6 +221,11 @@ public actor Autopilot {
   }
 
   func execute(_ item: AutopilotItem, authority: String, why: String) async -> AutopilotReceipt {
+    // Every burn passes here. Look-only lets through only the owner's own Burn now, and writes
+    // nothing for a held one: it isn't a refusal to wait out.
+    if authority != "operator", holdsBurns() {
+      return .refused(item, authority: authority, Self.lookOnlyHold)
+    }
     // One burn per item at a time, whoever asks: a second retire of the same copy would rewrite
     // the restore point the first one just verified. The first burn's receipt says how it went.
     guard burning.insert(item.id).inserted else {
@@ -469,6 +485,13 @@ public actor Autopilot {
       }
     case .setEnabled(let enabled):
       try store.updateSweep { $0.enabled = enabled }
+    case .setLookOnly(let on):
+      let enabled = try store.updateSweep { (sweep: inout AutopilotSweepState) -> Bool in
+        sweep.lookOnly = on ? true : nil
+        return sweep.enabled
+      }
+      // Turning burning on burns what's waiting right away, like an answer does.
+      if !on && enabled { Task { await self.burnAuthorized(now: now) } }
     case .setInterval(let minutes):
       guard [5, 15, 30, 60, 240].contains(minutes) else {
         throw StoreError.message("Choose 5, 15, 30, 60 or 240 minutes.")
@@ -513,6 +536,7 @@ public actor Autopilot {
     summary["answers"] = String(snap.answers)
     summary["coverage"] = String(format: "%.2f", snap.coverage)
     summary["totalItems"] = String(entries.count)
+    if snap.sweep.lookOnly == true { summary["lookOnly"] = "true" }
     return AutopilotCatalogPage(
       summary: summary, rules: snap.rules, openQuestions: snap.questions,
       answered: Array(
@@ -716,6 +740,7 @@ public struct AutopilotSummary: Codable, Sendable {
   public var questions: [String]
   public var rules: [String]
   public var enabled: Bool
+  public var lookOnly: Bool
   public var intervalMinutes: Int
   public var lastTick: Date?
   public var lastAISweep: Date?
@@ -733,6 +758,7 @@ public struct AutopilotSummary: Codable, Sendable {
     questions = s.questions.map { "\($0.question) (\($0.why))" }
     rules = s.rules.filter(\.enabled).map { "\($0.source.rawValue): \($0.title)" }
     enabled = s.sweep.enabled
+    lookOnly = s.sweep.lookOnly == true
     intervalMinutes = s.sweep.intervalMinutes
     lastTick = s.sweep.lastTick
     lastAISweep = s.sweep.lastAISweep
@@ -861,6 +887,24 @@ extension Autopilot {
       }
     } catch {
       return failure(error.localizedDescription)
+    }
+  }
+
+  /// Look-only from setup or the installer. A running app takes the change itself, so its next
+  /// tick can't write over it; with no app running it goes straight to the state folder.
+  public static func setLookOnly(_ on: Bool, root: URL = Store.defaultRoot) throws {
+    guard AgentConnection.isAvailable(root: root) else {
+      try AutopilotStore(root: root).updateSweep { $0.lookOnly = on ? true : nil }
+      return
+    }
+    var request = AutopilotRequest(tool: "command")
+    request.command = .setLookOnly(on)
+    let body = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+    let raw = try AgentConnection.call(AgentRequest("autopilot", payload: body), root: root)
+    let reply = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
+    guard reply?["ok"] as? Bool == true else {
+      throw StoreError.message(
+        "BurnZombies is running but didn't take the change. Use Settings → Autopilot instead.")
     }
   }
 }

@@ -54,13 +54,14 @@ jobs:
         run: .build/debug/BurnZombiesApp --settings-proof "$RUNNER_TEMP/bz-settings.png"
       - name: Permission banner clicks without opening System Settings
         run: .build/debug/BurnZombiesApp --access-banner-proof "$RUNNER_TEMP/bz-access-banner"
-      - name: Autopilot policy, processes, old copies, junk folders and sweep
+      - name: Autopilot policy, processes, old copies, junk folders, sweep and look-only
         run: |
           .build/debug/BurnProof --autopilot-policy
           .build/debug/BurnProof --autopilot-process
           .build/debug/BurnProof --autopilot-worktrees
           .build/debug/BurnProof --autopilot-disk
           .build/debug/BurnProof --autopilot-sweep
+          .build/debug/BurnProof --autopilot-look-only
       - name: Teach BZ, Findings and Autopilot settings without opening a window
         run: .build/debug/BurnZombiesApp --autopilot-proof "$RUNNER_TEMP/bz-autopilot"
       - name: Native impact filters without opening a window
