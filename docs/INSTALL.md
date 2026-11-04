@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 To install somewhere other than `~/Applications`, set `BURNZOMBIES_INSTALL_DIR`: `curl … | BURNZOMBIES_INSTALL_DIR=/path/to/folder bash`.
 
-Releases are ad-hoc signed, not notarized. The installer never disables Gatekeeper, removes quarantine flags or bypasses permissions. If your Mac's policy blocks the app, [build from source](../CONTRIBUTING.md).
+From v0.13.0, releases are signed with BurnZombies' own certificate (not an Apple Developer ID) and are not notarized. The installer never disables Gatekeeper, removes quarantine flags or bypasses permissions. If your Mac's policy blocks the app, [build from source](../CONTRIBUTING.md).
 
 ## The first minutes
 
@@ -65,7 +65,7 @@ Check from an agent without opening a window:
 ~/Applications/BurnZombies.app/Contents/MacOS/burnzombies access-status
 ```
 
-**After an update:** if macOS asks again, re-enable **BurnZombies** in **System Settings → Privacy & Security → Full Disk Access**. macOS ties the permission to the app's signer: a build signed with the same certificate keeps it, while an ad-hoc build (current releases included) is a new app to macOS each time. BZ keeps working in the meantime; only the protected places wait.
+**After an update:** macOS ties the permission to the app's signer, and every release from v0.13.0 on is signed with the same certificate, so Full Disk Access carries over. Coming from an earlier release, which was ad-hoc signed, macOS sees a new app once: in **System Settings → Privacy & Security → Full Disk Access**, remove BurnZombies with **−**, add it again and switch it on. BZ keeps working in the meantime; only the protected places wait.
 
 **Keep access across your own builds:** run `scripts/ensure-signing-identity.sh` once. It creates a local "BurnZombies Local Signing" certificate in your login keychain, trusted for code signing only, and macOS asks for your password once. From then on `scripts/build-app.sh` signs every build with it, so you allow Full Disk Access one last time. Set `BURNZOMBIES_SIGNING_IDENTITY` to use a certificate you already have.
 
