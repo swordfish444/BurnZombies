@@ -106,7 +106,7 @@ func groupsProof() async throws {
   // How I'm doing, just after the last answer, with nothing burned.
   let last = history.compactMap(\.answered).max() ?? groupsStart
   let progress = AutopilotPolicy.progress(
-    memory, receipts: [], totalBurns: nil, now: last.addingTimeInterval(60))
+    memory, receipts: [], impact: nil, now: last.addingTimeInterval(60))
   equal(
     progress.lines,
     [
@@ -185,7 +185,8 @@ private func templateProof() {
   equal(stops?.evidence, "From 7 answers · stopped 1 program, 500 MB of memory")
   equal(stops?.ruleIDs.count, 7)
 
-  // Keeps, one each.
+  // Keeps, one each. Copies and folders say how recently they were used: up to the bucket after
+  // the most recent age kept, and no bound once every age is kept.
   var keeps = AutopilotMemory()
   let node = teach(&keeps, .process, ["family": ["node"], "idle": ["active", "10m", "1h"]], .keep)
   let python = teach(
@@ -196,6 +197,14 @@ private func templateProof() {
     ["saved": ["local"], "changes": ["large", "small"], "stale": ["today", "day"]], .keep)
   let modules = teach(
     &keeps, .disk, ["folder": ["node_modules"], "home": ["repo"], "stale": ["today", "day"]], .keep)
+  let today = teach(&keeps, .worktree, ["repo": ["api"], "stale": ["today"]], .keep)
+  let edits = teach(
+    &keeps, .worktree, ["changes": ["large"], "stale": ["today", "day", "week", "month"]], .keep)
+  let local = teach(
+    &keeps, .worktree, ["saved": ["local"], "stale": ["today", "day", "week", "month", "older"]],
+    .keep)
+  let caches = teach(
+    &keeps, .disk, ["folder": ["package-cache"], "stale": ["today", "day", "week"]], .keep)
   let kept = AutopilotPolicy.lessonGroups(keeps)
   equal(
     group(kept, "rule:" + node.id)?.sentence, "Node programs stay while idle less than 6 hours.",
@@ -203,8 +212,18 @@ private func templateProof() {
   equal(group(kept, "rule:" + python.id)?.sentence, "Python programs serving a port stay.")
   equal(
     group(kept, "rule:" + drafts.id)?.sentence,
-    "Old project copies stay: Work only on this Mac, Has unsaved changes.")
-  equal(group(kept, "rule:" + modules.id)?.sentence, "node_modules folders stay: Inside your projects.")
+    "Copies used in the last week stay: Work only on this Mac, Has unsaved changes.")
+  equal(
+    group(kept, "rule:" + modules.id)?.sentence,
+    "node_modules folders used in the last week stay: Inside your projects.")
+  equal(group(kept, "rule:" + today.id)?.sentence, "Copies of api used in the last day stay.")
+  equal(
+    group(kept, "rule:" + edits.id)?.sentence,
+    "Copies used in the last 3 months stay: Has unsaved changes.")
+  equal(
+    group(kept, "rule:" + local.id)?.sentence, "Copies stay: Work only on this Mac.",
+    "kept at every age: no bound")
+  equal(group(kept, "rule:" + caches.id)?.sentence, "Tool caches used in the last month stay.")
   equal(group(kept, "rule:" + drafts.id)?.verdict, .keep)
   equal(group(kept, "rule:" + drafts.id)?.kind, .worktree)
   equal(group(kept, "rule:" + drafts.id)?.evidence, "From 1 answer", "keeps have no tally part")
@@ -250,20 +269,30 @@ private func score(_ right: Bool, _ n: Int) -> AutopilotScore {
 }
 
 private func receipt(
-  _ authority: String, _ outcome: String, gigabytes: UInt64, at date: Date
+  _ authority: String, _ outcome: String, gigabytes: UInt64, at date: Date,
+  kind: AutopilotKind = .worktree
 ) -> AutopilotReceipt {
   AutopilotReceipt(
-    itemID: "worktree:" + UUID().uuidString, kind: .worktree, name: "copy", authority: authority,
-    outcome: outcome, detail: "", bytes: gigabytes * 1_000_000_000, date: date)
+    itemID: kind.rawValue + ":" + UUID().uuidString, kind: kind, name: "fixture",
+    authority: authority, outcome: outcome, detail: "", bytes: gigabytes * 1_000_000_000,
+    date: date)
+}
+
+/// An impact tally: copies burned and still gone, and copies the owner restored.
+private func tally(_ worktrees: Int, restored: Int) -> AutopilotImpact {
+  var impact = AutopilotImpact()
+  impact.worktrees = worktrees
+  impact.restored = restored
+  return impact
 }
 
 /// How I'm doing, one line at a time.
 private func progressProof() {
   let now = groupsStart.addingTimeInterval(90 * 86_400)
-  func lines(_ memory: AutopilotMemory, _ receipts: [AutopilotReceipt] = [], burns: Int? = nil)
-    -> [String]
-  {
-    AutopilotPolicy.progress(memory, receipts: receipts, totalBurns: burns, now: now).lines
+  func lines(
+    _ memory: AutopilotMemory, _ receipts: [AutopilotReceipt] = [], impact: AutopilotImpact? = nil
+  ) -> [String] {
+    AutopilotPolicy.progress(memory, receipts: receipts, impact: impact, now: now).lines
   }
   equal(lines(AutopilotMemory()), [], "nothing to say yet")
 
@@ -295,32 +324,40 @@ private func progressProof() {
     receipt("rule:lesson", "refused", gigabytes: 16, at: now.addingTimeInterval(-1 * day)),
     receipt("starter:a", "burned", gigabytes: 1, at: now.addingTimeInterval(-9 * day)),
     receipt("ai:0.95", "burned", gigabytes: 8, at: now.addingTimeInterval(-15 * day)),
+    receipt(
+      "rule:folders", "burned", gigabytes: 3, at: now.addingTimeInterval(-1 * day), kind: .disk),
+    receipt(
+      "rule:programs", "burned", gigabytes: 32, at: now.addingTimeInterval(-1 * day),
+      kind: .process),
   ]
   equal(
     lines(weeks, burns).first,
-    "This week: 1 question, 2.0 GB burned on my own. Last week: 1 question, 1.0 GB.",
-    "the owner's own burns, restored ones and BZ's own answers don't count")
+    "This week: 1 question, 5.0 GB burned on my own. Last week: 1 question, 1.0 GB.",
+    "disk freed by copies and folders; not the owner's own burns, restored ones, program memory or BZ's own answers")
   var quiet = weeks
   quiet.questions = [weeks.questions[0]]
   equal(
-    lines(quiet, Array(burns.prefix(1))),
-    ["This week: 1 question, 2.0 GB burned on my own.", "You undid 0 of my 1 burn."],
+    lines(quiet, Array(burns.prefix(1))), ["This week: 1 question, 2.0 GB burned on my own."],
     "last week is left out when it had nothing")
 
-  // Undo: restored receipts out of all burns, from the durable count when there is one.
+  // Undo: the copies the owner restored, out of the copies BZ burned. Both come from the impact
+  // tally, which keeps them for good; receipts.json keeps only the latest.
   let old = now.addingTimeInterval(-60 * day)
-  let kept = [
-    receipt("rule:lesson", "burned", gigabytes: 1, at: old),
-    receipt("operator", "burned", gigabytes: 1, at: old),
+  let restores = [
     receipt("rule:lesson", "restored", gigabytes: 1, at: old),
-    receipt("rule:lesson", "refused", gigabytes: 1, at: old),
+    receipt("rule:lesson", "restored", gigabytes: 1, at: old),
   ]
   equal(
-    lines(AutopilotMemory(), kept, burns: 41), ["You undid 1 of my 41 burns."],
-    "the count it is given, not the receipts")
-  equal(lines(AutopilotMemory(), kept), ["You undid 1 of my 3 burns."], "or the receipts kept")
-  equal(lines(AutopilotMemory(), [], burns: 1), ["You undid 0 of my 1 burn."])
-  equal(lines(AutopilotMemory(), [], burns: 0), [], "no burns, nothing to undo")
+    lines(AutopilotMemory(), restores, impact: tally(40, restored: 1)),
+    ["You undid 1 of the 41 copies I burned."], "from the tally, not the receipts")
+  equal(
+    lines(AutopilotMemory(), [], impact: tally(1, restored: 0)),
+    ["You undid 0 of the 1 copy I burned."])
+  equal(
+    lines(AutopilotMemory(), [], impact: tally(0, restored: 1)),
+    ["You undid 1 of the 1 copy I burned."])
+  equal(lines(AutopilotMemory(), [], impact: tally(0, restored: 0)), [], "no copies burned yet")
+  equal(lines(AutopilotMemory(), restores), [], "without the tally there is no undo line")
 
   // The replay, once there are 5 answers.
   var replayed = AutopilotMemory()
@@ -362,7 +399,8 @@ private func snapshotProof(_ history: [AutopilotQuestion]) async throws {
   }
   // 38 more copies burned long ago, whose receipts are gone; only the tally remembers them.
   var impact = try store.impact()
-  equal(impact.worktrees, 2, "the tally counts burns that weren't undone")
+  equal(impact.worktrees, 2, "the tally counts copies that weren't undone")
+  equal(impact.restored, 1, "and the one that was")
   impact.worktrees += 38
   let encoder = JSONEncoder()
   encoder.outputFormatting = [.sortedKeys]
@@ -381,7 +419,7 @@ private func snapshotProof(_ history: [AutopilotQuestion]) async throws {
     [
       "I guessed 9 of your last 10 answers right.",
       "This week: 30 questions, 3.0 GB burned on my own.",
-      "You undid 1 of my 41 burns.",
+      "You undid 1 of the 41 copies I burned.",
       "Replaying your 27 answers, I'd have asked 17 and handled the other 10 on my own the way you would have.",
     ], "40 copies the tally counts, plus the 1 undone")
 }

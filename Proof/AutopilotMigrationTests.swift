@@ -1,103 +1,6 @@
 import BurnCore
 import Foundation
 
-/// The owner's anonymized answers (`teachHistoryJSON`), 30 questions with 3 skips.
-func teachHistory() throws -> [AutopilotQuestion] {
-  try JSONDecoder().decode([AutopilotQuestion].self, from: Data(teachHistoryJSON.utf8))
-}
-
-/// Version-1 memory made from the teach history the way it was before lessons: one rule per Yes or
-/// No, widened, keeping the project and maker it was asked about.
-func teachHistoryVersion1(_ history: [AutopilotQuestion]) -> AutopilotMemory {
-  var memory = AutopilotMemory()
-  memory.version = 1
-  memory.questions = history
-  for q in history {
-    guard let answer = q.answer, answer != .skip else { continue }
-    let verdict: AutopilotVerdict = answer == .yes ? .burn : .keep
-    memory.rules.append(
-      AutopilotRule(
-        kind: q.kind, match: AutopilotPolicy.widen(q.match, verdict: verdict), verdict: verdict,
-        source: .operator, title: AutopilotPolicy.ruleTitle(q, answer: answer),
-        created: q.answered ?? q.asked, questionID: q.id))
-  }
-  return memory
-}
-
-/// The lessons the teach history leaves, by match, worked out by hand from the fixture.
-enum TeachLessons {
-  static let ages = ["day", "week", "month", "older"]
-  /// q16 with q01, q02, q04, q05, q07, q10 and q27 in it.
-  static let copiesDay: [String: [String]] = [
-    "saved": ["local", "pushed", "merged"], "stale": ages,
-  ]
-  /// q13 with q14.
-  static let unchecked: [String: [String]] = [
-    "changes": ["small", "none"], "inUse": ["no"], "saved": ["unknown"], "stale": ages,
-    "thread": ["none", "ended"],
-  ]
-  /// q19.
-  static let unsavedUnchecked: [String: [String]] = [
-    "changes": ["small", "large"], "inUse": ["no"], "saved": ["unknown"], "stale": ["day", "week"],
-    "thread": ["none", "ended"],
-  ]
-  /// q25 with q30.
-  static let sameDay: [String: [String]] = [
-    "changes": ["none"], "inUse": ["no"], "saved": ["merged", "pushed"],
-    "stale": ["today"] + ages, "thread": ["none", "ended"],
-  ]
-  static let javaBurn: [String: [String]] = [
-    "family": ["java"], "idle": ["1h", "6h", "1d"], "listening": ["yes", "no"],
-  ]
-  /// q23 with q08.
-  static let nodeBurn: [String: [String]] = ["family": ["node"], "idle": ["10m", "1h", "6h", "1d"]]
-  static let javaKeep: [String: [String]] = [
-    "family": ["java"], "idle": ["active", "10m"], "listening": ["yes"],
-  ]
-  static let caches: [String: [String]] = ["folder": ["package-cache"], "stale": ages]
-  static let modules: [String: [String]] = [
-    "folder": ["node_modules"], "home": ["repo"], "stale": ages,
-  ]
-  static let builds: [String: [String]] = [
-    "folder": ["build-output"], "home": ["repo"], "stale": ages,
-  ]
-  /// Answers whose rules don't pin recency, so they stay exactly as they were.
-  static let anyAge = ["q20", "q21", "q22", "q24", "q26", "q28", "q29"]
-
-  static func id(_ kind: AutopilotKind, _ match: [String: [String]], _ verdict: AutopilotVerdict)
-    -> String
-  {
-    AutopilotRule.key(kind: kind, match: match) + ":" + verdict.rawValue
-  }
-  static var copiesDayID: String { id(.worktree, copiesDay, .burn) }
-  static var javaKeepID: String { id(.process, javaKeep, .keep) }
-  /// The rule q04 taught before lessons: no project in it, so the lesson keeps its id.
-  static var q04ID: String {
-    id(.worktree, ["saved": ["merged"], "stale": ages], .burn)
-  }
-  /// The rule q07 taught before lessons, naming who made the copies.
-  static var q07ID: String {
-    id(.worktree, ["place": ["patrol6"], "saved": ["pushed", "merged"], "stale": ages], .burn)
-  }
-}
-
-/// Burns, a restore and receipts no lesson made, by the rule q04 taught before lessons.
-func teachHistoryReceipts() -> [AutopilotReceipt] {
-  let old = "rule:" + TeachLessons.q04ID
-  func receipt(_ authority: String, _ outcome: String, _ gigabytes: UInt64) -> AutopilotReceipt {
-    AutopilotReceipt(
-      itemID: "worktree:" + UUID().uuidString, kind: .worktree, name: "copy",
-      authority: authority, outcome: outcome, detail: "", bytes: gigabytes * 1_000_000_000,
-      date: Date(timeIntervalSinceReferenceDate: 815_420_000))
-  }
-  return [
-    receipt(old, "burned", 1), receipt(old, "burned", 2), receipt(old, "restored", 4),
-    receipt(old, "refused", 8), receipt(old, "verifying", 16), receipt(old, "failed", 32),
-    receipt("starter:starter-finished-copies", "burned", 64), receipt("ai:0.90", "burned", 128),
-    receipt("operator", "burned", 256),
-  ]
-}
-
 private func encoded(_ rule: AutopilotRule) throws -> Data {
   let encoder = JSONEncoder()
   encoder.outputFormatting = [.sortedKeys]
@@ -143,6 +46,19 @@ func migrationProof() async throws {
   equal(migrated.scores.count, 14, "a score for each guess the replay made on an asked question")
   check(migrated.scores.allSatisfy { $0.replayed == true }, "all marked replayed")
   equal(migrated.questions, v1.questions, "the answers themselves stay")
+  // What the owner kept, the AI's judgments and the starter switches come through as they were.
+  var owned = v1
+  owned.keptItems = ["worktree:kept", "path:/kept"]
+  owned.starterDisabled = ["starter-finished-copies"]
+  owned.judgments = [
+    "worktree:judged": AutopilotJudgment(
+      itemID: "worktree:judged", revision: "r", verdict: .burn, confidence: 0.9,
+      label: "Old copy", why: "Merged", date: Date(timeIntervalSinceReferenceDate: 815_000_000))
+  ]
+  let carried = AutopilotPolicy.migrate(owned, receipts: receipts)
+  equal(carried.keptItems, owned.keptItems, "kept items survive migration")
+  equal(carried.judgments, owned.judgments, "judgments survive migration")
+  equal(carried.starterDisabled, owned.starterDisabled, "starter switches survive migration")
 
   // Receipts count toward the lesson that now holds the rule that made them, by its old id too.
   equal(
@@ -167,6 +83,48 @@ func migrationProof() async throws {
   try roundTripProof()
   try migrationStoreProof(v1)
   try await tallyEngineProof()
+  try await firstTickProof()
+}
+
+/// A version-1 file migrates when the engine starts, before a tick changes any receipt, so a stop
+/// verified on the first tick counts once. A migration that can't finish then (receipts.json
+/// unreadable) finishes on a later load, and a stop that load records still counts once.
+private func firstTickProof() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-autopilot-first-tick-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let v1 = try JSONEncoder().encode(teachHistoryVersion1(try teachHistory()))
+  let lesson = TeachLessons.id(.process, TeachLessons.nodeBurn, .burn)
+  func stopping() -> AutopilotReceipt {
+    AutopilotReceipt(
+      itemID: "process:node", kind: .process, name: "node", authority: "rule:" + lesson,
+      outcome: "verifying", detail: "Asked it to stop; checking that it did.",
+      bytes: 2_000_000_000, eventID: UUID())
+  }
+  let verified = AutopilotSources(processOutcome: { _ in ("verified", "") })
+  let once = AutopilotTally(count: 1, bytes: 2_000_000_000, undone: 0)
+
+  let store = try AutopilotStore(root: root.appendingPathComponent("start"))
+  try store.append(stopping())
+  try v1.write(to: store.directory.appendingPathComponent("memory.json"))
+  let engine = try Autopilot(root: root.appendingPathComponent("start"), sources: verified)
+  let file = store.directory.appendingPathComponent("memory.json")
+  let started = try JSONDecoder().decode(AutopilotMemory.self, from: Data(contentsOf: file))
+  equal(started.version, 2, "migrated when the engine starts, before any tick")
+  _ = await engine.tick(now: Date())
+  equal(try store.receipts().first?.outcome, "burned", "the stop was verified")
+  equal(try store.memory().tallies[lesson], once, "the first tick's verified stop counts once")
+
+  let late = try AutopilotStore(root: root.appendingPathComponent("late"))
+  let receipts = late.directory.appendingPathComponent("receipts.json")
+  try Data("not receipts".utf8).write(to: receipts)
+  try v1.write(to: late.directory.appendingPathComponent("memory.json"))
+  let waiting = try Autopilot(root: root.appendingPathComponent("late"), sources: verified)
+  equal(try late.memory().version, 1, "receipts.json can't be read yet")
+  try JSONEncoder().encode([stopping()]).write(to: receipts)
+  _ = await waiting.tick(now: Date())
+  equal(try late.memory().version, 2, "migrated once receipts.json reads")
+  equal(try late.memory().tallies[lesson], once, "the stop it recorded counts once")
 }
 
 /// Ruling R8: a memory with every field set comes back equal, so a field the hand-written decoder
@@ -275,6 +233,20 @@ private func migrationStoreProof(_ v1: AutopilotMemory) throws {
     bytes(again.directory.appendingPathComponent("memory.v1.json")), earlier,
     "an existing memory.v1.json stays as it is")
   equal(try again.memory().rules.count, 17)
+
+  // Receipts that are there but can't be read leave memory at version 1, to retry on the next
+  // load; only a missing receipts.json counts as no receipts.
+  let unreadable = try AutopilotStore(root: root.appendingPathComponent("unreadable"))
+  let receiptsFile = unreadable.directory.appendingPathComponent("receipts.json")
+  let memoryFile = unreadable.directory.appendingPathComponent("memory.json")
+  try Data("not receipts".utf8).write(to: receiptsFile)
+  try original.write(to: memoryFile)
+  equal(try unreadable.memory().version, 1, "version 1 while receipts.json can't be read")
+  equal(bytes(memoryFile), original, "memory.json is left as it was")
+  try JSONEncoder().encode(teachHistoryReceipts()).write(to: receiptsFile)
+  let retried = try unreadable.memory()
+  equal(retried.version, 2, "the next load migrates")
+  equal(retried.tallies[TeachLessons.copiesDayID]?.count, 3, "tallied from the receipts")
 }
 
 private final class Gone: @unchecked Sendable {

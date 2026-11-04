@@ -1,3 +1,4 @@
+import BurnCore
 import Foundation
 
 /// 30 answers from one real Mac, in the order given (3 are skips), with project names replaced.
@@ -38,3 +39,100 @@ let teachHistoryJSON = #"""
 {"answer":"yes","answered":815416762.87842,"asked":815413134.940346,"bytes":2753368064,"count":5,"examples":[],"id":"q30","kind":"worktree","match":{"changes":["none"],"inUse":["no"],"place":["patrol6"],"saved":["merged","pushed"],"size":["medium"],"stale":["today"],"thread":["none"]},"question":"Question 30?","source":"ai","why":""}
 ]
 """#
+
+/// The owner's anonymized answers (`teachHistoryJSON`), 30 questions with 3 skips.
+func teachHistory() throws -> [AutopilotQuestion] {
+  try JSONDecoder().decode([AutopilotQuestion].self, from: Data(teachHistoryJSON.utf8))
+}
+
+/// Version-1 memory made from the teach history the way it was before lessons: one rule per Yes or
+/// No, widened, keeping the project and maker it was asked about.
+func teachHistoryVersion1(_ history: [AutopilotQuestion]) -> AutopilotMemory {
+  var memory = AutopilotMemory()
+  memory.version = 1
+  memory.questions = history
+  for q in history {
+    guard let answer = q.answer, answer != .skip else { continue }
+    let verdict: AutopilotVerdict = answer == .yes ? .burn : .keep
+    memory.rules.append(
+      AutopilotRule(
+        kind: q.kind, match: AutopilotPolicy.widen(q.match, verdict: verdict), verdict: verdict,
+        source: .operator, title: AutopilotPolicy.ruleTitle(q, answer: answer),
+        created: q.answered ?? q.asked, questionID: q.id))
+  }
+  return memory
+}
+
+/// The lessons the teach history leaves, by match, worked out by hand from the fixture.
+enum TeachLessons {
+  static let ages = ["day", "week", "month", "older"]
+  /// q16 with q01, q02, q04, q05, q07, q10 and q27 in it.
+  static let copiesDay: [String: [String]] = [
+    "saved": ["local", "pushed", "merged"], "stale": ages,
+  ]
+  /// q13 with q14.
+  static let unchecked: [String: [String]] = [
+    "changes": ["small", "none"], "inUse": ["no"], "saved": ["unknown"], "stale": ages,
+    "thread": ["none", "ended"],
+  ]
+  /// q19.
+  static let unsavedUnchecked: [String: [String]] = [
+    "changes": ["small", "large"], "inUse": ["no"], "saved": ["unknown"], "stale": ["day", "week"],
+    "thread": ["none", "ended"],
+  ]
+  /// q25 with q30.
+  static let sameDay: [String: [String]] = [
+    "changes": ["none"], "inUse": ["no"], "saved": ["merged", "pushed"],
+    "stale": ["today"] + ages, "thread": ["none", "ended"],
+  ]
+  static let javaBurn: [String: [String]] = [
+    "family": ["java"], "idle": ["1h", "6h", "1d"], "listening": ["yes", "no"],
+  ]
+  /// q23 with q08.
+  static let nodeBurn: [String: [String]] = ["family": ["node"], "idle": ["10m", "1h", "6h", "1d"]]
+  static let javaKeep: [String: [String]] = [
+    "family": ["java"], "idle": ["active", "10m"], "listening": ["yes"],
+  ]
+  static let caches: [String: [String]] = ["folder": ["package-cache"], "stale": ages]
+  static let modules: [String: [String]] = [
+    "folder": ["node_modules"], "home": ["repo"], "stale": ages,
+  ]
+  static let builds: [String: [String]] = [
+    "folder": ["build-output"], "home": ["repo"], "stale": ages,
+  ]
+  /// Answers whose rules don't pin recency, so they stay exactly as they were.
+  static let anyAge = ["q20", "q21", "q22", "q24", "q26", "q28", "q29"]
+
+  static func id(_ kind: AutopilotKind, _ match: [String: [String]], _ verdict: AutopilotVerdict)
+    -> String
+  {
+    AutopilotRule.key(kind: kind, match: match) + ":" + verdict.rawValue
+  }
+  static var copiesDayID: String { id(.worktree, copiesDay, .burn) }
+  static var javaKeepID: String { id(.process, javaKeep, .keep) }
+  /// The rule q04 taught before lessons: no project in it, so the lesson keeps its id.
+  static var q04ID: String {
+    id(.worktree, ["saved": ["merged"], "stale": ages], .burn)
+  }
+  /// The rule q07 taught before lessons, naming who made the copies.
+  static var q07ID: String {
+    id(.worktree, ["place": ["patrol6"], "saved": ["pushed", "merged"], "stale": ages], .burn)
+  }
+}
+
+/// Burns, a restore and receipts no lesson made, by the rule q04 taught before lessons.
+func teachHistoryReceipts() -> [AutopilotReceipt] {
+  let old = "rule:" + TeachLessons.q04ID
+  func receipt(_ authority: String, _ outcome: String, _ gigabytes: UInt64) -> AutopilotReceipt {
+    AutopilotReceipt(
+      itemID: "worktree:" + UUID().uuidString, kind: .worktree, name: "copy",
+      authority: authority, outcome: outcome, detail: "", bytes: gigabytes * 1_000_000_000,
+      date: Date(timeIntervalSinceReferenceDate: 815_420_000))
+  }
+  return [
+    receipt(old, "burned", 1), receipt(old, "burned", 2), receipt(old, "restored", 4),
+    receipt(old, "refused", 8), receipt(old, "verifying", 16), receipt(old, "failed", 32),
+    receipt("starter:starter-finished-copies", "burned", 64), receipt("ai:0.90", "burned", 128),
+    receipt("operator", "burned", 256),
+  ]
+}

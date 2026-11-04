@@ -218,6 +218,12 @@ public struct AutopilotTally: Codable, Sendable, Equatable {
     self.bytes = bytes
     self.undone = undone
   }
+  /// Adds what another lesson, or another part of a group, did.
+  mutating func add(_ other: AutopilotTally) {
+    count += other.count
+    bytes += other.bytes
+    undone += other.undone
+  }
 }
 
 /// What Autopilot's cleanups freed. Kept apart from the receipts, which keep only the latest 500,
@@ -241,9 +247,20 @@ public struct AutopilotImpact: Codable, Sendable, Equatable {
   public var bytes: UInt64 = 0
   /// Cleanups of the last week, and older ones whose receipt is still kept.
   public var cleanups: [Cleanup] = []
+  /// Copies the owner restored, all time. With `worktrees`, every copy Autopilot burned.
+  public var restored = 0
   public init() {}
+  /// A tally saved before `restored` existed still loads, with nothing restored.
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    worktrees = try values.decode(Int.self, forKey: .worktrees)
+    bytes = try values.decode(UInt64.self, forKey: .bytes)
+    cleanups = try values.decode([Cleanup].self, forKey: .cleanups)
+    restored = try values.decodeIfPresent(Int.self, forKey: .restored) ?? 0
+  }
 
-  /// Counts burned copies and junk folders not counted yet, and takes restored ones back out.
+  /// Counts burned copies and junk folders not counted yet, and takes restored ones back out;
+  /// a restored copy counts as `restored`.
   public mutating func count(_ receipts: [AutopilotReceipt]) {
     var counted = Set(cleanups.map(\.receiptID))
     for r in receipts
@@ -256,10 +273,11 @@ public struct AutopilotImpact: Codable, Sendable, Equatable {
       worktrees += r.kind == .worktree ? 1 : 0
       bytes += r.bytes
     }
-    let restored = Set(receipts.filter { $0.outcome == "restored" }.map(\.id))
+    let restoredIDs = Set(receipts.filter { $0.outcome == "restored" }.map(\.id))
     cleanups.removeAll { cleanup in
-      guard restored.contains(cleanup.receiptID) else { return false }
+      guard restoredIDs.contains(cleanup.receiptID) else { return false }
       worktrees -= cleanup.worktree ? 1 : 0
+      restored += cleanup.worktree ? 1 : 0
       bytes -= min(bytes, cleanup.bytes)
       return true
     }

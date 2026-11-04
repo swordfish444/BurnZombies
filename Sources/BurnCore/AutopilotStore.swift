@@ -28,31 +28,37 @@ public final class AutopilotStore: @unchecked Sendable {
   }
 
   public func memory() throws -> AutopilotMemory {
-    try lock.withLock { try loadMemory() }
+    try lock.withLock { try loadMemory().memory }
   }
 
   /// Memory as saved, migrated to version 2 the first time memory from before lessons is read.
-  /// The version-1 file is kept as `memory.v1.json`, once: an existing copy is never replaced.
-  /// Without that copy nothing is migrated, and the memory is used as it is until the next read.
+  /// Migrating needs the receipts (a missing receipts.json is none; one that can't be read is
+  /// waited for) and a copy of the version-1 file as `memory.v1.json`, made once: an existing copy
+  /// is never replaced. Without either, the memory is used as it is and the next read tries again.
   /// A failed save doesn't fail the read, since the engine treats unreadable memory as empty and
-  /// would lose the owner's keeps; the next read migrates again. Call with `lock` held.
-  private func loadMemory() throws -> AutopilotMemory {
+  /// would lose the owner's keeps; the next read migrates again. `seeded` says this read migrated,
+  /// so the tallies were just counted from receipts.json. Call with `lock` held.
+  private func loadMemory() throws -> (memory: AutopilotMemory, seeded: Bool) {
     let memory = try load("memory.json", limit: 8 << 20, empty: AutopilotMemory())
-    guard memory.version < 2 else { return memory }
+    guard memory.version < 2 else { return (memory, false) }
+    let receipts: [AutopilotReceipt]
+    do {
+      receipts = try load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())
+    } catch {
+      return (memory, false)
+    }
     let backup = directory.appendingPathComponent("memory.v1.json")
     if !FileManager.default.fileExists(atPath: backup.path) {
       let file = directory.appendingPathComponent("memory.json")
       do {
         try store.write(store.read(file, limit: 8 << 20), to: backup, limit: 8 << 20)
       } catch {
-        return memory
+        return (memory, false)
       }
     }
-    // Unreadable receipts leave the tallies empty rather than the lessons unmigrated.
-    let receipts = (try? load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())) ?? []
     let migrated = AutopilotPolicy.migrate(memory, receipts: receipts)
     try? save(migrated, "memory.json", limit: 8 << 20)
-    return migrated
+    return (migrated, true)
   }
   public func save(memory: AutopilotMemory) throws {
     var bounded = memory
@@ -67,9 +73,19 @@ public final class AutopilotStore: @unchecked Sendable {
   @discardableResult public func updateMemory<T>(_ change: (inout AutopilotMemory) throws -> T)
     throws -> T
   {
+    try updateMemoryAfterReceipts { memory, _ in try change(&memory) }
+  }
+
+  /// `updateMemory` for receipts already saved to receipts.json. `change` learns whether this read
+  /// migrated version-1 memory: the migration then seeded the tallies from receipts.json, so those
+  /// receipts are counted already and counting them again would count them twice.
+  @discardableResult func updateMemoryAfterReceipts<T>(
+    _ change: (inout AutopilotMemory, _ seeded: Bool) throws -> T
+  ) throws -> T {
     try lock.withLock {
-      var memory = try loadMemory()
-      let result = try change(&memory)
+      let loaded = try loadMemory()
+      var memory = loaded.memory
+      let result = try change(&memory, loaded.seeded)
       if memory.judgments.count > Self.maximumJudgments {
         let keep = memory.judgments.values.sorted { $0.date > $1.date }.prefix(
           Self.maximumJudgments)

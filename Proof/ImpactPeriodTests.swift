@@ -163,4 +163,22 @@ func autopilotImpactProof() throws {
   impact = try store.impact()
   equal(impact.worktrees, 2, "a restored copy is no longer counted")
   equal(impact.bytes, 5_000_000_000 + junk, "nor are its bytes")
+  equal(impact.restored, 1, "but it counts as undone, for good")
+  try store.refreshImpact()
+  equal(try store.impact().restored, 1, "once")
+
+  // Only copies come back: a restored folder leaves the totals without counting as undone.
+  var folders = AutopilotImpact()
+  var cleared = receipt(.disk, "burned", 1_000_000, now)
+  folders.count([cleared])
+  cleared.outcome = "restored"
+  folders.count([cleared])
+  equal(folders.bytes, 0, "the folder's bytes go back out")
+  equal(folders.restored, 0, "undone counts copies only")
+
+  // A tally saved before restores were counted still loads, with none undone.
+  let older = #"{"bytes":5,"cleanups":[],"worktrees":3}"#
+  let loaded = try? JSONDecoder().decode(AutopilotImpact.self, from: Data(older.utf8))
+  equal(loaded?.worktrees, 3, "an older tally loads")
+  equal(loaded?.restored, 0, "with nothing undone")
 }

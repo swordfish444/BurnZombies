@@ -109,15 +109,15 @@ extension AutopilotPolicy {
   /// 1. Guesses right among the last 10 scores, replayed ones included.
   /// 2. Questions shown to the owner this week and what BZ burned on its own, and last week's when
   ///    it had any.
-  /// 3. Burns the owner undid, out of `totalBurns` (the durable count, as receipts.json is capped)
-  ///    or, without it, the burns still in `receipts`.
+  /// 3. Copies the owner restored, out of the copies BZ burned, from the impact tally, which keeps
+  ///    both for good (receipts.json keeps only the latest); without the tally, no line.
   /// 4. The replay of the owner's answers, once there are 5.
   public static func progress(
-    _ memory: AutopilotMemory, receipts: [AutopilotReceipt], totalBurns: Int?, now: Date
+    _ memory: AutopilotMemory, receipts: [AutopilotReceipt], impact: AutopilotImpact?, now: Date
   ) -> AutopilotProgress {
     let lines: [String?] = [
       guessedLine(memory.scores), weekLine(memory.questions, receipts, now: now),
-      undoneLine(receipts, totalBurns: totalBurns), replayLine(memory.questions),
+      undoneLine(impact), replayLine(memory.questions),
     ]
     return AutopilotProgress(lines: lines.compactMap { $0 })
   }
@@ -154,8 +154,9 @@ extension AutopilotPolicy {
     return line
   }
 
-  /// Questions shown to the owner in a window (BZ's own calls aren't shown), and what burns not
-  /// asked for by the owner's Burn now freed in it.
+  /// Questions shown to the owner in a window (BZ's own calls aren't shown), and the disk that
+  /// burns of copies and folders not asked for by the owner's Burn now freed in it. A stopped
+  /// program frees memory, not disk.
   static func week(
     _ questions: [AutopilotQuestion], _ receipts: [AutopilotReceipt], after start: Date,
     through end: Date
@@ -165,18 +166,19 @@ extension AutopilotPolicy {
     }
     var bytes: UInt64 = 0
     for receipt in receipts where receipt.outcome == "burned" && receipt.authority != "operator" {
+      guard receipt.kind == .worktree || receipt.kind == .disk else { continue }
       if receipt.date > start && receipt.date <= end { bytes += receipt.bytes }
     }
     return (shown.count, bytes)
   }
 
-  /// "You undid 0 of my 498 burns."
-  static func undoneLine(_ receipts: [AutopilotReceipt], totalBurns: Int?) -> String? {
-    let undone = receipts.filter { $0.outcome == "restored" }.count
-    let kept = receipts.filter { $0.outcome == "burned" || $0.outcome == "restored" }.count
-    let burns = totalBurns ?? kept
-    guard burns > 0 else { return nil }
-    return "You undid \(undone) of my " + AutopilotEval.plural(burns, "burn") + "."
+  /// "You undid 0 of the 498 copies I burned." Only copies can be brought back.
+  static func undoneLine(_ impact: AutopilotImpact?) -> String? {
+    guard let impact else { return nil }
+    let burned = impact.worktrees + impact.restored
+    guard burned > 0 else { return nil }
+    let copies: String = burned == 1 ? "1 copy" : "\(burned) copies"
+    return "You undid \(impact.restored) of the " + copies + " I burned."
   }
 
   /// "Replaying your 27 answers, I'd have asked 17 and handled the other 10 on my own the way you
@@ -349,12 +351,8 @@ public enum AutopilotEval {
       }
     }
     let verdict: AutopilotVerdict = owner == .yes ? .burn : .keep
-    let match = AutopilotPolicy.lessonMatch(question.kind, question.match, verdict: verdict)
-    AutopilotPolicy.learn(
-      AutopilotRule(
-        kind: question.kind, match: match, verdict: verdict, source: .operator, title: "",
-        created: date, questionID: question.id),
-      into: &memory.rules)
+    let lesson = AutopilotPolicy.lesson(for: question, verdict: verdict, created: date)
+    AutopilotPolicy.learn(lesson, into: &memory.rules)
     memory.questions.append(question)
     let matched: Bool? = lean.map { $0 == owner }
     return Step(

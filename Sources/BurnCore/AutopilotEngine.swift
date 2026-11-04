@@ -104,6 +104,9 @@ public actor Autopilot {
     self.sources = sources
     self.minimumBytes = minimumBytes
     catalog = try? store.catalog()
+    // Memory from before lessons migrates now, before a tick changes a receipt: its tallies are
+    // seeded from receipts.json as it stands, and each later burn counts as it is recorded.
+    _ = try? store.memory()
     try? store.refreshImpact()
   }
 
@@ -273,7 +276,9 @@ public actor Autopilot {
   func tally(_ receipts: [AutopilotReceipt]) {
     let taught = receipts.filter { $0.outcome == "burned" && $0.authority.hasPrefix("rule:") }
     guard !taught.isEmpty else { return }
-    try? store.updateMemory { memory in
+    try? store.updateMemoryAfterReceipts { memory, seeded in
+      // A migration in this same read counted them from receipts.json already.
+      guard !seeded else { return }
       for receipt in taught { AutopilotPolicy.tally(receipt, into: &memory) }
     }
   }
@@ -383,7 +388,7 @@ public actor Autopilot {
     }
     result.questions = memory.openQuestions.filter { $0.count > 0 }
     // Rules taught by a question read like its card, even rules taught with older words.
-    let taught = Dictionary(memory.questions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    let taught = AutopilotPolicy.questionsByID(memory.questions)
     result.rules =
       memory.rules.map { rule in
         guard var question = rule.questionID.flatMap({ taught[$0] }) else { return rule }
@@ -407,17 +412,8 @@ public actor Autopilot {
     result.observedAt = catalog?.observedAt
     result.lessons = AutopilotPolicy.lessonGroups(memory)
     result.progress = AutopilotPolicy.progress(
-      memory, receipts: receipts, totalBurns: totalBurns(receipts), now: now)
+      memory, receipts: receipts, impact: try? store.impact(), now: now)
     return result
-  }
-
-  /// Burns BZ made, for "You undid …": the durable impact tally, since receipts.json keeps only
-  /// the latest burns. The tally counts copies, and takes restored ones back out, so the restores
-  /// the receipts still hold are added back. nil when the tally can't be read.
-  func totalBurns(_ receipts: [AutopilotReceipt]) -> Int? {
-    guard let impact = try? store.impact() else { return nil }
-    let restored = receipts.filter { $0.outcome == "restored" }.count
-    return impact.worktrees + restored
   }
 
   /// Applies an operator command and returns the new snapshot.
@@ -446,16 +442,9 @@ public actor Autopilot {
           let q = memory.questions[i]
           let verdict: AutopilotVerdict = answer == .yes ? .burn : .keep
           // The answer teaches why, not which project: a general lesson, titled the same way.
-          var general = q
-          general.match = AutopilotPolicy.generalize(q.kind, q.match)
           memory.rules.removeAll { $0.questionID == q.id }
           AutopilotPolicy.learn(
-            AutopilotRule(
-              kind: q.kind, match: AutopilotPolicy.lessonMatch(q.kind, q.match, verdict: verdict),
-              verdict: verdict, source: .operator,
-              title: AutopilotPolicy.ruleTitle(general, answer: answer), created: now,
-              questionID: q.id),
-            into: &memory.rules)
+            AutopilotPolicy.lesson(for: q, verdict: verdict, created: now), into: &memory.rules)
           // A lesson the new one took in brings its tally along.
           AutopilotPolicy.carryTallies(&memory)
         }
@@ -492,11 +481,12 @@ public actor Autopilot {
           all[i].detail = "Restored at \(restore.path)."
         }
       }
-      try store.updateMemory {
-        $0.keptItems.insert(receipt.itemID)
-        $0.keptItems.insert("path:" + restore.path)
-        // The burn already counted toward its lesson; restoring it only marks it undone.
-        if wasBurned { AutopilotPolicy.undone(receipt, into: &$0) }
+      try store.updateMemoryAfterReceipts { memory, seeded in
+        memory.keptItems.insert(receipt.itemID)
+        memory.keptItems.insert("path:" + restore.path)
+        // The burn already counted toward its lesson; restoring it only marks it undone. A
+        // migration in this same read counted the restore from receipts.json already.
+        if wasBurned && !seeded { AutopilotPolicy.undone(receipt, into: &memory) }
       }
     case .forgetRule(let id):
       try store.updateMemory { memory in
