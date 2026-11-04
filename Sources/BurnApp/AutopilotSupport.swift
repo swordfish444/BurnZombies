@@ -140,13 +140,52 @@ enum AutopilotText {
     let things: String = noun(tell.kind, count: tell.count)
     return "Burned \(tell.count) \(things) on my own."
   }
-  /// How much it was, the way a question card says what it frees: "2.4 GB".
-  static func tellSize(_ tell: AutopilotTell) -> String { AutopilotPolicy.roughly(tell.bytes) }
+  /// How much it was, the way a question card says what it frees: "Freed 2.4 GB" for copies and
+  /// folders, "412 MB of memory" for programs.
+  static func tellSize(_ tell: AutopilotTell) -> String {
+    let size: String = AutopilotPolicy.roughly(tell.bytes)
+    return tell.kind == .process ? "\(size) of memory" : "Freed \(size)"
+  }
   static let tellWhyPrefix = "You'd have said yes: "
-  /// "You'd have said yes: You said yes to 6 like these."
-  static func tellWhy(_ tell: AutopilotTell) -> String { tellWhyPrefix + tell.why }
-  /// Shown in place of the reason once the owner has pressed Undo and the copies are coming back.
+  /// "You'd have said yes: you said yes to 6 like these." The reason's first letter drops to lower
+  /// case when it starts with "You", so the two read as one sentence; a reason like "I think
+  /// you'll say yes." keeps its capital I.
+  static func tellWhy(_ tell: AutopilotTell) -> String {
+    var reason: String = tell.why
+    if reason.hasPrefix("You ") {
+      let first: String = reason.prefix(1).lowercased()
+      let rest: String = String(reason.dropFirst())
+      reason = first + rest
+    }
+    return tellWhyPrefix + reason
+  }
+  /// The line a tell for programs or folders gives before any Undo, because Undo can't bring them
+  /// back. Copies come back, so theirs has none.
+  static func tellCantComeBack(_ kind: AutopilotKind) -> String? {
+    switch kind {
+    case .worktree: return nil
+    case .process: return "Stopped programs can't be restarted by me; I'll ask next time."
+    case .disk: return "Your tools rebuild deleted folders; I'll ask next time."
+    }
+  }
+  /// The second button: Undo for copies, which can be brought back. For programs and folders it is
+  /// the owner's real answer, because nothing comes back.
+  static func tellUndoLabel(_ kind: AutopilotKind) -> String {
+    kind == .worktree ? "Undo" : "I'd have said no"
+  }
+  /// Shown in place of the reason while copies are coming back.
   static let undoingLine = "Bringing them back…"
+  /// Shown in place of the reason while that button's work is under way: copies are coming back;
+  /// for programs and folders there is nothing to bring back, so it says what BZ does next time.
+  static func tellWorking(_ kind: AutopilotKind) -> String {
+    kind == .worktree ? undoingLine : "Got it. I'll ask next time."
+  }
+  /// Shown for a tell the engine still lists as undoing after a quit, whose button is there to
+  /// finish it.
+  static func tellStalled(_ kind: AutopilotKind) -> String {
+    if kind == .worktree { return "Undo didn't finish. Tap Undo to bring them back." }
+    return "That didn't finish. Tap I'd have said no to finish it."
+  }
   /// How many more than its rows it burned.
   static func tellMore(_ tell: AutopilotTell) -> Int { max(0, tell.count - tell.rows.count) }
   /// A tell worth showing: still open or being undone, and it burned something. When every burn
@@ -160,24 +199,26 @@ enum AutopilotText {
     for tell in tells { count += tell.count }
     return "BZ burned \(things(count)) on its own"
   }
-  /// The tell's rows as a question card shows them. A copy or folder says when it last changed. A
-  /// program says how long it sat idle when BZ stopped it, which stays true as time passes.
+  /// The tell's rows, worded by the same function a question card's rows are. A program says how
+  /// long it sat idle when BZ stopped it, which stays true as time passes. A copy or folder says
+  /// "used Oct 26" or "used yesterday 5 pm", so a date beside a burned thing isn't read as the day
+  /// it was burned.
   static func tellRows(_ tell: AutopilotTell, now: Date, calendar: Calendar) -> [AutopilotCardRow] {
-    tell.rows.map { (row: AutopilotQuestionRow) -> AutopilotCardRow in
-      var when = ""
-      if let used = row.lastUsed {
-        if tell.kind == .process {
-          when = AutopilotPolicy.idleText(used, now: tell.date)
-        } else {
-          when = AutopilotPolicy.clock(used, now: now, calendar: calendar)
-        }
-      }
-      return AutopilotCardRow(title: row.title, subtitle: row.subtitle, when: when)
+    let at: Date = tell.kind == .process ? tell.date : now
+    let rows: [AutopilotCardRow] = AutopilotPolicy.cardRows(
+      tell.rows, kind: tell.kind, now: at, calendar: calendar)
+    guard tell.kind != .process else { return rows }
+    return rows.map { (row: AutopilotCardRow) -> AutopilotCardRow in
+      var shown: AutopilotCardRow = row
+      if !shown.when.isEmpty { shown.when = "used " + shown.when }
+      return shown
     }
   }
 
   // MARK: Teach: what an answer taught
 
+  /// Settings' heading for the lessons, which the "Got it!" card points the owner to.
+  static let learnedHeading = "What BZ has learned"
   /// The lesson group that now holds the lesson an answer to `questionID` taught: the rule whose
   /// answers include the question (a lesson that took it in lists it), then the group that lists
   /// that rule. Nil while the engine hasn't caught up, or when the answer taught nothing.
@@ -190,18 +231,23 @@ enum AutopilotText {
     guard let rule else { return nil }
     return snapshot.lessons.first { $0.ruleIDs.contains(rule.id) }
   }
-  /// What BZ will do from now on, under the lesson on the "Got it!" card.
-  static func handling(_ kind: AutopilotKind, answer: AutopilotAnswer) -> String {
-    let things: String
-    switch kind {
-    case .worktree: things = "copies"
-    case .process: things = "programs"
-    case .disk: things = "folders"
-    }
-    let pointer = " You'll find this under What I've learned."
-    if answer == .yes { return "I'll handle \(things) like these on my own from now on." + pointer }
-    return "I'll leave \(things) like these alone." + pointer
+  /// Under the lesson on the "Got it!" card, for a Yes and a No alike: the lesson says what it
+  /// covers, this says what BZ does and how to change it.
+  static let handling =
+    "I'll handle these on my own from now on. To change it, use Forget in \(learnedHeading)."
+  /// The last line of the "Got it!" card: what comes next. A tell comes before any question.
+  static func whatsNext(tells: Int, questions: Int) -> String {
+    if tells > 0 { return "Next up…" }
+    return questions > 0 ? "Next question coming up…" : "That's everything for now."
   }
+  /// What VoiceOver reads for a lesson's Forget button: which lesson it forgets.
+  static func forgetLabel(_ group: AutopilotLessonGroup) -> String { "Forget: " + group.sentence }
+}
+
+extension AutopilotSnapshot {
+  /// What BZ did on its own that still waits for the owner. Every surface that lists or counts
+  /// tells goes through this one filter.
+  var tellsWaiting: [AutopilotTell] { tells.filter { AutopilotText.shows($0) } }
 }
 
 /// What the model does itself when no engine is attached (demo and offscreen proofs). Each
@@ -524,7 +570,7 @@ struct AutopilotMenuSection: View {
   @ObservedObject var model: AppModel
   @State private var tick = Date()
   var openQuestions: Int { model.autopilot.questions.filter(\.isOpen).count }
-  var openTells: [AutopilotTell] { model.autopilot.tells.filter { AutopilotText.shows($0) } }
+  var openTells: [AutopilotTell] { model.autopilot.tellsWaiting }
   var dot: Color {
     let sweep = model.autopilot.sweep
     if !sweep.enabled { return BurnTheme.muted }

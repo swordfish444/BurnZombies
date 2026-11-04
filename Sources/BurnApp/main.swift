@@ -266,16 +266,20 @@ import UserNotifications
   var openWorktreeID: ((String) -> Void)?
   /// Autopilot as the windows see it. The engine replaces this after every sweep and command.
   @Published var autopilot = AutopilotSnapshot()
-  /// Applies one operator command in the engine and returns the new snapshot. While nil (demo and
-  /// offscreen proofs) the model applies the same change to `autopilot` in memory instead.
-  var autopilotRunner: ((AutopilotCommand) async -> AutopilotSnapshot?)?
+  /// Applies one operator command in the engine and returns the new snapshot, or throws why it
+  /// couldn't. While nil (demo and offscreen proofs) the model applies the same change to
+  /// `autopilot` in memory instead.
+  var autopilotRunner: ((AutopilotCommand) async throws -> AutopilotSnapshot)?
   /// The Autopilot surfaces appear once an engine is attached, or in the demo.
   var autopilotAvailable: Bool { demo || autopilotRunner != nil }
   /// What the owner pressed on a tell that the engine hasn't finished yet, by tell id. Teach BZ
-  /// hides a tell called good at once and shows one being undone as "Bringing them back…"; a command
-  /// the engine couldn't do clears its entry and the tell comes back with its buttons.
+  /// hides a tell called good at once and shows one being undone as under way; a command the engine
+  /// couldn't do clears its entry and the tell comes back with its buttons.
   enum TellAction { case good, undo }
   @Published private(set) var tellActions: [String: TellAction] = [:]
+  /// Why the last Good call or Undo on a tell couldn't be done, by tell id, so Teach BZ can say so
+  /// on the card and not only in the footer. A new press clears it.
+  @Published private(set) var tellProblems: [String: String] = [:]
   @Published var findingSelection: String?
   @Published var findingBusy = Set<String>()
   let demo: Bool
@@ -328,12 +332,7 @@ import UserNotifications
       reloadReviewConfiguration()
       if let runtime = try? AutopilotRuntime(monitor: observer) {
         autopilotRuntime = runtime
-        autopilotRunner = { [weak self] command in
-          do { return try await runtime.run(command) } catch {
-            self?.message = error.localizedDescription
-            return nil
-          }
-        }
+        autopilotRunner = { command in try await runtime.run(command) }
       }
     } catch {
       state.error = error.localizedDescription
@@ -790,18 +789,26 @@ import UserNotifications
   func tellGood(_ tell: AutopilotTell) {
     guard tellActions[tell.id] == nil else { return }
     tellActions[tell.id] = .good
+    tellProblems[tell.id] = nil
     sendAutopilot(
       .tellGood(id: tell.id), local: { AutopilotLocal.tellGood(&$0, id: tell.id) },
-      finished: { [weak self] in self?.tellActions[tell.id] = nil })
+      finished: { [weak self] problem in
+        self?.tellActions[tell.id] = nil
+        self?.tellProblems[tell.id] = problem
+      })
   }
-  /// "Undo": the owner takes back what BZ did on its own. The copies come back over a few moments,
-  /// so the tell shows as undoing until the engine answers.
+  /// "Undo": the owner takes back what BZ did on its own. Copies come back over a few moments, so
+  /// the tell shows as under way until the engine answers.
   func tellUndo(_ tell: AutopilotTell) {
     guard tellActions[tell.id] == nil else { return }
     tellActions[tell.id] = .undo
+    tellProblems[tell.id] = nil
     sendAutopilot(
       .tellUndo(id: tell.id), local: { AutopilotLocal.tellUndo(&$0, id: tell.id, now: Date()) },
-      finished: { [weak self] in self?.tellActions[tell.id] = nil })
+      finished: { [weak self] problem in
+        self?.tellActions[tell.id] = nil
+        self?.tellProblems[tell.id] = problem
+      })
   }
   /// Settings → Autopilot → Act on its own when sure.
   func setActsOnItsOwn(_ acts: Bool) {
@@ -824,33 +831,38 @@ import UserNotifications
   func sweepNow() {
     sendAutopilot(.sweepNow) { AutopilotLocal.sweepNow(&$0, now: Date()) }
   }
-  /// `finished` runs once the command is done, whether or not the engine could do it.
+  static let couldntFinish = "Autopilot couldn't finish that. Try again in a moment."
+  /// `finished` runs once the command is done, with why the engine couldn't do it, or nil. The
+  /// reason is also the footer's message.
   private func sendAutopilot(
     _ command: AutopilotCommand, local: (inout AutopilotSnapshot) -> Void,
-    finished: (@MainActor () -> Void)? = nil
+    finished: (@MainActor (String?) -> Void)? = nil
   ) {
     if let runner = autopilotRunner {
       Task { [weak self] in
-        if let next = await runner(command) {
+        do {
+          let next = try await runner(command)
           self?.autopilot = next
-        } else {
-          if self?.message == nil {
-            self?.message = "Autopilot couldn't finish that. Try again in a moment."
-          }
+          finished?(nil)
+        } catch {
+          let said: String = error.localizedDescription
+          let reason: String = said.isEmpty ? Self.couldntFinish : said
+          self?.message = reason
+          finished?(reason)
         }
-        finished?()
       }
       return
     }
     guard demo else {
-      message = "Autopilot isn't connected yet."
-      finished?()
+      let reason = "Autopilot isn't connected yet."
+      message = reason
+      finished?(reason)
       return
     }
     var next = autopilot
     local(&next)
     autopilot = next
-    finished?()
+    finished?(nil)
   }
   func quit() {
     Task {

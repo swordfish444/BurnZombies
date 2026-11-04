@@ -364,15 +364,21 @@ extension AutopilotPolicy {
   }
 
   /// "From 11 answers · burned 364 copies, 396.0 GB · undone 0": the answers still in memory that
-  /// the lessons were made from, BZ's own calls apart, and for burns what the lessons did.
+  /// the lessons were made from, BZ's own calls apart, and for burns what the lessons did. A lesson
+  /// made only from BZ's own calls reads "From my own call" or "From 3 of my own calls", never
+  /// "From 0 answers and …".
   static func evidence(
     _ kind: AutopilotKind, _ verdict: AutopilotVerdict, _ rules: [AutopilotRule],
     _ memory: AutopilotMemory
   ) -> String {
     let behind = answers(behind: rules, memory)
     var text = "From " + AutopilotEval.plural(behind.owner, "answer")
-    // "1 of my own calls": one of the calls BZ made, so always plural.
-    if behind.calls > 0 { text += " and \(behind.calls) of my own calls" }
+    if behind.owner == 0 && behind.calls > 0 {
+      text = behind.calls == 1 ? "From my own call" : "From \(behind.calls) of my own calls"
+    } else if behind.calls > 0 {
+      // "1 of my own calls": one of the calls BZ made, so always plural.
+      text += " and \(behind.calls) of my own calls"
+    }
     guard verdict == .burn else { return text }
     let done: AutopilotTally = tallied(rules, memory)
     let freed: String = roughly(done.bytes)

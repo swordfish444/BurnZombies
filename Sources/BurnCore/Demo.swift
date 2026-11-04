@@ -84,7 +84,6 @@ public enum Demo {
     catalog.lifetimeCPUSecondsSaved = (catalog.lifetimeCPUSecondsSaved ?? 0) + cpu
   }
 
-
   /// Invented Autopilot data for previews and offscreen proofs. Every name, path and number is
   /// made up; nothing here describes a real machine. Counts and bytes are tallied from the entries.
   /// The lessons and the "How I'm doing" lines are not written by hand: the functions the engine
@@ -167,7 +166,7 @@ public enum Demo {
       facts: [
         "program": "node", "family": "node", "orphaned": "no", "thread": "live",
         "agent": "claude", "idle": "active", "listening": "yes", "memory": "medium",
-        "repo": "web-app"
+        "repo": "web-app",
       ], pid: 49902, protectedReason: "A chat you still have open started it.")
     let gradle = make(
       .process, "gradle-helper", "java (Gradle helper)",

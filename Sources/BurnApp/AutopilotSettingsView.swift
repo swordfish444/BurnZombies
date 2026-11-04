@@ -8,6 +8,9 @@ struct AutopilotSettingsView: View {
   @ObservedObject var model: AppModel
   @State private var confirmReset = false
   static let intervals = [5, 15, 30, 60, 240]
+  /// Under the toggle. Only copies can be undone, so it says so.
+  static let actsCaption =
+    "When I'm sure, I'll do it and tell you after. Copies can be undone. Off means I always ask first."
 
   private var sweep: AutopilotSweepState { model.autopilot.sweep }
   private var lessons: [AutopilotLessonGroup] { model.autopilot.lessons }
@@ -111,17 +114,15 @@ struct AutopilotSettingsView: View {
         .labelsHidden().toggleStyle(.switch).tint(BurnTheme.orange).clickPointer()
         .accessibilityIdentifier("autopilot-acts-on-its-own")
       }
-      Text(
-        "When I'm sure, I'll burn it and tell you after, with Undo. Off means I always ask first."
-      )
-      .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      Text(Self.actsCaption)
+        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }
 
   /// Lessons as plain sentences, each with what it rests on and what it did.
   private var learnedSection: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("What BZ has learned").font(.subheadline.weight(.semibold))
+      Text(AutopilotText.learnedHeading).font(.subheadline.weight(.semibold))
       if lessons.isEmpty {
         Text("Nothing yet. Answer BZ's quick questions and the lessons show up here.")
           .font(.caption).foregroundStyle(.secondary)
@@ -142,6 +143,7 @@ struct AutopilotSettingsView: View {
       Spacer(minLength: 6)
       Button("Forget") { model.forgetLesson(group) }.buttonStyle(.borderless)
         .font(.callout).foregroundStyle(BurnTheme.orange).clickPointer()
+        .accessibilityLabel(AutopilotText.forgetLabel(group))
         .accessibilityIdentifier("forget-lesson-" + group.id)
     }
   }

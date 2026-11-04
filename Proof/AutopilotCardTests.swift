@@ -120,6 +120,19 @@ private func ownerCardProof() throws {
   equal(card.rows.map(\.title), ["fix login selector", "add dark mode toggle", "tidy the footer"])
   equal(card.rows.map(\.subtitle), ["web-app", "web-app", "docs"])
   equal(card.rows.map(\.when), ["yesterday 5 pm", "yesterday 1 pm", "yesterday 7 pm"])
+  // A tell words its rows through the same public function, so it reads as a question card does.
+  equal(
+    AutopilotPolicy.cardRows(question.rows ?? [], kind: .worktree, now: cardNow, calendar: utc),
+    card.rows, "stored rows give the card's rows")
+  let programRows = AutopilotPolicy.cardRows(
+    [
+      AutopilotQuestionRow(
+        title: "node in api", subtitle: "started by Codex", bytes: 1,
+        lastUsed: cardNow.addingTimeInterval(-40 * 60)),
+      AutopilotQuestionRow(title: "node", bytes: 1),
+    ], kind: .process, now: cardNow, calendar: utc)
+  equal(programRows.map(\.when), ["idle 40 min", ""], "a program says how long it sat idle")
+  equal(programRows.map(\.subtitle), ["started by Codex", nil], "no date, no time")
   equal(card.more, 2)
   equal(card.facts, [], "how long they sat unused is in the headline, not listed again")
   equal(card.cautions, [])

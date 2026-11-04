@@ -18,8 +18,19 @@ struct TeachView: View {
 
     struct Taught: Equatable {
       var questionID: String
-      var kind: AutopilotKind
-      var answer: AutopilotAnswer
+    }
+  }
+
+  /// Which card shows now.
+  enum Card: Equatable {
+    case confirmation
+    case tell(String)
+    case question(String)
+    case caughtUp
+
+    var isTell: Bool {
+      if case .tell = self { return true }
+      return false
     }
   }
 
@@ -27,6 +38,8 @@ struct TeachView: View {
   @State private var confirmation: Confirmation?
   @State private var answeredHere = 0
   @State private var answeredIDs = Set<String>()
+  /// The question on screen. It stays until it is answered or gone, whatever arrives meanwhile.
+  @State private var pinnedQuestionID: String?
 
   init(model: AppModel, confirmation: Confirmation? = nil) {
     self.model = model
@@ -54,7 +67,24 @@ struct TeachView: View {
   /// What BZ did on its own that still waits for the owner, oldest first. One called good is gone
   /// at once; one being undone stays, with its buttons off.
   private var tells: [AutopilotTell] {
-    snapshot.tells.filter { AutopilotText.shows($0) && model.tellActions[$0.id] != .good }
+    snapshot.tellsWaiting.filter { model.tellActions[$0.id] != .good }
+  }
+  private var showing: Card {
+    Self.card(
+      confirming: confirmation != nil, pinned: pinnedQuestionID, tells: tells, waiting: waiting)
+  }
+
+  /// Which card shows. A question already on screen stays until it is answered or gone, even when
+  /// a tell has arrived since: a card never changes under the owner's hands, it changes at its
+  /// boundary. At a boundary, what BZ did on its own comes before any question.
+  static func card(
+    confirming: Bool, pinned: String?, tells: [AutopilotTell], waiting: [AutopilotQuestion]
+  ) -> Card {
+    if confirming { return .confirmation }
+    if let pinned, waiting.contains(where: { $0.id == pinned }) { return .question(pinned) }
+    if let tell = tells.first { return .tell(tell.id) }
+    if let question = waiting.first { return .question(question.id) }
+    return .caughtUp
   }
 
   var body: some View {
@@ -88,13 +118,14 @@ struct TeachView: View {
   }
 
   @ViewBuilder private var content: some View {
-    if let confirmation {
-      confirmationCard(confirmation)
-    } else if let tell = tells.first {
-      tellCard(tell)
-    } else if let question = waiting.first {
-      questionCard(question)
-    } else {
+    switch showing {
+    case .confirmation:
+      if let confirmation { confirmationCard(confirmation) }
+    case .tell(let id):
+      if let tell = tells.first(where: { $0.id == id }) { tellCard(tell) }
+    case .question(let id):
+      if let question = waiting.first(where: { $0.id == id }) { questionCard(question) }
+    case .caughtUp:
       caughtUp
     }
   }
@@ -116,7 +147,7 @@ struct TeachView: View {
   /// not one of them, so it shows no count.
   @ViewBuilder private var progress: some View {
     let total = answeredHere + waiting.count
-    if total > 0 && (confirmation != nil || tells.isEmpty) {
+    if total > 0 && !showing.isTell {
       VStack(alignment: .trailing, spacing: 6) {
         HStack(spacing: 6) {
           ForEach(0..<min(total, 8), id: \.self) { index in
@@ -166,6 +197,7 @@ struct TeachView: View {
           .foregroundStyle(BurnTheme.muted)
       }.buttonStyle(.plain).clickPointer().accessibilityIdentifier("teach-skip")
     }
+    .onChange(of: question.id, initial: true) { _, id in pinnedQuestionID = id }
   }
 
   private func headline(_ text: String) -> some View {
@@ -227,31 +259,35 @@ struct TeachView: View {
   // MARK: Tell
 
   /// What BZ did on its own: how much, which things, and why the owner would have said yes. Good
-  /// call and Undo wait at the bottom. Once Undo is pressed both are off and the card says the
-  /// copies are coming back. A tell the engine still lists as undoing, with no Undo under way from
-  /// here, was cut short by a quit: Good call stays off but Undo is there to finish it, because
-  /// nothing else will and Teach BZ shows tells first.
+  /// call and the second button wait at the bottom.
+  /// - Copies: the second button is Undo. Once it is pressed both buttons are off and the card says
+  ///   the copies are coming back.
+  /// - Programs and folders: nothing comes back, so the card says so before any press, the second
+  ///   button is "I'd have said no", and pressing it says BZ will ask next time.
+  /// - A tell the engine still lists as undoing with nothing under way from here was cut short by a
+  ///   quit: Good call stays off but the second button is there to finish it, because nothing
+  ///   else will and Teach BZ shows tells first.
   private func tellCard(_ tell: AutopilotTell) -> some View {
     let working = model.tellActions[tell.id] == .undo
     let undoing = working || tell.state == "undoing"
     let rows = AutopilotText.tellRows(tell, now: Date(), calendar: .current)
+    let cantComeBack: String? = undoing ? nil : AutopilotText.tellCantComeBack(tell.kind)
     return TeachCardFrame {
       VStack(spacing: 8) {
         Text(AutopilotLook.emoji(tell.kind)).font(.system(size: 34))
         headline(AutopilotText.tellHeadline(tell))
         sizeLine(AutopilotText.tellSize(tell))
         TeachRows(rows: rows, more: AutopilotText.tellMore(tell))
-        if undoing {
-          Text(AutopilotText.undoingLine)
-            .font(.system(size: 15, weight: .semibold)).foregroundStyle(AutopilotTheme.yellow)
-            .accessibilityIdentifier("teach-undoing")
-        } else {
-          Text(AutopilotText.tellWhy(tell)).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
-            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        tellLine(tell, working: working, undoing: undoing)
+        if let cantComeBack {
+          softLine(cantComeBack).accessibilityIdentifier("teach-cant-come-back")
         }
-        if let note = tell.note, !note.isEmpty {
-          Text(note).font(.system(size: 13.5)).foregroundStyle(BurnTheme.muted)
+        if let note = tell.note, !note.isEmpty { softLine(note, size: 13.5) }
+        if let problem = model.tellProblems[tell.id] {
+          Text(problem)
+            .font(.system(size: 14, weight: .semibold)).foregroundStyle(AutopilotTheme.red)
             .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("teach-problem")
         }
       }
     } actions: {
@@ -261,11 +297,35 @@ struct TeachView: View {
           stroke: Color.clear, id: "teach-good", off: undoing
         ) { model.tellGood(tell) }
         answerButton(
-          "Undo", fill: Color.white.opacity(0.10), text: BurnTheme.cream,
-          stroke: Color.white.opacity(0.22), id: "teach-undo", off: working
+          AutopilotText.tellUndoLabel(tell.kind), fill: Color.white.opacity(0.10),
+          text: BurnTheme.cream, stroke: Color.white.opacity(0.22), id: "teach-undo", off: working
         ) { model.tellUndo(tell) }
       }
     }
+  }
+
+  /// What the card says under its rows: why BZ acted; once the second button is pressed, what is
+  /// happening; or that an earlier press didn't finish.
+  @ViewBuilder private func tellLine(_ tell: AutopilotTell, working: Bool, undoing: Bool)
+    -> some View
+  {
+    if working {
+      statusLine(AutopilotText.tellWorking(tell.kind)).accessibilityIdentifier("teach-undoing")
+    } else if undoing {
+      statusLine(AutopilotText.tellStalled(tell.kind)).accessibilityIdentifier("teach-stalled")
+    } else {
+      softLine(AutopilotText.tellWhy(tell))
+    }
+  }
+
+  private func statusLine(_ text: String) -> some View {
+    Text(text).font(.system(size: 15, weight: .semibold)).foregroundStyle(AutopilotTheme.yellow)
+      .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+  }
+
+  private func softLine(_ text: String, size: CGFloat = 14) -> some View {
+    Text(text).font(.system(size: size)).foregroundStyle(BurnTheme.muted)
+      .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
   }
 
   // MARK: After an answer
@@ -274,12 +334,10 @@ struct TeachView: View {
   /// The lesson is looked up as the card shows: the engine may take a moment to hand it over.
   private func confirmationCard(_ note: Confirmation) -> some View {
     var lesson: String?
-    var handling: String?
     if let taught = note.taught {
       lesson = AutopilotText.lesson(taughtBy: taught.questionID, in: snapshot)?.sentence
-      handling = AutopilotText.handling(taught.kind, answer: taught.answer)
     }
-    let done = waiting.isEmpty && tells.isEmpty
+    let next = AutopilotText.whatsNext(tells: tells.count, questions: waiting.count)
     return VStack(spacing: 14) {
       Image(systemName: note.symbol).font(.system(size: 46)).foregroundStyle(AutopilotTheme.green)
       Text(note.text)
@@ -294,13 +352,12 @@ struct TeachView: View {
           .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BurnTheme.line))
           .accessibilityIdentifier("teach-lesson")
       }
-      if let handling {
-        Text(handling).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
+      if note.taught != nil {
+        Text(AutopilotText.handling).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
           .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: 460)
       }
-      Text(done ? "That's everything for now." : "Next question coming up…")
-        .font(.system(size: 15)).foregroundStyle(BurnTheme.muted)
+      Text(next).font(.system(size: 15)).foregroundStyle(BurnTheme.muted)
     }
     .padding(.horizontal, 48).padding(.vertical, 24)
     .contentShape(Rectangle())
@@ -323,6 +380,7 @@ struct TeachView: View {
     confirmation = Self.confirmation(for: question, answer)
     answeredHere += 1
     answeredIDs.insert(question.id)
+    pinnedQuestionID = nil
     model.answer(question, answer)
   }
 
@@ -331,7 +389,7 @@ struct TeachView: View {
   static func confirmation(for question: AutopilotQuestion, _ answer: AutopilotAnswer)
     -> Confirmation
   {
-    let taught = Confirmation.Taught(questionID: question.id, kind: question.kind, answer: answer)
+    let taught = Confirmation.Taught(questionID: question.id)
     switch answer {
     case .yes: return Confirmation(text: "Got it!", symbol: "flame.fill", taught: taught)
     case .no: return Confirmation(text: "Got it!", symbol: "hand.raised.fill", taught: taught)

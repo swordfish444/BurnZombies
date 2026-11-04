@@ -235,10 +235,19 @@ extension AutopilotPolicy {
     guard let stored = question.rows, !stored.isEmpty else {
       return question.examples.map { AutopilotCardRow(title: $0, subtitle: nil, when: "") }
     }
-    return stored.map { row in
+    return cardRows(stored, kind: question.kind, now: now, calendar: calendar)
+  }
+
+  /// Rows a question or a tell stores, ready to show: each with its time worked out for `now`
+  /// (`timeWords`), and none for a row with no date. Public so a tell card words its rows exactly
+  /// as a question card does.
+  public static func cardRows(
+    _ stored: [AutopilotQuestionRow], kind: AutopilotKind, now: Date, calendar: Calendar
+  ) -> [AutopilotCardRow] {
+    stored.map { (row: AutopilotQuestionRow) -> AutopilotCardRow in
       var when = ""
       if let used = row.lastUsed {
-        when = timeWords(used, kind: question.kind, now: now, calendar: calendar)
+        when = timeWords(used, kind: kind, now: now, calendar: calendar)
       }
       return AutopilotCardRow(title: row.title, subtitle: row.subtitle, when: when)
     }

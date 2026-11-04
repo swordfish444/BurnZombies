@@ -254,7 +254,7 @@ struct MiniImpactView: View {
   var numbers: ImpactNumbers { .make(model, period: .today) }
   var totals: ImpactNumbers { .make(model, period: model.miniImpactPeriod) }
   /// What BZ burned on its own that the owner hasn't called good or undone yet.
-  var openTells: [AutopilotTell] { model.autopilot.tells.filter { AutopilotText.shows($0) } }
+  var openTells: [AutopilotTell] { model.autopilot.tellsWaiting }
   /// What Autopilot found and hasn't burned yet.
   var found: UInt64 {
     model.autopilot.entries.filter { $0.status == .unsure || $0.status == .burn }

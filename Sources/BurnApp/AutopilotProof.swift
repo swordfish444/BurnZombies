@@ -182,9 +182,15 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   try check(
     abs(snapshot.trainingProgress - expectedProgress) < 0.001 && snapshot.answers > 0,
     "Demo answers and training progress should agree")
-  let openTells = snapshot.tells.filter { AutopilotText.shows($0) }
+  let openTells = snapshot.tellsWaiting
   try check(openTells.count == 1, "Demo should have exactly one open tell")
   guard let demoTell = openTells.first else { throw StoreError.message("Demo has no tell") }
+  // A lesson made only from BZ's own call says so, and none says "0 answers".
+  let actGroup = snapshot.lessons.first { $0.ruleIDs.contains(demoTell.ruleID) }
+  try check(
+    actGroup?.evidence.hasPrefix("From my own call · ") == true
+      && snapshot.lessons.allSatisfy { !$0.evidence.contains("0 answers") },
+    "BZ's own call reads \"From my own call\": \(actGroup?.evidence ?? "no lesson")")
   let burnedByTell = snapshot.entries.filter { $0.authority == "rule:" + demoTell.ruleID }
   var tellBytes: UInt64 = 0
   for entry in burnedByTell { tellBytes += entry.item.bytes }
@@ -410,12 +416,24 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       "You'd have said yes",
     ], in: "teach-tell")
   try check(
+    AutopilotText.tellSize(demoTell) == "Freed 2.4 GB",
+    "A copies tell says what it freed, not a bare size")
+  try check(
+    AutopilotText.tellWhy(demoTell) == "You'd have said yes: you said yes to 6 like these.",
+    "The reason reads as one sentence after the prefix")
+  try check(
     tellView.hasWords(of: AutopilotText.tellWhy(demoTell)),
     "teach-tell is missing the reason. OCR saw: \(tellView.raw)")
+  try check(
+    !tellView.has("Bringing them back") && !tellView.has("I'd have said no"),
+    "An open copies tell offers Undo and says nothing about bringing them back yet")
   let tellRows = AutopilotText.tellRows(demoTell, now: Date(), calendar: .current)
   try check(
     tellRows.count == 3 && AutopilotText.tellMore(demoTell) == 0,
     "The demo tell should name every copy it burned")
+  try check(
+    tellRows.allSatisfy { $0.when.hasPrefix("used ") },
+    "A copy's row says when it was last used, so it isn't read as when it was burned")
   for row in tellRows {
     try check(
       tellView.hasWords(of: row.title),
@@ -425,12 +443,140 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   try check(
     !tellView.has("Question 1 of 3") && !tellView.hasWords(of: card.headline),
     "A tell comes before the questions and shows no question count. OCR saw: \(tellView.raw)")
-  // Pressing Undo: both buttons go off at once and the card says the copies are coming back.
+
+  // Rows are worded by the question card's own function: dates read the same way, with "used".
+  var utc = Calendar(identifier: .gregorian)
+  utc.timeZone = TimeZone(identifier: "UTC") ?? .current
+  let fixedNow =
+    utc.date(from: DateComponents(year: 2026, month: 11, day: 3, hour: 9, minute: 39))
+    ?? Date()
+  let yesterdayFive =
+    utc.date(
+      from: DateComponents(year: 2026, month: 11, day: 2, hour: 17)) ?? Date()
+  let october26 = utc.date(from: DateComponents(year: 2026, month: 10, day: 26, hour: 8)) ?? Date()
+  var dated = demoTell
+  dated.rows = [
+    AutopilotQuestionRow(title: "a", bytes: 3, lastUsed: yesterdayFive),
+    AutopilotQuestionRow(title: "b", bytes: 2, lastUsed: october26),
+    AutopilotQuestionRow(title: "c", bytes: 1),
+  ]
+  let datedWords: [String] = AutopilotText.tellRows(dated, now: fixedNow, calendar: utc).map(\.when)
+  try check(
+    datedWords == ["used yesterday 5 pm", "used Oct 26", ""],
+    "A copy's row reads \"used yesterday 5 pm\", then \"used Oct 26\", and nothing with no date: \(datedWords)"
+  )
+  var datedFolders = dated
+  datedFolders.kind = .disk
+  let datedFolderWords: [String] = AutopilotText.tellRows(
+    datedFolders, now: fixedNow, calendar: utc
+  ).map(\.when)
+  try check(
+    datedFolderWords == datedWords, "A folder's row reads the same way: \(datedFolderWords)")
+
+  // Programs and folders can't be brought back. Their card says so before any press, the second
+  // button is the owner's real answer, and pressing it never claims to bring anything back.
+  let stopped: Date = Date().addingTimeInterval(-25 * 60)
+  let programTell = AutopilotTell(
+    id: "demo-program-tell", questionID: "process:demo:question", ruleID: "demo-program-rule",
+    kind: .process, count: 3, bytes: 1_700_000_000,
+    rows: [
+      AutopilotQuestionRow(
+        title: "node in api", subtitle: "started by Codex", bytes: 900_000_000,
+        lastUsed: stopped.addingTimeInterval(-3 * 3600)),
+      AutopilotQuestionRow(
+        title: "node in web-app", subtitle: "started by Codex", bytes: 500_000_000,
+        lastUsed: stopped.addingTimeInterval(-95 * 60)),
+    ], why: "You said yes to 4 like these.", date: stopped)
+  var folderTell = programTell
+  folderTell.id = "demo-folder-tell"
+  folderTell.kind = .disk
+  folderTell.count = 4
+  folderTell.bytes = 1_500_000_000
+  folderTell.rows = [
+    AutopilotQuestionRow(
+      title: "node_modules in api", bytes: 800_000_000,
+      lastUsed: Date().addingTimeInterval(-9 * 86_400)),
+    AutopilotQuestionRow(
+      title: "node_modules in web-app", bytes: 400_000_000,
+      lastUsed: Date().addingTimeInterval(-11 * 86_400)),
+  ]
+  try check(
+    AutopilotText.tellSize(programTell) == "1.7 GB of memory"
+      && AutopilotText.tellSize(folderTell) == "Freed 1.5 GB",
+    "A program tell says how much memory; a folder tell what it freed")
+  let copiesLine: String? = AutopilotText.tellCantComeBack(.worktree)
+  let programsLine: String? = AutopilotText.tellCantComeBack(.process)
+  let foldersLine: String? = AutopilotText.tellCantComeBack(.disk)
+  try check(copiesLine == nil, "Copies come back, so their card says nothing of the kind")
+  try check(
+    programsLine == "Stopped programs can't be restarted by me; I'll ask next time.",
+    "Programs say up front that Undo can't bring them back")
+  try check(
+    foldersLine == "Your tools rebuild deleted folders; I'll ask next time.",
+    "Folders say up front that Undo can't bring them back")
+  let copyLabel: String = AutopilotText.tellUndoLabel(.worktree)
+  let programLabel: String = AutopilotText.tellUndoLabel(.process)
+  let folderLabel: String = AutopilotText.tellUndoLabel(.disk)
+  try check(
+    copyLabel == "Undo" && programLabel == "I'd have said no" && folderLabel == "I'd have said no",
+    "The second button is Undo only for copies")
+  let copyWorking: String = AutopilotText.tellWorking(.worktree)
+  let programWorking: String = AutopilotText.tellWorking(.process)
+  let folderWorking: String = AutopilotText.tellWorking(.disk)
+  try check(
+    copyWorking == "Bringing them back…" && programWorking == "Got it. I'll ask next time."
+      && folderWorking == "Got it. I'll ask next time.",
+    "Only copies are brought back")
+  try check(
+    AutopilotText.tellStalled(.worktree) == "Undo didn't finish. Tap Undo to bring them back.",
+    "A copies Undo cut short by a quit says to tap Undo")
+  for kind in [AutopilotKind.process, .disk] {
+    let lines: [String] = [
+      AutopilotText.tellWorking(kind), AutopilotText.tellStalled(kind),
+      AutopilotText.tellCantComeBack(kind) ?? "", AutopilotText.tellUndoLabel(kind),
+    ]
+    try check(
+      lines.allSatisfy { !$0.lowercased().contains("bring") && !$0.contains("Undo") },
+      "Programs and folders never say they bring anything back: \(lines)")
+  }
+  let programRows: [String] = AutopilotText.tellRows(programTell, now: Date(), calendar: .current)
+    .map(\.when)
+  try check(
+    programRows == ["idle 3 h", "idle 1 h"],
+    "A program's row says how long it sat idle when BZ stopped it: \(programRows)")
+  for kindTell in [programTell, folderTell] {
+    let kindModel = AppModel(demo: true)
+    kindModel.autopilot.tells = [kindTell]
+    let name = kindTell.kind == .process ? "teach-tell-programs" : "teach-tell-folders"
+    let kindView = try render(
+      TeachView(model: kindModel), size: TeachView.size, name: name, directory: directory)
+    try require(
+      kindView,
+      [
+        AutopilotText.tellHeadline(kindTell), AutopilotText.tellSize(kindTell),
+        AutopilotText.tellCantComeBack(kindTell.kind) ?? "", "Good call", "I'd have said no",
+        "You'd have said yes",
+      ], in: name)
+    try check(
+      kindView.hasWords(of: AutopilotText.tellWhy(kindTell)),
+      "\(name) is missing the reason. OCR saw: \(kindView.raw)")
+    try check(
+      !kindView.has("Undo") && !kindView.has("Bringing them back"),
+      "\(name) offers no Undo and never says it brings anything back. OCR saw: \(kindView.raw)")
+    for row in AutopilotText.tellRows(kindTell, now: Date(), calendar: .current) {
+      try check(
+        kindView.hasWords(of: row.title), "\(name) lost \"\(row.title)\". OCR saw: \(kindView.raw)")
+    }
+  }
+
+  // Pressing the second button: both buttons go off at once. For copies the card says they are
+  // coming back; for programs it says BZ will ask next time.
   var engineDone = false
+  let problem = "I can't find that anymore."
   let undoing = AppModel(demo: true)
   undoing.autopilotRunner = { _ in
     while !engineDone { try? await Task.sleep(for: .milliseconds(20)) }
-    return nil
+    throw StoreError.message(problem)
   }
   guard let pressed = undoing.autopilot.tells.first else {
     throw StoreError.message("Demo has no tell to undo")
@@ -446,13 +592,43 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   try check(
     !undoingView.has("You'd have said yes"),
     "An undone tell should not argue it was right. OCR saw: \(undoingView.raw)")
-  // The engine can't finish: the tell comes back with its buttons rather than waiting forever.
+  let programsWorking = AppModel(demo: true)
+  programsWorking.autopilot.tells = [programTell]
+  programsWorking.autopilotRunner = { _ in
+    while !engineDone { try? await Task.sleep(for: .milliseconds(20)) }
+    throw StoreError.message(problem)
+  }
+  programsWorking.tellUndo(programTell)
+  let workingView = try render(
+    TeachView(model: programsWorking), size: TeachView.size, name: "teach-tell-programs-working",
+    directory: directory)
+  try require(
+    workingView,
+    [AutopilotText.tellHeadline(programTell), "Got it. I'll ask next time.", "I'd have said no"],
+    in: "teach-tell-programs-working")
+  try check(
+    !workingView.has("Bringing them back") && !workingView.has("Undo")
+      && !workingView.has("Stopped programs can't be restarted"),
+    "A program tell under way says BZ will ask next time, and nothing about bringing back. OCR saw: \(workingView.raw)"
+  )
+  // The engine can't do it: the tell comes back with its buttons, and says why on the card.
   engineDone = true
   let comeBack = Date().addingTimeInterval(3)
-  while !undoing.tellActions.isEmpty && Date() < comeBack {
+  while !(undoing.tellActions.isEmpty && programsWorking.tellActions.isEmpty) && Date() < comeBack {
     RunLoop.main.run(until: Date().addingTimeInterval(0.02))
   }
-  try check(undoing.tellActions.isEmpty, "A tell the engine couldn't undo stayed under way")
+  try check(
+    undoing.tellActions.isEmpty && programsWorking.tellActions.isEmpty,
+    "A tell the engine couldn't undo stayed under way")
+  try check(
+    undoing.tellProblems[pressed.id] == problem && undoing.message == problem,
+    "A failed Undo keeps its reason for the Teach window as well as the footer")
+  let failedView = try render(
+    TeachView(model: undoing), size: TeachView.size, name: "teach-tell-failed",
+    directory: directory)
+  try require(
+    failedView, [AutopilotText.tellHeadline(demoTell), problem, "Good call", "Undo"],
+    in: "teach-tell-failed")
   // Cut short by a quit, the engine still lists it as undoing and nothing else will finish it, so
   // Undo stays there to pick it up where it stopped; Good call is off, the engine refuses it.
   let resume = AppModel(demo: true)
@@ -464,16 +640,36 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   try require(
     resumeView,
     [
-      AutopilotText.tellHeadline(demoTell), AutopilotText.undoingLine, "Your newer answer stands",
-      "Good call", "Undo",
+      AutopilotText.tellHeadline(demoTell), AutopilotText.tellStalled(.worktree),
+      "Your newer answer stands", "Good call", "Undo",
     ], in: "teach-tell-resume")
-  // A tell that burned nothing says nothing, and one program or folder reads in the singular.
+  try check(
+    !resumeView.has("Bringing them back") && !resumeView.has("You'd have said yes"),
+    "A stalled Undo says it didn't finish. OCR saw: \(resumeView.raw)")
+  let programsStalled = AppModel(demo: true)
+  programsStalled.autopilot.tells = [programTell]
+  programsStalled.autopilot.tells[0].state = "undoing"
+  let stalledView = try render(
+    TeachView(model: programsStalled), size: TeachView.size, name: "teach-tell-programs-stalled",
+    directory: scratch)
+  try require(
+    stalledView, [AutopilotText.tellStalled(.process), "Good call", "I'd have said no"],
+    in: "teach-tell-programs-stalled")
+  try check(
+    !stalledView.has("Undo") && !stalledView.has("bring them back"),
+    "A stalled program tell never says it brings anything back. OCR saw: \(stalledView.raw)")
+
+  // A tell that burned nothing says nothing, and one program or folder reads in the singular. Every
+  // surface asks the snapshot for the tells that wait.
   var nothing = demoTell
   nothing.count = 0
   try check(!AutopilotText.shows(nothing), "A tell that burned nothing must not show")
   var closed = demoTell
   closed.state = "good"
   try check(!AutopilotText.shows(closed), "A closed tell must not show")
+  var crowd = snapshot
+  crowd.tells = [demoTell, nothing, closed]
+  try check(crowd.tellsWaiting == [demoTell], "The snapshot lists only the tells that wait")
   var oneProgram = demoTell
   oneProgram.kind = .process
   oneProgram.count = 1
@@ -486,6 +682,60 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     programWords == "Burned 1 program on my own." && folderWords == "Burned 3 folders on my own."
       && copyWords == "Burned 3 copies on my own.",
     "The tell headline should name its things")
+  var guessed = demoTell
+  guessed.why = "I think you'll say yes."
+  try check(
+    AutopilotText.tellWhy(guessed) == "You'd have said yes: I think you'll say yes.",
+    "A reason that starts with I keeps its capital")
+
+  // A tell that arrives while a question is on screen waits for the card to end.
+  let onScreen = questions[0]
+  let behind = questions[1]
+  try check(
+    TeachView.card(
+      confirming: false, pinned: onScreen.id, tells: [demoTell], waiting: [onScreen, behind])
+      == .question(onScreen.id), "A question on screen stays when a tell arrives")
+  try check(
+    TeachView.card(confirming: false, pinned: nil, tells: [demoTell], waiting: [onScreen, behind])
+      == .tell(demoTell.id), "With no card on screen, what BZ did on its own comes first")
+  try check(
+    TeachView.card(confirming: false, pinned: onScreen.id, tells: [demoTell], waiting: [behind])
+      == .tell(demoTell.id), "When the question on screen is gone, the tell comes next")
+  try check(
+    TeachView.card(confirming: true, pinned: onScreen.id, tells: [demoTell], waiting: [onScreen])
+      == .confirmation, "A confirmation is a card too")
+  try check(
+    TeachView.card(confirming: false, pinned: nil, tells: [], waiting: [onScreen, behind])
+      == .question(onScreen.id)
+      && TeachView.card(confirming: false, pinned: nil, tells: [], waiting: []) == .caughtUp,
+    "Questions, then all caught up")
+  let latch = AppModel(demo: true)
+  latch.autopilot.tells = []
+  let latchHost = NSHostingView(rootView: TeachView(model: latch))
+  latchHost.sizingOptions = []
+  latchHost.frame = NSRect(origin: .zero, size: TeachView.size)
+  let latchSurface = NSWindow(
+    contentRect: latchHost.frame, styleMask: .borderless, backing: .buffered, defer: false)
+  latchSurface.contentView = latchHost
+  let latchAsking = try capture(
+    latchHost, surface: latchSurface, name: "latch-asking", directory: scratch)
+  try check(
+    latchAsking.hasWords(of: card.headline),
+    "The latch proof starts on a question. OCR saw: \(latchAsking.raw)")
+  latch.autopilot.tells = snapshot.tells
+  let whileAsking = try capture(
+    latchHost, surface: latchSurface, name: "latch-arrived", directory: scratch)
+  try check(
+    whileAsking.hasWords(of: card.headline)
+      && !whileAsking.hasWords(of: AutopilotText.tellHeadline(demoTell)),
+    "A tell that arrives must not replace the question on screen. OCR saw: \(whileAsking.raw)")
+  latch.answer(onScreen, .skip)
+  let atBoundary = try capture(
+    latchHost, surface: latchSurface, name: "latch-boundary", directory: scratch)
+  try check(
+    atBoundary.hasWords(of: AutopilotText.tellHeadline(demoTell)),
+    "When the question is answered, the tell comes next. OCR saw: \(atBoundary.raw)")
+
   let quiet = AppModel(demo: true)
   quiet.autopilot.questions = []
   quiet.autopilot.tells = []
@@ -505,24 +755,46 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   let teachDone = try render(
     TeachView(model: answeredModel, confirmation: TeachView.confirmation(for: toAnswer, .yes)),
     size: TeachView.size, name: "teach-confirmed", directory: directory)
-  let handling = AutopilotText.handling(toAnswer.kind, answer: .yes)
   try require(teachDone, ["Got it"], in: "teach-confirmed")
   try check(
     teachDone.hasWords(of: taught.sentence),
     "teach-confirmed is missing the lesson. OCR saw: \(teachDone.raw)")
   try check(
-    teachDone.hasWords(of: handling),
+    teachDone.hasWords(of: AutopilotText.handling),
     "teach-confirmed is missing what BZ will do. OCR saw: \(teachDone.raw)")
-  hint(teachDone, "teach-confirmed", ["I'll handle", "What I've learned"])
+  hint(teachDone, "teach-confirmed", ["handle these on my own", "What BZ has learned"])
+  try check(
+    AutopilotText.handling
+      == "I'll handle these on my own from now on. To change it, use Forget in What BZ has learned."
+      && AutopilotText.learnedHeading == "What BZ has learned",
+    "The line under the lesson points at the Settings heading by its own name")
+  try check(
+    !teachDone.has("What I've learned") && !teachDone.has("copies like these"),
+    "The old pointer and the claim about \"copies like these\" are gone. OCR saw: \(teachDone.raw)")
   let skipped = TeachView.confirmation(for: toAnswer, .skip)
   let refused = TeachView.confirmation(for: toAnswer, .no)
-  let leaves: String = AutopilotText.handling(.process, answer: .no)
   try check(
     skipped.taught == nil && skipped.text == "No problem. I'll ask again tomorrow.",
     "A skip teaches nothing")
   try check(
-    refused.taught?.answer == .no && leaves.hasPrefix("I'll leave programs like these alone."),
-    "A No says what BZ leaves alone")
+    refused.taught?.questionID == toAnswer.id && refused.symbol == "hand.raised.fill"
+      && refused.text == "Got it!",
+    "A No says Got it! and points at its lesson")
+  // When a tell comes next, the card says "Next up…"; questions say "Next question coming up…".
+  try check(
+    AutopilotText.whatsNext(tells: 1, questions: 2) == "Next up…"
+      && AutopilotText.whatsNext(tells: 0, questions: 2) == "Next question coming up…"
+      && AutopilotText.whatsNext(tells: 0, questions: 0) == "That's everything for now.",
+    "The confirmation says what comes next")
+  let tellNext = AppModel(demo: true)
+  tellNext.autopilot.questions = []
+  let nextUp = try render(
+    TeachView(model: tellNext, confirmation: TeachView.confirmation(for: toAnswer, .skip)),
+    size: TeachView.size, name: "teach-confirmed-tell-next", directory: scratch)
+  try require(nextUp, ["Next up"], in: "teach-confirmed-tell-next")
+  try check(
+    !nextUp.has("Next question coming up"),
+    "A tell is next, not a question. OCR saw: \(nextUp.raw)")
   let teachWindow = TeachView.makeWindow(model: model)
   let windowWidth: CGFloat = teachWindow.contentView?.bounds.width ?? 0
   let windowHeight: CGFloat = teachWindow.contentView?.bounds.height ?? 0
@@ -531,7 +803,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       && abs(windowHeight - TeachView.size.height) < 1,
     "Teach BZ window should be \(Int(TeachView.size.width)) wide and unshown")
   print(
-    "PASS autopilot UI Teach BZ render: question card with rows, heavier cards, tell, undoing tell, lesson confirmation and empty state"
+    "PASS autopilot UI Teach BZ render: question card with rows, heavier cards, copy, program and folder tells, working, failed and stalled tells, a tell that waits for the card on screen, lesson confirmation and empty state"
   )
 
   // Findings: an entry that needs the operator is selected so the detail card shows.
@@ -612,6 +884,17 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     try check(
       settings.hasWords(of: line), "settings lost \"\(line)\". OCR saw: \(settings.raw)")
   }
+  try check(
+    settings.hasWords(of: AutopilotSettingsView.actsCaption),
+    "settings lost the toggle caption. OCR saw: \(settings.raw)")
+  try check(
+    AutopilotSettingsView.actsCaption
+      == "When I'm sure, I'll do it and tell you after. Copies can be undone. Off means I always ask first.",
+    "The toggle caption says only copies can be undone")
+  try check(
+    snapshot.lessons.allSatisfy {
+      AutopilotText.forgetLabel($0) == "Forget: " + $0.sentence
+    }, "Each Forget button is labeled with its lesson")
   hint(settings, "settings", ["Sweep every", "Starter rules", "Forget", "Undo"])
   try check(
     !settings.raw.contains("%") && !settings.raw.contains("trained"),
@@ -954,7 +1237,8 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     wired.tellActions.isEmpty, "A tell command the engine finished stayed marked as under way")
   let failing = AppModel(demo: true)
   let before = failing.autopilot
-  failing.autopilotRunner = { _ in nil }
+  let refusal = "That one is already closed."
+  failing.autopilotRunner = { _ in throw StoreError.message(refusal) }
   failing.setAutopilot(enabled: false)
   let failDeadline = Date().addingTimeInterval(3)
   while failing.message == nil && Date() < failDeadline {
@@ -974,6 +1258,19 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     try check(
       failing.tellActions.isEmpty && failing.autopilot.tells.first == stuck,
       "An Undo the engine couldn't do should leave the tell as it was")
+    try check(
+      failing.tellProblems[stuck.id] == refusal && failing.message == refusal,
+      "A failed Undo keeps the engine's reason for the tell, as well as for the footer")
+    // A new press clears the old reason; a Good call the engine can't do gives its own.
+    failing.tellGood(stuck)
+    try check(failing.tellProblems[stuck.id] == nil, "A new press should clear the last reason")
+    let goodDeadline = Date().addingTimeInterval(3)
+    while !failing.tellActions.isEmpty && Date() < goodDeadline {
+      RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+    try check(
+      failing.tellProblems[stuck.id] == refusal && failing.autopilot.tells.first == stuck,
+      "A failed Good call says why and leaves the tell")
   } else {
     throw StoreError.message("Demo has no tell for the failing engine proof")
   }

@@ -240,6 +240,22 @@ private func templateProof() {
   equal(
     group(AutopilotPolicy.lessonGroups(calls), "worktree:burn:week")?.evidence,
     "From 1 answer and 1 of my own calls · burned 1 copy, 1.0 GB · undone 0")
+  // Made only from BZ's own calls, a lesson says so instead of "From 0 answers and …".
+  var alone = AutopilotMemory()
+  let once = teach(
+    &alone, .worktree, ["saved": ["merged"], "stale": ["week", "month", "older"]], by: "bz")
+  alone.tallies[once.id] = AutopilotTally(count: 1, bytes: 1_000_000_000)
+  equal(
+    group(AutopilotPolicy.lessonGroups(alone), "worktree:burn:week")?.evidence,
+    "From my own call · burned 1 copy, 1.0 GB · undone 0", "one call of BZ's own")
+  let twice = teach(
+    &alone, .worktree, ["saved": ["pushed"], "stale": ["week", "month", "older"]], by: "bz")
+  alone.tallies[twice.id] = AutopilotTally(count: 2, bytes: 2_000_000_000)
+  let aloneEvidence = group(AutopilotPolicy.lessonGroups(alone), "worktree:burn:week")?.evidence
+  equal(
+    aloneEvidence, "From 2 of my own calls · burned 3 copies, 3.0 GB · undone 0",
+    "two calls of BZ's own")
+  check(aloneEvidence?.contains("0 answers") == false, "never \"From 0 answers\"")
   var folder = AutopilotMemory()
   let cache = teach(&folder, .disk, ["folder": ["package-cache"], "stale": ["week", "month", "older"]])
   folder.tallies[cache.id] = AutopilotTally(count: 1, bytes: 2_000_000_000)
