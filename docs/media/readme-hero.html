@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>BurnZombies README hero</title>
+<style>
+@font-face{font-family:Anton;src:url('../../Sources/BurnApp/Resources/Anton-Regular.ttf')}
+*{box-sizing:border-box}
+html,body{margin:0;background:transparent}
+main{width:900px;height:440px;position:relative;overflow:hidden;border-radius:22px;
+  background:radial-gradient(ellipse at 77% 50%,#5a2a1890 0%,#2a1d1640 30%,transparent 58%),linear-gradient(135deg,#272823,#141513 70%);
+  border:1px solid #3f3e37;color:#faf6df;font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif}
+header{position:absolute;left:50px;top:38px;display:flex;align-items:center;gap:10px;font:21px Anton;letter-spacing:.5px}
+header img{width:28px;height:34px;object-fit:contain}
+h1{position:absolute;left:48px;top:46px;margin:0;font:94px/.92 Anton;letter-spacing:-.3px}
+h1 span{color:#ff5a26}
+p{position:absolute;left:51px;top:326px;margin:0;font-size:23px;line-height:1.3;color:#e9e5d4}
+p b{color:#faf6df}
+.exhaust{position:absolute;left:50px;top:374px;display:flex;gap:8px}
+.exhaust span{font-size:13.5px;color:#c4c3b8;border:1px solid #4a4840;border-radius:999px;padding:5px 11px;
+  text-decoration:line-through;text-decoration-color:#ff5a26;text-decoration-thickness:1.5px}
+.panel{position:absolute;right:46px;top:44px;width:334px;height:292px;border-radius:15px;overflow:hidden;
+  box-shadow:0 26px 60px #000b,0 0 0 1px #504e45;-webkit-mask-image:linear-gradient(#000 90%,transparent)}
+.panel img{display:block;width:334px}
+.caption{position:absolute;right:46px;top:352px;width:334px;text-align:center;font-size:12px;line-height:1.4;color:#a3a298}
+.caption b{color:#d9d6c8;font-weight:600}
+</style>
+<main>
+<h1>RUN YOUR<br>AGENTS<br><span>FOREVER.</span></h1>
+<p>Let <b>BurnZombies</b> handle the exhaust.</p>
+<div class="exhaust"><span>zombie processes</span><span>stale worktrees</span><span>node_modules</span><span>build junk</span></div>
+<div class="panel"><img src="panel-real.png" alt=""></div>
+<div class="caption"><b>The author's real menu-bar panel</b><br>after two days of Autopilot</div>
+</main>
+</html>
