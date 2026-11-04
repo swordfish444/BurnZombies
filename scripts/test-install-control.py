@@ -119,6 +119,9 @@ os.execv('/bin/mv',['/bin/mv']+sys.argv[1:])
             assert (["autopilot", "look-only"] in calls) == ("--look-only" in flags), calls
         else:
             assert ["setup", "--harness", client] + flags in calls, calls
+        if "--look-only" in flags:
+            # Burns are held first, before the new app is copied into place and before setup.
+            assert calls[1 if upgrade else 0] == ["autopilot", "look-only"], calls
         if failure is None:
             # A look-only install never says it burns in minute one.
             burns = "burns what's clearly safe" in result.stdout

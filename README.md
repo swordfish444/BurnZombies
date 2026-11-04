@@ -86,7 +86,7 @@ The plain facts BZ gathered about each item, like where it is, its size and what
 <details>
 <summary><b>Can I see what it would burn before it burns anything?</b></summary>
 
-Yes: install with `--look-only` (`curl … | bash -s -- --look-only`). BZ finds, sizes and asks exactly as usual, and **Findings** lists everything it found, why, and what burning it would do. Nothing burns on its own: not the starter rules, not your yes answers, not the AI. The menu says **Look-only · nothing burns** and how much it would burn. When you're ready, choose **Start burning** there, or switch off **Look only** in **Settings → Autopilot**, and what waited burns right away. A **Burn now** you click on one item still burns that item.
+Yes: install with `--look-only` (`curl … | bash -s -- --look-only`). BZ finds, sizes and asks exactly as usual, and **Findings** lists everything it found, why, and what burning it would do. Nothing burns on its own: not the starter rules, not your yes answers, not the AI. The menu says **Look-only · nothing burns** and how much it would burn. When you're ready, choose **Start burning** there, or switch off **Look only** in **Settings → Autopilot**, and BZ starts burning what waited right away. A **Burn now** you click on one item still burns that item.
 
 Already installed? Switch on **Look only** in **Settings → Autopilot**. `--observe-only` is not a dry run: it only turns the AI off, and the rules keep burning.
 

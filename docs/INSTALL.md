@@ -44,7 +44,7 @@ From v0.13.0, releases are signed with BurnZombies' own certificate (not an Appl
 
 BZ takes its first look right away and keeps looking every minute for its first half hour, then every 15 minutes (change that with **Settings → Autopilot → Sweep every**). Within about a minute the panel shows how much it found, like **Found 4.2 GB of leftovers**, and **BZ has N quick questions** when there's something to decide. Safe starter rules burn from the first minute. With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. [What BZ burns on its own →](AUTOPILOT.md)
 
-Installed with `--look-only`, nothing burns: not the starter rules, not your yes answers, not the AI. The panel says **Look-only · nothing burns** and shows how much BZ would burn, like **I'd burn 5.6 GB**; **Findings** shows what and why. Answers still become rules. When you're ready, choose **Start burning** on the panel and everything waiting burns right away. To go back to looking, switch **Look only** on in **Settings → Autopilot**.
+Installed with `--look-only`, nothing burns: not the starter rules, not your yes answers, not the AI. The panel says **Look-only · nothing burns** and shows how much BZ would burn, like **I'd burn 5.6 GB**; **Findings** shows what and why. Answers still become rules. When you're ready, choose **Start burning** on the panel and BZ starts burning what waited right away. To go back to looking, switch **Look only** on in **Settings → Autopilot**.
 
 ## Optional Full Disk Access
 

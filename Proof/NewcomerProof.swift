@@ -233,21 +233,29 @@ private func lookOnlyAfterward(
   // Start burning: what waited burns right away, without waiting for the next look.
   let switched = Date()
   _ = try await engine.apply(.setLookOnly(false), now: now)
-  let merged = ["acme-old-1", "acme-old-2", "acme-old-3"].map { git.appendingPathComponent($0).path }
+  let names: Set<String> = ["acme-old-1", "acme-old-2", "acme-old-3"]
+  let merged = names.map { git.appendingPathComponent($0).path }
   // Junk folders are measured by a background walk that can reach a copy found late only ten
   // minutes on, so the paused copy's junk counts only once BZ listed it to burn.
   let junk = paused.appendingPathComponent("node_modules").path
   let junkListed = last.entries.contains { $0.item.path == junk && $0.status == .burn }
+  // A copy's receipt is written just after its folder goes, so wait for the receipts too.
+  var burned = [AutopilotReceipt]()
   let deadline = Date().addingTimeInterval(180)
-  while Date() < deadline,
-    (junkListed && fm.fileExists(atPath: junk)) || merged.contains(where: fm.fileExists(atPath:))
-  {
+  while Date() < deadline {
+    burned = try store.receipts().filter { $0.outcome == "burned" || $0.outcome == "verifying" }
+    let copies = Set(burned.filter { $0.kind == .worktree }.map(\.name))
+    let junkGone = !junkListed || !fm.fileExists(atPath: junk)
+    if names.isSubset(of: copies) && junkGone && !merged.contains(where: fm.fileExists(atPath:)) {
+      break
+    }
     try await Task.sleep(nanoseconds: 250_000_000)
   }
-  let burned = try store.receipts().filter { $0.outcome == "burned" || $0.outcome == "verifying" }
   print(
     "LOOK-ONLY after Start burning: \(burned.count) burned in \(Int(Date().timeIntervalSince(switched))) s\(junkListed ? "" : " (paused copy's junk not measured yet)") · sandbox ran \(Int(Date().timeIntervalSince(started))) s")
-  check(!burned.isEmpty, "after Start burning: it burns")
+  check(
+    names.isSubset(of: Set(burned.filter { $0.kind == .worktree }.map(\.name))),
+    "after Start burning: each merged copy burns, with its receipt")
   if junkListed {
     check(!fm.fileExists(atPath: junk), "after Start burning: junk inside the paused copy goes")
   }

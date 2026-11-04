@@ -31,7 +31,8 @@ Copies made by Codex, Claude or Conductor are checked like any other copy, so yo
 Install with `--look-only`, or switch on **Settings → Autopilot → Look only**, to see what BurnZombies would burn before it burns anything. It finds, sizes, asks and judges exactly as above, but nothing burns on its own: not the starter rules, not your yes answers, not the AI. The menu says **Look-only · nothing burns** and shows how much it would burn; **Findings** says what and why, with *I'd burn N once you start burning* on top.
 
 - Your answers still become rules, and AI sweeps still run on their usual schedule, at the usual cost. When a sweep asks to burn something, the app holds it without a receipt; its verdicts burn once you start.
-- **Start burning** in the menu, or switching **Look only** off, burns everything waiting right away instead of at the next look.
+- **Start burning** in the menu, or switching **Look only** off, starts burning what waited right away instead of at the next look, within the usual limits per look; the rest follows at the next looks.
+- Switching look-only on holds every burn that hasn't started. One already underway, like a copy halfway through its backup, finishes.
 - **Burn now** on one item in **Findings** is you deciding, so it still burns that item.
 - Reinstalling keeps look-only as it is: `--look-only` turns it on, and only you turn it off.
 

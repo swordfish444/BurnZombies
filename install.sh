@@ -87,6 +87,11 @@ if [[ -e "$app" || -L "$app" ]]; then
     exit 1
   fi
 fi
+# Hold every burn before the new app is in place: an agent's BurnZombies tools can start it
+# before setup below has finished.
+if $look_only && ! "$work/BurnZombies.app/Contents/MacOS/burnzombies" autopilot look-only >/dev/null; then
+  echo 'Look-only setup failed. Nothing installed.' >&2; exit 1
+fi
 replacing=true
 if ! ditto "$work/BurnZombies.app" "$app"; then
   echo 'Install failed; rolling back.' >&2; exit 1

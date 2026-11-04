@@ -47,7 +47,7 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
 ## Tell the operator what happens next
 
 - BZ looks right away and every minute for its first half hour. Within about a minute the menu-bar panel (the skull) shows how much it found, and "BZ has N quick questions" when something needs a decision.
-- Installed with `--look-only`, nothing burns on its own (not the rules below, not yes answers, not the AI) until the operator chooses Start burning in the menu-bar panel; then everything waiting burns right away. The panel says "Look-only · nothing burns" and how much it would burn.
+- Installed with `--look-only`, nothing burns on its own (not the rules below, not yes answers, not the AI) until the operator chooses Start burning in the menu-bar panel; then BZ starts burning what waited right away. The panel says "Look-only · nothing burns" and how much it would burn.
 - Otherwise, from the first minute, starter rules burn on their own (each can be switched off in Settings → Autopilot):
   - programs whose app or chat is gone, idle 6+ hours, with no open port (a program that has barely used the CPU since it started counts as idle from its start);
   - old project copies (git worktrees) already merged, unchanged and untouched for a month, always backed up first;
