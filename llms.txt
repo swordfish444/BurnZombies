@@ -54,6 +54,7 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
   - rebuildable folders (node_modules, build output) inside copies untouched for two weeks.
 - Everything else becomes a one-tap yes/no question. Yes burns all the matches now and later; No keeps them.
 - With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. After that, sweeps run when there is something new to judge, at most every 30 minutes, rechecking every 4 hours, each capped at 15 minutes. The AI may burn on its own only an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor.
+- A new install starts at login, so a restart doesn't stop BZ; macOS shows a notice when BZ adds itself to login items. Settings → Start at login turns that off, and updates keep that choice. An install updated from v0.13.0 or earlier keeps its old setting: off unless the operator turned it on.
 - Never asked about or touched: macOS, apps, anything a running chat is working in, main project folders.
 - Undo: old copies restore from Findings for 30 days (restore points are `refs/burnzombies/retired/…` in each repository; ignored files over 5 MB aren't saved). Junk folders are rebuilt by the operator's tools. Programs get SIGTERM, which can't be undone.
 
@@ -67,7 +68,7 @@ Without it, BZ covers everything except the places macOS protects (Desktop, Docu
 
 ## Update
 
-Read `version`, `doctor` and `access-status` first. Rerun the inspected installer without `--mcp`: it keeps the selected tool, model, thinking level, on/off state and look-only. Add `--observe-only` or `--look-only` only if the operator asks. If the selected tool is missing, setup stops; it never switches tools. The installer closes only its own previous app and refuses a forced replacement.
+Read `version`, `doctor` and `access-status` first. Rerun the inspected installer without `--mcp`: it keeps the selected tool, model, thinking level, on/off state, Start at login and look-only. Add `--observe-only` or `--look-only` only if the operator asks. If the selected tool is missing, setup stops; it never switches tools. The installer closes only its own previous app and refuses a forced replacement.
 
 On an explicit request to change tool or model:
 
@@ -87,9 +88,11 @@ Setup writes only BZ's private configuration, keeps unspecified settings and nev
 
 ## Uninstall
 
-1. `"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" stop-observer "$HOME/Applications/BurnZombies.app"`
+1. Ask the operator to switch off Settings → Start at login (it needs the human). Then `"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" stop-observer "$HOME/Applications/BurnZombies.app"`
 2. Delete `~/Applications/BurnZombies.app`.
 3. Delete `~/Library/Application Support/BurnZombies`.
+
+If the app was deleted first and BurnZombies is still listed in System Settings → General → Login Items, the operator can remove it there.
 
 Restore points stay in each repository and are the only way back for burned copies. Delete them only if the operator asks, inside the repository: `git for-each-ref --format='%(refname)' refs/burnzombies/ | xargs -n1 git update-ref -d`
 

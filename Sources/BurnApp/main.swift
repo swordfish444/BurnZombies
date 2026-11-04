@@ -317,6 +317,7 @@ import UserNotifications
       return
     }
     restoringAccessPresentation = false
+    startAtLoginOnFirstLaunch()
     do {
       let observer = try Monitor()
       monitor = observer
@@ -749,14 +750,28 @@ import UserNotifications
     }
   }
   func login(_ enabled: Bool) {
+    let item = SMAppService.mainApp
     do {
-      if enabled {
-        try SMAppService.mainApp.register()
-      } else {
-        try SMAppService.mainApp.unregister()
-      }
+      try StartAtLogin.choose(
+        enabled, root: Store.defaultRoot, register: { try item.register() },
+        unregister: { try item.unregister() })
       objectWillChange.send()
     } catch { message = "Login item could not be changed: \(error.localizedDescription)" }
+  }
+  /// A fresh install starts at login. This runs before the observer saves its first catalog,
+  /// which is how an update from an older version tells itself apart from a new install.
+  private func startAtLoginOnFirstLaunch() {
+    guard
+      StartAtLogin.applies(
+        bundle: Bundle.main.bundleURL, environment: ProcessInfo.processInfo.environment)
+    else { return }
+    let item = SMAppService.mainApp
+    let outcome = StartAtLogin.decideAtLaunch(
+      root: Store.defaultRoot, isEnabled: { item.status == .enabled },
+      register: { try item.register() })
+    if case .refused(let reason) = outcome {
+      message = "Start at login could not be turned on: \(reason)"
+    }
   }
   // MARK: Autopilot commands
   // Each sends its AutopilotCommand through `autopilotRunner` and shows the snapshot it returns.
@@ -1147,6 +1162,9 @@ struct Dashboard: View {
         "Start at login",
         isOn: Binding(get: { SMAppService.mainApp.status == .enabled }, set: model.login)
       ).clickPointer().disabled(model.demo)
+      Text(
+        "On for a new install, so Autopilot keeps running after a restart. Updates keep your choice."
+      ).font(.caption).foregroundStyle(.secondary)
       Divider()
       Text("Protected executables").font(.headline)
       if model.state.catalog.preferences.protectedExecutables.isEmpty {

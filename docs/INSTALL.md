@@ -6,7 +6,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 macOS 14+, Apple Silicon or Intel. The installer checks the download's checksum and signature, puts **BurnZombies.app** in `~/Applications` and starts it in the menu bar: look for the skull. No account, no API key, no sudo, no package manager and no restart.
 
-BZ keeps running with no chat open. To bring it back after you restart your Mac, turn on **Start at login** in Settings. To remove it, see [Uninstall](#uninstall).
+BZ keeps running with no chat open, and a new install starts at login, so it comes back after you restart your Mac. macOS shows a notice when BZ adds itself to your login items. To stop that, switch off **Start at login** in Settings; updates keep your choice. Updating from v0.13.0 or earlier keeps the switch as it was; if it's off, turn it on in Settings. To remove BZ, see [Uninstall](#uninstall).
 
 ## With or without Claude Code or Codex
 
@@ -108,7 +108,7 @@ An agent can set the model without opening a window:
 
 ## Uninstall
 
-1. Stop BZ:
+1. Switch off **Start at login** in Settings, then stop BZ:
 
    ```sh
    ~/Applications/BurnZombies.app/Contents/MacOS/burnzombies stop-observer ~/Applications/BurnZombies.app
@@ -116,6 +116,8 @@ An agent can set the model without opening a window:
 
 2. Delete `~/Applications/BurnZombies.app`.
 3. Delete `~/Library/Application Support/BurnZombies`.
+
+Deleted the app first? If BurnZombies is still listed in **System Settings → General → Login Items**, remove it there.
 
 Restore points stay in each repository until you delete them, and they are the only way back for copies BZ burned there. To delete them, run this inside the repository:
 
