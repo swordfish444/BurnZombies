@@ -28,7 +28,31 @@ public final class AutopilotStore: @unchecked Sendable {
   }
 
   public func memory() throws -> AutopilotMemory {
-    try lock.withLock { try load("memory.json", limit: 8 << 20, empty: AutopilotMemory()) }
+    try lock.withLock { try loadMemory() }
+  }
+
+  /// Memory as saved, migrated to version 2 the first time memory from before lessons is read.
+  /// The version-1 file is kept as `memory.v1.json`, once: an existing copy is never replaced.
+  /// Without that copy nothing is migrated, and the memory is used as it is until the next read.
+  /// A failed save doesn't fail the read, since the engine treats unreadable memory as empty and
+  /// would lose the owner's keeps; the next read migrates again. Call with `lock` held.
+  private func loadMemory() throws -> AutopilotMemory {
+    let memory = try load("memory.json", limit: 8 << 20, empty: AutopilotMemory())
+    guard memory.version < 2 else { return memory }
+    let backup = directory.appendingPathComponent("memory.v1.json")
+    if !FileManager.default.fileExists(atPath: backup.path) {
+      let file = directory.appendingPathComponent("memory.json")
+      do {
+        try store.write(store.read(file, limit: 8 << 20), to: backup, limit: 8 << 20)
+      } catch {
+        return memory
+      }
+    }
+    // Unreadable receipts leave the tallies empty rather than the lessons unmigrated.
+    let receipts = (try? load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())) ?? []
+    let migrated = AutopilotPolicy.migrate(memory, receipts: receipts)
+    try? save(migrated, "memory.json", limit: 8 << 20)
+    return migrated
   }
   public func save(memory: AutopilotMemory) throws {
     var bounded = memory
@@ -44,7 +68,7 @@ public final class AutopilotStore: @unchecked Sendable {
     throws -> T
   {
     try lock.withLock {
-      var memory = try load("memory.json", limit: 8 << 20, empty: AutopilotMemory())
+      var memory = try loadMemory()
       let result = try change(&memory)
       if memory.judgments.count > Self.maximumJudgments {
         let keep = memory.judgments.values.sorted { $0.date > $1.date }.prefix(

@@ -5,6 +5,7 @@ import Foundation
 func autopilotLearningProof() async throws {
   try await lessonsProof()
   try guessProof()
+  try await migrationProof()
 }
 
 private func copy(_ id: String, _ facts: [String: String], bytes: UInt64 = 1 << 30)

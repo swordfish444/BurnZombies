@@ -207,6 +207,19 @@ public struct AutopilotScore: Codable, Sendable, Equatable {
   }
 }
 
+/// What one lesson has done: the burns it authorized, what they freed, and how many the owner
+/// undid. Counted as burns are recorded, because receipts.json keeps only the latest 500.
+public struct AutopilotTally: Codable, Sendable, Equatable {
+  public var count: Int
+  public var bytes: UInt64
+  public var undone: Int
+  public init(count: Int = 0, bytes: UInt64 = 0, undone: Int = 0) {
+    self.count = count
+    self.bytes = bytes
+    self.undone = undone
+  }
+}
+
 /// What Autopilot's cleanups freed. Kept apart from the receipts, which keep only the latest 500,
 /// so the totals never go down when old receipts are trimmed.
 public struct AutopilotImpact: Codable, Sendable, Equatable {
@@ -330,7 +343,9 @@ public struct AutopilotReceipt: Codable, Sendable, Identifiable, Equatable {
 }
 
 public struct AutopilotMemory: Codable, Sendable, Equatable {
-  public var version = 1
+  /// 2 since lessons (`AutopilotPolicy.migrate`). A decoded file keeps its own version, so memory
+  /// saved before lessons is found and migrated once.
+  public var version = 2
   /// Operator rules learned from answers.
   public var rules: [AutopilotRule] = []
   public var starterDisabled: Set<String> = []
@@ -341,6 +356,8 @@ public struct AutopilotMemory: Codable, Sendable, Equatable {
   /// BZ's guesses checked against the owner's answers, oldest first, at most
   /// `AutopilotPolicy.maximumScores`.
   public var scores: [AutopilotScore] = []
+  /// What each lesson has done, by lesson id.
+  public var tallies: [String: AutopilotTally] = [:]
   public init() {}
   /// Memory saved before a field existed still loads. The original fields are required as they
   /// always were; every field added since is decoded with `decodeIfPresent` and falls back to its
@@ -354,6 +371,7 @@ public struct AutopilotMemory: Codable, Sendable, Equatable {
     questions = try values.decode([AutopilotQuestion].self, forKey: .questions)
     judgments = try values.decode([String: AutopilotJudgment].self, forKey: .judgments)
     scores = try values.decodeIfPresent([AutopilotScore].self, forKey: .scores) ?? []
+    tallies = try values.decodeIfPresent([String: AutopilotTally].self, forKey: .tallies) ?? [:]
   }
   public var answers: Int { questions.filter { $0.answer == .yes || $0.answer == .no }.count }
   public var openQuestions: [AutopilotQuestion] { questions.filter(\.isOpen) }

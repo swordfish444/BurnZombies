@@ -230,7 +230,7 @@ public actor Autopilot {
     case .disk:
       receipt = await Task.detached { sources.reclaimDisk(item, authority) }.value
     }
-    try? store.append(receipt)
+    if (try? store.append(receipt)) != nil { tally([receipt]) }
     let verb = receipt.outcome == "refused" ? "Skipped" : "Burned"
     try? store.updateSweep {
       $0.append(
@@ -254,13 +254,27 @@ public actor Autopilot {
       }
     }
     guard !updates.isEmpty else { return }
-    try? store.updateReceipts { all in
-      for i in all.indices {
-        if let (outcome, detail) = updates[all[i].id] {
+    var stopped = [AutopilotReceipt]()
+    do {
+      try store.updateReceipts { all in
+        for i in all.indices where all[i].outcome == "verifying" {
+          guard let (outcome, detail) = updates[all[i].id] else { continue }
           all[i].outcome = outcome
           all[i].detail = detail
+          if outcome == "burned" { stopped.append(all[i]) }
         }
       }
+    } catch { return }
+    // Counted only once saved as burned, so the next tick never counts the same stop again.
+    tally(stopped)
+  }
+
+  /// Counts burns toward the lessons that authorized them, once each, as they are recorded.
+  func tally(_ receipts: [AutopilotReceipt]) {
+    let taught = receipts.filter { $0.outcome == "burned" && $0.authority.hasPrefix("rule:") }
+    guard !taught.isEmpty else { return }
+    try? store.updateMemory { memory in
+      for receipt in taught { AutopilotPolicy.tally(receipt, into: &memory) }
     }
   }
 
@@ -430,6 +444,8 @@ public actor Autopilot {
               title: AutopilotPolicy.ruleTitle(general, answer: answer), created: now,
               questionID: q.id),
             into: &memory.rules)
+          // A lesson the new one took in brings its tally along.
+          AutopilotPolicy.carryTallies(&memory)
         }
       }
       refreshQuestions(now: now)
@@ -456,8 +472,10 @@ public actor Autopilot {
         let restore = receipt.restore
       else { throw StoreError.message("There's nothing to restore for that one.") }
       try await Task.detached { [sources] in try sources.restoreWorktree(receipt) }.value
+      var wasBurned = false
       try store.updateReceipts { all in
         if let i = all.firstIndex(where: { $0.id == receiptID }) {
+          wasBurned = all[i].outcome == "burned"
           all[i].outcome = "restored"
           all[i].detail = "Restored at \(restore.path)."
         }
@@ -465,6 +483,8 @@ public actor Autopilot {
       try store.updateMemory {
         $0.keptItems.insert(receipt.itemID)
         $0.keptItems.insert("path:" + restore.path)
+        // The burn already counted toward its lesson; restoring it only marks it undone.
+        if wasBurned { AutopilotPolicy.undone(receipt, into: &$0) }
       }
     case .forgetRule(let id):
       try store.updateMemory { memory in
@@ -474,6 +494,7 @@ public actor Autopilot {
           memory.questions.removeAll { taught.contains($0.id) }
         }
         memory.rules.removeAll { $0.id == id }
+        AutopilotPolicy.carryTallies(&memory)
       }
     case .setStarter(let id, let enabled):
       try store.updateMemory { memory in

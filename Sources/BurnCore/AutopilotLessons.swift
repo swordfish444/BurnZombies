@@ -99,6 +99,98 @@ extension AutopilotPolicy {
     return ids
   }
 
+  /// Version 1 → 2:
+  /// - regeneralize operator rules whose question pins recency (new id; old id goes to formerIDs);
+  /// - absorb with learn();
+  /// - seed tallies from receipts;
+  /// - seed scores from AutopilotEval.replay(memory.questions).scores.
+  /// Version >= 2 returns its input unchanged.
+  public static func migrate(_ memory: AutopilotMemory, receipts: [AutopilotReceipt])
+    -> AutopilotMemory
+  {
+    guard memory.version < 2 else { return memory }
+    var result = memory
+    result.version = 2
+    var asked = [String: AutopilotQuestion]()
+    for question in memory.questions where asked[question.id] == nil {
+      asked[question.id] = question
+    }
+    var rules: [AutopilotRule] = []
+    for rule in memory.rules { learn(regeneralized(rule, asked: asked), into: &rules) }
+    result.rules = rules
+    // Seeded from the receipts once; from now on burns count as they are recorded.
+    result.tallies = [:]
+    for receipt in receipts { tally(receipt, into: &result) }
+    if result.scores.isEmpty { result.scores = AutopilotEval.replay(memory.questions).scores }
+    return result
+  }
+
+  /// A rule from before lessons, made general the way an answer is now. Its old id goes to
+  /// `formerIDs`, so receipts that name it still count toward the lesson. A rule whose question
+  /// doesn't pin recency comes back unchanged.
+  static func regeneralized(_ rule: AutopilotRule, asked: [String: AutopilotQuestion])
+    -> AutopilotRule
+  {
+    guard rule.source == .operator, let id = rule.questionID, let question = asked[id],
+      pinsRecency(question.kind, question.match)
+    else { return rule }
+    var lesson = rule
+    lesson.match = lessonMatch(question.kind, question.match, verdict: rule.verdict)
+    lesson.id = AutopilotRule.key(kind: rule.kind, match: lesson.match) + ":" + rule.verdict.rawValue
+    lesson.formerIDs = adding([rule.id], to: rule.formerIDs, except: lesson.id)
+    // Titled like a new answer's lesson: without the project or its maker.
+    var general = question
+    general.match = generalize(question.kind, question.match)
+    lesson.title = ruleTitle(general, answer: rule.verdict == .burn ? .yes : .no)
+    return lesson
+  }
+
+  /// The current lesson id for an authority "rule:<id>", where <id> is current or in some formerIDs.
+  public static func lessonID(forAuthority authority: String, rules: [AutopilotRule]) -> String? {
+    let prefix = "rule:"
+    guard authority.hasPrefix(prefix) else { return nil }
+    let id = String(authority.dropFirst(prefix.count))
+    if rules.contains(where: { $0.id == id }) { return id }
+    return rules.first { $0.formerIDs?.contains(id) == true }?.id
+  }
+
+  /// outcome "burned": count+1, bytes += receipt.bytes. outcome "restored": also count, plus undone+1.
+  /// Called once per receipt outcome.
+  public static func tally(_ receipt: AutopilotReceipt, into memory: inout AutopilotMemory) {
+    guard receipt.outcome == "burned" || receipt.outcome == "restored",
+      let id = lessonID(forAuthority: receipt.authority, rules: memory.rules)
+    else { return }
+    var mark = memory.tallies[id] ?? AutopilotTally()
+    mark.count += 1
+    mark.bytes += receipt.bytes
+    if receipt.outcome == "restored" { mark.undone += 1 }
+    memory.tallies[id] = mark
+  }
+
+  /// A restore of a burn its lesson already counted: only marks it undone.
+  static func undone(_ receipt: AutopilotReceipt, into memory: inout AutopilotMemory) {
+    guard let id = lessonID(forAuthority: receipt.authority, rules: memory.rules) else { return }
+    var mark = memory.tallies[id] ?? AutopilotTally()
+    mark.undone += 1
+    memory.tallies[id] = mark
+  }
+
+  /// Tallies follow their lessons: a lesson taken into another adds its tally to that one's, and a
+  /// forgotten lesson's tally goes with it.
+  public static func carryTallies(_ memory: inout AutopilotMemory) {
+    let current = Set(memory.rules.map(\.id))
+    for key in memory.tallies.keys.sorted() where !current.contains(key) {
+      guard let mark = memory.tallies.removeValue(forKey: key),
+        let owner = memory.rules.first(where: { $0.formerIDs?.contains(key) == true })
+      else { continue }
+      var into = memory.tallies[owner.id] ?? AutopilotTally()
+      into.count += mark.count
+      into.bytes += mark.bytes
+      into.undone += mark.undone
+      memory.tallies[owner.id] = into
+    }
+  }
+
   /// `list` with each new id appended once; nil stays nil when there is nothing to add.
   static func adding(_ ids: [String], to list: [String]?, except own: String?) -> [String]? {
     var result = list ?? []
