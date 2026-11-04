@@ -110,35 +110,52 @@ final class AutopilotSkipped: @unchecked Sendable {
   func get() -> [String] { lock.withLock { places } }
 }
 
-/// Measuring junk folders is slow, so the list is refreshed at most every six hours in
-/// the background and pruned immediately after a burn.
+/// Measuring junk folders is slow, so the whole list is walked at most every six hours in the
+/// background and pruned immediately after a burn. A copy the inventory reports later, or dates
+/// later, is walked on its own right away: a new install's first scan reports copies over several
+/// ticks and dates each one only when it inspects it.
 final class AutopilotJunkCache: @unchecked Sendable {
   private let lock = NSLock()
   private var cached: [AutopilotItem] = []
   private var refreshed: Date?
-  private var walked: Set<String> = []
+  /// Copies walked since the last full walk, by record, and whether each one was dated then.
+  private var walked: [String: Bool] = [:]
   private var running = false
   func items(_ records: [WorktreeRecord], home: String, protected: ProtectedLocations)
     -> [AutopilotItem]
   {
-    let paths = Set(records.map(\.path))
-    let due: Bool = lock.withLock {
-      guard !running else { return false }
+    let walk: (records: [WorktreeRecord], everything: Bool)? = lock.withLock {
+      guard !running else { return nil }
       let age = refreshed.map { Date().timeIntervalSince($0) } ?? .infinity
-      // Copies the last walk didn't know about are walked soon, so junk inside old copies shows up
-      // with a new install's first inventory instead of six hours later.
-      let unseen = !paths.isSubset(of: walked) && (walked.isEmpty || age >= 600)
-      guard age >= 6 * 3600 || unseen else { return false }
+      let everything = age >= 6 * 3600
+      if everything { walked = [:] }
+      // Junk in a copy of unknown age never looks old, so a copy walked before it was dated is
+      // walked again once it is.
+      let unseen = records.filter { record in
+        guard let dated = walked[record.id] else { return true }
+        return !dated && Self.dated(record)
+      }
+      guard everything || !unseen.isEmpty else { return nil }
       running = true
-      walked = paths
-      return true
+      for record in unseen { walked[record.id] = Self.dated(record) }
+      return (unseen, everything)
     }
-    if due {
+    if let walk {
       Thread.detachNewThread { [self] in
-        let fresh = AutopilotDisk.items(worktrees: records, home: home, protected: protected)
+        // Only the full walk measures the global caches again.
+        let fresh = AutopilotDisk.items(
+          worktrees: walk.records, home: home, caches: walk.everything, protected: protected)
         lock.withLock {
-          cached = fresh
-          refreshed = Date()
+          if walk.everything {
+            cached = fresh
+            refreshed = Date()
+          } else {
+            let ids = Set(fresh.map(\.id))
+            var merged = cached.filter { !ids.contains($0.id) }
+            merged += fresh
+            merged.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
+            cached = merged
+          }
           running = false
         }
       }
@@ -154,6 +171,10 @@ final class AutopilotJunkCache: @unchecked Sendable {
   func forget(under path: String?) {
     guard let path else { return }
     lock.withLock { cached.removeAll { $0.path == path || ($0.path ?? "").hasPrefix(path + "/") } }
+  }
+  /// Whether a walk can tell how old the copy is: junk counts as inside an old copy only then.
+  private static func dated(_ record: WorktreeRecord) -> Bool {
+    record.main || record.lastFileChange != nil || record.lastCommitAt != nil
   }
 }
 

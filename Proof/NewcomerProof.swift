@@ -181,6 +181,9 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
     if junkCleared == nil, !fm.fileExists(atPath: paused.appendingPathComponent("node_modules").path) {
       junkCleared = minute
     }
+    // A real minute leaves background work, like measuring junk folders, plenty of time; a
+    // simulated one leaves it a quarter of a second.
+    try await Task.sleep(nanoseconds: 250_000_000)
   }
   if lookOnly {
     try await lookOnlyAfterward(
@@ -228,6 +231,10 @@ private func lookOnlyAfterward(
     "look-only: every copy stays")
   check(kill(helper, 0) == 0, "look-only: the helper keeps running")
   check(last.count(.burn) > 0, "look-only: BZ shows what it would burn")
+  let junk = paused.appendingPathComponent("node_modules").path
+  check(
+    last.entries.contains { $0.item.path == junk && $0.status == .burn },
+    "look-only: the paused copy's junk is among what BZ would burn")
   equal(last.sweep.lookOnly, true, "look-only: the snapshot says so")
 
   // Start burning: what waited burns right away, without waiting for the next look.
@@ -235,30 +242,24 @@ private func lookOnlyAfterward(
   _ = try await engine.apply(.setLookOnly(false), now: now)
   let names: Set<String> = ["acme-old-1", "acme-old-2", "acme-old-3"]
   let merged = names.map { git.appendingPathComponent($0).path }
-  // Junk folders are measured by a background walk that can reach a copy found late only ten
-  // minutes on, so the paused copy's junk counts only once BZ listed it to burn.
-  let junk = paused.appendingPathComponent("node_modules").path
-  let junkListed = last.entries.contains { $0.item.path == junk && $0.status == .burn }
   // A copy's receipt is written just after its folder goes, so wait for the receipts too.
   var burned = [AutopilotReceipt]()
   let deadline = Date().addingTimeInterval(180)
   while Date() < deadline {
     burned = try store.receipts().filter { $0.outcome == "burned" || $0.outcome == "verifying" }
     let copies = Set(burned.filter { $0.kind == .worktree }.map(\.name))
-    let junkGone = !junkListed || !fm.fileExists(atPath: junk)
+    let junkGone = !fm.fileExists(atPath: junk)
     if names.isSubset(of: copies) && junkGone && !merged.contains(where: fm.fileExists(atPath:)) {
       break
     }
     try await Task.sleep(nanoseconds: 250_000_000)
   }
   print(
-    "LOOK-ONLY after Start burning: \(burned.count) burned in \(Int(Date().timeIntervalSince(switched))) s\(junkListed ? "" : " (paused copy's junk not measured yet)") · sandbox ran \(Int(Date().timeIntervalSince(started))) s")
+    "LOOK-ONLY after Start burning: \(burned.count) burned in \(Int(Date().timeIntervalSince(switched))) s · sandbox ran \(Int(Date().timeIntervalSince(started))) s")
   check(
     names.isSubset(of: Set(burned.filter { $0.kind == .worktree }.map(\.name))),
     "after Start burning: each merged copy burns, with its receipt")
-  if junkListed {
-    check(!fm.fileExists(atPath: junk), "after Start burning: junk inside the paused copy goes")
-  }
+  check(!fm.fileExists(atPath: junk), "after Start burning: junk inside the paused copy goes")
   check(!merged.contains(where: fm.fileExists(atPath:)), "after Start burning: the merged copies go")
   check(fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path), "the paused copy's work stays")
   check(

@@ -14,6 +14,7 @@ func autopilotDiskProof() async throws {
   try adkThreadsProof(base: base + "/threads", now: now)
   try adkSizeProof(base: base + "/sizes")
   try adkJunkProof(base: base + "/junk", now: now)
+  try await adkJunkCacheProof(base: base + "/cache", now: now)
 }
 
 private func adkWrite(_ text: String, to path: String, modified: Date? = nil) throws {
@@ -467,6 +468,13 @@ private func adkJunkProof(base: String, now: Date) throws {
     .first { $0.path == old + "/node_modules" }
   equal(unknownNodes?.facts["home"], "repo", "unknown activity must not look stale")
 
+  let copiesOnly = AutopilotDisk.items(
+    worktrees: [stale] + guarded, home: home, caches: false, now: now, sizer: sizer)
+  equal(
+    Set(copiesOnly.compactMap { $0.path }),
+    expected.subtracting([derived + "/MyApp-abc", playwright, npm]),
+    "without the global caches, only junk in checkouts")
+
   let both = AutopilotDisk.items(worktrees: [primary, stale], home: home, now: now, sizer: sizer)
   equal(both.count, expected.count, "listing the main checkout as well adds nothing")
   equal(Set(both.compactMap { $0.path }).count, both.count, "no folder is listed twice")
@@ -597,4 +605,86 @@ private func adkJunkProof(base: String, now: Date) throws {
   check(
     adkNear(lastChange, staleDate),
     "clearing junk counted as using the copy: \(String(describing: lastChange))")
+}
+
+/// Autopilot's live junk list walks every copy at most every six hours, plus each copy the
+/// inventory reports after a walk began and each copy whose age it learns after its walk, on its
+/// own and right away: a new install's first scan reports copies over several ticks, and their
+/// ages only once each copy is inspected.
+private func adkJunkCacheProof(base: String, now: Date) async throws {
+  let fm = FileManager.default
+  let day: TimeInterval = 86_400
+  let home = base + "/home"
+  let repo = home + "/git/shop"
+  try adkRepository(repo)
+  try adkWrite("node_modules/\ndist/\n", to: repo + "/.gitignore")
+  try adkGit(repo, ["add", "."])
+  try adkGit(repo, ["commit", "-m", "fixture"])
+  // The live walk measures real allocated bytes, so each junk folder clones one 100 MB chunk.
+  let chunk = base + "/chunk"
+  try Data(count: 104_857_600).write(to: URL(fileURLWithPath: chunk))
+  func junk(_ folder: String) throws {
+    try fm.createDirectory(atPath: folder, withIntermediateDirectories: true)
+    if clonefile(chunk, folder + "/part", 0) != 0 {
+      try fm.copyItem(atPath: chunk, toPath: folder + "/part")
+    }
+  }
+  var primary = WorktreeRecord(id: "shop", path: repo, repository: repo + "/.git")
+  primary.main = true
+  func copy(_ name: String) throws -> WorktreeRecord {
+    let path = home + "/git/" + name
+    try adkGit(repo, ["worktree", "add", "--detach", path])
+    try junk(path + "/node_modules/pkg")
+    var record = WorktreeRecord(id: name, path: path, repository: repo + "/.git")
+    record.lastFileChange = now.addingTimeInterval(-30 * day)
+    record.lastCommitAt = now.addingTimeInterval(-31 * day)
+    return record
+  }
+  let first = try copy("shop-first")
+  let late = try copy("shop-late")
+  let inspected = try copy("shop-inspected")
+  var pending = inspected
+  pending.lastFileChange = nil
+  pending.lastCommitAt = nil
+
+  let state = URL(fileURLWithPath: base + "/state")
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: state, accessCheck: fixtureAccess)
+  let sources = AutopilotSources.live(monitor: monitor, root: state, home: home)
+  /// Asks for the list as each Autopilot tick does, until `done` holds or `seconds` pass.
+  func ask(
+    _ records: [WorktreeRecord], seconds: TimeInterval = 10, until done: ([AutopilotItem]) -> Bool
+  ) async -> [AutopilotItem] {
+    let deadline = Date().addingTimeInterval(seconds)
+    var items = sources.disk(records)
+    while !done(items), Date() < deadline {
+      try? await Task.sleep(nanoseconds: 50_000_000)
+      items = sources.disk(records)
+    }
+    return items
+  }
+  func place(_ record: WorktreeRecord, _ items: [AutopilotItem]) -> String? {
+    items.first { $0.path == record.path + "/node_modules" }?.facts["home"]
+  }
+
+  var items = await ask([primary, first]) { place(first, $0) != nil }
+  equal(place(first, items), "stale-worktree", "the first walk lists junk in an old copy")
+  try junk(first.path + "/dist")
+  items = await ask([primary, first, late]) { place(late, $0) != nil }
+  equal(
+    place(late, items), "stale-worktree",
+    "a copy found after the first walk is walked within seconds, not ten minutes on")
+  items = await ask([primary, first, late, pending]) { place(inspected, $0) != nil }
+  equal(place(inspected, items), "repo", "a copy of unknown age is walked, and never looks old")
+  items = await ask([primary, first, late, inspected]) { place(inspected, $0) == "stale-worktree" }
+  equal(
+    place(inspected, items), "stale-worktree", "a copy is walked again once its age is known")
+  check(place(first, items) != nil && place(late, items) != nil, "earlier walks' junk stays listed")
+  items = await ask([primary, first, late, inspected], seconds: 1) {
+    $0.contains { $0.path == first.path + "/dist" }
+  }
+  checkFalse(
+    items.contains { $0.path == first.path + "/dist" },
+    "a copy already walked waits for the six-hourly walk instead of being walked every tick")
+  await monitor.shutdownWorktrees()
 }

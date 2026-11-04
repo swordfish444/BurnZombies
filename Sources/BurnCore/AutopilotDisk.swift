@@ -52,11 +52,12 @@ public enum AutopilotDisk {
   }
 
   /// Rebuildable folders of at least 100 MB: inside live checkouts (and the main checkout each
-  /// one belongs to) and in the global developer caches. Nothing outside `home`, no link, no
-  /// private area, nothing Git tracks. Work stops at a time budget; the rest comes next time.
+  /// one belongs to) and, with `caches`, in the global developer caches. Nothing outside `home`,
+  /// no link, no private area, nothing Git tracks. Work stops at a time budget; the rest comes
+  /// next time.
   public static func items(
-    worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), now: Date = Date(),
-    sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) },
+    worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), caches: Bool = true,
+    now: Date = Date(), sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) },
     protected: ProtectedLocations? = nil
   ) -> [AutopilotItem] {
     let protected = protected ?? .limited(homes: [home])
@@ -65,7 +66,7 @@ public enum AutopilotDisk {
     let deadline = Date().addingTimeInterval(timeBudget)
     var found: [String: AutopilotItem] = [:]
 
-    for cache in globalCaches {
+    for cache in globalCaches where caches {
       let location = base + "/" + cache.path
       guard Date() < deadline, refusal(location, home: base, protected: protected) == nil else {
         continue
