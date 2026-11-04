@@ -737,10 +737,11 @@ private func aiBriefProof() async throws {
   let brief =
     "The owner's lessons (catalog `lessons`) are their intent and your brief: judge unsure items by why they burn or keep things, ask only where no lesson reaches, never contradict one."
   check(prompt.contains(brief), "the lessons are the AI's brief")
-  let procedure = prompt.range(of: "Procedure (")?.lowerBound
-  check(
-    prompt.range(of: brief).map { $0.lowerBound < (procedure ?? $0.lowerBound) } == true,
-    "before the procedure")
+  let briefStart: String.Index? = prompt.range(of: brief)?.lowerBound
+  let procedureStart: String.Index? = prompt.range(of: "Procedure (")?.lowerBound
+  var briefFirst = false
+  if let briefStart, let procedureStart { briefFirst = briefStart < procedureStart }
+  check(briefFirst, "before the procedure")
   check(
     prompt.contains("Include `guess` (yes or no): what you think the owner will answer."),
     "the AI guesses the owner's answer")

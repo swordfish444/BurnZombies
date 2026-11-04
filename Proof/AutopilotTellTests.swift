@@ -12,36 +12,51 @@ func tellProof() async throws {
   try await expiryProof()
   try await forgetTellProof()
   try await askActProof()
+  try await undoSafetyProof()
 }
 
 // MARK: A Mac BZ has learned about
 
-/// What an engine's fake sources did. Something burned is gone until it is restored.
-private final class TellWorld: @unchecked Sendable {
+/// What an engine's fake sources did. Something burned is gone until it is restored. A copy can
+/// take `delay` to retire, the way Git takes its time.
+final class TellWorld: @unchecked Sendable {
   let burns = Calls()
   let restores = Calls()
-  let copies: [AutopilotItem]
-  let programs: [AutopilotItem]
-  init(copies: [AutopilotItem] = [], programs: [AutopilotItem] = []) {
-    self.copies = copies
-    self.programs = programs
+  let delay: TimeInterval
+  private let lock = NSLock()
+  private var items: [AutopilotItem]
+  private var started: [String: Date] = [:]
+  init(copies: [AutopilotItem] = [], programs: [AutopilotItem] = [], delay: TimeInterval = 0) {
+    items = copies + programs
+    self.delay = delay
   }
+  var copies: [AutopilotItem] { lock.withLock { items.filter { $0.kind == .worktree } } }
+  var programs: [AutopilotItem] { lock.withLock { items.filter { $0.kind == .process } } }
+  /// Something new shows up on the Mac.
+  func add(_ item: AutopilotItem) { lock.withLock { items.append(item) } }
+  /// When BZ started to burn it.
+  func startedBurning(_ id: String) -> Date? { lock.withLock { started[id] } }
   func present(_ items: [AutopilotItem]) -> [AutopilotItem] {
     let burned = Set(burns.all)
     let back = Set(restores.all)
     return items.filter { !burned.contains($0.id) || back.contains($0.id) }
+  }
+  private func starting(_ id: String) {
+    lock.withLock { started[id] = Date() }
+    burns.add(id)
   }
   var sources: AutopilotSources {
     AutopilotSources(
       processes: { _ in self.present(self.programs) },
       worktrees: { _, _, delivery in (self.present(self.copies), delivery) },
       burnProcess: { item, _, _ in
-        self.burns.add(item.id)
+        self.starting(item.id)
         return UUID()
       },
       processOutcome: { _ in ("verified", "") },
       retireWorktree: { item, authority in
-        self.burns.add(item.id)
+        self.starting(item.id)
+        if self.delay > 0 { Thread.sleep(forTimeInterval: self.delay) }
         let backup = AutopilotRestore(
           repository: "/fixture/.git", path: "/fixture/" + item.name,
           ref: "refs/fixture/" + item.name, head: String(repeating: "0", count: 40), branch: nil,
@@ -55,18 +70,21 @@ private final class TellWorld: @unchecked Sendable {
 }
 
 /// A copy BZ isn't sure about: untouched for a week, with work only on this Mac.
-private func weekCopy(_ name: String, changes: String = "none", now: Date) -> AutopilotItem {
+func weekCopy(
+  _ name: String, changes: String = "none", stale: String = "week",
+  bytes: UInt64 = 400_000_000, now: Date
+) -> AutopilotItem {
   AutopilotItem(
-    id: "worktree:" + name, kind: .worktree, name: name, bytes: 400_000_000,
+    id: "worktree:" + name, kind: .worktree, name: name, bytes: bytes,
     facts: [
       "repo": "web-app", "place": "patrol6", "saved": "local", "changes": changes,
-      "stale": "week", "inUse": "no", "thread": "none",
+      "stale": stale, "inUse": "no", "thread": "none",
     ], lastUsed: now.addingTimeInterval(-10 * 86_400),
     title: name.replacingOccurrences(of: "-", with: " "))
 }
 
 /// Three copies untouched for a week, 1.2 GB in all, one with unsaved changes.
-private func threeCopies(_ now: Date) -> [AutopilotItem] {
+func threeCopies(_ now: Date) -> [AutopilotItem] {
   [
     weekCopy("fix-login", now: now), weekCopy("dark-mode", now: now),
     weekCopy("tidy-footer", changes: "small", now: now),
@@ -74,7 +92,7 @@ private func threeCopies(_ now: Date) -> [AutopilotItem] {
 }
 
 /// A Node program serving a port, idle for 6 hours; its app may still be open.
-private func idleServer(_ name: String, now: Date) -> AutopilotItem {
+func idleServer(_ name: String, now: Date) -> AutopilotItem {
   AutopilotItem(
     id: "process:" + name, kind: .process, name: name, bytes: 700_000_000,
     facts: [
@@ -84,7 +102,7 @@ private func idleServer(_ name: String, now: Date) -> AutopilotItem {
 }
 
 /// A question the owner said yes to.
-private func ownerYes(
+func ownerYes(
   _ kind: AutopilotKind, _ match: [String: [String]], risks: [String], at date: Date
 ) -> AutopilotQuestion {
   var question = AutopilotQuestion(
@@ -98,7 +116,7 @@ private func ownerYes(
 
 /// Memory after the owner said yes to `answers`, learned as lessons, and BZ guessed its last 5 on
 /// `subject` right.
-private func trusted(_ subject: String, _ answers: [AutopilotQuestion], now: Date)
+func trustedOn(_ subject: String, _ answers: [AutopilotQuestion], now: Date)
   -> AutopilotMemory
 {
   var memory = AutopilotMemory()
@@ -119,14 +137,14 @@ private func trusted(_ subject: String, _ answers: [AutopilotQuestion], now: Dat
 /// R4: the owner said yes to copies untouched for a month with work only on this Mac, and to ones
 /// with unsaved changes. Their lessons leave copies untouched for a week unsure. The first lesson
 /// has burned 4 copies.
-private func trustedCopies(now: Date) -> AutopilotMemory {
+func trustedCopies(now: Date) -> AutopilotMemory {
   let local = ownerYes(
     .worktree, ["saved": ["local"], "stale": ["month"]], risks: ["saved=local"],
     at: now.addingTimeInterval(-3 * 86_400))
   let unsaved = ownerYes(
     .worktree, ["changes": ["small"], "stale": ["month"]], risks: ["changes=small"],
     at: now.addingTimeInterval(-2 * 86_400))
-  var memory = trusted("worktree:", [local, unsaved], now: now)
+  var memory = trustedOn("worktree:", [local, unsaved], now: now)
   if let first = memory.rules.first {
     memory.tallies[first.id] = AutopilotTally(count: 4, bytes: 9_000_000_000, undone: 0)
   }
@@ -134,7 +152,7 @@ private func trustedCopies(now: Date) -> AutopilotMemory {
 }
 
 /// An engine over `world` whose memory starts as `memory`, in a fresh temporary root.
-private func tellEngine(_ name: String, _ world: TellWorld, _ memory: AutopilotMemory) throws
+func tellEngine(_ name: String, _ world: TellWorld, _ memory: AutopilotMemory) throws
   -> (Autopilot, AutopilotStore, URL)
 {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -219,28 +237,56 @@ private func actProof() async throws {
   equal(question.guess?.sure, true)
   // A tick burns what BZ acted on before it returns.
   equal(Set(world.burns.all), Set(world.copies.map(\.id)), "the 3 copies burned")
+  let pattern: String = AutopilotRule.key(kind: .worktree, match: ["stale": ["week"]])
+  check(question.id != pattern, "BZ's answer leaves the pattern free to ask the owner about")
   guard let lesson = stored.rules.first(where: { $0.id == tell.ruleID }) else {
     return failTest("the tell's lesson exists")
   }
   equal(lesson.verdict, .burn)
-  equal(
-    lesson.match, AutopilotPolicy.lessonMatch(.worktree, ["stale": ["week"]], verdict: .burn),
-    "the lesson a Yes teaches")
-  let behind: [String] = [question.id] + memory.questions.map(\.id)
-  equal(
-    Set(AutopilotPolicy.questionIDs(lesson)), Set(behind), "it took in the owner's two lessons")
+  equal(lesson.tellID, tell.id, "marked as the lesson of BZ's own act")
+  // What a Yes teaches, kept to the risks the owner said yes to on copies: work only on this Mac
+  // and small unsaved changes. Large ones and anything unchecked stay out.
+  var approved = AutopilotPolicy.lessonMatch(.worktree, ["stale": ["week"]], verdict: .burn)
+  approved["saved"] = ["local", "pushed", "merged"]
+  approved["changes"] = ["small", "none"]
+  approved["inUse"] = ["no"]
+  equal(lesson.match, approved, "the lesson a Yes teaches, within the risks the owner approved")
+  // R23: it takes nothing in, and the owner's own lessons stay exactly as they were.
+  isNil(lesson.from)
+  isNil(lesson.formerIDs)
+  for rule in memory.rules {
+    equal(stored.rules.first { $0.id == rule.id }, rule, "the owner's lesson is untouched")
+  }
   let burned = try store.receipts().filter { $0.outcome == "burned" }
   equal(
     Set(burned.map(\.authority)), ["rule:" + tell.ruleID],
     "burned on the lesson's authority, as for a Yes")
   check(burned.allSatisfy { $0.restore != nil }, "each copy backed up first")
+  let tallies = try store.memory().tallies
   equal(
-    try store.memory().tallies[tell.ruleID],
-    AutopilotTally(count: 7, bytes: 10_200_000_000, undone: 0),
-    "the owner's lesson's 4 burns and BZ's 3")
-  let again = await engine.tick(now: now.addingTimeInterval(60))
-  equal(again.tells.count, 1, "still one tell")
+    tallies[tell.ruleID], AutopilotTally(count: 3, bytes: 1_200_000_000, undone: 0),
+    "BZ's lesson counts its own 3 burns")
+  equal(
+    tallies[memory.rules[0].id], AutopilotTally(count: 4, bytes: 9_000_000_000, undone: 0),
+    "and the owner's lesson keeps its 4")
+
+  // Later a copy untouched for a week shows up with large unsaved changes, which the owner never
+  // said yes to: BZ's lesson doesn't burn it, it stays unsure, and BZ asks about it.
+  world.add(weekCopy("big-rewrite", changes: "large", bytes: 1_200_000_000, now: now))
+  let later = await engine.tick(now: now.addingTimeInterval(60))
+  checkFalse(world.burns.all.contains("worktree:big-rewrite"), "not burned under BZ's lesson")
   equal(world.burns.all.count, 3, "nothing burns twice")
+  equal(
+    later.entries.first { $0.item.id == "worktree:big-rewrite" }?.status, .unsure,
+    "it stays unsure")
+  guard let risky = later.questions.first(where: { $0.kind == .worktree }) else {
+    return failTest("a question about the copy with large unsaved changes")
+  }
+  equal(risky.id, pattern, "asked under the pattern BZ answered for the others")
+  equal(risky.count, 1)
+  equal(risky.risks, ["changes=large", "saved=local"])
+  equal(risky.guess?.sure, false, "never sure of a risk the owner hasn't said yes to")
+  equal(later.tells.count, 1, "still one tell")
 
   // With acting off, the same Mac is asked, BZ sure, and nothing burns.
   var cautious = trustedCopies(now: now)
@@ -308,7 +354,7 @@ private func goodCallProof() async throws {
 // MARK: Undo
 
 /// Undo brings the copies back, turns the lesson into a keep, records the owner's No and scores BZ
-/// wrong. The owner's lessons that BZ's lesson took in are learned again, with what they did.
+/// wrong. The owner's own lessons were never part of BZ's, so they stand as they were.
 private func undoProof() async throws {
   let now = Date()
   let world = TellWorld(copies: threeCopies(now))
@@ -331,12 +377,9 @@ private func undoProof() async throws {
   let flipped = after.rules.first { $0.questionID == tell.questionID }
   equal(flipped?.verdict, .keep, "the lesson is now a keep")
   equal(flipped?.match, keep, "widened toward riskier, like a No")
-  // Nothing the owner taught is lost.
+  // Nothing the owner taught is touched.
   for rule in memory.rules {
-    let back = after.rules.first { $0.id == rule.id }
-    equal(back?.match, rule.match, "the owner's lesson is learned again")
-    equal(back?.questionID, rule.questionID)
-    equal(back?.verdict, .burn)
+    equal(after.rules.first { $0.id == rule.id }, rule, "the owner's lesson stands as it was")
   }
   equal(
     after.tallies[memory.rules[0].id], AutopilotTally(count: 4, bytes: 9_000_000_000, undone: 0),
@@ -372,7 +415,7 @@ private func programUndoProof() async throws {
     .process, ["family": ["node"], "idle": ["1d"]], risks: ["listening=yes"],
     at: now.addingTimeInterval(-86_400))
   let world = TellWorld(programs: [idleServer("vite", now: now), idleServer("storybook", now: now)])
-  let memory = trusted("process:node", [servers], now: now)
+  let memory = trustedOn("process:node", [servers], now: now)
   let (engine, store, root) = try tellEngine("programs", world, memory)
   defer { try? FileManager.default.removeItem(at: root) }
   let acted = await engine.tick(now: now)
@@ -426,7 +469,8 @@ private func expiryProof() async throws {
 private func forgetTellProof() async throws {
   let now = Date()
   let world = TellWorld(copies: threeCopies(now))
-  let (engine, store, root) = try tellEngine("forget", world, trustedCopies(now: now))
+  let memory = trustedCopies(now: now)
+  let (engine, store, root) = try tellEngine("forget", world, memory)
   defer { try? FileManager.default.removeItem(at: root) }
   guard let tell = await engine.tick(now: now).tells.first else {
     return failTest("a tell whose lesson to forget")
@@ -438,15 +482,15 @@ private func forgetTellProof() async throws {
   let forgotten = try await engine.apply(.forgetLesson(ruleIDs: [tell.ruleID, node.id]), now: now)
   check(forgotten.tells.isEmpty, "the tell closes with its answer")
   let after = try store.memory()
-  equal(after.rules, [], "both lessons forgotten")
-  equal(after.questions, [], "with every answer behind them")
+  equal(after.rules, memory.rules, "both lessons forgotten; the owner's others stay")
+  equal(after.questions, memory.questions, "with the answer behind BZ's lesson, and only that")
   equal(after.tells.map(\.state), ["expired"])
 }
 
 // MARK: The AI's questions
 
 /// Waits a little for burns that run in the background.
-private func eventually(_ done: () -> Bool) async {
+func eventually(_ done: () -> Bool) async {
   for _ in 0..<60 where !done() { try? await Task.sleep(nanoseconds: 50_000_000) }
 }
 

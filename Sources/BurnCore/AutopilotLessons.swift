@@ -58,10 +58,14 @@ extension AutopilotPolicy {
   ///   move into `rule.from` / `rule.formerIDs`.
   /// Merging carries every question id and former id along, so nothing a lesson was made from or
   /// did is lost. A rule that doesn't pin recency is only ever appended, and never changed.
+  ///
+  /// A lesson BZ taught itself by acting (`tellID`) stands alone (R23): it takes nothing in and
+  /// joins nothing, and an owner's answer never joins it, so an Undo takes back exactly what BZ did
+  /// and nothing the owner taught. An owner's wider answer may still take it in.
   @discardableResult public static func learn(
     _ rule: AutopilotRule, into rules: inout [AutopilotRule]
   ) -> String {
-    guard rule.source == .operator, pinsRecency(rule.kind, rule.match) else {
+    guard rule.source == .operator, rule.tellID == nil, pinsRecency(rule.kind, rule.match) else {
       rules.append(rule)
       return rule.id
     }
@@ -70,7 +74,11 @@ extension AutopilotPolicy {
       else { return false }
       return pinsRecency(other.kind, other.match)
     }
-    if let i = rules.firstIndex(where: { mergeable($0) && subsumes($0.match, rule.match) }) {
+    func joinable(_ other: AutopilotRule) -> Bool {
+      guard other.tellID == nil, mergeable(other) else { return false }
+      return subsumes(other.match, rule.match)
+    }
+    if let i = rules.firstIndex(where: joinable) {
       var ids: [String] = []
       // An id another rule still has stays that rule's.
       if !rules.contains(where: { $0.id == rule.id }) { ids.append(rule.id) }

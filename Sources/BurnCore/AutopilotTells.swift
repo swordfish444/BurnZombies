@@ -69,55 +69,135 @@ extension AutopilotPolicy {
     if excess > 0 { memory.scores.removeFirst(excess) }
   }
 
-  /// BZ answers `question` yes itself: the answer is recorded as BZ's, the lesson a Yes teaches is
-  /// learned the same way, and an open tell is added. The caller then burns what the lesson
-  /// authorizes, through the same path as an owner's Yes. Returns the stored question.
+  /// The risk facts an act's lesson is kept within (ruling 2), by kind, with every value each can
+  /// take, riskiest first: work only on this Mac, unsaved changes, a running server, and anything
+  /// BZ couldn't check (`unknown`). A copy in use is protected and never burned, so "yes" isn't
+  /// listed for `inUse`.
+  static let riskFacts: [AutopilotKind: [(fact: String, values: [String])]] = [
+    .worktree: [
+      (fact: "saved", values: ["unknown", "local", "pushed", "merged"]),
+      (fact: "changes", values: ["unknown", "large", "small", "none"]),
+      (fact: "inUse", values: ["unknown", "no"]),
+    ],
+    .process: [(fact: "listening", values: ["unknown", "yes", "no"])],
+    .disk: [],
+  ]
+  /// What Undo, Good call and Forget say while an Undo runs.
+  public static let undoingNow = "I'm already undoing that."
+  /// An Undo's note when an owner's newer answer took the act's lesson in.
+  public static let newerAnswerStands = "Your newer answer stands."
+  /// Closed tells memory keeps, newest last; open and undoing ones always stay.
+  public static let maximumClosedTells = 100
+
+  /// The lesson BZ's own Yes teaches: what an owner's Yes would, kept to the risks the owner has
+  /// said yes to on the subject (`approved`). Each risk fact allows its safe values and the risky
+  /// values the owner approved, and `unknown` only when approved. A later thing with a risk the
+  /// owner never saw isn't burned under it, but asked about. It is this act's alone (R23): its id
+  /// carries the tell's, so every burn it authorizes is the act's.
+  static func actLesson(
+    for question: AutopilotQuestion, approved: Set<String>, created: Date, tellID: String
+  ) -> AutopilotRule {
+    var rule = lesson(for: question, verdict: .burn, created: created)
+    for (fact, values) in riskFacts[question.kind] ?? [] {
+      let allowed: [String] = values.filter { value in
+        !risky(fact, value) || approved.contains(fact + "=" + value)
+      }
+      if let mine = rule.match[fact] {
+        rule.match[fact] = allowed.filter(mine.contains)
+      } else {
+        rule.match[fact] = allowed
+      }
+    }
+    let key: String = AutopilotRule.key(kind: rule.kind, match: rule.match)
+    rule.id = key + ":burn:" + tellID
+    rule.tellID = tellID
+    return rule
+  }
+
+  /// BZ answers `question` yes itself, at `date`, when it acts. The answer is stored as BZ's under
+  /// an id of its own: that leaves the pattern free, so things it covers with a risk the owner never
+  /// approved stay unsure and are asked about under it. The lesson is `actLesson`, learned on its
+  /// own, and an open tell is added. The caller then burns what the lesson authorizes, through the
+  /// same path as an owner's Yes. Returns the stored question and the tell.
   @discardableResult static func act(
-    _ question: AutopilotQuestion, guess: AutopilotGuess, memory: inout AutopilotMemory, now: Date
-  ) -> AutopilotQuestion {
+    _ question: AutopilotQuestion, guess: AutopilotGuess, memory: inout AutopilotMemory,
+    at date: Date
+  ) -> (question: AutopilotQuestion, tell: AutopilotTell) {
+    let tellID = UUID().uuidString
+    let topic: String = subject(question.kind, question.match)
+    let approved = approvedRisks(topic, memory, besides: question.id)
     var answered = question
+    answered.id = question.id + ":" + tellID
     answered.guess = guess
     answered.answer = .yes
-    answered.answered = now
+    answered.answered = date
     answered.answeredBy = "bz"
-    // A skip of the same pattern from before is replaced by this answer.
-    memory.questions.removeAll { $0.id == question.id }
     memory.questions.append(answered)
-    let before = memory.tallies
-    let taught = lesson(for: answered, verdict: .burn, created: now)
-    let ruleID = learn(taught, into: &memory.rules)
-    carryTallies(&memory)
+    let taught = actLesson(for: answered, approved: approved, created: date, tellID: tellID)
+    learn(taught, into: &memory.rules)
     let tell = AutopilotTell(
-      id: UUID().uuidString, questionID: answered.id, ruleID: ruleID, kind: answered.kind,
+      id: tellID, questionID: answered.id, ruleID: taught.id, kind: answered.kind,
       count: answered.count, bytes: answered.bytes, rows: answered.rows ?? [], why: guess.why,
-      date: now, absorbed: absorbed(by: ruleID, before: before, memory: memory))
+      date: date)
     memory.tells.append(tell)
-    return answered
+    trimTells(&memory)
+    return (answered, tell)
   }
 
-  /// What the lessons `ruleID` just took in had done, by their ids; nil when it took in none.
-  static func absorbed(
-    by ruleID: String, before: [String: AutopilotTally], memory: AutopilotMemory
-  ) -> [String: AutopilotTally]? {
-    guard let rule = memory.rules.first(where: { $0.id == ruleID }) else { return nil }
-    let current = Set(memory.rules.map(\.id))
-    var taken: [String: AutopilotTally] = [:]
-    for id in rule.formerIDs ?? [] where !current.contains(id) {
-      if let tally = before[id] { taken[id] = tally }
+  /// Says on each open tell what its lesson burned, from its receipts (burned, still stopping, or
+  /// burned and since restored), so "Burned N" stays true as the act's burns land: count, bytes and
+  /// rows, named as the catalog shows them. A tell with no burn yet keeps what BZ meant to burn,
+  /// unless it is in `settled`, whose act's own burn pass just finished.
+  static func refreshTells(
+    _ memory: inout AutopilotMemory, receipts: [AutopilotReceipt], items: [AutopilotItem],
+    settled: Set<String>
+  ) {
+    let burnt: Set<String> = ["burned", "verifying", "restored"]
+    var byID: [String: AutopilotItem] = [:]
+    for item in items { byID[item.id] = item }
+    for i in memory.tells.indices where memory.tells[i].isOpen {
+      let authority: String = "rule:" + memory.tells[i].ruleID
+      var made: [String: AutopilotItem] = [:]
+      for receipt in receipts where receipt.authority == authority {
+        guard burnt.contains(receipt.outcome) else { continue }
+        var item: AutopilotItem =
+          byID[receipt.itemID]
+          ?? AutopilotItem(
+            id: receipt.itemID, kind: receipt.kind, name: receipt.name, facts: [:])
+        item.bytes = receipt.bytes
+        made[receipt.itemID] = item
+      }
+      guard !made.isEmpty || settled.contains(memory.tells[i].id) else { continue }
+      let things: [AutopilotItem] = Array(made.values)
+      memory.tells[i].count = things.count
+      memory.tells[i].bytes = things.reduce(0) { $0 + $1.bytes }
+      memory.tells[i].rows = rows(of: things)
     }
-    return taken.isEmpty ? nil : taken
   }
 
-  /// Closes open tells older than `tellLifetime`, without a score.
+  /// Closes open tells older than `tellLifetime`, without a score. A tell an Undo is working on
+  /// never expires.
   static func expireTells(_ memory: inout AutopilotMemory, now: Date) {
     for i in memory.tells.indices where memory.tells[i].isOpen {
       guard now.timeIntervalSince(memory.tells[i].date) > tellLifetime else { continue }
       memory.tells[i].state = "expired"
     }
+    trimTells(&memory)
+  }
+
+  /// Keeps the last `maximumClosedTells` closed tells; open and undoing ones always stay.
+  static func trimTells(_ memory: inout AutopilotMemory) {
+    var excess = memory.tells.filter(\.isClosed).count - maximumClosedTells
+    guard excess > 0 else { return }
+    memory.tells.removeAll { tell in
+      guard excess > 0, tell.isClosed else { return false }
+      excess -= 1
+      return true
+    }
   }
 
   /// The tell's index while it is open; nil when it is already `state`, as after a second click.
-  /// Throws when it is gone or was closed some other way.
+  /// Throws while an Undo runs, and when it is gone or was closed some other way.
   static func openTell(_ id: String, _ memory: AutopilotMemory, already state: String) throws
     -> Int?
   {
@@ -125,6 +205,7 @@ extension AutopilotPolicy {
       throw StoreError.message("I can't find that anymore.")
     }
     if memory.tells[i].state == state { return nil }
+    if memory.tells[i].state == "undoing" { throw StoreError.message(undoingNow) }
     guard memory.tells[i].isOpen else { throw StoreError.message("That one is already closed.") }
     return i
   }
@@ -134,90 +215,95 @@ extension AutopilotPolicy {
     guard let i = try openTell(id, memory, already: "good") else { return }
     memory.tells[i].state = "good"
     let questionID = memory.tells[i].questionID
-    guard let question = memory.questions.first(where: { $0.id == questionID }) else { return }
-    score(question, guess: .yes, answer: .yes, into: &memory, date: now)
+    if let question = memory.questions.first(where: { $0.id == questionID }) {
+      score(question, guess: .yes, answer: .yes, into: &memory, date: now)
+    }
+    trimTells(&memory)
   }
 
-  /// What the tell's lesson burned since the tell: receipts by its id, or an id it took in, that
-  /// freed something or are still stopping it. Only copies with a restore point can come back.
-  public static func burns(
-    of tell: AutopilotTell, receipts: [AutopilotReceipt], rules: [AutopilotRule]
-  ) -> [AutopilotReceipt] {
-    var ids: Set<String> = [tell.ruleID]
-    if let rule = rules.first(where: { $0.id == tell.ruleID }) {
-      ids.formUnion(rule.formerIDs ?? [])
-    }
-    let authorities = Set(ids.map { "rule:" + $0 })
+  /// Every burn the act's lesson made: receipts whose authority is exactly its id, which was born
+  /// with the act, that freed something or are still stopping it. Only copies with a restore point
+  /// can come back.
+  public static func burns(of tell: AutopilotTell, receipts: [AutopilotReceipt])
+    -> [AutopilotReceipt]
+  {
+    let authority: String = "rule:" + tell.ruleID
     return receipts.filter { receipt in
-      guard receipt.outcome == "burned" || receipt.outcome == "verifying" else { return false }
-      return receipt.date >= tell.date && authorities.contains(receipt.authority)
+      guard receipt.authority == authority else { return false }
+      return receipt.outcome == "burned" || receipt.outcome == "verifying"
     }
   }
 
-  /// The memory side of an Undo, once what can come back is back: the lesson becomes a keep, the
-  /// owner's answer is No, BZ's guess scores wrong and the tell closes, with `note` when something
-  /// couldn't come back. A second Undo changes nothing.
-  static func undo(_ id: String, note: String?, memory: inout AutopilotMemory, now: Date) throws {
-    guard let t = try openTell(id, memory, already: "undone") else { return }
+  /// An Undo's first step, before anything is restored (ruling 1a). The tell is undoing; the act's
+  /// lesson is gone, with the keep a No teaches in its place; the owner's answer is No; and BZ's
+  /// guess scores wrong. If an owner's newer answer took the act's lesson in, that answer stands:
+  /// no keep is learned, BZ's Yes stays held by it, and the note says so. Returns the tell to
+  /// finish, or nil when it is already undone. One left undoing by an Undo cut short is picked up
+  /// as it is.
+  static func beginUndo(_ id: String, memory: inout AutopilotMemory, now: Date) throws
+    -> AutopilotTell?
+  {
+    guard let t = memory.tells.firstIndex(where: { $0.id == id }) else {
+      throw StoreError.message("I can't find that anymore.")
+    }
     let tell = memory.tells[t]
-    if let q = memory.questions.firstIndex(where: { $0.id == tell.questionID }) {
-      let question = memory.questions[q]
-      unlearn(question, tell: tell, memory: &memory, now: now)
-      memory.questions[q].answer = .no
-      memory.questions[q].answered = now
-      memory.questions[q].answeredBy = nil
-      score(question, guess: .yes, answer: .no, into: &memory, date: now)
+    switch tell.state {
+    case "undone": return nil
+    case "undoing": return tell
+    case "open": break
+    default: throw StoreError.message("That one is already closed.")
     }
-    memory.tells[t].state = "undone"
-    memory.tells[t].note = note
+    memory.tells[t].state = "undoing"
+    let q = memory.questions.firstIndex(where: { $0.id == tell.questionID })
+    if memory.rules.contains(where: { $0.id == tell.ruleID }) {
+      memory.rules.removeAll { $0.id == tell.ruleID }
+      if let q {
+        memory.questions[q].answer = .no
+        memory.questions[q].answered = now
+        memory.questions[q].answeredBy = nil
+        let keep = lesson(for: memory.questions[q], verdict: .keep, created: now)
+        learn(keep, into: &memory.rules)
+      }
+      carryTallies(&memory)
+    } else if memory.rules.contains(where: { $0.formerIDs?.contains(tell.ruleID) == true }) {
+      memory.tells[t].note = newerAnswerStands
+    }
+    if let q { score(memory.questions[q], guess: .yes, answer: .no, into: &memory, date: now) }
+    return memory.tells[t]
   }
 
-  /// Replaces what BZ's Yes to `question` taught with what a No teaches. The lesson holding the
-  /// answer goes; every other answer it held teaches its own lesson again before the keep is
-  /// learned, so nothing the owner taught is lost; and lessons BZ's lesson took in get back what
-  /// they had done.
-  static func unlearn(
-    _ question: AutopilotQuestion, tell: AutopilotTell, memory: inout AutopilotMemory, now: Date
-  ) {
-    let answers = questionsByID(memory.questions)
-    if let holder = memory.rules.first(where: { questionIDs($0).contains(question.id) }) {
-      memory.rules.removeAll { $0.id == holder.id }
-      for id in questionIDs(holder) where id != question.id {
-        guard let other = answers[id], other.answer == .yes || other.answer == .no else {
-          continue
-        }
-        let verdict: AutopilotVerdict = other.answer == .yes ? .burn : .keep
-        let created: Date = other.answered ?? now
-        learn(lesson(for: other, verdict: verdict, created: created), into: &memory.rules)
-      }
-      // BZ's own lesson goes with what it did; a later lesson of the owner's that took it in
-      // was learned again under its own id and keeps its tally.
-      if holder.id == tell.ruleID {
-        for (id, tally) in tell.absorbed ?? [:] {
-          var mark = memory.tallies[id] ?? AutopilotTally()
-          mark.add(tally)
-          memory.tallies[id] = mark
-        }
-      }
+  /// An Undo's last step, once the act's burns that can come back are back: the tell closes, with
+  /// what couldn't come back added to its note.
+  static func finishUndo(_ id: String, note: String?, memory: inout AutopilotMemory) throws {
+    guard let t = memory.tells.firstIndex(where: { $0.id == id }) else {
+      throw StoreError.message("I can't find that anymore.")
     }
-    learn(lesson(for: question, verdict: .keep, created: now), into: &memory.rules)
-    carryTallies(&memory)
+    guard memory.tells[t].state == "undoing" else { return }
+    let parts: [String] = [memory.tells[t].note, note].compactMap { $0 }
+    memory.tells[t].note = parts.isEmpty ? nil : parts.joined(separator: " ")
+    memory.tells[t].state = "undone"
+    trimTells(&memory)
   }
 
   /// Forgets lessons, each with every answer it was made from, so those things can be asked again.
-  /// A tell whose answer is forgotten closes, without a score.
-  static func forget(_ ruleIDs: [String], memory: inout AutopilotMemory) {
-    for id in ruleIDs {
-      if let rule = memory.rules.first(where: { $0.id == id }) {
-        let taught = Set(questionIDs(rule))
-        memory.questions.removeAll { taught.contains($0.id) }
-      }
-      memory.rules.removeAll { $0.id == id }
+  /// A tell whose answer is forgotten closes, without a score. While an Undo needs one of those
+  /// answers, nothing is forgotten.
+  static func forget(_ ruleIDs: [String], memory: inout AutopilotMemory) throws {
+    var taught = Set<String>()
+    for rule in memory.rules where ruleIDs.contains(rule.id) {
+      taught.formUnion(questionIDs(rule))
     }
+    let needed = memory.tells.contains { tell in
+      tell.state == "undoing" && taught.contains(tell.questionID)
+    }
+    if needed { throw StoreError.message(undoingNow) }
+    memory.questions.removeAll { taught.contains($0.id) }
+    memory.rules.removeAll { ruleIDs.contains($0.id) }
     carryTallies(&memory)
     let asked = Set(memory.questions.map(\.id))
     for i in memory.tells.indices where memory.tells[i].isOpen {
       if !asked.contains(memory.tells[i].questionID) { memory.tells[i].state = "expired" }
     }
+    trimTells(&memory)
   }
 }

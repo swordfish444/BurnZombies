@@ -86,6 +86,10 @@ public struct AutopilotRule: Codable, Sendable, Identifiable, Equatable {
   public var from: [String]?
   /// Ids of the lessons it took in, so what they did still counts toward it.
   public var formerIDs: [String]?
+  /// Set on a lesson BZ taught itself by acting on its own: the tell it made. Such a lesson never
+  /// takes another in nor joins one, so an Undo takes back exactly what BZ did; an owner's answer
+  /// may still take it in.
+  public var tellID: String?
   public init(
     id: String? = nil, kind: AutopilotKind, match: [String: [String]], verdict: AutopilotVerdict,
     source: AutopilotRuleSource, title: String, enabled: Bool = true, created: Date = Date(),
@@ -247,27 +251,26 @@ public struct AutopilotTell: Codable, Sendable, Identifiable, Equatable {
   public var id: String
   /// The question BZ answered itself.
   public var questionID: String
-  /// The lesson that answer taught, which authorized the burns.
+  /// The lesson that answer taught, made for this act alone: every burn it authorized is the act's.
   public var ruleID: String
   public var kind: AutopilotKind
+  /// What BZ burned, from the act's receipts once its burns are done; until then, what it meant to.
   public var count: Int
   public var bytes: UInt64
   /// What its card names, as on a question card.
   public var rows: [AutopilotQuestionRow]
   /// "You said yes to 6 like these."
   public var why: String
+  /// When BZ acted.
   public var date: Date
-  /// "open", "good", "undone" or "expired".
+  /// "open"; "undoing" while an Undo runs; then "good", "undone" or "expired".
   public var state: String
-  /// Why an undo couldn't bring everything back.
+  /// Why an undo couldn't bring everything back, or that a newer answer of the owner's stands.
   public var note: String?
-  /// What the owner's lessons that the new lesson took in had done, by their ids. An undo gives it
-  /// back to them when they are learned again.
-  public var absorbed: [String: AutopilotTally]?
   public init(
     id: String, questionID: String, ruleID: String, kind: AutopilotKind, count: Int,
     bytes: UInt64, rows: [AutopilotQuestionRow], why: String, date: Date,
-    state: String = "open", note: String? = nil, absorbed: [String: AutopilotTally]? = nil
+    state: String = "open", note: String? = nil
   ) {
     self.id = id
     self.questionID = questionID
@@ -280,9 +283,10 @@ public struct AutopilotTell: Codable, Sendable, Identifiable, Equatable {
     self.date = date
     self.state = state
     self.note = note
-    self.absorbed = absorbed
   }
   public var isOpen: Bool { state == "open" }
+  /// Called good, undone or expired: nothing more happens to it.
+  public var isClosed: Bool { state == "good" || state == "undone" || state == "expired" }
 }
 
 /// What one lesson has done: the burns it authorized, what they freed, and how many the owner
@@ -475,7 +479,13 @@ public struct AutopilotMemory: Codable, Sendable, Equatable {
     tells = try values.decodeIfPresent([AutopilotTell].self, forKey: .tells) ?? []
     actsOnItsOwn = try values.decodeIfPresent(Bool.self, forKey: .actsOnItsOwn) ?? true
   }
-  public var answers: Int { questions.filter { $0.answer == .yes || $0.answer == .no }.count }
+  /// The owner's Yes and No answers; BZ's own calls aren't counted.
+  public var answers: Int {
+    questions.filter { question in
+      guard question.answer == .yes || question.answer == .no else { return false }
+      return question.answeredBy != "bz"
+    }.count
+  }
   public var openQuestions: [AutopilotQuestion] { questions.filter(\.isOpen) }
 }
 
@@ -593,7 +603,8 @@ public struct AutopilotSnapshot: Codable, Sendable, Equatable {
   public var lessons: [AutopilotLessonGroup] = []
   /// How I'm doing (`AutopilotPolicy.progress`).
   public var progress = AutopilotProgress()
-  /// What BZ did on its own that the owner hasn't called good or undone yet, oldest first.
+  /// What BZ did on its own that the owner hasn't called good or undone yet, oldest first, with
+  /// any Undo still running ("undoing"), so one cut short by a quit can be clicked again.
   public var tells: [AutopilotTell] = []
   public init() {}
   public func count(_ status: AutopilotStatus) -> Int { counts[status.rawValue] ?? 0 }

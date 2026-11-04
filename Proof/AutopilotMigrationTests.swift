@@ -139,6 +139,7 @@ private func roundTripProof() throws {
     created: Date(timeIntervalSinceReferenceDate: 1_000), questionID: "q-full")
   rule.from = ["q-other"]
   rule.formerIDs = ["old-lesson"]
+  rule.tellID = "tell"
   full.rules = [rule]
   full.starterDisabled = ["starter-finished-copies"]
   full.keptItems = ["worktree:kept", "path:/kept"]
@@ -179,8 +180,7 @@ private func roundTripProof() throws {
       id: "tell", questionID: "q-full", ruleID: "lesson", kind: .worktree, count: 2, bytes: 3,
       rows: question.rows ?? [], why: "You said yes to 1 like this.",
       date: Date(timeIntervalSinceReferenceDate: 8_000), state: "undone",
-      note: "Stopped programs and deleted folders can't come back; I'll ask next time.",
-      absorbed: ["old-lesson": AutopilotTally(count: 1, bytes: 2, undone: 0)])
+      note: "Stopped programs and deleted folders can't come back; I'll ask next time.")
   ]
   full.actsOnItsOwn = false
   let defaults = Array(Mirror(reflecting: AutopilotMemory()).children)

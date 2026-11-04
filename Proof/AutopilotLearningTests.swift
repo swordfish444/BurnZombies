@@ -520,4 +520,13 @@ func evalRequestProof() async throws {
   equal(lines.count, 28, "27 step lines and a summary")
   check(lines.last?.contains("27 answers: 3 settled, 7 acted, 17 asked.") == true, "the summary")
   isNil(await engine.sweepState().lastTick)
+  // Memory that can't be read is an error, not "0 answers".
+  let broken = root.appendingPathComponent("broken")
+  let brokenStore = try AutopilotStore(root: broken)
+  try Data("not memory".utf8).write(
+    to: brokenStore.directory.appendingPathComponent("memory.json"))
+  let brokenEngine = try Autopilot(root: broken, sources: AutopilotSources())
+  let (brokenOK, brokenJSON) = await brokenEngine.handle(AutopilotRequest(tool: "eval"))
+  checkFalse(brokenOK, "unreadable memory is an error: \(brokenJSON)")
+  check(brokenJSON.contains("\"error\""), brokenJSON)
 }

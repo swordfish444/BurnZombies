@@ -81,8 +81,7 @@ extension AutopilotPolicy {
     guard yes.count != no else { return nil }
     let lean: AutopilotAnswer = yes.count > no ? .yes : .no
     let asked = risks(of: question)
-    var saidYes = Set<String>()
-    for past in same where past.answer == .yes { saidYes.formUnion(risks(of: past)) }
+    let saidYes = approvedRisks(topic, memory, besides: question.id)
     let general = generalize(question.kind, question.match)
     let kept = memory.rules.contains { rule in
       guard rule.verdict == .keep, rule.kind == question.kind else { return false }
@@ -105,6 +104,19 @@ extension AutopilotPolicy {
     return AutopilotGuess(answer: lean, sure: sure, why: why, source: "native")
   }
 
+  /// The risks the owner said yes to on a subject: every risk on a question of theirs about it
+  /// that they answered Yes. BZ's own calls don't count, nor does `questionID` itself.
+  static func approvedRisks(_ topic: String, _ memory: AutopilotMemory, besides questionID: String)
+    -> Set<String>
+  {
+    var said = Set<String>()
+    for past in memory.questions where past.id != questionID && past.answer == .yes {
+      guard ownerAnswered(past), subject(past.kind, past.match) == topic else { continue }
+      said.formUnion(risks(of: past))
+    }
+    return said
+  }
+
   /// How I'm doing (spec 4.2): plain counts, each line only when it has something to say.
   /// 1. Guesses right among the last 10 scores, replayed ones included.
   /// 2. Questions shown to the owner this week and what BZ burned on its own, and last week's when
@@ -115,8 +127,9 @@ extension AutopilotPolicy {
   public static func progress(
     _ memory: AutopilotMemory, receipts: [AutopilotReceipt], impact: AutopilotImpact?, now: Date
   ) -> AutopilotProgress {
+    let told = Set(memory.tells.map(\.questionID))
     let lines: [String?] = [
-      guessedLine(memory.scores), weekLine(memory.questions, receipts, now: now),
+      guessedLine(memory.scores), weekLine(memory.questions, told: told, receipts, now: now),
       undoneLine(impact), replayLine(memory.questions),
     ]
     return AutopilotProgress(lines: lines.compactMap { $0 })
@@ -134,13 +147,14 @@ extension AutopilotPolicy {
   }
 
   /// "This week: 2 questions, 120.0 GB burned on my own. Last week: 9 questions, 80.0 GB."
-  static func weekLine(_ questions: [AutopilotQuestion], _ receipts: [AutopilotReceipt], now: Date)
-    -> String?
-  {
+  static func weekLine(
+    _ questions: [AutopilotQuestion], told: Set<String>, _ receipts: [AutopilotReceipt], now: Date
+  ) -> String? {
     let weekAgo = now.addingTimeInterval(-7 * 86_400)
     let twoWeeksAgo = weekAgo.addingTimeInterval(-7 * 86_400)
-    let this = week(questions, receipts, after: weekAgo, through: now)
-    let last = week(questions, receipts, after: twoWeeksAgo, through: weekAgo)
+    let asked = questions.filter { !told.contains($0.id) }
+    let this = week(asked, receipts, after: weekAgo, through: now)
+    let last = week(asked, receipts, after: twoWeeksAgo, through: weekAgo)
     let lastHadAny = last.questions > 0 || last.bytes > 0
     guard this.questions > 0 || this.bytes > 0 || lastHadAny else { return nil }
     let shown: String = AutopilotEval.plural(this.questions, "question")
@@ -154,9 +168,9 @@ extension AutopilotPolicy {
     return line
   }
 
-  /// Questions shown to the owner in a window (BZ's own calls aren't shown), and the disk that
-  /// burns of copies and folders not asked for by the owner's Burn now freed in it. A stopped
-  /// program frees memory, not disk.
+  /// Questions shown to the owner in a window (BZ's own calls aren't shown, and the caller leaves
+  /// out ones that were tells, undone or not), and the disk that burns of copies and folders not
+  /// asked for by the owner's Burn now freed in it. A stopped program frees memory, not disk.
   static func week(
     _ questions: [AutopilotQuestion], _ receipts: [AutopilotReceipt], after start: Date,
     through end: Date
