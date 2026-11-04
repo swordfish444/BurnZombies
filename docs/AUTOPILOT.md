@@ -47,7 +47,7 @@ Yes and No become rules immediately (and burn right away for Yes). Skip hides th
 
 ## The AI sweep
 
-Native code catalogs and applies rules without any model. When there is something new to judge (or every 4 hours), BurnZombies runs one headless sweep in your harness — Claude Code by default (`sonnet`), Codex also supported — with six tools: catalog, inspect, decide, burn, ask, report. It can read project files to understand what something is, but it has no shell, and every burn is re-checked by the app. A sweep is capped at 15 minutes; one that runs out of time after judging things counts as done, and the next picks up the rest. Failures back off (15 → 30 → 60 → 120 minutes); the loop never stops for good, and your rules keep working while the AI is unavailable.
+Native code catalogs and applies rules without any model. When there is something new to judge (or every 4 hours), BurnZombies runs one headless sweep in your harness — Claude Code by default (`sonnet` at medium effort, whatever your own Claude Code settings say), Codex also supported — with six tools: catalog, inspect, decide, burn, ask, report. It can read project files to understand what something is, but it has no shell, and every burn is re-checked by the app. A sweep is capped at 15 minutes; one that runs out of time after judging things counts as done, and the next picks up the rest. Failures back off (15 → 30 → 60 → 120 minutes); the loop never stops for good, and your rules keep working while the AI is unavailable.
 
 ## Safety rails that never change
 

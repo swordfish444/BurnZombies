@@ -71,6 +71,24 @@ func autopilotSweepProof() async throws {
   check(claude.contains("Read,Glob,Grep"), "read-only built-ins")
   check(claude.contains("Bash"), "Bash explicitly disallowed")
   equal(claude.firstIndex(of: "--max-turns").map { claude[$0 + 1] }, "40")
+  // Claude Code still loads the owner's own settings, whose `env` outranks `--effort`: an
+  // interactive CLAUDE_CODE_EFFORT_LEVEL=max spent six minutes on one sweep decision, and a short
+  // MCP_TOOL_TIMEOUT cut burns off mid-call. Settings passed with `--settings` outrank the owner's.
+  func pinned(_ args: [String]) -> [String: String] {
+    guard let i = args.firstIndex(of: "--settings"),
+      let settings = try? JSONSerialization.jsonObject(with: Data(args[i + 1].utf8))
+        as? [String: Any]
+    else { return [:] }
+    check(settings["disableAllHooks"] as? Bool == true, "hooks stay off")
+    return settings["env"] as? [String: String] ?? [:]
+  }
+  equal(pinned(claude)["CLAUDE_CODE_EFFORT_LEVEL"], "medium", "sweep effort by default")
+  equal(pinned(claude)["MCP_TOOL_TIMEOUT"], "900000", "a burn may take the whole sweep")
+  config.reasoningEffort = "high"
+  let chosen = try AutopilotHarness.arguments(config, directory: directory, root: directory)
+  equal(pinned(chosen)["CLAUDE_CODE_EFFORT_LEVEL"], "high", "the owner's choice in BZ wins")
+  equal(chosen.firstIndex(of: "--effort").map { chosen[$0 + 1] }, "high")
+  config.reasoningEffort = nil
   config.harness = "codex"
   let codex = try AutopilotHarness.arguments(config, directory: directory, root: directory)
   check(codex.contains("mcp_servers.burnzombies.env.BURNZOMBIES_AUTOPILOT=\"1\""), "codex mode")

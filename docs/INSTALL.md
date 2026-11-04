@@ -68,7 +68,7 @@ Open **Settings → Review intelligence** to choose a model and thinking level, 
 
 Model IDs are supported by all five adapters. Codex offers suggestions from its local model catalog and filters thinking levels for a selected catalog model; custom IDs work too. Codex, Claude Code and GitHub Copilot expose separate thinking controls. Cursor and Gemini manage thinking through the selected model/harness. Unsupported combinations are reported by the harness and never silently replaced by BurnZombies.
 
-Settings live only in BurnZombies's private configuration. Reinstalling preserves them. Codex's default here is its CLI default, because background reviews deliberately skip global Codex configuration; BurnZombies does not claim an inferred default as a pinned model.
+Settings live only in BurnZombies's private configuration. Reinstalling preserves them. Codex's default here is its CLI default, because background reviews deliberately skip global Codex configuration; BurnZombies does not claim an inferred default as a pinned model. Claude Code's default thinking level here is **Medium**: Autopilot sets it for each sweep, so an effort level in your own Claude Code settings (such as max) cannot make every sweep think for minutes.
 
 An agent can also configure these without opening a window:
 

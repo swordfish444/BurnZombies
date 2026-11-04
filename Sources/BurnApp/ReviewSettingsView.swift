@@ -75,7 +75,11 @@ struct ReviewSettingsView: View {
       }
       if settings.configuration?.thinkingLevels.isEmpty == false {
         Picker("Thinking level", selection: $settings.thinking) {
-          Text("Harness default").tag("")
+          // Claude sweeps pin their own effort; the owner's Claude Code settings don't apply.
+          Text(
+            settings.configuration?.harness == "claude"
+              ? AutopilotHarness.claudeEffort.capitalized + " (default)" : "Harness default"
+          ).tag("")
           ForEach(settings.levels, id: \.self) { Text($0.capitalized).tag($0) }
           if !settings.thinking.isEmpty && !settings.levels.contains(settings.thinking) {
             Text("\(settings.thinking.capitalized) — unavailable").tag(settings.thinking)
