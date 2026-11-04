@@ -4,6 +4,7 @@ import Foundation
 /// What answers teach, how BZ guesses before asking, and the replay that shows it improving.
 func autopilotLearningProof() async throws {
   try await lessonsProof()
+  try guessProof()
 }
 
 private func copy(_ id: String, _ facts: [String: String], bytes: UInt64 = 1 << 30)
@@ -223,4 +224,214 @@ private func lessonEngineProof() async throws {
   memory = try store.memory()
   equal(memory.rules.count, 0, "lesson forgotten")
   equal(memory.questions.map(\.id), [node.id], "with all three answers, and nothing else")
+}
+
+private let replayStart = Date(timeIntervalSinceReferenceDate: 815_000_000)
+
+/// A question the owner (or BZ, with `by: "bz"`) already answered.
+private func answered(
+  _ kind: AutopilotKind, _ match: [String: [String]], _ answer: AutopilotAnswer,
+  risks: [String]? = nil, by: String? = nil, at minute: Double
+) -> AutopilotQuestion {
+  var question = AutopilotQuestion(
+    kind: kind, match: match, question: "", why: "", examples: [], count: 2,
+    bytes: 2_000_000_000, asked: replayStart)
+  question.answer = answer
+  question.answered = replayStart.addingTimeInterval(minute * 60)
+  question.risks = risks
+  question.answeredBy = by
+  return question
+}
+
+/// Scores on one subject, oldest first.
+private func scores(_ subject: String, _ rights: [Bool]) -> [AutopilotScore] {
+  rights.enumerated().map { i, right in
+    AutopilotScore(
+      questionID: subject + "-\(i)", subject: subject, guess: .yes, answer: right ? .yes : .no,
+      right: right, date: replayStart.addingTimeInterval(Double(i)))
+  }
+}
+
+func guessProof() throws {
+  // Risks are the risky facts among the things a question covers, anything unknown included.
+  equal(
+    AutopilotPolicy.risks(
+      .worktree,
+      [
+        copy("draft", ["saved": "local", "changes": "small"]),
+        copy("odd", ["saved": "unknown", "changes": "none"]),
+      ]), ["changes=small", "saved=local", "saved=unknown"])
+  // Older questions name theirs in their pattern and their caution text.
+  var drafts = AutopilotQuestion(
+    kind: .worktree,
+    match: [
+      "changes": ["small", "large"], "saved": ["local", "pushed"], "stale": ["day", "week"],
+    ],
+    question: "", why: "", examples: [], count: 4, bytes: 7_000_000_000)
+  drafts.cautions = ["3 have work only on this Mac", "4 have unsaved changes"]
+  equal(
+    AutopilotPolicy.risks(of: drafts), ["changes=large", "changes=small", "saved=local"],
+    "risks from the pattern")
+  var servers = AutopilotQuestion(
+    kind: .process, match: ["family": ["node"], "idle": ["10m"]], question: "", why: "",
+    examples: [], count: 1, bytes: 5_000_000_000)
+  servers.cautions = ["1 is still running a server"]
+  equal(AutopilotPolicy.risks(of: servers), ["idle=10m", "listening=yes"], "and from cautions")
+  drafts.risks = ["saved=unknown"]
+  equal(AutopilotPolicy.risks(of: drafts), ["saved=unknown"], "stored risks are used as they are")
+
+  // Trust takes five right guesses in a row on a subject; one miss ends it.
+  let fiveRight = scores("worktree:", [true, true, true, true, true])
+  check(AutopilotPolicy.trusted("worktree:", scores: fiveRight), "5 right")
+  checkFalse(
+    AutopilotPolicy.trusted("worktree:", scores: scores("worktree:", [true, true, true, true])),
+    "4 right")
+  checkFalse(
+    AutopilotPolicy.trusted(
+      "worktree:", scores: scores("worktree:", [true, true, true, true, true, false])),
+    "a miss ends trust")
+  check(
+    AutopilotPolicy.trusted(
+      "worktree:", scores: scores("worktree:", [false, true, true, true, true, true])),
+    "five right after a miss earn it back")
+  checkFalse(
+    AutopilotPolicy.trusted(
+      "worktree:",
+      scores: scores("worktree:", [true, true, true, true]) + scores("process:node", [true])),
+    "another subject's right guess doesn't count")
+  check(
+    AutopilotPolicy.trusted(
+      "worktree:",
+      scores: fiveRight + scores("process:node", [false])),
+    "nor does its miss")
+
+  // Guess: the owner's usual answer on the subject, sure only when trust is earned and nothing
+  // about the question is new to the owner.
+  let copies = AutopilotQuestion(
+    kind: .worktree, match: ["stale": ["week"]], question: "", why: "", examples: [], count: 3,
+    bytes: 1_200_000_000)
+  check(AutopilotPolicy.guess(copies, memory: AutopilotMemory()) == nil, "nothing to go on")
+  var memory = AutopilotMemory()
+  memory.questions = [
+    answered(
+      .worktree, ["saved": ["local"], "stale": ["month"]], .yes, risks: ["saved=local"], at: 1),
+    answered(
+      .worktree, ["changes": ["small"], "stale": ["month"]], .yes, risks: ["changes=small"], at: 2),
+  ]
+  let early = AutopilotPolicy.guess(copies, memory: memory)
+  equal(early?.answer, .yes, "two yes answers on copies")
+  equal(early?.sure, false, "but no trust yet")
+  equal(early?.source, "native")
+  equal(early?.why, "You said yes to 2 like these.")
+  memory.scores = scores("worktree:", [true, true, true, true, true])
+  var seen = copies
+  seen.risks = ["changes=small", "saved=local"]
+  let trusted = AutopilotPolicy.guess(seen, memory: memory)
+  equal(trusted?.answer, .yes)
+  equal(trusted?.sure, true, "trusted, and every risk was said yes to before")
+  equal(
+    trusted?.why,
+    "You said yes to 2 like these, including ones with work only on this Mac and unsaved changes.")
+  var serving = copies
+  serving.risks = ["listening=yes", "saved=local"]
+  equal(AutopilotPolicy.guess(serving, memory: memory)?.answer, .yes)
+  equal(AutopilotPolicy.guess(serving, memory: memory)?.sure, false, "a risk never said yes to")
+  var careful = memory
+  careful.rules = [
+    AutopilotRule(
+      kind: .worktree, match: ["stale": ["today", "day"]], verdict: .keep, source: .operator,
+      title: "")
+  ]
+  equal(AutopilotPolicy.guess(seen, memory: careful)?.sure, true, "a keep for newer copies only")
+  careful.rules[0].match = ["changes": ["large", "small"], "stale": ["today", "day", "week"]]
+  equal(AutopilotPolicy.guess(seen, memory: careful)?.sure, false, "a keep lesson overlaps it")
+  // A program family nobody answered leans on other programs, but is never sure.
+  var programs = AutopilotMemory()
+  programs.questions = [
+    answered(.process, ["family": ["node"], "idle": ["1h"]], .yes, at: 1),
+    answered(.process, ["family": ["python"], "idle": ["1d"]], .yes, at: 2),
+  ]
+  programs.scores = scores("process:ruby", [true, true, true, true, true])
+  let ruby = AutopilotQuestion(
+    kind: .process, match: ["family": ["ruby"], "idle": ["1h"]], question: "", why: "",
+    examples: [], count: 1, bytes: 1_500_000_000)
+  equal(AutopilotPolicy.guess(ruby, memory: programs)?.answer, .yes, "leans on other programs")
+  equal(AutopilotPolicy.guess(ruby, memory: programs)?.sure, false, "never sure on a new family")
+  // Only the owner's own answers count, a tie is no guess, and a No lean is never sure.
+  var own = AutopilotMemory()
+  own.questions = [answered(.worktree, ["stale": ["month"]], .yes, by: "bz", at: 1)]
+  check(AutopilotPolicy.guess(copies, memory: own) == nil, "BZ's own calls don't count")
+  var split = AutopilotMemory()
+  split.questions = [
+    answered(.worktree, ["stale": ["month"]], .yes, at: 1),
+    answered(.worktree, ["saved": ["local"], "stale": ["day"]], .no, at: 2),
+  ]
+  check(AutopilotPolicy.guess(copies, memory: split) == nil, "a tie is no guess")
+  split.questions.append(answered(.worktree, ["changes": ["small"], "stale": ["day"]], .no, at: 3))
+  split.scores = scores("worktree:", [true, true, true, true, true])
+  let keeps = AutopilotPolicy.guess(copies, memory: split)
+  equal(keeps?.answer, .no, "two no answers to one yes")
+  equal(keeps?.sure, false, "BZ never acts on a No")
+  equal(keeps?.why, "You said no to 2 like these.")
+  split.questions = [answered(.worktree, ["stale": ["month"]], .yes, at: 1)]
+  equal(AutopilotPolicy.guess(copies, memory: split)?.why, "You said yes to 1 like this.")
+
+  // Memory from before scores existed still loads, and scores round-trip.
+  let older =
+    #"{"judgments":{},"keptItems":[],"questions":[],"rules":[],"starterDisabled":[],"version":1}"#
+  equal(
+    try JSONDecoder().decode(AutopilotMemory.self, from: Data(older.utf8)).scores, [],
+    "memory without scores")
+  var scored = AutopilotMemory()
+  scored.scores = scores("worktree:", [true, false])
+  equal(
+    try JSONDecoder().decode(AutopilotMemory.self, from: JSONEncoder().encode(scored)), scored,
+    "scores round-trip")
+
+  // The replay eval over the owner's anonymized history, matching the spec's reference replay.
+  let history = try JSONDecoder().decode(
+    [AutopilotQuestion].self, from: Data(teachHistoryJSON.utf8))
+  let replay = AutopilotEval.replay(history)
+  var expected = AutopilotEval.Summary()
+  expected.answers = 27
+  expected.settled = 3
+  expected.acted = 7
+  expected.asked = 17
+  expected.guesses = 14
+  expected.right = 13
+  expected.wrongSettled = 0
+  expected.wrongActed = 0
+  expected.handledBytes = 126_591_930_368
+  expected.lessons = 17
+  equal(replay.summary, expected, "the owner's history")
+  equal(replay.scores.count, 14, "a score for each guess on an asked question")
+  check(replay.scores.allSatisfy { $0.replayed == true }, "all marked replayed")
+  let outcomes: [String] = [
+    "asked", "asked", "asked", "asked", "asked", "asked", "asked", "asked", "asked", "asked",
+    "settled", "asked", "acted", "asked", "asked", "asked", "asked", "acted", "acted", "asked",
+    "acted", "asked", "acted", "settled", "acted", "acted", "settled",
+  ]
+  equal(replay.steps.map(\.outcome), outcomes, "step by step as the reference replay")
+  let unguessed = replay.steps.filter { $0.guess == nil }.map(\.questionID)
+  equal(unguessed, ["q01", "q03", "q15"], "no guess where nothing was answered on the kind")
+  let missed = replay.steps.filter { $0.matched == false }.map(\.questionID)
+  equal(missed, ["q12"], "the only miss: the busy Java helpers kept, asked about")
+  equal(replay.scores.map(\.right).firstIndex(of: false), 6, "the 7th score")
+  equal(AutopilotEval.replay(Array(history.reversed())).summary, expected, "in the order answered")
+  var mixed = history
+  var bzCall = history[3]
+  bzCall.id = "bz-call"
+  bzCall.answeredBy = "bz"
+  mixed.append(bzCall)
+  equal(AutopilotEval.replay(mixed).summary, expected, "BZ's own calls aren't replayed")
+
+  // The CLI report: a line per answer, then the summary.
+  let report = AutopilotEval.report(replay)
+  let lines = report.split(separator: "\n").map(String.init)
+  equal(lines.count, 28, "27 answers and a summary")
+  let summary = lines.last ?? ""
+  check(summary.contains("27 answers"), summary)
+  check(summary.contains("17 asked"), summary)
+  check(summary.contains("13 of 14"), summary)
+  check(lines[8].contains("process:java") && lines[8].contains("3.1 GB"), lines[8])
 }

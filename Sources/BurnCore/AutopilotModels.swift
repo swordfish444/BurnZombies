@@ -140,6 +140,12 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
   public var snoozedUntil: Date?
   /// What makes some of the matches riskier, counted: "2 have work only on this Mac".
   public var cautions: [String]?
+  /// The risky facts among the matches, as "fact=value": "saved=local", "changes=small".
+  public var risks: [String]?
+  /// BZ's guess at the answer, made when the question is created.
+  public var guess: AutopilotGuess?
+  /// "bz" when BZ answered it on its own; nil when the owner did.
+  public var answeredBy: String?
   public init(
     kind: AutopilotKind, match: [String: [String]], question: String, why: String,
     examples: [String], count: Int, bytes: UInt64, asked: Date = Date(), source: String = "native"
@@ -156,6 +162,49 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
     self.source = source
   }
   public var isOpen: Bool { answer == nil }
+}
+
+/// BZ's guess at how the owner will answer a question.
+public struct AutopilotGuess: Codable, Sendable, Equatable {
+  /// `.yes` or `.no`.
+  public var answer: AutopilotAnswer
+  /// Sure enough to act without asking, when the owner lets BZ act on its own.
+  public var sure: Bool
+  /// For display: "You said yes to 6 like these."
+  public var why: String
+  /// `native` or `ai`.
+  public var source: String
+  public init(answer: AutopilotAnswer, sure: Bool, why: String, source: String = "native") {
+    self.answer = answer
+    self.sure = sure
+    self.why = why
+    self.source = source
+  }
+}
+
+/// A guess checked against the owner's answer. Trust on a subject is earned from these.
+public struct AutopilotScore: Codable, Sendable, Equatable {
+  public var questionID: String
+  /// The question's subject (`AutopilotPolicy.subject`): "worktree:", "process:node".
+  public var subject: String
+  public var guess: AutopilotAnswer
+  public var answer: AutopilotAnswer
+  public var right: Bool
+  public var date: Date
+  /// True when it comes from replaying earlier answers rather than a live guess.
+  public var replayed: Bool?
+  public init(
+    questionID: String, subject: String, guess: AutopilotAnswer, answer: AutopilotAnswer,
+    right: Bool, date: Date, replayed: Bool? = nil
+  ) {
+    self.questionID = questionID
+    self.subject = subject
+    self.guess = guess
+    self.answer = answer
+    self.right = right
+    self.date = date
+    self.replayed = replayed
+  }
 }
 
 /// What Autopilot's cleanups freed. Kept apart from the receipts, which keep only the latest 500,
@@ -289,7 +338,23 @@ public struct AutopilotMemory: Codable, Sendable, Equatable {
   public var keptItems: Set<String> = []
   public var questions: [AutopilotQuestion] = []
   public var judgments: [String: AutopilotJudgment] = [:]
+  /// BZ's guesses checked against the owner's answers, oldest first, at most
+  /// `AutopilotPolicy.maximumScores`.
+  public var scores: [AutopilotScore] = []
   public init() {}
+  /// Memory saved before a field existed still loads. The original fields are required as they
+  /// always were; every field added since is decoded with `decodeIfPresent` and falls back to its
+  /// default, and fields added later must be decoded here the same way.
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    version = try values.decode(Int.self, forKey: .version)
+    rules = try values.decode([AutopilotRule].self, forKey: .rules)
+    starterDisabled = try values.decode(Set<String>.self, forKey: .starterDisabled)
+    keptItems = try values.decode(Set<String>.self, forKey: .keptItems)
+    questions = try values.decode([AutopilotQuestion].self, forKey: .questions)
+    judgments = try values.decode([String: AutopilotJudgment].self, forKey: .judgments)
+    scores = try values.decodeIfPresent([AutopilotScore].self, forKey: .scores) ?? []
+  }
   public var answers: Int { questions.filter { $0.answer == .yes || $0.answer == .no }.count }
   public var openQuestions: [AutopilotQuestion] { questions.filter(\.isOpen) }
 }
