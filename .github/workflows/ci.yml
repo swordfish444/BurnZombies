@@ -1,19 +1,14 @@
 name: macOS proof
+# The full suite, about half an hour on a hosted runner. It runs only when started by hand
+# (Actions → macOS proof → Run workflow). The everyday check is scripts/test.sh, under a minute.
 on:
-  push:
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   prove:
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:

@@ -1,6 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Quick by default: the build, core safety and Autopilot policy, well under a minute.
+# The full suite runs only on request: --full (several minutes; use caffeinate -i -m).
+if [[ $# -eq 0 ]]; then
+  set -- --quick
+elif [[ "$1" == --full ]]; then
+  shift
+  set -- --integration "$@"
+fi
 swift build
 git rev-parse HEAD
 test_dirty_entries="$(git status --porcelain=v1 | wc -l | tr -d ' ')"
