@@ -6,7 +6,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 macOS 14+, Apple Silicon or Intel. The installer checks the download's checksum and signature, puts **BurnZombies.app** in `~/Applications` and starts it in the menu bar: look for the skull. No account, no API key, no sudo, no package manager and no restart.
 
-BZ keeps running with no chat open, and a new install starts at login, so it comes back after you restart your Mac. To stop that, switch off **Start at login** in Settings; updates keep your choice. Updating from v0.13.0 or earlier keeps the switch as it was; if it's off, turn it on in Settings. To remove BZ, see [Uninstall](#uninstall).
+BZ keeps running with no chat open, and a new install starts at login, so it comes back after you restart your Mac. macOS shows a notice when BZ adds itself to your login items. To stop that, switch off **Start at login** in Settings; updates keep your choice. Updating from v0.13.0 or earlier keeps the switch as it was; if it's off, turn it on in Settings. To remove BZ, see [Uninstall](#uninstall).
 
 ## With or without Claude Code or Codex
 

@@ -52,7 +52,7 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
   - rebuildable folders (node_modules, build output) inside copies untouched for two weeks.
 - Everything else becomes a one-tap yes/no question. Yes burns all the matches now and later; No keeps them.
 - With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. After that, sweeps run when there is something new to judge, at most every 30 minutes, rechecking every 4 hours, each capped at 15 minutes. The AI may burn on its own only an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor.
-- A new install starts at login, so a restart doesn't stop BZ. Settings → Start at login turns that off, and updates keep that choice. An install updated from v0.13.0 or earlier keeps its old setting: off unless the operator turned it on.
+- A new install starts at login, so a restart doesn't stop BZ; macOS shows a notice when BZ adds itself to login items. Settings → Start at login turns that off, and updates keep that choice. An install updated from v0.13.0 or earlier keeps its old setting: off unless the operator turned it on.
 - Never asked about or touched: macOS, apps, anything a running chat is working in, main project folders.
 - Undo: old copies restore from Findings for 30 days (restore points are `refs/burnzombies/retired/…` in each repository; ignored files over 5 MB aren't saved). Junk folders are rebuilt by the operator's tools. Programs get SIGTERM, which can't be undone.
 
