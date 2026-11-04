@@ -98,8 +98,12 @@ if [[ "$client" != none ]]; then
     exit 1
   fi
 fi
-if $launch; then "$app/Contents/MacOS/burnzombies" start-observer; fi
-echo "Installed BurnZombies $version. Your work can keep running."
-echo 'Without Full Disk Access, BurnZombies covers everything except the places macOS protects, such as Desktop, Documents and Downloads.'
-echo 'Optional setup: System Settings → Privacy & Security → Full Disk Access covers those places too and turns on AI hunts.'
-echo "Use Allow Full Disk Access in the menu-bar banner, add and enable $app, then return to BurnZombies. No computer restart is needed."
+if $launch; then
+  "$app/Contents/MacOS/burnzombies" start-observer
+  echo "BurnZombies $version is running in your menu bar: look for the skull."
+  echo "Within a minute it shows what it found, burns what's clearly safe and asks you about the rest."
+else
+  echo "BurnZombies $version is installed at $app. Open it to start."
+fi
+echo "Old project copies are backed up before they go, so you can restore them; junk folders rebuild themselves."
+echo "Optional: Full Disk Access also covers Desktop, Documents and Downloads. Use Allow Full Disk Access in the menu."

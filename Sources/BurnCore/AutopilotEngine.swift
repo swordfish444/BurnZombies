@@ -115,7 +115,10 @@ public actor Autopilot {
     guard !ticking else { return snapshot(now: now) }
     ticking = true
     defer { ticking = false }
-    try? store.updateSweep { $0.lastTick = now }
+    try? store.updateSweep {
+      if $0.lastTick == nil { $0.firstTick = now }
+      $0.lastTick = now
+    }
     let threads = sources.threads()
     let records = await sources.worktreeRecords()
     var items = await sources.processes(threads)

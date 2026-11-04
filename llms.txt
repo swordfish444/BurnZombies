@@ -1,85 +1,105 @@
-# BurnZombies agent setup and operation
+# BurnZombies agent setup
 
 Canonical guide: https://raw.githubusercontent.com/swordfish444/BurnZombies/main/llms.txt
 Repository: https://github.com/swordfish444/BurnZombies
-Supported harnesses: Codex and Claude Code. Requires macOS 14+, Apple Silicon or Intel, and an installed, signed-in harness.
+Requires macOS 14+, Apple Silicon or Intel. Claude Code or Codex is optional: with one installed and signed in, BurnZombies (BZ) uses it to judge new things; without one, BZ still cleans with its own rules and the operator's answers.
 
-## Installation is not cleanup
+## Rules
 
-Install/configure only what the operator requested. Never run a hunt, approve a burn, grant automatic cleanup, stop a process or retire a worktree as an installation test. Do not change credentials, account routing, global MCP configuration, chat hooks or shell profiles. Preserve existing model/provider selections. Account/permission refusal means pause, never provider fallback.
+- Install and configure only what the operator asked for. Setup is not cleanup: never start a sweep (Hunt Zombies, Sweep now, `autopilot sweep`), answer a question, burn, restore or stop anything as an installation test.
+- Do not change credentials, account routing, global MCP configuration, chat hooks or shell profiles. Preserve the operator's tool, model and thinking choices.
+- If a login, usage limit or permission is refused, stop and report it. Never fall back to another tool or account.
+- Never disable Gatekeeper, remove quarantine metadata or grant macOS permissions yourself. Report steps that need the human.
 
-## Fresh installation
+## Install
 
-Check `sw_vers -productVersion` and either `codex --version` or `claude --version`. CLI availability alone does not prove authentication. Download and inspect the installer, then execute it with the chosen harness:
+Check `sw_vers -productVersion` (14 or later), then `claude --version` and `codex --version`. A CLI being present doesn't prove it is signed in. Download, inspect, then run the installer:
 
 ```sh
 installer="$(mktemp -t burnzombies-installer)"
 curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh -o "$installer"
-bash "$installer" --mcp codex --observe-only
+bash "$installer"
 rm "$installer"
 ```
 
-For Claude Code, use `--mcp claude --observe-only` in the same command. The observer starts in the background. `--observe-only` configures the private integration but leaves AI reviews disabled; native inventory can still run. The installer checks the release checksum, archive paths and bundle signature. Current releases are ad-hoc signed, not notarized. If macOS blocks opening, report the actual prompt; do not disable Gatekeeper or remove quarantine metadata.
+- Default (`--mcp auto`): Claude Code if installed, otherwise Codex. If the operator named one, add `--mcp claude` or `--mcp codex`.
+- Neither installed: run the same command. AI judging stays off. Once the operator installs and signs in to one, run `"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" setup`.
+- `--observe-only`: AI judging off. Add it only if the operator asks; `burnzombies setup --with-ai` turns it back on.
+- `--no-open`: install without starting the app.
 
-Verify using the bundled CLI (no global command or PATH edit is needed):
+The installer checks the release checksum, archive paths and bundle signature, installs `~/Applications/BurnZombies.app` (or `$BURNZOMBIES_INSTALL_DIR`; substitute that path below if the operator set it) and starts it in the menu bar. No account, API key or sudo. Releases are not notarized; if macOS blocks opening, report the exact prompt.
 
-```sh
-"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" version
-"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" doctor
-"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" access-status
-"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" findings
-```
-
-Substitute the operator's explicit BURNZOMBIES_INSTALL_DIR if used. Check doctor.configuredHarness, configuredExecutableAvailable, mcpServerAvailable, appResponding and runningAppMatchesCLI. `version`/`build` identify this CLI; `runningAppVersion`/`runningAppBuild` identify the responding app. An old or mismatched app is not a verified update. Unknown permission/coverage or an empty inbox is not a successful discovery test.
-
-Full Disk Access is optional: without it BurnZombies covers everything except the places macOS protects (Desktop, Documents, Downloads, iCloud Drive, Mail, Messages, Photos, other apps' data, external drives) and AI hunts stay off. Granting it requires the human: System Settings → Privacy & Security → Full Disk Access → add/enable the exact installed BurnZombies.app. `access-check` verifies an existing grant; it cannot grant access. Recovery may require the human to answer a Keychain prompt. Never bypass these permission boundaries. Report pending human steps honestly.
-
-Show the operator the menu bar's Autopilot line, Teach BZ (yes/no questions that teach rules) and Findings. Autopilot sweeps every 15 minutes: it burns orphaned programs, retires old copies (always restorable) and clears rebuildable junk folders that its starter rules or the operator's answers cover, and asks about the rest. Settings → Autopilot turns it off or changes the frequency. See docs/AUTOPILOT.md. Review permission is not blanket cleanup permission. Finding notifications are controlled in Findings → Notifications and workflow rules → Notify me about findings. Notification permission and details visibility are separate choices; do not enable them silently as an install test.
-
-## Existing installation / update
-
-Read version, doctor and access-status first. Preserve the selected harness, model, thinking effort, schedule and enabled/paused state. Run the inspected installer with `--mcp auto`; omit --observe-only unless the operator asked to disable reviews. No fallback occurs if the selected harness is missing. The installer gracefully closes only its exact previous app bundle; it refuses a forced replacement if shutdown fails.
-
-For an explicitly requested provider selection:
+## Verify (read-only)
 
 ```sh
-"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" setup --harness codex
-# OR, only when the operator selected Claude Code:
-"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" setup --harness claude
+bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
+"$bz" version
+"$bz" doctor
+"$bz" access-status
+"$bz" autopilot
 ```
 
-Optional explicit selections: --model MODEL_ID, --thinking high (or another supported level), --model default, --thinking default. Setup writes BurnZombies's private configuration and preserves unspecified prior settings. Run doctor afterward. It never grants new cleanup authority. Existing native policies retain their original guards.
+- `doctor`: `appResponding` and `runningAppMatchesCLI` must be true. `configuredHarness` is `claude`, `codex` or `none`; `backgroundReviewsEnabled` says whether AI judging is on. It never starts the AI or a burn, and can't prove a login. An old or mismatched running app is not a verified update.
+- `access-status`: Full Disk Access state.
+- `autopilot`: snapshot of counts, open questions and rules; changes nothing. Empty counts in the first minute are not a failure; the first look may still be running.
 
-## Codex
+## Tell the operator what happens next
 
-The resident app launches an owned, bounded Codex app-server session for each focused review and supplies its private MCP server. No always-loaded global MCP server, working-chat skill, hooks or global config edit is required. Do not run the legacy install/install-skill commands for normal setup. Existing chat permissions and global Codex settings remain the user's.
+- BZ looks right away and every minute for its first half hour. Within about a minute the menu-bar panel (the skull) shows how much it found, and "BZ has N quick questions" when something needs a decision.
+- From the first minute, starter rules burn on their own (each can be switched off in Settings → Autopilot):
+  - programs whose app or chat is gone, idle 6+ hours, with no open port (a program that has barely used the CPU since it started counts as idle from its start);
+  - old project copies (git worktrees) already merged, unchanged and untouched for a month, always backed up first;
+  - rebuildable folders (node_modules, build output) inside copies untouched for two weeks.
+- Everything else becomes a one-tap yes/no question. Yes burns all the matches now and later; No keeps them.
+- With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. After that, sweeps run when there is something new to judge, at most every 30 minutes, rechecking every 4 hours, each capped at 15 minutes. The AI may burn on its own only an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor.
+- Never asked about or touched: macOS, apps, anything a running chat is working in, main project folders.
+- Undo: old copies restore from Findings for 30 days (restore points are `refs/burnzombies/retired/…` in each repository; ignored files over 5 MB aren't saved). Junk folders are rebuilt by the operator's tools. Programs get SIGTERM, which can't be undone.
 
-## Claude Code
+## Cost
 
-The resident app uses the installed Claude Code CLI and existing login, with focused instructions, a private MCP configuration and a bounded turn allowance. Unrelated MCP servers, project hooks and browser integration are excluded from this background invocation. No edit to ~/.claude.json or ~/.claude/settings.json is required. Ordinary chats are unaffected.
+Claude Code uses Sonnet by default; Codex uses its own default. Roughly $0.30–$1.20 per AI sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. Model: Settings → Review intelligence. AI off: `"$bz" setup --observe-only` (back on: `--with-ai`); the Settings → Autopilot switch pauses all of Autopilot. Spend: Settings → Usage & estimated cost.
 
-## Read-only diagnosis
+## Full Disk Access (optional, human only)
 
-- doctor: configuration and app connectivity; no cleanup or model invocation.
-- access-status: permission state; access-check: recheck an existing grant.
-- findings [OFFSET]: durable inbox; blocked/unknown is not zero.
-- Native Worktrees window: discovered checkouts, evidence gaps and recovery history.
-- Private reviewer MCP tool burnzombies_worktrees with action list or operations: inventory or native receipts. These are MCP calls, not CLI subcommands; normal setup does not add them to unrelated chats.
-- evidence PID [PID ...]: up to 16 exact current process identities; no signals.
-- status: saved aggregate catalog; does not prove the running app responds.
+Without it, BZ covers everything except the places macOS protects (Desktop, Documents, Downloads, iCloud Drive, Mail, Messages, Photos, other apps' data, external drives) and says what it skipped. With it, those are covered too. AI sweeps run either way. Granting it needs the human: Allow Full Disk Access in the menu-bar banner, or System Settings → Privacy & Security → Full Disk Access → enable BurnZombies. If macOS asks again after an update, re-enable it there. `"$bz" access-check` re-verifies an existing grant; it cannot grant access.
 
-Hunt now starts an Autopilot sweep immediately; it is not an installation test. `burnzombies autopilot` prints the current snapshot (counts, open questions, learned rules) without changing anything. Native inventory continues without a model. Age, size, a finished chat turn or a merged PR alone never proves abandonment. Missing owner/consumer evidence preserves the resource.
+## Update
 
-New idle worktrees appear for manual review without prompting. Worktree notifications require the configured stale age (fourteen days by default), an exact completion confirmation, or released current owners. These signals request attention; they do not grant cleanup authority.
+Read `version`, `doctor` and `access-status` first. Rerun the inspected installer without `--mcp`: it keeps the selected tool, model, thinking level and on/off state. Add `--observe-only` only if the operator asks. If the selected tool is missing, setup stops; it never switches tools. The installer closes only its own previous app and refuses a forced replacement.
 
-## Decisions and recovery
+On an explicit request to change tool or model:
 
-Findings shows the exact action, evidence, protection and recovery requirement. Keep protects that identity across action paths. Approval once applies to one semantic revision and is revalidated before dispatch. Recurring rules are separate grants with exact scope, cap, expiry and a one-item canary; success never expands them. Silence, dismissal and snooze never approve cleanup.
+```sh
+"$bz" setup --harness claude        # or: --harness codex
+"$bz" setup --model MODEL_ID --thinking high
+"$bz" setup --model default --thinking default
+```
 
-Gradle adapters support exactly 8.14.6 and 9.8.2 via authenticated StopWhenIdle: raced builds finish before exit. Generic process stops require positive ownership and completion evidence. Worktree retirement requires management/release, complete inspection and independently verified encrypted recovery. Harness-owned worktrees stay with their owning tool. Only verified native receipts count as cleanup; uncertain dispatches are never automatically retried.
+Setup writes only BZ's private configuration, keeps unspecified settings and never grants cleanup. Run `doctor` afterward.
 
-Report installation, permission readiness, actual model review, surfaced findings and verified cleanup separately. Destructive acceptance tests must use sacrificial targets, never real work.
+## How each tool runs
+
+- Claude Code: each sweep runs the installed CLI with its existing login, a private MCP config, read-only file tools (no shell, no edits), no hooks, no CLAUDE.md files and no saved session. No edits to ~/.claude.json or ~/.claude/settings.json.
+- Codex: each sweep runs an owned, bounded Codex session with only BZ's MCP tools; apps, plugins, memories, shell and web search are off. No global Codex config edits.
+- Only Claude Code and Codex run AI sweeps. Do not run the legacy `install` or `install-skill` commands for normal setup.
+
+## Uninstall
+
+1. `"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" stop-observer "$HOME/Applications/BurnZombies.app"`
+2. Delete `~/Applications/BurnZombies.app`.
+3. Delete `~/Library/Application Support/BurnZombies`.
+
+Restore points stay in each repository and are the only way back for burned copies. Delete them only if the operator asks, inside the repository: `git for-each-ref --format='%(refname)' refs/burnzombies/ | xargs -n1 git update-ref -d`
+
+## More read-only commands
+
+- `findings [OFFSET]`: the advanced findings inbox; blocked or unknown is not zero.
+- `evidence PID [PID ...]`: up to 16 exact process identities; sends no signals.
+- `status`: saved totals; does not prove the app is running.
+
+Report installation, AI judging on/off, Full Disk Access and what Autopilot found separately. Destructive tests must use sacrificial targets, never real work.
 
 User guide: https://github.com/swordfish444/BurnZombies/blob/main/docs/USER_GUIDE.md
-Worktrees: https://github.com/swordfish444/BurnZombies/blob/main/docs/WORKTREE-CLEANUP.md
+Autopilot: https://github.com/swordfish444/BurnZombies/blob/main/docs/AUTOPILOT.md
+Install & uninstall: https://github.com/swordfish444/BurnZombies/blob/main/docs/INSTALL.md
 Safety: https://github.com/swordfish444/BurnZombies/blob/main/docs/SAFETY.md

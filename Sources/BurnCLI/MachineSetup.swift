@@ -16,12 +16,13 @@ enum MachineSetup {
       throw StoreError.message("Choose auto, codex, claude, cursor, copilot or gemini.")
     }
     let root = try value("--root").map { URL(fileURLWithPath: $0) } ?? Store.defaultRoot
+    let cleansAnyway = "BurnZombies still burns what's clearly safe and asks you about the rest."
     if selected == "none" {
       if var config = try MachineReviewConfiguration.load(root: root) {
         config.enabled = false
         try config.save(root: root)
       }
-      print("Background reviews off. The app can still observe this Mac.")
+      print("AI judging is off. " + cleansAnyway)
       return
     }
     let old = try MachineReviewConfiguration.load(root: root)
@@ -29,17 +30,24 @@ enum MachineSetup {
     let choices =
       selected == "auto" || selected == "all"
       ? old.map { [$0.harness] } ?? ["claude", "codex"] : [selected]
+    let launcher = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+      .resolvingSymlinksInPath()
     guard let harness = choices.first(where: { MachineReviewConfiguration.detect($0) != nil }),
       let executable = MachineReviewConfiguration.detect(harness)
     else {
-      throw StoreError.message(
-        "No selected harness CLI is available. Install/sign in to the selected harness (Codex or Claude Code for current supported setup), then run setup again. Nothing changed."
+      // A Mac without an AI command-line tool still gets BurnZombies; only a named one is required.
+      guard old == nil, selected == "auto" || selected == "all" else {
+        throw StoreError.message(
+          "\(old.map(\.harnessName) ?? selected) isn't installed or isn't on PATH. Install it and sign in, then run setup again. Nothing changed."
+        )
+      }
+      print(
+        "No Claude Code or Codex found, so AI judging is off. \(cleansAnyway) To add AI later, install one and run: \(launcher.path) setup"
       )
+      return
     }
     // Establish migration only after read-only prerequisites pass.
     _ = try IntentLedger.migrate(root: root)
-    let launcher = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-      .resolvingSymlinksInPath()
     var config = MachineReviewConfiguration(
       harness: harness, executable: executable, launcher: launcher.path,
       server: launcher.deletingLastPathComponent().appendingPathComponent("burnzombies-mcp").path)
@@ -57,29 +65,17 @@ enum MachineSetup {
     if let thinking = try value("--thinking") {
       config.reasoningEffort = MachineReviewConfiguration.selectionValue(thinking)
     }
-    if args.contains("--observe-only") { config.enabled = false }
+    // A reinstall keeps AI judging as it was; only these flags change it.
+    if args.contains("--observe-only") {
+      config.enabled = false
+    } else if args.contains("--with-ai") {
+      config.enabled = true
+    }
     try config.save(root: root)
     print(
       config.enabled
-        ? "BurnZombies Autopilot will sweep this Mac every 15 minutes, using \(harness) to judge new leftovers."
-        : "BurnZombies is configured for \(harness). AI reviews are off; native observation remains available."
-    )
-    print(
-      "No active chat, chat hooks, computer restart or edits to harness configuration required.")
-    print(
-      "Reviews use your existing harness login and usage allowance. One provider; no automatic fallback."
-    )
-    print(
-      "Autopilot burns leftovers on its own with safe starter rules and what you teach it in Teach BZ. Old copies are always restorable. Turn it off in Settings → Autopilot."
-    )
-    print(
-      "Model: \(config.model ?? "harness default") · Thinking: \(config.reasoningEffort ?? "harness default"). Change these in Settings."
-    )
-    print(
-      "Full Disk Access is optional: System Settings → Privacy & Security → Full Disk Access → add and enable BurnZombies.app."
-    )
-    print(
-      "Without it BurnZombies covers everything except the places macOS protects (Desktop, Documents, Downloads, iCloud Drive, Mail, Messages, Photos, other apps' data and external drives). With it, use Allow Full Disk Access in the menu-bar banner and return to BurnZombies for an access check; it adds those places and AI hunts."
+        ? "\(config.harnessName) judges what BurnZombies isn't sure about, with your existing login. Change the model in Settings → Review intelligence."
+        : "AI judging is off. \(cleansAnyway) To turn it on: \(launcher.path) setup --with-ai"
     )
   }
 }

@@ -93,6 +93,12 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       if failures == 0 { print("PASS Autopilot end-to-end with a real AI sweep") }
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--newcomer" {
+      do {
+        try await newcomerProof(root: URL(fileURLWithPath: CommandLine.arguments[2]))
+      } catch { failTest("Newcomer: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--autopilot-preview" {
       do {
         try await autopilotPreview(
@@ -523,8 +529,16 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await autopilotDiskProof() } catch { failTest("Autopilot junk folders: \(error)") }
     do { try await autopilotProcessProof() } catch { failTest("Autopilot processes: \(error)") }
     do { try await autopilotSweepProof() } catch { failTest("Autopilot sweep: \(error)") }
+    do {
+      let newcomer = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "bz-newcomer-" + UUID().uuidString)
+      defer { try? FileManager.default.removeItem(at: newcomer) }
+      try await newcomerProof(root: newcomer)
+    } catch { failTest("Newcomer first run: \(error)") }
     if failures == beforeAutopilot {
-      print("PASS autopilot policy, restorable retirement, junk folders, processes and sweep")
+      print(
+        "PASS autopilot policy, restorable retirement, junk folders, processes, sweep and a newcomer's first two minutes"
+      )
     }
     let beforeMachine = failures
     do { try await machineReviewProof() } catch { failTest("Machine review: \(error)") }

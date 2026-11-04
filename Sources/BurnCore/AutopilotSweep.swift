@@ -6,11 +6,20 @@ public enum AutopilotSweeper {
   public static let aiTimeout: TimeInterval = 900
   public static let rejudgeInterval: TimeInterval = 4 * 3600
   public static let minimumSpacing: TimeInterval = 30 * 60
+  /// A new install looks every minute for its first half hour, so what its first inventory finds
+  /// is burned or asked about as soon as it arrives, and its first AI sweep waits ten minutes
+  /// for that first look instead of judging a half-empty catalog.
+  public static let warmUp: TimeInterval = 30 * 60
+  public static let warmUpInterval: TimeInterval = 60
+  public static let firstSweepDelay: TimeInterval = 10 * 60
 
   /// Cataloging runs even when Autopilot is off, so the UI can show what it would burn;
   /// the engine only burns while enabled.
   public static func nativeDue(_ state: AutopilotSweepState, now: Date) -> Bool {
     guard let last = state.lastTick else { return true }
+    if let first = state.firstTick, now.timeIntervalSince(first) < warmUp {
+      return now.timeIntervalSince(last) >= warmUpInterval - 5
+    }
     return now.timeIntervalSince(last) >= Double(state.intervalMinutes * 60) - 5
   }
 
@@ -30,6 +39,7 @@ public enum AutopilotSweeper {
   ) -> Bool {
     guard state.enabled || manual, !state.running else { return false }
     if manual { return true }
+    if let first = state.firstTick, now.timeIntervalSince(first) < firstSweepDelay { return false }
     if let retry = state.retryAfter, retry > now { return false }
     guard snapshot.count(.unsure) > 0 else { return false }
     let since = state.lastAISweep.map { now.timeIntervalSince($0) } ?? .infinity

@@ -31,7 +31,7 @@ Live background-model cleanup is verified for Codex and Claude. Cursor, Copilot 
 
 The public 0.4 installer launched the real menu bar observer without opening a window or taking focus. Automatic Codex reviews ran independently of chats. The first real-workload reviews preserved uncertain work and reported a denied supplemental process-inspection command. Later automatic reviews produced verified process-exit receipts; those remain separate from controlled fixtures and do not establish worktree-cleanup success. Controlled-fixture cleanup proof is separate from that trial. Settings rendering and save/reopen behavior are exercised offscreen; foreground mouse/keyboard interaction remains untested under the operator's no-focus restriction.
 
-Universal packaging supports arm64 and x86_64; execution is tested on Apple Silicon only. Releases are ad-hoc signed, not notarized. Source tests and local packages do not by themselves establish a published release; public installer verification is a separate delivery check.
+Universal packaging supports arm64 and x86_64; execution is tested on Apple Silicon only. From v0.13.0, releases are signed with BurnZombies' own certificate, not notarized; a certificate the Mac doesn't trust still passes the installer's signature check and runs. Source tests and local packages do not by themselves establish a published release; public installer verification is a separate delivery check.
 
 ## Reproduce without displaying an app
 

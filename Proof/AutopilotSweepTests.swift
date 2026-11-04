@@ -50,6 +50,43 @@ func autopilotSweepProof() async throws {
   check(
     AutopilotSweeper.aiDue(
       AutopilotSweepState(), snapshot: AutopilotSnapshot(), now: now, manual: true), "manual hunt")
+  // A new install looks every minute for its first half hour, so what its first inventory finds
+  // is burned or asked about as soon as it arrives; on a real Mac nothing showed for 15 minutes.
+  var newcomer = AutopilotSweepState()
+  newcomer.firstTick = now.addingTimeInterval(-5 * 60)
+  newcomer.lastTick = now.addingTimeInterval(-60)
+  check(AutopilotSweeper.nativeDue(newcomer, now: now), "a new install looks every minute")
+  newcomer.lastTick = now.addingTimeInterval(-30)
+  checkFalse(AutopilotSweeper.nativeDue(newcomer, now: now), "but not twice a minute")
+  newcomer.firstTick = now.addingTimeInterval(-31 * 60)
+  newcomer.lastTick = now.addingTimeInterval(-60)
+  checkFalse(AutopilotSweeper.nativeDue(newcomer, now: now), "after half an hour, every 15 minutes")
+  // Its first AI sweep waits for that first look instead of judging a half-empty catalog.
+  newcomer.firstTick = now.addingTimeInterval(-5 * 60)
+  checkFalse(
+    AutopilotSweeper.aiDue(newcomer, snapshot: unsureSnapshot, now: now, manual: false),
+    "the first AI sweep waits for a complete first look")
+  check(
+    AutopilotSweeper.aiDue(newcomer, snapshot: unsureSnapshot, now: now, manual: true),
+    "a hunt the owner asks for never waits")
+  newcomer.firstTick = now.addingTimeInterval(-10 * 60)
+  check(
+    AutopilotSweeper.aiDue(newcomer, snapshot: unsureSnapshot, now: now, manual: false),
+    "ten minutes in, the first AI sweep starts")
+  // Only the very first tick starts the warm-up; an install that ticked before never gets one.
+  let warmRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-warmup-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: warmRoot) }
+  let warmEngine = try Autopilot(root: warmRoot, sources: AutopilotSources())
+  _ = await warmEngine.tick(now: now)
+  _ = await warmEngine.tick(now: now.addingTimeInterval(60))
+  equal(await warmEngine.sweepState().firstTick, now, "the first tick starts the warm-up")
+  let olderRoot = warmRoot.appendingPathComponent("older")
+  try AutopilotStore(root: olderRoot).updateSweep { $0.lastTick = now.addingTimeInterval(-3600) }
+  let olderEngine = try Autopilot(root: olderRoot, sources: AutopilotSources())
+  _ = await olderEngine.tick(now: now)
+  // An install that ticked before gets no warm-up.
+  isNil(await olderEngine.sweepState().firstTick)
   equal(AutopilotSweeper.backoff(failures: 1), 15 * 60)
   equal(AutopilotSweeper.backoff(failures: 2), 30 * 60)
   equal(AutopilotSweeper.backoff(failures: 3), 60 * 60)

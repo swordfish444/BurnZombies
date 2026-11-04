@@ -155,8 +155,15 @@ public enum AutopilotProcesses {
     return result.reversed()
   }
 
+  /// Since it was last seen busy, or first seen. A program never seen busy that has used under a
+  /// second of CPU in its whole life has been idle since it started, so a new install need not
+  /// watch it for hours first.
   static func idleSince(_ r: Record, now: Date) -> TimeInterval {
-    now.timeIntervalSince(r.lastBusy ?? r.firstSeen)
+    if r.lastBusy == nil, r.latest.cpuNS < 1_000_000_000 {
+      let started = Date(timeIntervalSince1970: Double(r.latest.identity.seconds))
+      return now.timeIntervalSince(min(started, r.firstSeen))
+    }
+    return now.timeIntervalSince(r.lastBusy ?? r.firstSeen)
   }
 
   public static func items(

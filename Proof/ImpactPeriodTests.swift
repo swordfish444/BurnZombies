@@ -99,6 +99,8 @@ func impactPeriodProof() throws {
   equal(cleaned(.all).worktrees, 42, "all time adds Autopilot's tally to earlier cleanups")
   equal(cleaned(.all).disk, 900_000_080_000, "all time")
   equal(cleaned(.all).lifetimeWorktrees, 42)
+  // "Last burn" counts them too; a real Mac said "No burns yet today" right after one.
+  equal(cleaned(.all).last, now, "Autopilot's latest cleanup is the last burn")
   try autopilotImpactProof()
 }
 

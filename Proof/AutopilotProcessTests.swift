@@ -168,4 +168,26 @@ func autopilotProcessProof() async throws {
       key, authority: "starter:test", label: item.name, rationale: "Again.")
     failTest("a stopped process cannot be burned twice")
   } catch {}
+
+  // A program a new install finds that has barely used the CPU since it started has been idle
+  // since then, so it needn't be watched for hours before Autopilot can judge it.
+  let started = Date().addingTimeInterval(-3 * 86_400)
+  let quiet = AutopilotProcessProbe(
+    listening: { _ in false }, agent: { _ in nil }, cwd: { _ in nil }, alive: { _ in false })
+  func found(cpu seconds: Double, busy: Date? = nil) -> AutopilotItem? {
+    var o = Observation(
+      identity: ProcessIdentity(pid: 99_991, seconds: UInt64(started.timeIntervalSince1970)),
+      executable: "/opt/homebrew/bin/node")
+    o.uid = getuid()
+    o.parent = 1
+    o.cpuNS = UInt64(seconds * 1e9)
+    var r = Record(o)
+    r.lastBusy = busy
+    return AutopilotProcesses.items(
+      [o.identity.key: r], threads: [], protectedPIDs: [], probe: quiet
+    ).first
+  }
+  equal(found(cpu: 0.4)?.facts["idle"], "1d", "under a second of CPU in three days: idle since it started")
+  equal(found(cpu: 120)?.facts["idle"], "active", "real work since it started: watch it first")
+  equal(found(cpu: 0.4, busy: Date())?.facts["idle"], "active", "seen busy just now")
 }

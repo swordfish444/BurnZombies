@@ -151,7 +151,7 @@ enum AutopilotTools {
 
   static func serve() async throws {
     let server = Server(
-      name: "BurnZombies Autopilot", version: "0.13.0",
+      name: "BurnZombies Autopilot", version: BuildIdentity.version,
       instructions:
         "Autopilot sweep tools. Read the catalog, inspect what is unclear, record honest verdicts, burn what is authorized, ask at most a few yes/no questions, then report. The app enforces every safety rail.",
       capabilities: .init(tools: .init()))
