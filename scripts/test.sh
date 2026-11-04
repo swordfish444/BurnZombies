@@ -9,6 +9,7 @@ elif [[ "$1" == --full ]]; then
   shift
   set -- --integration "$@"
 fi
+scripts/check.sh
 swift build
 git rev-parse HEAD
 test_dirty_entries="$(git status --porcelain=v1 | wc -l | tr -d ' ')"

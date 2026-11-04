@@ -1,6 +1,7 @@
 name: macOS proof
-# The full suite, about half an hour on a hosted runner. It runs only when started by hand
-# (Actions → macOS proof → Run workflow). The everyday check is scripts/test.sh, under a minute.
+# The full suite, about 20 minutes on a hosted runner. It runs only when started by hand
+# (Actions → macOS proof → Run workflow). Pull requests get the fast checks in checks.yml; the
+# everyday check is scripts/test.sh. Releases are built on the maintainer's Mac, never here.
 on:
   workflow_dispatch:
 permissions:
@@ -31,8 +32,8 @@ jobs:
         run: .build/debug/BurnZombiesApp --observer-schedule-proof
       - name: Transport with one cooperative worker
         run: LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 .build/debug/BurnProof --transport
-      - name: Build universal candidate bundle
-        run: scripts/build-app.sh --universal
+      - name: App bundle from the debug build, for the installer proof
+        run: scripts/build-app.sh --debug
       - name: MCP client protocol proof
         run: python3 scripts/test-mcp.py
       - name: Autopilot MCP tools over stdio against a private app endpoint
@@ -72,21 +73,3 @@ jobs:
           python3 scripts/test-install-control.py
           COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/BurnZombies-test.tar.gz" -C dist BurnZombies.app
           python3 scripts/test-install.py "$RUNNER_TEMP/BurnZombies-test.tar.gz"
-
-      - name: Package exact tested candidate
-        run: |
-          for binary in BurnZombiesApp burnzombies burnzombies-mcp; do
-            for architecture in arm64 x86_64; do
-              lipo "dist/BurnZombies.app/Contents/MacOS/$binary" -verify_arch "$architecture"
-            done
-          done
-          COPYFILE_DISABLE=1 tar -czf dist/BurnZombies-macOS-universal.tar.gz -C dist BurnZombies.app
-          cd dist
-          shasum -a 256 BurnZombies-macOS-universal.tar.gz > SHA256SUMS
-      - uses: actions/upload-artifact@v4
-        with:
-          name: BurnZombies-${{ github.sha }}
-          path: |
-            dist/BurnZombies-macOS-universal.tar.gz
-            dist/SHA256SUMS
-          if-no-files-found: error
