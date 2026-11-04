@@ -156,7 +156,8 @@ func newcomerProof(root: URL) async throws {
     }
     if firstQuestion == nil, !snapshot.questions.isEmpty { firstQuestion = minute }
     if firstBurn == nil, !burned.isEmpty { firstBurn = minute }
-    if firstNumber == nil, numbers.disk + numbers.memory > 0 || numbers.count + numbers.worktrees > 0 {
+    let shown = numbers.disk > 0 || numbers.memory > 0 || numbers.count > 0 || numbers.worktrees > 0
+    if firstNumber == nil, shown {
       firstNumber = minute
     }
     if junkCleared == nil, !fm.fileExists(atPath: paused.appendingPathComponent("node_modules").path) {

@@ -55,10 +55,11 @@ public struct MachineReviewConfiguration: Codable, Sendable {
     // Isolated tests replace the usual install folders, so a Mac that has a harness can still
     // play one that has none.
     let override = ProcessInfo.processInfo.environment["BURNZOMBIES_HARNESS_DIRS"]
-    let paths =
-      (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
-      + (override.map { $0.split(separator: ":").map(String.init) }
-        ?? [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"])
+    let searched: [String] = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+      .split(separator: ":").map(String.init)
+    let usual: [String] = [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+    let fallbacks: [String] = override.map { $0.split(separator: ":").map(String.init) } ?? usual
+    let paths = searched + fallbacks
     let names = harness == "cursor" ? ["agent", "cursor-agent"] : [harness]
     var candidates = paths.flatMap { dir in names.map { dir + "/" + $0 } }
     if harness == "codex", override == nil {

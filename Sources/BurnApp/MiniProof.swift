@@ -257,9 +257,11 @@ import Vision
     try click(option)
     let expected = ImpactNumbers.make(model, period: option)
     let earlier = ImpactNumbers.make(catalog: model.state.catalog, period: option)
-    let mine = option == .all ? (30, UInt64(600_000_000_000)) : (1, UInt64(5_000_000_000))
+    let mineWorktrees: Int = option == .all ? 30 : 1
+    let mineBytes: UInt64 = option == .all ? 600_000_000_000 : 5_000_000_000
     guard view.totals.count == expected.count, view.totals.memory == expected.memory,
-      view.totals.worktrees == earlier.worktrees + mine.0, view.totals.disk == earlier.disk + mine.1
+      view.totals.worktrees == earlier.worktrees + mineWorktrees,
+      view.totals.disk == earlier.disk + mineBytes
     else { throw StoreError.message("The \(option.rawValue) tab shows the wrong totals") }
     guard view.numbers.count == card.count, view.numbers.memory == card.memory,
       model.impactPeriod == .today
