@@ -23,7 +23,8 @@ Refresh the example question card without opening a window or starting an observ
 ```sh
 swift build --product BurnZombiesApp
 .build/debug/BurnZombiesApp --autopilot-proof /tmp/bz-readme-autopilot
-sips -s format jpeg -s formatOptions 90 /tmp/bz-readme-autopilot/teach-caches.png --out docs/media/readme-question.jpg
+sips -c 1030 1200 --cropOffset 0 40 /tmp/bz-readme-autopilot/teach-caches.png --out /tmp/bz-question.png
+sips -s format jpeg -s formatOptions 90 /tmp/bz-question.png --out docs/media/readme-question.jpg
 ```
 
 Then render the hero at 2x, transparent outside its rounded card (the phone hero likewise), and the 1280 × 640 link-preview card (upload it in the repository's **Settings → Social preview**):

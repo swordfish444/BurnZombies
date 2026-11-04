@@ -8,7 +8,7 @@
 <h3 align="center">BurnZombies (BZ) cleans up after your AI coding agents, on its own.</h3>
 
 <p align="center">
-  It stops the processes they orphan and deletes the worktrees and rebuildable junk they leave behind, backing up every worktree first. On the author's Mac, which had about 1,000 agent worktrees, its first two days freed <b>685.6 GB</b> and cleared <b>453</b> stale ones, most of them under rules the author made by answering yes.
+  It stops the processes they orphan and deletes the worktrees and rebuildable junk they leave behind, saving each worktree's commits and changes first. On the author's Mac, which had about 1,000 agent worktrees, its first two days freed <b>685.6 GB</b> and cleared <b>453</b> stale worktrees, most of them under rules learned from 19 one-tap answers.
 </p>
 
 <p align="center">On your Mac, paste this into Terminal:</p>
@@ -17,13 +17,13 @@
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-<p align="center"><sub>macOS 14+ · no account, API key or sudo · free and open source (MIT) · signed, not yet notarized by Apple · <a href="install.sh">read the script first</a></sub></p>
+<p align="center"><sub>macOS 14+ · no account, API key or sudo · free and open source (MIT) · signed, not yet notarized by Apple · <a href="install.sh">read the script first</a><br>If Claude Code or Codex is signed in, BZ also runs AI sweeps on your login, about $0.30–$1.20 each at API prices. To skip them, use <code>| bash -s -- --observe-only</code> instead of <code>| bash</code>.</sub></p>
 
 ## How it works
 
-1. **Install it.** One command. A flaming skull joins your menu bar, and within a minute it shows what it found.
+1. **Install it.** One command. A flaming skull joins your menu bar and shows what it found within a minute.
 2. **Run your agents.** Claude Code, Codex, Cursor: as many sessions, worktrees, dev servers and builds as you like. Nothing about how you work changes.
-3. **BZ burns the exhaust.** Every 15 minutes it stops orphaned processes and deletes stale worktrees and rebuildable junk, backing up each worktree first. When it isn't sure, it asks you one yes/no question and remembers your answer.
+3. **BZ burns the exhaust.** From the first minute, and every 15 minutes after, it stops orphaned processes and deletes stale worktrees and rebuildable junk, backing up each worktree first. When it isn't sure, it asks you once, and your answer becomes a rule.
 
 <p align="center">
   <img src="docs/media/readme-question.jpg" width="480" alt="A Teach BZ question card, with example data: Burn 5 tool caches? Frees 20.3 GB. Unused for a month. Inside your projects. Your tools rebuild them when needed. Yes, burn them or No, keep them.">
@@ -32,8 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 ## What happens next
 
-- **Minute one:** BZ shows what it found and asks its first questions. Its starter rules start burning the obvious right away.
-- **Around minute 10:** if Claude Code or Codex is signed in, the first AI sweep judges what the rules don't cover. It runs on your own login: roughly $0.30–$1.20 a sweep on API pricing, or plan usage on a subscription.
+- **Minute one:** BZ shows what it found, burns what's clearly safe and asks about the rest.
+- **Around minute 10:** if Claude Code or Codex is signed in, the first AI sweep judges what the rules don't cover.
 - **From then on:** BZ looks every 15 minutes, quietly. AI sweeps run only when there's something new to judge, at most every 30 minutes.
 - **After a restart:** BZ comes back only if **Start at login** is on in Settings, so switch it on once.
 
@@ -44,24 +44,35 @@ To BZ, burning means stopping a program or deleting a folder.
 - 🧟 **Zombie processes**: Node workers, headless browsers and build watchers left running after their app or chat is gone.<br>
   **Safety net:** a polite `SIGTERM`, sent only after an exact identity check.
 - 📁 **Stale worktrees** nothing is using.<br>
-  **Safety net:** first, a Git ref inside the repo saves every commit, uncommitted change and untracked file, and BZ verifies it. Restore in one click from **Findings** for 30 days; the ref stays in the repo after that.
+  **Safety net:** first, a Git ref inside the repo saves every commit, uncommitted change and untracked file, plus small ignored files. If BZ can't verify that backup, the worktree stays. Branches are kept. Restore in one click from **Findings** for 30 days; the ref stays in the repo after that.
 - 🗑️ **Rebuildable junk**: `node_modules`, build output, DerivedData.<br>
   **Safety net:** your tools rebuild it when needed.
 
 ## Safe by default
 
-- **Hands off what's in use.** BZ never touches macOS, your apps, your AI tools, your main project folders, or any worktree or program something is using. It also reads the session records Claude Code and Codex keep, so even an idle chat's folder stays safe.
-- **On its own, only the obvious.** Starter rules take orphaned programs idle for 6+ hours with no open port, merged worktrees with no local changes untouched for a month, and junk inside worktrees untouched for two weeks. Switch any of them off in **Settings → Autopilot**.
-- **Your agents' worktrees wait for you.** Worktrees made by Claude Code, Codex or the Conductor app are never burned without your yes: not by a starter rule, not by the AI.
-- **AI with limits.** Your Claude Code or Codex may burn a low-risk item on its own only when it's at least 85% sure: an orphaned program with no open port, a known junk folder, or a worktree nothing uses.
-- **You have the last word.** **No** and **Keep forever** always win. Every **Yes** becomes a rule covering everything that matches that question; forget it any time in **Settings → Autopilot → What BZ has learned**. The [tests](Proof) check these rules on every code change. [How cleanup stays safe →](docs/SAFETY.md)
+- **Hands off what's in use:** never macOS, your apps, your AI tools, your main project folders, or anything a program or an open chat is using.
+- **Your agents' worktrees wait for your yes,** and **No** or **Keep forever** always wins.
+- **Every worktree is backed up** to a Git ref first; restore it in one click or by hand.
+
+<details>
+<summary><b>Exactly what it burns on its own</b></summary>
+
+- **Starter rules** (switch each off in **Settings → Autopilot**): orphaned programs that have barely used the CPU for 6+ hours and have no open port, merged worktrees with no local changes untouched for a month, and junk inside worktrees untouched for two weeks.
+- **The AI,** if on, may burn a low-risk item only when it rates itself at least 85% sure: an orphaned program with no open port, a known junk folder, or a worktree nothing uses. Every burn it asks for passes BZ's own checks.
+- **Never on its own:** worktrees made by Claude Code, Codex or the Conductor app. Other worktrees, such as ones Cursor or your scripts make, follow the two rules above.
+- **Your yes answers:** a question says what it covers, like "Burn 5 tool caches?", and **Yes** also covers new matches later. Forget any rule in **Settings → Autopilot → What BZ has learned**.
+- **Limits:** at most 20 worktrees, 20 junk folders and 50 programs per look. BZ knows an idle Claude Code or Codex chat is still open from the session records those tools keep.
+
+The [tests](Proof) check these rules on every code change. [How cleanup stays safe →](docs/SAFETY.md)
+
+</details>
 
 ## FAQ
 
 <details>
-<summary><b>Can I keep the AI off?</b></summary>
+<summary><b>What does the AI cost, and can I turn it off?</b></summary>
 
-Yes. Without Claude Code or Codex signed in there's no AI at all; with one, AI sweeps are on by default. Install with `curl … | bash -s -- --observe-only` to keep them off, or later run `~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup --observe-only` (`--with-ai` turns them back on). **Settings → Usage & estimated cost** shows what sweeps used. [Model and cost →](docs/INSTALL.md#model-and-cost)
+Without Claude Code or Codex signed in there's no AI at all; with one, AI sweeps are on by default and run on your login: roughly $0.30–$1.20 a sweep at API prices, or plan usage on a subscription. They run only when there's something new to judge, at most every 30 minutes, so a quieter Mac runs fewer. On the author's Mac, working through about 1,000 worktrees in its first days, they came to about $13–23 a day at API prices. There's no spending cap yet; **Settings → Usage & estimated cost** shows what they used. Turn them off with `~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup --observe-only` (`--with-ai` turns them back on); the starter rules and your answers keep cleaning. [Model and cost →](docs/INSTALL.md#model-and-cost)
 
 </details>
 
@@ -140,6 +151,6 @@ Stop BZ, then delete the app and its data folder. Restore points stay in your re
 
 ## Learn more
 
-[User guide](docs/USER_GUIDE.md) · [How Autopilot decides](docs/AUTOPILOT.md) · [Safety](docs/SAFETY.md) · [Install options](docs/INSTALL.md) · [MCP](docs/MCP.md) · [Feedback](https://github.com/swordfish444/BurnZombies/issues/new?template=feedback.yml)
+[User guide](docs/USER_GUIDE.md) · [How Autopilot decides](docs/AUTOPILOT.md) · [Safety](docs/SAFETY.md) · [Install options](docs/INSTALL.md) · [MCP server](docs/MCP.md) · [Feedback](https://github.com/swordfish444/BurnZombies/issues/new?template=feedback.yml)
 
 <p align="center"><b>You build. We burn.</b></p>
