@@ -8,7 +8,7 @@
 <h3 align="center">BurnZombies (BZ) cleans up after your AI coding agents, on its own.</h3>
 
 <p align="center">
-  It stops the processes they orphan and deletes the worktrees and rebuildable junk they leave behind, backing up every worktree first. On the author's Mac, which had about 1,000 agent worktrees, its first two days freed <b>685.6 GB</b> and cleared <b>453</b> stale ones.
+  It stops the processes they orphan and deletes the worktrees and rebuildable junk they leave behind, backing up every worktree first. On the author's Mac, which had about 1,000 agent worktrees, its first two days freed <b>685.6 GB</b> and cleared <b>453</b> stale ones, most of them under rules the author made by answering yes.
 </p>
 
 <p align="center">On your Mac, paste this into Terminal:</p>
@@ -17,7 +17,7 @@
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-<p align="center"><sub>macOS 14+ · no account, API key or sudo · free and open source (MIT) · <a href="install.sh">read the script first</a></sub></p>
+<p align="center"><sub>macOS 14+ · no account, API key or sudo · free and open source (MIT) · signed, not yet notarized by Apple · <a href="install.sh">read the script first</a></sub></p>
 
 ## How it works
 
@@ -35,13 +35,16 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 - **Minute one:** BZ shows what it found and asks its first questions. Its starter rules start burning the obvious right away.
 - **Around minute 10:** if Claude Code or Codex is signed in, the first AI sweep judges what the rules don't cover. It runs on your own login: roughly $0.30–$1.20 a sweep on API pricing, or plan usage on a subscription.
 - **From then on:** BZ looks every 15 minutes, quietly. AI sweeps run only when there's something new to judge, at most every 30 minutes.
+- **After a restart:** BZ comes back only if **Start at login** is on in Settings, so switch it on once.
 
 ## What it burns
+
+To BZ, burning means stopping a program or deleting a folder.
 
 - 🧟 **Zombie processes**: Node workers, headless browsers and build watchers left running after their app or chat is gone.<br>
   **Safety net:** a polite `SIGTERM`, sent only after an exact identity check.
 - 📁 **Stale worktrees** nothing is using.<br>
-  **Safety net:** first, a Git ref inside the repo saves every commit, uncommitted change and untracked file, and BZ verifies it. Restore from **Findings** for 30 days.
+  **Safety net:** first, a Git ref inside the repo saves every commit, uncommitted change and untracked file, and BZ verifies it. Restore in one click from **Findings** for 30 days; the ref stays in the repo after that.
 - 🗑️ **Rebuildable junk**: `node_modules`, build output, DerivedData.<br>
   **Safety net:** your tools rebuild it when needed.
 
@@ -49,22 +52,23 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 - **Hands off what's in use.** BZ never touches macOS, your apps, your AI tools, your main project folders, or any worktree or program something is using. It also reads the session records Claude Code and Codex keep, so even an idle chat's folder stays safe.
 - **On its own, only the obvious.** Starter rules take orphaned programs idle for 6+ hours with no open port, merged worktrees with no local changes untouched for a month, and junk inside worktrees untouched for two weeks. Switch any of them off in **Settings → Autopilot**.
-- **AI with limits.** Your Claude Code or Codex may burn a low-risk item on its own only when it's at least 85% sure. Worktrees made by Claude Code, Codex or the Conductor app always wait for your yes.
-- **You have the last word.** **No** and **Keep forever** always win, and every **Yes** becomes a rule you can forget in **Settings → Autopilot → What BZ has learned**. The [proof suite](Proof) tests these rules on every code change. [How cleanup stays safe →](docs/SAFETY.md)
+- **Your agents' worktrees wait for you.** Worktrees made by Claude Code, Codex or the Conductor app are never burned without your yes: not by a starter rule, not by the AI.
+- **AI with limits.** Your Claude Code or Codex may burn a low-risk item on its own only when it's at least 85% sure: an orphaned program with no open port, a known junk folder, or a worktree nothing uses.
+- **You have the last word.** **No** and **Keep forever** always win. Every **Yes** becomes a rule covering everything that matches that question; forget it any time in **Settings → Autopilot → What BZ has learned**. The [tests](Proof) check these rules on every code change. [How cleanup stays safe →](docs/SAFETY.md)
 
 ## FAQ
 
 <details>
 <summary><b>Can I keep the AI off?</b></summary>
 
-Yes. Without Claude Code or Codex signed in there's no AI at all; with one, AI sweeps are on by default. Install with `curl … | bash -s -- --observe-only` to keep them off, or run `burnzombies setup --observe-only` later (`--with-ai` turns them back on). **Settings → Usage & estimated cost** shows what sweeps used. [Model and cost →](docs/INSTALL.md#model-and-cost)
+Yes. Without Claude Code or Codex signed in there's no AI at all; with one, AI sweeps are on by default. Install with `curl … | bash -s -- --observe-only` to keep them off, or later run `~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup --observe-only` (`--with-ai` turns them back on). **Settings → Usage & estimated cost** shows what sweeps used. [Model and cost →](docs/INSTALL.md#model-and-cost)
 
 </details>
 
 <details>
 <summary><b>What does the AI see?</b></summary>
 
-The plain facts BZ gathered about each item, like where it is, its size and what started it, plus any project files it reads in the folders it's judging, such as `package.json`, READMEs and configs. It's told never to read secrets such as `.env` files, keys or credentials. All of it goes through your own Claude Code or Codex login, like any other request you make with it.
+The plain facts BZ gathered about each item, like where it is, its size and what started it, plus any project files it reads in the folders it's judging, such as `package.json`, READMEs and configs. It's told never to read secrets such as `.env` files, keys or credentials. Its shell and web tools are switched off: it reads, then asks BZ to burn, and every burn it asks for passes BZ's own checks. All of it goes through your own Claude Code or Codex login, like any other request you make with it.
 
 </details>
 
@@ -78,7 +82,15 @@ The plain facts BZ gathered about each item, like where it is, its size and what
 <details>
 <summary><b>Can I undo a burn?</b></summary>
 
-Worktrees, yes: **Restore** in **Findings** for 30 days. The restore point is a Git ref in the repo (`refs/burnzombies/retired/…`) that holds every commit and local change. Ignored files over 5 MB and anything inside rebuildable folders aren't kept. Junk folders get rebuilt by your tools. Programs get a graceful stop, which can't be undone.
+Worktrees, yes: **Restore** in **Findings** for 30 days. The restore point is a Git ref in the repo that holds every commit and local change, small ignored files such as `.env` included; ignored files over 5 MB and anything inside rebuildable folders aren't kept. The ref stays local unless you push `refs/burnzombies/*` yourself, for example with `git push --mirror`. It stays after 30 days, so you can also restore by hand, without the app:
+
+```sh
+git for-each-ref refs/burnzombies/retired          # list restore points
+git worktree add --detach ../my-copy refs/burnzombies/retired/<id>
+git -C ../my-copy reset HEAD^   # only if the top commit is a "BurnZombies safety copy"
+```
+
+Junk folders get rebuilt by your tools. Programs get a graceful stop, which can't be undone.
 
 </details>
 
@@ -99,7 +111,14 @@ No. Without it, BZ skips the places macOS protects (Desktop, Documents, Download
 <details>
 <summary><b>What does the install script do?</b></summary>
 
-It downloads the release it pins, checks it against that release's SHA-256 checksums, checks the archive's paths and the app's code signature, and puts BurnZombies.app in `~/Applications`. No sudo. Releases are signed with BurnZombies' own certificate but aren't notarized by Apple yet. [Read install.sh](install.sh) · [Installer options →](docs/INSTALL.md#installer-options)
+It downloads the release it pins, checks it against that release's SHA-256 checksums, checks the archive's paths and the app's code signature, and puts BurnZombies.app in `~/Applications`. No sudo. Releases are signed with BurnZombies' own certificate but aren't notarized by Apple yet. Prefer a fixed version? Swap `main` in the URL for a release tag, such as `v0.13.0`. [Read install.sh](install.sh) · [Installer options →](docs/INSTALL.md#installer-options)
+
+</details>
+
+<details>
+<summary><b>What does it install, and does it phone home?</b></summary>
+
+One app in `~/Applications`, with its `burnzombies` command inside it, and a data folder in `~/Library/Application Support/BurnZombies`. Setup writes only BZ's own settings, not your agents'. There's no login item until you switch on **Start at login**, no auto-update (run the install line again to update) and no telemetry: BZ itself makes no network requests. The only traffic is your AI sweeps through your own Claude Code or Codex login and, on request, a GitHub CLI lookup of a worktree's pull request.
 
 </details>
 
