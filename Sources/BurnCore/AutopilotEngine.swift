@@ -165,23 +165,42 @@ public actor Autopilot {
       }.map(\.itemID))
   }
 
+  /// A refusal stands for the facts and authority it saw until either changes or a while
+  /// passes. Keyed by `refusalKey`; the latest refusal says why.
+  static func standingRefusals(_ receipts: [AutopilotReceipt], now: Date)
+    -> [String: AutopilotReceipt]
+  {
+    var standing = [String: AutopilotReceipt]()
+    for r in receipts
+    where r.outcome == "refused" && now.timeIntervalSince(r.date) < retryRefusalsAfter {
+      if let revision = r.revision { standing[refusalKey(r.itemID, revision, r.authority)] = r }
+    }
+    return standing
+  }
+
+  static func refusalKey(_ id: String, _ revision: String, _ authority: String) -> String {
+    [id, revision, authority].joined(separator: "@")
+  }
+
+  /// What the AI hears about an item waiting after a refusal, instead of a fresh try.
+  static func waiting(after refusal: AutopilotReceipt, now: Date) -> String {
+    let retry = refusal.date.addingTimeInterval(retryRefusalsAfter)
+    let when = RelativeDateTimeFormatter().localizedString(for: retry, relativeTo: now)
+    return "Waiting after a refusal: \(refusal.detail) I'll try again \(when), or sooner if it changes."
+  }
+
   /// Burns every item the policy authorizes now, bounded per kind.
   func burnAuthorized(now: Date) async {
     guard let items = catalog?.items else { return }
     let memory = memory()
     let receipts = (try? store.receipts()) ?? []
     let spent = spent(receipts)
-    // A refusal stands for the facts and authority it saw until either changes or a while
-    // passes.
-    let refused = Set(
-      receipts.filter {
-        $0.outcome == "refused" && now.timeIntervalSince($0.date) < Self.retryRefusalsAfter
-      }.compactMap { r in r.revision.map { [r.itemID, $0, r.authority].joined(separator: "@") } })
+    let refused = Self.standingRefusals(receipts, now: now)
     var used = [AutopilotKind: Int]()
     for item in items where !spent.contains(item.id) && !burning.contains(item.id) {
       let decision = AutopilotPolicy.decide(item, memory: memory)
       guard decision.status == .burn, let authority = decision.authority,
-        !refused.contains([item.id, item.revision, authority].joined(separator: "@")),
+        refused[Self.refusalKey(item.id, item.revision, authority)] == nil,
         used[item.kind, default: 0] < Self.maximumBurns[item.kind, default: 0]
       else { continue }
       // Only burns count toward the bound; a refusal frees nothing.
@@ -469,8 +488,10 @@ public actor Autopilot {
   public func catalogPage(status: String?, kind: String?, offset: Int, limit: Int)
     -> AutopilotCatalogPage
   {
-    let snap = snapshot()
+    let now = Date()
+    let snap = snapshot(now: now)
     let memory = memory()
+    let refused = Self.standingRefusals((try? store.receipts()) ?? [], now: now)
     var entries = snap.entries.filter { entry in
       (status == nil || status == "all" || entry.status.rawValue == status)
         && (kind == nil || entry.item.kind.rawValue == kind)
@@ -493,12 +514,19 @@ public actor Autopilot {
       answered: Array(
         memory.questions.filter { $0.answer == .yes || $0.answer == .no }.suffix(20)),
       items: page.map { entry in
-        AutopilotCatalogItem(
+        var why = entry.status == .unsure ? nil : entry.why
+        // Authorized but refused for these same facts: burning it now only repeats the refusal.
+        if entry.status == .burn, let authority = entry.authority,
+          let refusal = refused[Self.refusalKey(entry.id, entry.item.revision, authority)]
+        {
+          why = Self.waiting(after: refusal, now: now)
+        }
+        return AutopilotCatalogItem(
           id: entry.id, kind: entry.item.kind, name: entry.item.name, detail: entry.item.detail,
           size: AutopilotPolicy.format(entry.item.bytes),
           facts: entry.item.facts.filter { $0.key != "kind" }, status: entry.status,
           authority: entry.authority, label: entry.label == entry.item.name ? nil : entry.label,
-          why: entry.status == .unsure ? nil : entry.why)
+          why: why)
       },
       nextOffset: offset + page.count < entries.count ? offset + page.count : nil)
   }
@@ -538,7 +566,9 @@ public actor Autopilot {
     }
   }
 
-  /// Burns items the policy authorizes; everything else is refused with a reason.
+  /// Burns items the policy authorizes; everything else is refused with a reason. An item
+  /// refused for the same facts and authority waits as it does for the native pass: the recorded
+  /// reason comes back at once, without checking it again or adding a receipt or a log line.
   public func burn(_ ids: [String]) async -> [AutopilotReceipt] {
     let memory = memory()
     var receipts = [AutopilotReceipt]()
@@ -550,7 +580,8 @@ public actor Autopilot {
             detail: "Unknown item. Read the catalog again."))
         continue
       }
-      if spent((try? store.receipts()) ?? []).contains(id) {
+      let stored = (try? store.receipts()) ?? []
+      if spent(stored).contains(id) {
         receipts.append(.refused(item, authority: "ai", "Already burned."))
         continue
       }
@@ -563,6 +594,13 @@ public actor Autopilot {
               ? (item.protectedReason ?? "Protected.")
               : "Not authorized. Record a confident judgment with autopilot_decide if it is AI-eligible, otherwise ask the operator with autopilot_ask."
           ))
+        continue
+      }
+      let now = Date()
+      let key = Self.refusalKey(item.id, item.revision, authority)
+      if let refusal = Self.standingRefusals(stored, now: now)[key] {
+        let reason = Self.waiting(after: refusal, now: now)
+        receipts.append(.refused(item, authority: authority, reason))
         continue
       }
       receipts.append(await execute(item, authority: authority, why: why(item, decision, memory)))

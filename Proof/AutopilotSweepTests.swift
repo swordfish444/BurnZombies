@@ -661,6 +661,70 @@ func autopilotSweepProof() async throws {
   equal(
     try fullStore.receipts().filter { $0.outcome == "burned" }.count,
     AutopilotStore.maximumReceipts, "every restorable burn is kept")
+
+  // The AI's burns wait after a refusal too. On a real Mac every sweep burned the same four
+  // copies the app kept refusing for unchanged facts and answers: each try spent up to minutes
+  // in Git and added a line to the owner's activity log.
+  @Sendable func stuckCopy(stale: String) -> AutopilotItem {
+    AutopilotItem(
+      id: "worktree:stuck", kind: .worktree, name: "stuck", bytes: 1 << 30,
+      facts: [
+        "place": "sibling", "saved": "merged", "changes": "none", "stale": stale, "inUse": "no",
+        "thread": "none",
+      ])
+  }
+  let reason = "I could not check it safely, so I left it alone."
+  let stuckAttempts = Calls()
+  let touched = Calls()
+  let waitRoot = directory.appendingPathComponent("ai-refusals")
+  let waitStore = try AutopilotStore(root: waitRoot)
+  let waiting = try Autopilot(
+    root: waitRoot,
+    sources: AutopilotSources(
+      worktrees: { _, _, d in ([stuckCopy(stale: touched.all.isEmpty ? "older" : "month")], d) },
+      retireWorktree: { item, authority in
+        stuckAttempts.add(item.id)
+        return .refused(item, authority: authority, reason)
+      }))
+  _ = await waiting.tick(now: now, burn: false)
+  let firstTry = await waiting.burn(["worktree:stuck"])
+  equal(firstTry.first?.detail, reason, "the first burn runs every check")
+  let receiptCount = try waitStore.receipts().count
+  let logCount = try waitStore.sweep().log.count
+  let retry = await waiting.burn(["worktree:stuck"])
+  equal(stuckAttempts.all.count, 1, "an unchanged copy refused for the same answer waits: no Git")
+  equal(retry.first?.outcome, "refused")
+  check(retry.first?.detail.contains(reason) == true, "the AI hears the recorded reason at once")
+  check(
+    retry.first?.detail.hasPrefix("Waiting after a refusal") == true,
+    "and that the copy is waiting: \(retry.first?.detail ?? "")")
+  equal(try waitStore.receipts().count, receiptCount, "a waiting copy adds no receipt")
+  equal(try waitStore.sweep().log.count, logCount, "nor a line in the owner's activity log")
+  let listed = await waiting.catalogPage(status: "burn", kind: nil, offset: 0, limit: 10)
+  check(
+    listed.items.first?.why?.hasPrefix("Waiting after a refusal") == true
+      && listed.items.first?.why?.contains(reason) == true,
+    "the catalog says the copy is waiting, and why: \(listed.items.first?.why ?? "")")
+  _ = await waiting.tick(now: now.addingTimeInterval(900))
+  equal(stuckAttempts.all.count, 1, "the native pass waits after the AI's refusal")
+  // Changed facts or a new answer are tried right away; unchanged ones once the wait is over.
+  touched.add("changed")
+  _ = await waiting.tick(now: now.addingTimeInterval(1800), burn: false)
+  _ = await waiting.burn(["worktree:stuck"])
+  equal(stuckAttempts.all.count, 2, "a copy whose facts changed is tried right away")
+  try waitStore.updateMemory {
+    $0.rules.append(
+      AutopilotRule(
+        kind: .worktree, match: ["place": ["sibling"]], verdict: .burn, source: .operator,
+        title: "Burn sibling copies"))
+  }
+  _ = await waiting.burn(["worktree:stuck"])
+  equal(stuckAttempts.all.count, 3, "so is one a new answer allows")
+  try waitStore.updateReceipts { all in
+    for i in all.indices { all[i].date.addTimeInterval(-Autopilot.retryRefusalsAfter - 60) }
+  }
+  _ = await waiting.burn(["worktree:stuck"])
+  equal(stuckAttempts.all.count, 4, "and an unchanged one once the wait is over")
 }
 
 /// A private app-side endpoint for the MCP protocol proof: an Autopilot engine with

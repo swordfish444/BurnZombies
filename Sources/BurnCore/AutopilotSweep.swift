@@ -73,7 +73,7 @@ public enum AutopilotHarness {
     - autopilot_catalog: items with facts and status. Start with status "unsure".
     - autopilot_inspect: live detail for one item (command line, folder, git state, contents). Use it before judging anything unclear.
     - autopilot_decide: record verdicts: burn | keep | unsure, confidence 0-1, a friendly label (at most 6 words, like "Test runner from orbit-web") and one sentence of why that a 10-year-old understands.
-    - autopilot_burn: burn items. The app re-checks every item and refuses anything not authorized. A refusal is final for this sweep.
+    - autopilot_burn: burn items. The app re-checks every item and refuses anything not authorized. A refusal is final for this sweep, and the catalog marks items refused earlier as "Waiting after a refusal": burning those again only repeats the refusal.
     - autopilot_ask: ask the owner ONE yes/no question about a fact pattern that frees a lot (1 GB or more; smaller ones are refused).
     - autopilot_report: a two-sentence summary at the end.
     - Read, Glob, Grep: read project files (package.json, README, configs) inside folders you are judging. Never read secrets such as .env files, keys or credentials.
