@@ -10,6 +10,7 @@ func autopilotLearningProof() async throws {
   try await groupsProof()
   try await cardProof()
   try await tellProof()
+  try await evalRequestProof()
 }
 
 private func copy(_ id: String, _ facts: [String: String], bytes: UInt64 = 1 << 30)
@@ -498,4 +499,25 @@ func guessProof() throws {
   check(summary.contains("17 asked"), summary)
   check(summary.contains("13 of 14"), summary)
   check(lines[8].contains("process:java") && lines[8].contains("3.1 GB"), lines[8])
+}
+
+/// `burnzombies autopilot eval [--json]` asks the running app for the replay of the owner's answers,
+/// the same way as the other autopilot commands, and prints it as lines or as JSON. Reading it
+/// starts no tick.
+func evalRequestProof() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-autopilot-eval-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let history = try teachHistory()
+  try AutopilotStore(root: root).updateMemory { $0.questions = history }
+  let engine = try Autopilot(root: root, sources: AutopilotSources())
+  let (ok, json) = await engine.handle(AutopilotRequest(tool: "eval"))
+  check(ok, json)
+  let replay = try AutopilotEval.replay(json: Data(json.utf8))
+  equal(replay.summary, AutopilotEval.replay(history).summary, "the owner's replay")
+  equal(replay.steps.count, 27)
+  let lines = AutopilotEval.report(replay).split(separator: "\n")
+  equal(lines.count, 28, "27 step lines and a summary")
+  check(lines.last?.contains("27 answers: 3 settled, 7 acted, 17 asked.") == true, "the summary")
+  isNil(await engine.sweepState().lastTick)
 }

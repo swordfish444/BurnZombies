@@ -72,9 +72,26 @@ public struct AutopilotCatalogItem: Codable, Sendable {
   public var why: String?
 }
 
+/// One of the owner's lessons as the AI reads it (spec 2.6): the sentence Settings shows for a
+/// group of lessons, their ids and exact matches, how many of the owner's answers they rest on, and
+/// what they burned, freed and the owner undid.
+public struct AutopilotCatalogLesson: Codable, Sendable {
+  public var ids: [String]
+  public var sentence: String
+  public var kind: AutopilotKind
+  public var verdict: AutopilotVerdict
+  public var matches: [[String: [String]]]
+  public var answers: Int
+  public var burned: Int
+  public var bytes: UInt64
+  public var undone: Int
+}
+
 public struct AutopilotCatalogPage: Codable, Sendable {
   public var summary: [String: String]
   public var rules: [AutopilotRule]
+  /// The owner's lessons, one per group Settings shows: the AI's brief.
+  public var lessons: [AutopilotCatalogLesson]
   public var openQuestions: [AutopilotQuestion]
   public var answered: [AutopilotQuestion]
   public var items: [AutopilotCatalogItem]
@@ -619,7 +636,8 @@ public actor Autopilot {
     summary["coverage"] = String(format: "%.2f", snap.coverage)
     summary["totalItems"] = String(entries.count)
     return AutopilotCatalogPage(
-      summary: summary, rules: snap.rules, openQuestions: snap.questions,
+      summary: summary, rules: snap.rules, lessons: AutopilotPolicy.catalogLessons(memory),
+      openQuestions: snap.questions,
       answered: Array(
         memory.questions.filter { $0.answer == .yes || $0.answer == .no }.suffix(20)),
       items: page.map { entry in
@@ -717,17 +735,24 @@ public actor Autopilot {
     return receipts
   }
 
-  /// Opens a training question. Fails when three are open, unless it replaces one.
-  public func ask(_ question: AutopilotQuestion, replacing: String? = nil) throws
-    -> AutopilotQuestion
-  {
+  /// Opens a training question. Fails when three are open, unless it replaces one. The question
+  /// keeps BZ's guess, with the AI's `guess` when it gives one (yes or no). When BZ is sure, the AI
+  /// expects a yes too and BZ may act on its own, BZ answers it itself exactly as in
+  /// `refreshQuestions` and returns the stored question, answered by BZ; what its lesson authorizes
+  /// burns in the background.
+  public func ask(
+    _ question: AutopilotQuestion, replacing: String? = nil, guess: AutopilotAnswer? = nil
+  ) throws -> AutopilotQuestion {
     let items = catalog?.items ?? []
     guard !question.match.values.contains(where: { $0.contains("unknown") }) else {
       throw StoreError.message(
         "Leave out facts I haven't checked yet (\"unknown\"): an answer about them stops applying once they are checked."
       )
     }
-    return try store.updateMemory { memory in
+    let now = Date()
+    let acting = enabled()
+    var acted = false
+    let stored = try store.updateMemory { memory -> AutopilotQuestion in
       if let replacing {
         memory.questions.removeAll { $0.id == replacing && $0.isOpen }
       }
@@ -739,6 +764,9 @@ public actor Autopilot {
         if !question.why.isEmpty { memory.questions[i].why = question.why }
         if !question.examples.isEmpty { memory.questions[i].examples = question.examples }
         memory.questions[i].source = "ai"
+        if guess != nil {
+          memory.questions[i].guess = AutopilotPolicy.guess(memory.questions[i].guess, ai: guess)
+        }
         return memory.questions[i]
       }
       guard !memory.questions.contains(where: { $0.id == question.id }) else {
@@ -797,9 +825,18 @@ public actor Autopilot {
         q.examples = Array(matching.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name))
       }
       q.source = "ai"
+      let own = AutopilotPolicy.guess(q, memory: memory, reaching: unsure)
+      q.guess = AutopilotPolicy.guess(own, ai: guess)
+      if acting, memory.actsOnItsOwn, let sure = q.guess, sure.sure {
+        acted = true
+        return AutopilotPolicy.act(q, guess: sure, memory: &memory, now: now)
+      }
       memory.questions.append(q)
       return q
     }
+    // What BZ answered itself burns in the background, as after an owner's Yes.
+    if acted { Task { await self.burnAuthorized(now: now) } }
+    return stored
   }
 
   public func report(_ text: String) throws {
@@ -852,7 +889,7 @@ public struct AutopilotSummary: Codable, Sendable {
 
 /// One autopilot call from the MCP server or CLI.
 public struct AutopilotRequest: Codable, Sendable {
-  /// `catalog`, `inspect`, `decide`, `burn`, `ask`, `report`, `snapshot` or `command`.
+  /// `catalog`, `inspect`, `decide`, `burn`, `ask`, `report`, `snapshot`, `eval` or `command`.
   public var tool: String
   public var status: String?
   public var kind: String?
@@ -888,6 +925,8 @@ public struct AutopilotQuestionInput: Codable, Sendable {
   public var question: String
   public var why: String?
   public var examples: [String]?
+  /// What the AI thinks the owner will answer: "yes" or "no". Anything else is ignored.
+  public var guess: String?
   public init(kind: AutopilotKind, match: [String: [String]], question: String) {
     self.kind = kind
     self.match = match
@@ -943,7 +982,13 @@ extension Autopilot {
         var q = AutopilotQuestion(
           kind: input.kind, match: input.match, question: text, why: input.why ?? "",
           examples: input.examples ?? [], count: 0, bytes: 0, source: "ai")
-        q = try ask(q, replacing: request.replace)
+        // Only yes or no is a guess; anything else is ignored rather than refused.
+        let said: String = input.guess?.lowercased() ?? ""
+        let guess: AutopilotAnswer? = said == "yes" ? .yes : (said == "no" ? .no : nil)
+        q = try ask(q, replacing: request.replace, guess: guess)
+        if q.answeredBy == "bz" {
+          return (true, "I was sure you'd say yes, so I burned them and will tell the owner.")
+        }
         if q.why.isEmpty || input.why == nil {
           q.why = "I found \(q.count) like this, using \(AutopilotPolicy.format(q.bytes))."
           let final = q
@@ -959,6 +1004,9 @@ extension Autopilot {
         return (true, encode(["ok": "true"]))
       case "snapshot":
         return (true, encode(AutopilotSummary(snapshot())))
+      case "eval":
+        // `burnzombies autopilot eval`: the replay of the owner's answers, read without a tick.
+        return (true, encode(AutopilotEval.replay(memory().questions)))
       case "command":
         guard let command = request.command else { return failure("Pass command.") }
         return (true, encode(AutopilotSummary(try await apply(command))))

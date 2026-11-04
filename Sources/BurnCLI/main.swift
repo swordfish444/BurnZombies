@@ -141,8 +141,9 @@ do {
       )
     }
   case "autopilot":
-    // `burnzombies autopilot [snapshot|catalog|inspect ID|burn ID...|sweep]`, or one
-    // AutopilotRequest JSON object on stdin with `burnzombies autopilot -`.
+    // `burnzombies autopilot [snapshot|catalog|inspect ID|burn ID...|sweep|eval [--json]]`, or one
+    // AutopilotRequest JSON object on stdin with `burnzombies autopilot -`. Every one is answered
+    // by the running app; none starts a tick.
     var request = AutopilotRequest(tool: args.count > 1 ? args[1] : "snapshot")
     if request.tool == "-" {
       guard let data = try FileHandle.standardInput.read(upToCount: 1 << 20) else {
@@ -160,8 +161,16 @@ do {
     let body = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
     let raw = try await AgentConnection.callAsync(AgentRequest("autopilot", payload: body))
     let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
-    print((object?["payload"] as? String) ?? raw)
-    if object?["ok"] as? Bool != true { exit(1) }
+    let payload = (object?["payload"] as? String) ?? raw
+    let ok = object?["ok"] as? Bool == true
+    // The replay of the owner's answers reads as a line per answer and a summary, unless asked
+    // for JSON.
+    if request.tool == "eval", ok, !args.contains("--json") {
+      print(AutopilotEval.report(try AutopilotEval.replay(json: Data(payload.utf8))))
+    } else {
+      print(payload)
+    }
+    if !ok { exit(1) }
   case "review-codex":
     guard args.count == 2 || (args.count == 3 && args[2] == "--probe") else {
       fail("Internal Codex review requires a private plan.")

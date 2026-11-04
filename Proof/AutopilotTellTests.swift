@@ -11,6 +11,7 @@ func tellProof() async throws {
   try await programUndoProof()
   try await expiryProof()
   try await forgetTellProof()
+  try await askActProof()
 }
 
 // MARK: A Mac BZ has learned about
@@ -440,4 +441,105 @@ private func forgetTellProof() async throws {
   equal(after.rules, [], "both lessons forgotten")
   equal(after.questions, [], "with every answer behind them")
   equal(after.tells.map(\.state), ["expired"])
+}
+
+// MARK: The AI's questions
+
+/// Waits a little for burns that run in the background.
+private func eventually(_ done: () -> Bool) async {
+  for _ in 0..<60 where !done() { try? await Task.sleep(nanoseconds: 50_000_000) }
+}
+
+/// A question the AI asks is acted on like BZ's own when BZ is sure and the AI expects a yes too.
+/// The AI's No, or a lesson that would reach riskier copies elsewhere, leaves it asked.
+private func askActProof() async throws {
+  let now = Date()
+  let sentence = "I was sure you'd say yes, so I burned them and will tell the owner."
+  func aiAsk(_ match: [String: [String]], guess: String, replacing: String) -> AutopilotRequest {
+    var input = AutopilotQuestionInput(
+      kind: .worktree, match: match, question: "Can I burn the copies nobody touched this week?")
+    input.guess = guess
+    var request = AutopilotRequest(tool: "ask")
+    request.question = input
+    request.replace = replacing
+    return request
+  }
+  // BZ's own question stays open while acting is off; with acting on, the AI replaces it.
+  var cautious = trustedCopies(now: now)
+  cautious.actsOnItsOwn = false
+  let world = TellWorld(copies: threeCopies(now))
+  let (engine, store, root) = try tellEngine("ask-act", world, cautious)
+  defer { try? FileManager.default.removeItem(at: root) }
+  guard let native = await engine.tick(now: now).questions.first(where: { $0.kind == .worktree })
+  else { return failTest("BZ's own question for the AI to replace") }
+  _ = try await engine.apply(.setActsOnItsOwn(true), now: now)
+  let (ok, reply) = await engine.handle(
+    aiAsk(["saved": ["local"], "stale": ["week"]], guess: "yes", replacing: native.id))
+  check(ok, reply)
+  equal(reply, sentence, "the AI hears that BZ acted")
+  let memory = try store.memory()
+  guard let tell = memory.tells.first(where: \.isOpen) else {
+    return failTest("a tell for the AI's question")
+  }
+  equal(tell.count, 3)
+  let asked = memory.questions.first { $0.id == tell.questionID }
+  equal(asked?.source, "ai")
+  equal(asked?.answer, .yes)
+  equal(asked?.answeredBy, "bz")
+  equal(asked?.guess?.source, "ai")
+  equal(asked?.guess?.sure, true)
+  isNil(memory.questions.first { $0.id == native.id })
+  await eventually {
+    let receipts = (try? store.receipts()) ?? []
+    return receipts.filter { $0.outcome == "burned" }.count == 3
+  }
+  equal(Set(world.burns.all), Set(world.copies.map(\.id)), "burned in the background, like a Yes")
+  equal(Set(try store.receipts().map(\.authority)), ["rule:" + tell.ruleID])
+
+  // The AI's No keeps BZ from acting, sure as BZ is.
+  let noWorld = TellWorld(copies: threeCopies(now))
+  let (noEngine, noStore, noRoot) = try tellEngine("ask-no", noWorld, cautious)
+  defer { try? FileManager.default.removeItem(at: noRoot) }
+  guard let open = await noEngine.tick(now: now).questions.first(where: { $0.kind == .worktree })
+  else { return failTest("BZ's own question for the AI to replace with a No") }
+  _ = try await noEngine.apply(.setActsOnItsOwn(true), now: now)
+  let (noOK, noReply) = await noEngine.handle(
+    aiAsk(["saved": ["local"], "stale": ["week"]], guess: "no", replacing: open.id))
+  check(noOK, noReply)
+  checkFalse(noReply == sentence, "asked, not acted on")
+  let noMemory = try noStore.memory()
+  equal(noMemory.tells.count, 0)
+  let kept = noMemory.questions.first { $0.isOpen && $0.source == "ai" }
+  equal(kept?.guess?.answer, .no)
+  equal(kept?.guess?.sure, false)
+  equal(kept?.guess?.source, "ai")
+  equal(noWorld.burns.all, [])
+
+  // The lesson reaches further than the AI's question: a yes about web-app copies teaches about
+  // every project's, and a docs copy has unsaved work the owner never said yes to. BZ asks.
+  let docs = AutopilotItem(
+    id: "worktree:docs-draft", kind: .worktree, name: "docs-draft", bytes: 400_000_000,
+    facts: [
+      "repo": "docs", "place": "patrol6", "saved": "local", "changes": "large", "stale": "week",
+      "inUse": "no", "thread": "none",
+    ])
+  let farWorld = TellWorld(copies: threeCopies(now) + [docs])
+  let (farEngine, farStore, farRoot) = try tellEngine("ask-reach", farWorld, trustedCopies(now: now))
+  defer { try? FileManager.default.removeItem(at: farRoot) }
+  let first = await farEngine.tick(now: now)
+  check(first.tells.isEmpty, "BZ isn't sure of its own question: unsaved work never said yes to")
+  guard let wide = first.questions.first(where: { $0.kind == .worktree }) else {
+    return failTest("BZ's own question about the four copies")
+  }
+  equal(wide.guess?.sure, false)
+  let (farOK, farReply) = await farEngine.handle(
+    aiAsk(["repo": ["web-app"], "stale": ["week"]], guess: "yes", replacing: wide.id))
+  check(farOK, farReply)
+  checkFalse(farReply == sentence, "the AI's narrower question is asked, not acted on")
+  let far = try farStore.memory()
+  equal(far.tells.count, 0)
+  let narrow = far.questions.first { $0.isOpen && $0.source == "ai" }
+  equal(narrow?.count, 3, "about the web-app copies")
+  equal(narrow?.guess?.sure, false, "its lesson would reach the docs copy")
+  equal(farWorld.burns.all, [])
 }

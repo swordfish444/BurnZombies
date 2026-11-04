@@ -38,6 +38,22 @@ extension AutopilotPolicy {
     return own
   }
 
+  /// The guess a question the AI asks keeps (spec 2.6): BZ's own, with the AI's answer when it gives
+  /// one, and sure only when BZ is sure and the AI expects a yes too. Where the AI's answer isn't
+  /// BZ's lean, BZ's reason doesn't back it, so the words only say what the AI expects.
+  static func guess(_ own: AutopilotGuess?, ai: AutopilotAnswer?) -> AutopilotGuess? {
+    guard let ai, ai != .skip else { return own }
+    let expected: String = "I think you'll say " + ai.rawValue + "."
+    guard var guess = own else {
+      return AutopilotGuess(answer: ai, sure: false, why: expected, source: "ai")
+    }
+    if guess.answer != ai { guess.why = expected }
+    guess.sure = guess.sure && ai == .yes
+    guess.answer = ai
+    guess.source = "ai"
+    return guess
+  }
+
   /// A guess checked against an answer (spec 3.2), keeping the latest `maximumScores`.
   static func score(
     _ question: AutopilotQuestion, guess: AutopilotAnswer, answer: AutopilotAnswer,

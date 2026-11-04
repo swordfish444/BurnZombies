@@ -318,32 +318,63 @@ extension AutopilotPolicy {
       evidence: evidence(kind, verdict, rules, memory), ruleIDs: rules.map(\.id))
   }
 
-  /// "From 11 answers · burned 364 copies, 396.0 GB · undone 0": the answers still in memory that
-  /// the lessons were made from, BZ's own calls apart, and for burns what the lessons did.
-  static func evidence(
-    _ kind: AutopilotKind, _ verdict: AutopilotVerdict, _ rules: [AutopilotRule],
-    _ memory: AutopilotMemory
-  ) -> String {
+  /// The owner's lessons as the AI reads them in the catalog (spec 2.6): one per group Settings
+  /// shows, with the same sentence, the lessons' ids and exact matches, the owner's answers behind
+  /// them and what they did.
+  public static func catalogLessons(_ memory: AutopilotMemory) -> [AutopilotCatalogLesson] {
+    var byID: [String: AutopilotRule] = [:]
+    for rule in memory.rules where byID[rule.id] == nil { byID[rule.id] = rule }
+    return lessonGroups(memory).map { group in
+      let rules: [AutopilotRule] = group.ruleIDs.compactMap { byID[$0] }
+      let behind = answers(behind: rules, memory)
+      let done: AutopilotTally = tallied(rules, memory)
+      return AutopilotCatalogLesson(
+        ids: group.ruleIDs, sentence: group.sentence, kind: group.kind, verdict: group.verdict,
+        matches: rules.map(\.match), answers: behind.owner, burned: done.count,
+        bytes: done.bytes, undone: done.undone)
+    }
+  }
+
+  /// The answers still in memory that lessons were made from: the owner's, and BZ's own calls.
+  static func answers(behind rules: [AutopilotRule], _ memory: AutopilotMemory) -> (
+    owner: Int, calls: Int
+  ) {
     let asked = questionsByID(memory.questions)
     var seen = Set<String>()
-    var answers = 0
+    var owner = 0
     var calls = 0
     for rule in rules {
       for id in questionIDs(rule) where seen.insert(id).inserted {
         guard let question = asked[id], question.answer == .yes || question.answer == .no else {
           continue
         }
-        if question.answeredBy == "bz" { calls += 1 } else { answers += 1 }
+        if question.answeredBy == "bz" { calls += 1 } else { owner += 1 }
       }
     }
-    var text = "From " + AutopilotEval.plural(answers, "answer")
-    // "1 of my own calls": one of the calls BZ made, so always plural.
-    if calls > 0 { text += " and \(calls) of my own calls" }
-    guard verdict == .burn else { return text }
+    return (owner, calls)
+  }
+
+  /// What lessons did together: burns, what they freed and how many were undone.
+  static func tallied(_ rules: [AutopilotRule], _ memory: AutopilotMemory) -> AutopilotTally {
     var done = AutopilotTally()
     for rule in rules {
       if let tally = memory.tallies[rule.id] { done.add(tally) }
     }
+    return done
+  }
+
+  /// "From 11 answers · burned 364 copies, 396.0 GB · undone 0": the answers still in memory that
+  /// the lessons were made from, BZ's own calls apart, and for burns what the lessons did.
+  static func evidence(
+    _ kind: AutopilotKind, _ verdict: AutopilotVerdict, _ rules: [AutopilotRule],
+    _ memory: AutopilotMemory
+  ) -> String {
+    let behind = answers(behind: rules, memory)
+    var text = "From " + AutopilotEval.plural(behind.owner, "answer")
+    // "1 of my own calls": one of the calls BZ made, so always plural.
+    if behind.calls > 0 { text += " and \(behind.calls) of my own calls" }
+    guard verdict == .burn else { return text }
+    let done: AutopilotTally = tallied(rules, memory)
     let freed: String = roughly(done.bytes)
     switch kind {
     case .worktree:

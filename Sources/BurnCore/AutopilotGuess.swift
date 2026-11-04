@@ -374,6 +374,14 @@ public enum AutopilotEval {
     }
   }
 
+  /// The replay as the running app sends it to `burnzombies autopilot eval`: JSON with ISO 8601
+  /// dates.
+  public static func replay(json: Data) throws -> Replay {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try decoder.decode(Replay.self, from: json)
+  }
+
   /// Plain text for the CLI: one line per step, then the summary.
   public static func report(_ replay: Replay) -> String {
     let dates = DateFormatter()

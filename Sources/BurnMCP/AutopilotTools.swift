@@ -11,7 +11,7 @@ enum AutopilotTools {
     Tool(
       name: "autopilot_catalog", title: "Read the cleanup catalog",
       description:
-        "Items (zombie programs, old copies, junk folders) with their facts and current status, plus the owner's rules and open questions. Unsure items come first.",
+        "Items (zombie programs, old copies, junk folders) with their facts and current status, plus the owner's lessons, rules and open questions. Unsure items come first.",
       inputSchema: .object([
         "type": "object",
         "properties": .object([
@@ -74,7 +74,7 @@ enum AutopilotTools {
     Tool(
       name: "autopilot_ask", title: "Ask the owner one yes/no question",
       description:
-        "Open a training question about a fact pattern (fact name to allowed values) that covers unsure items. One short sentence a 10-year-old understands, ending with ?. One open question per subject (old copies, each kind of program, each kind of folder); use replace to improve the open one. Say how long things sat unused (stale or idle) and never ask about things used today.",
+        "Open a training question about a fact pattern (fact name to allowed values) that covers unsure items. One short sentence a 10-year-old understands, ending with ?. One open question per subject (old copies, each kind of program, each kind of folder); use replace to improve the open one. Say how long things sat unused (stale or idle) and never ask about things used today. Include guess (yes or no): what you think the owner will answer. When BZ is sure the owner would say yes, it burns them itself and tells the owner instead of asking.",
       inputSchema: .object([
         "type": "object",
         "properties": .object([
@@ -88,6 +88,10 @@ enum AutopilotTools {
           "question": string(200), "why": string(200),
           "examples": .object(["type": "array", "maxItems": 3, "items": string(120)]),
           "replace": string(100),
+          // Any other value is ignored, not refused, so the schema names no enum.
+          "guess": .object([
+            "type": "string", "description": "yes or no: what you think the owner will answer",
+          ]),
         ]), "required": ["kind", "match", "question"], "additionalProperties": false,
       ]),
       annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)),
@@ -137,6 +141,8 @@ enum AutopilotTools {
         question: question)
       input.why = arguments["why"]?.stringValue
       input.examples = arguments["examples"]?.arrayValue?.compactMap(\.stringValue)
+      // The app keeps "yes" or "no" and ignores anything else.
+      input.guess = arguments["guess"]?.stringValue
       r.question = input
       r.replace = arguments["replace"]?.stringValue
       return r

@@ -60,6 +60,9 @@ with tempfile.TemporaryDirectory(prefix="bz-ap-", dir="/tmp") as root:
         assert set(tools) == {"autopilot_catalog", "autopilot_inspect", "autopilot_decide",
                               "autopilot_burn", "autopilot_ask", "autopilot_report"}, tools.keys()
         assert tools["autopilot_burn"]["annotations"]["destructiveHint"] is True
+        ask_schema = tools["autopilot_ask"]["inputSchema"]
+        assert "guess" in ask_schema["properties"], ask_schema
+        assert "guess" not in ask_schema.get("required", []), "guess is optional"
 
         error, page = call("autopilot_catalog", {"status": "unsure"})
         assert not error and {i["id"] for i in page["items"]} == {"worktree:fixture-copy", "process:fixture-server"}, page
@@ -89,9 +92,13 @@ with tempfile.TemporaryDirectory(prefix="bz-ap-", dir="/tmp") as root:
         assert error and "already asking" in overlap.get("error", ""), overlap
         error, page = call("autopilot_catalog", {"status": "unsure"})
         native = next(q for q in page["openQuestions"] if q["kind"] == "process")
+        # A guess that isn't yes or no is ignored, not refused.
         error, question = call("autopilot_ask", {"kind": "process", "match": native["match"],
-                                                 "question": "Can I burn leftover dev servers from chats that already finished?"})
+                                                 "question": "Can I burn leftover dev servers from chats that already finished?",
+                                                 "guess": "maybe"})
         assert not error and question["count"] == 1 and question["source"] == "ai", question
+        error, page = call("autopilot_catalog", {"status": "unsure"})
+        assert not error and isinstance(page["lessons"], list), page.keys()
         error, bad = call("autopilot_ask", {"kind": "process", "match": {"family": ["node"]}, "question": "no question mark"})
         assert error, "questions must be questions"
         error, done = call("autopilot_report", {"text": "Burned one old copy; asked about one dev server."})

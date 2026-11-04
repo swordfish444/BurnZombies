@@ -726,6 +726,110 @@ func autopilotSweepProof() async throws {
   }
   _ = await waiting.burn(["worktree:stuck"])
   equal(stuckAttempts.all.count, 4, "and an unchanged one once the wait is over")
+
+  try await aiBriefProof()
+}
+
+/// The AI works from the owner's lessons and says how it expects the owner to answer (spec 2.6).
+private func aiBriefProof() async throws {
+  // The prompt names the lessons as the owner's intent, before the procedure, and asks for a guess.
+  let prompt = AutopilotHarness.prompt
+  let brief =
+    "The owner's lessons (catalog `lessons`) are their intent and your brief: judge unsure items by why they burn or keep things, ask only where no lesson reaches, never contradict one."
+  check(prompt.contains(brief), "the lessons are the AI's brief")
+  let procedure = prompt.range(of: "Procedure (")?.lowerBound
+  check(
+    prompt.range(of: brief).map { $0.lowerBound < (procedure ?? $0.lowerBound) } == true,
+    "before the procedure")
+  check(
+    prompt.contains("Include `guess` (yes or no): what you think the owner will answer."),
+    "the AI guesses the owner's answer")
+  check(prompt.contains("lessons") && prompt.contains("guess"))
+
+  // The catalog carries every lesson the owner taught, worded as Settings shows it, with what it
+  // rests on and what it did.
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-autopilot-brief-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let store = try AutopilotStore(root: root.appendingPathComponent("lessons"))
+  for receipt in teachHistoryReceipts() { try store.append(receipt) }
+  try JSONEncoder().encode(teachHistoryVersion1(try teachHistory())).write(
+    to: store.directory.appendingPathComponent("memory.json"))
+  let engine = try Autopilot(
+    root: root.appendingPathComponent("lessons"), sources: AutopilotSources())
+  let page = await engine.catalogPage(status: nil, kind: nil, offset: 0, limit: 10)
+  let memory = try store.memory()
+  let taught = Set(memory.rules.filter { $0.source == .operator }.map(\.id))
+  equal(Set(page.lessons.flatMap(\.ids)), taught, "every lesson the owner taught")
+  equal(
+    page.lessons.map(\.sentence), AutopilotPolicy.lessonGroups(memory).map(\.sentence),
+    "one per group, worded as Settings shows it")
+  guard let day = page.lessons.first(where: { $0.ids.contains(TeachLessons.copiesDayID) }) else {
+    return failTest("the lesson most answers rest on")
+  }
+  equal(day.kind, .worktree)
+  equal(day.verdict, .burn)
+  equal(day.matches.count, day.ids.count, "an exact match per lesson")
+  check(day.matches.contains(TeachLessons.copiesDay), "with the lesson's own match")
+  equal(day.answers, 11, "the owner's 11 answers behind the day lessons")
+  equal(day.burned, 3)
+  equal(day.bytes, 7_000_000_000)
+  equal(day.undone, 1)
+  let (catalogOK, catalogJSON) = await engine.handle(AutopilotRequest(tool: "catalog"))
+  check(catalogOK && catalogJSON.contains("\"lessons\""), "over the bridge too")
+
+  // The AI's question records its guess. Every check that refused a question still does.
+  func pushed(_ name: String) -> AutopilotItem {
+    AutopilotItem(
+      id: "worktree:" + name, kind: .worktree, name: name, bytes: 500_000_000,
+      facts: [
+        "place": "codex", "saved": "pushed", "changes": "none", "stale": "week", "inUse": "no",
+        "thread": "none",
+      ])
+  }
+  let copies = [pushed("one"), pushed("two"), pushed("three")]
+  let askEngine = try Autopilot(
+    root: root.appendingPathComponent("ask"),
+    sources: AutopilotSources(worktrees: { _, _, d in (copies, d) }))
+  guard let native = await askEngine.tick(now: Date()).questions.first else {
+    return failTest("BZ's own question about the copies")
+  }
+  isNil(native.guess)
+  func aiQuestion(_ match: [String: [String]]) -> AutopilotQuestion {
+    AutopilotQuestion(
+      kind: .worktree, match: match, question: "Can I burn the copies already on GitHub?",
+      why: "", examples: [], count: 0, bytes: 0, source: "ai")
+  }
+  do {
+    _ = try await askEngine.ask(aiQuestion(["saved": ["pushed"]]), replacing: native.id, guess: .yes)
+    failTest("a question must say how long things sat unused")
+  } catch {
+    equal(
+      error.localizedDescription,
+      "Say how long they sat unused, and never ask about things used today or busy right now: a yes would also cover things still being worked on.",
+      "the same refusal as before")
+  }
+  let guessedNo = try await askEngine.ask(
+    aiQuestion(["saved": ["pushed"], "stale": ["week"]]), replacing: native.id, guess: .no)
+  equal(guessedNo.guess?.source, "ai", "the AI's guess")
+  equal(guessedNo.guess?.answer, .no)
+  equal(guessedNo.guess?.sure, false, "never sure of a No")
+  equal(guessedNo.guess?.why, "I think you'll say no.")
+  equal(
+    try AutopilotStore(root: root.appendingPathComponent("ask")).memory().questions.first {
+      $0.id == guessedNo.id
+    }?.guess?.answer, .no, "and stored")
+  // Over the bridge, a guess that isn't yes or no is ignored, not refused.
+  var maybe = AutopilotRequest(tool: "ask")
+  var input = AutopilotQuestionInput(
+    kind: .worktree, match: ["saved": ["pushed", "merged"], "stale": ["week"]],
+    question: "Can I burn the copies already on GitHub?")
+  input.guess = "maybe"
+  maybe.question = input
+  maybe.replace = guessedNo.id
+  let (maybeOK, maybeJSON) = await askEngine.handle(maybe)
+  check(maybeOK, "an odd guess is ignored: \(maybeJSON)")
+  checkFalse(maybeJSON.contains("\"guess\""), "and no guess is recorded: \(maybeJSON)")
 }
 
 /// A private app-side endpoint for the MCP protocol proof: an Autopilot engine with
