@@ -353,7 +353,9 @@ public actor Autopilot {
     let taught = Dictionary(memory.questions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     result.rules =
       memory.rules.map { rule in
-        guard let question = rule.questionID.flatMap({ taught[$0] }) else { return rule }
+        guard var question = rule.questionID.flatMap({ taught[$0] }) else { return rule }
+        // A lesson names only the facts it kept, so its title leaves out what it generalized.
+        question.match = question.match.filter { rule.match[$0.key] != nil }
         var shown = rule
         shown.title = AutopilotPolicy.ruleTitle(question, answer: rule.verdict == .burn ? .yes : .no)
         return shown
@@ -390,13 +392,17 @@ public actor Autopilot {
         } else {
           let q = memory.questions[i]
           let verdict: AutopilotVerdict = answer == .yes ? .burn : .keep
+          // The answer teaches why, not which project: a general lesson, titled the same way.
+          var general = q
+          general.match = AutopilotPolicy.generalize(q.kind, q.match)
           memory.rules.removeAll { $0.questionID == q.id }
-          memory.rules.append(
+          AutopilotPolicy.learn(
             AutopilotRule(
-              kind: q.kind, match: AutopilotPolicy.widen(q.match, verdict: verdict),
+              kind: q.kind, match: AutopilotPolicy.lessonMatch(q.kind, q.match, verdict: verdict),
               verdict: verdict, source: .operator,
-              title: AutopilotPolicy.ruleTitle(q, answer: answer), created: now,
-              questionID: q.id))
+              title: AutopilotPolicy.ruleTitle(general, answer: answer), created: now,
+              questionID: q.id),
+            into: &memory.rules)
         }
       }
       refreshQuestions(now: now)
@@ -435,8 +441,10 @@ public actor Autopilot {
       }
     case .forgetRule(let id):
       try store.updateMemory { memory in
-        if let rule = memory.rules.first(where: { $0.id == id }), let q = rule.questionID {
-          memory.questions.removeAll { $0.id == q }
+        // Every answer the lesson was made from goes too, so those things can be asked again.
+        if let rule = memory.rules.first(where: { $0.id == id }) {
+          let taught = Set(AutopilotPolicy.questionIDs(rule))
+          memory.questions.removeAll { taught.contains($0.id) }
         }
         memory.rules.removeAll { $0.id == id }
       }

@@ -79,6 +79,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       ("--autopilot-disk", "Autopilot junk folders and threads", autopilotDiskProof),
       ("--autopilot-process", "Autopilot processes", autopilotProcessProof),
       ("--autopilot-sweep", "Autopilot sweep", autopilotSweepProof),
+      ("--autopilot-learning", "Autopilot learning", autopilotLearningProof),
     ] as [(String, String, () async throws -> Void)] where CommandLine.arguments.contains(flag) {
       do { try await proof() } catch { failTest("\(name): \(error)") }
       if failures == 0 { print("PASS \(name)") }
@@ -529,6 +530,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await autopilotDiskProof() } catch { failTest("Autopilot junk folders: \(error)") }
     do { try await autopilotProcessProof() } catch { failTest("Autopilot processes: \(error)") }
     do { try await autopilotSweepProof() } catch { failTest("Autopilot sweep: \(error)") }
+    do { try await autopilotLearningProof() } catch { failTest("Autopilot learning: \(error)") }
     do {
       let newcomer = FileManager.default.temporaryDirectory.appendingPathComponent(
         "bz-newcomer-" + UUID().uuidString)
@@ -537,7 +539,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     } catch { failTest("Newcomer first run: \(error)") }
     if failures == beforeAutopilot {
       print(
-        "PASS autopilot policy, restorable retirement, junk folders, processes, sweep and a newcomer's first two minutes"
+        "PASS autopilot policy, restorable retirement, junk folders, processes, sweep, learning and a newcomer's first two minutes"
       )
     }
     let beforeMachine = failures

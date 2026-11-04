@@ -72,6 +72,10 @@ public struct AutopilotRule: Codable, Sendable, Identifiable, Equatable {
   public var enabled: Bool
   public var created: Date
   public var questionID: String?
+  /// The other answers an operator lesson was made from, besides `questionID`'s.
+  public var from: [String]?
+  /// Ids of the lessons it took in, so what they did still counts toward it.
+  public var formerIDs: [String]?
   public init(
     id: String? = nil, kind: AutopilotKind, match: [String: [String]], verdict: AutopilotVerdict,
     source: AutopilotRuleSource, title: String, enabled: Bool = true, created: Date = Date(),
