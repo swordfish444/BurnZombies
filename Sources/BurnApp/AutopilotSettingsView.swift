@@ -1,15 +1,17 @@
 import BurnCore
 import SwiftUI
 
-/// The Autopilot section of Settings: on/off, how often BZ sweeps, what it has learned from
-/// the operator's answers, the starter rules and a way to start over.
+/// The Autopilot section of Settings: on/off, how often BZ sweeps, whether it acts on its own when
+/// it is sure, what it has learned from the operator's answers, how it is doing, the starter rules
+/// and a way to start over.
 struct AutopilotSettingsView: View {
   @ObservedObject var model: AppModel
   @State private var confirmReset = false
   static let intervals = [5, 15, 30, 60, 240]
 
   private var sweep: AutopilotSweepState { model.autopilot.sweep }
-  private var learned: [AutopilotRule] { model.autopilot.rules.filter { $0.source == .`operator` } }
+  private var lessons: [AutopilotLessonGroup] { model.autopilot.lessons }
+  private var progress: [String] { model.autopilot.progress.lines }
   private var starters: [AutopilotRule] { model.autopilot.rules.filter { $0.source == .starter } }
 
   static func label(_ minutes: Int) -> String {
@@ -58,8 +60,13 @@ struct AutopilotSettingsView: View {
         Button("Sweep now") { model.sweepNow() }.buttonStyle(.bordered).controlSize(.small)
           .clickPointer().disabled(!sweep.enabled)
       }
+      actsOnItsOwn
       Divider()
       learnedSection
+      if !progress.isEmpty {
+        Divider()
+        doingSection
+      }
       Divider()
       startersSection
       Divider()
@@ -90,23 +97,69 @@ struct AutopilotSettingsView: View {
     return text
   }
 
+  /// Whether BZ burns what it is sure of and tells the owner after, or always asks first.
+  private var actsOnItsOwn: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 10) {
+        Text("Act on its own when sure").font(.callout)
+        Spacer(minLength: 8)
+        Toggle(
+          "Act on its own when sure",
+          isOn: Binding(
+            get: { model.autopilot.actsOnItsOwn }, set: { model.setActsOnItsOwn($0) })
+        )
+        .labelsHidden().toggleStyle(.switch).tint(BurnTheme.orange).clickPointer()
+        .accessibilityIdentifier("autopilot-acts-on-its-own")
+      }
+      Text(
+        "When I'm sure, I'll burn it and tell you after, with Undo. Off means I always ask first."
+      )
+      .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  /// Lessons as plain sentences, each with what it rests on and what it did.
   private var learnedSection: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 12) {
       Text("What BZ has learned").font(.subheadline.weight(.semibold))
-      if learned.isEmpty {
+      if lessons.isEmpty {
         Text("Nothing yet. Answer BZ's quick questions and the lessons show up here.")
           .font(.caption).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
-      ForEach(learned) { rule in
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-          badge(rule)
-          Text(AutopilotText.plainTitle(rule)).font(.callout)
-            .fixedSize(horizontal: false, vertical: true)
-          Spacer(minLength: 6)
-          Button("Forget") { model.forgetRule(rule) }.buttonStyle(.borderless)
-            .font(.callout).foregroundStyle(BurnTheme.orange).clickPointer()
-        }
+      ForEach(lessons) { group in lessonRow(group) }
+    }
+  }
+
+  private func lessonRow(_ group: AutopilotLessonGroup) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+      lessonSymbol(group.verdict)
+      VStack(alignment: .leading, spacing: 3) {
+        Text(group.sentence).font(.callout).fixedSize(horizontal: false, vertical: true)
+        Text(group.evidence).font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: 6)
+      Button("Forget") { model.forgetLesson(group) }.buttonStyle(.borderless)
+        .font(.callout).foregroundStyle(BurnTheme.orange).clickPointer()
+        .accessibilityIdentifier("forget-lesson-" + group.id)
+    }
+  }
+
+  /// A lesson to burn is the flame, a lesson to keep the open hand: the same marks as the answers.
+  private func lessonSymbol(_ verdict: AutopilotVerdict) -> some View {
+    let burn = verdict == .burn
+    return Image(systemName: burn ? "flame.fill" : "hand.raised.fill")
+      .font(.system(size: 14)).foregroundStyle(burn ? BurnTheme.orange : AutopilotTheme.green)
+      .frame(width: 18, alignment: .center).padding(.top, 2)
+  }
+
+  /// How I'm doing: plain counts, one sentence each, as BZ worked them out.
+  private var doingSection: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("How I'm doing").font(.subheadline.weight(.semibold))
+      ForEach(Array(progress.enumerated()), id: \.offset) { _, line in
+        Text(line).font(.callout).fixedSize(horizontal: false, vertical: true)
       }
     }
   }
@@ -126,14 +179,5 @@ struct AutopilotSettingsView: View {
         }.toggleStyle(.switch).tint(BurnTheme.orange).clickPointer()
       }
     }
-  }
-
-  private func badge(_ rule: AutopilotRule) -> some View {
-    let burn = rule.verdict == .burn
-    let color = burn ? BurnTheme.orange : AutopilotTheme.green
-    return Text(burn ? "Burn" : "Keep")
-      .font(.caption2.weight(.bold)).foregroundStyle(color)
-      .padding(.horizontal, 8).padding(.vertical, 3)
-      .background(color.opacity(0.16), in: Capsule())
   }
 }

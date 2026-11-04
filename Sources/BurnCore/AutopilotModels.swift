@@ -606,6 +606,9 @@ public struct AutopilotSnapshot: Codable, Sendable, Equatable {
   /// What BZ did on its own that the owner hasn't called good or undone yet, oldest first, with
   /// any Undo still running ("undoing"), so one cut short by a quit can be clicked again.
   public var tells: [AutopilotTell] = []
+  /// Whether BZ acts on its own when sure (Settings → Autopilot): the owner's setting, not
+  /// something it learned.
+  public var actsOnItsOwn = true
   public init() {}
   public func count(_ status: AutopilotStatus) -> Int { counts[status.rawValue] ?? 0 }
 }

@@ -124,12 +124,83 @@ enum AutopilotText {
     }
     return parts.joined(separator: " · ")
   }
-  /// Rule titles come as "Burn: ..." or "Keep: ..."; the badge already says which.
-  static func plainTitle(_ rule: AutopilotRule) -> String {
-    for prefix in ["Burn: ", "Keep: "] where rule.title.hasPrefix(prefix) {
-      return String(rule.title.dropFirst(prefix.count))
+  // MARK: Tells: what BZ did on its own
+
+  /// What a tell calls the things BZ burned: "copy" and "copies", "program" and "programs",
+  /// "folder" and "folders".
+  static func noun(_ kind: AutopilotKind, count: Int) -> String {
+    switch kind {
+    case .worktree: return count == 1 ? "copy" : "copies"
+    case .process: return count == 1 ? "program" : "programs"
+    case .disk: return count == 1 ? "folder" : "folders"
     }
-    return rule.title
+  }
+  /// "Burned 3 copies on my own."
+  static func tellHeadline(_ tell: AutopilotTell) -> String {
+    let things: String = noun(tell.kind, count: tell.count)
+    return "Burned \(tell.count) \(things) on my own."
+  }
+  /// How much it was, the way a question card says what it frees: "2.4 GB".
+  static func tellSize(_ tell: AutopilotTell) -> String { AutopilotPolicy.roughly(tell.bytes) }
+  static let tellWhyPrefix = "You'd have said yes: "
+  /// "You'd have said yes: You said yes to 6 like these."
+  static func tellWhy(_ tell: AutopilotTell) -> String { tellWhyPrefix + tell.why }
+  /// Shown in place of the reason once the owner has pressed Undo and the copies are coming back.
+  static let undoingLine = "Bringing them back…"
+  /// How many more than its rows it burned.
+  static func tellMore(_ tell: AutopilotTell) -> Int { max(0, tell.count - tell.rows.count) }
+  /// A tell worth showing: still open or being undone, and it burned something. When every burn
+  /// in its act was refused it burned nothing and says nothing.
+  static func shows(_ tell: AutopilotTell) -> Bool {
+    (tell.isOpen || tell.state == "undoing") && tell.count > 0
+  }
+  /// The prompt in the menu while tells wait: "BZ burned 3 things on its own".
+  static func burnedOnItsOwn(_ tells: [AutopilotTell]) -> String {
+    var count: Int = 0
+    for tell in tells { count += tell.count }
+    return "BZ burned \(things(count)) on its own"
+  }
+  /// The tell's rows as a question card shows them. A copy or folder says when it last changed. A
+  /// program says how long it sat idle when BZ stopped it, which stays true as time passes.
+  static func tellRows(_ tell: AutopilotTell, now: Date, calendar: Calendar) -> [AutopilotCardRow] {
+    tell.rows.map { (row: AutopilotQuestionRow) -> AutopilotCardRow in
+      var when = ""
+      if let used = row.lastUsed {
+        if tell.kind == .process {
+          when = AutopilotPolicy.idleText(used, now: tell.date)
+        } else {
+          when = AutopilotPolicy.clock(used, now: now, calendar: calendar)
+        }
+      }
+      return AutopilotCardRow(title: row.title, subtitle: row.subtitle, when: when)
+    }
+  }
+
+  // MARK: Teach: what an answer taught
+
+  /// The lesson group that now holds the lesson an answer to `questionID` taught: the rule whose
+  /// answers include the question (a lesson that took it in lists it), then the group that lists
+  /// that rule. Nil while the engine hasn't caught up, or when the answer taught nothing.
+  static func lesson(taughtBy questionID: String, in snapshot: AutopilotSnapshot)
+    -> AutopilotLessonGroup?
+  {
+    let rule: AutopilotRule? = snapshot.rules.first { rule in
+      AutopilotPolicy.questionIDs(rule).contains(questionID)
+    }
+    guard let rule else { return nil }
+    return snapshot.lessons.first { $0.ruleIDs.contains(rule.id) }
+  }
+  /// What BZ will do from now on, under the lesson on the "Got it!" card.
+  static func handling(_ kind: AutopilotKind, answer: AutopilotAnswer) -> String {
+    let things: String
+    switch kind {
+    case .worktree: things = "copies"
+    case .process: things = "programs"
+    case .disk: things = "folders"
+    }
+    let pointer = " You'll find this under What I've learned."
+    if answer == .yes { return "I'll handle \(things) like these on my own from now on." + pointer }
+    return "I'll leave \(things) like these alone." + pointer
   }
 }
 
@@ -158,20 +229,76 @@ enum AutopilotLocal {
     // Skip hides the question for a day and teaches nothing.
     guard a != .skip else { return }
     s.answers += 1
-    let burn = a == .yes
-    let rule = AutopilotRule(
-      kind: q.kind, match: q.match, verdict: burn ? .burn : .keep, source: .`operator`,
-      title: AutopilotPolicy.ruleTitle(q, answer: a), enabled: true, created: now,
-      questionID: q.id)
-    s.rules.removeAll { $0.id == rule.id }
-    s.rules.insert(rule, at: 0)
-    for i in s.entries.indices
-    where s.entries[i].status == .unsure && AutopilotPolicy.matches(rule, s.entries[i].item) {
-      s.entries[i].status = burn ? .burn : .keep
-      s.entries[i].authority = "rule:" + rule.id
-      s.entries[i].why = burn ? "You told me to burn these." : "You told me to keep these."
-    }
+    // The answer teaches why, not which project: the engine's own lesson, taken in or joined the
+    // way the engine does, with operator lessons first and the starter rules after them.
+    var lessons: [AutopilotRule] = s.rules.filter { $0.source == .`operator` }
+    let starters: [AutopilotRule] = s.rules.filter { $0.source == .starter }
+    lessons.removeAll { $0.questionID == q.id }
+    let verdict: AutopilotVerdict = a == .yes ? .burn : .keep
+    let taught: AutopilotRule = AutopilotPolicy.lesson(for: q, verdict: verdict, created: now)
+    AutopilotPolicy.learn(taught, into: &lessons)
+    s.rules = lessons + starters
+    decideUnsure(&s)
+    regroup(&s)
     recount(&s)
+  }
+
+  /// Whatever the rules now say about the things BZ was unsure of: the engine's own decision for
+  /// each, so a lesson that took another in covers what both covered.
+  private static func decideUnsure(_ s: inout AutopilotSnapshot) {
+    var memory = AutopilotMemory()
+    memory.rules = s.rules.filter { $0.source == .`operator` }
+    for rule in s.rules where rule.source == .starter && !rule.enabled {
+      memory.starterDisabled.insert(rule.id)
+    }
+    for i in s.entries.indices where s.entries[i].status == .unsure {
+      let decision = AutopilotPolicy.decide(s.entries[i].item, memory: memory)
+      // Only a lesson moves a thing here; starter rules have their own switch.
+      guard let authority = decision.authority, authority.hasPrefix("rule:") else { continue }
+      switch decision.status {
+      case .burn:
+        s.entries[i].status = .burn
+        s.entries[i].why = "You told me to burn these."
+      case .keep:
+        s.entries[i].status = .keep
+        s.entries[i].why = "You told me to keep these."
+      default:
+        continue
+      }
+      s.entries[i].authority = authority
+    }
+  }
+
+  /// Writes `lessons` again from `rules`, with the engine's own sentences, so a new lesson shows in
+  /// its group the way it does after a real answer. A group whose lessons didn't change keeps its
+  /// evidence: what each lesson burned isn't in the snapshot to work out again.
+  private static func regroup(_ s: inout AutopilotSnapshot) {
+    var memory = AutopilotMemory()
+    memory.rules = s.rules.filter { $0.source == .`operator` }
+    var seen = Set<String>()
+    for rule in memory.rules {
+      for id in AutopilotPolicy.questionIDs(rule) where seen.insert(id).inserted {
+        var answered = AutopilotQuestion(
+          kind: rule.kind, match: rule.match, question: "", why: "", examples: [], count: 0,
+          bytes: 0)
+        answered.id = id
+        answered.answer = rule.verdict == .burn ? .yes : .no
+        // The lesson of a call BZ made on its own comes from that call.
+        answered.answeredBy = rule.tellID == nil ? nil : "bz"
+        memory.questions.append(answered)
+      }
+    }
+    var before = [String: AutopilotLessonGroup]()
+    for group in s.lessons { before[group.id] = group }
+    var groups = [AutopilotLessonGroup]()
+    for group in AutopilotPolicy.lessonGroups(memory) {
+      if let old = before[group.id], Set(old.ruleIDs) == Set(group.ruleIDs) {
+        groups.append(old)
+      } else {
+        groups.append(group)
+      }
+    }
+    s.lessons = groups
   }
 
   static func burnNow(_ s: inout AutopilotSnapshot, entry e: AutopilotEntry, now: Date) {
@@ -240,12 +367,75 @@ enum AutopilotLocal {
 
   static func forget(_ s: inout AutopilotSnapshot, rule r: AutopilotRule) {
     guard r.source == .`operator` else { return }
-    s.rules.removeAll { $0.id == r.id }
-    for i in s.entries.indices
-    where s.entries[i].authority == "rule:" + r.id && isOpenToChange(s.entries[i].status) {
-      askAgain(&s.entries[i], why: "I forgot that lesson, so I'm asking again.")
+    forgetLesson(&s, ruleIDs: [r.id])
+  }
+
+  /// Forgets lessons, each with every answer it was made from, so those things can be asked again
+  /// (the engine's `forget`). A tell whose lesson is forgotten closes, without a score.
+  static func forgetLesson(_ s: inout AutopilotSnapshot, ruleIDs: [String]) {
+    let gone = Set(ruleIDs)
+    var answers = Set<String>()
+    // The ids things may carry as their authority: the lesson's own and those it took in.
+    var names = Set<String>()
+    for rule in s.rules where rule.source == .`operator` && gone.contains(rule.id) {
+      answers.formUnion(AutopilotPolicy.questionIDs(rule))
+      names.insert(rule.id)
+      names.formUnion(rule.formerIDs ?? [])
     }
+    guard !names.isEmpty else { return }
+    s.rules.removeAll { $0.source == .`operator` && gone.contains($0.id) }
+    s.questions.removeAll { answers.contains($0.id) }
+    for i in s.entries.indices where isOpenToChange(s.entries[i].status) {
+      guard let authority = s.entries[i].authority, authority.hasPrefix("rule:") else { continue }
+      if names.contains(String(authority.dropFirst("rule:".count))) {
+        askAgain(&s.entries[i], why: "I forgot that lesson, so I'm asking again.")
+      }
+    }
+    s.tells.removeAll { gone.contains($0.ruleID) || answers.contains($0.questionID) }
+    regroup(&s)
     recount(&s)
+  }
+
+  /// Good call: the tell closes.
+  static func tellGood(_ s: inout AutopilotSnapshot, id: String) {
+    s.tells.removeAll { $0.id == id && $0.isOpen }
+  }
+
+  /// Undo, without the real restores: the tell closes, what its lesson burned comes back and is
+  /// kept, and the lesson becomes the keep a No teaches.
+  static func tellUndo(_ s: inout AutopilotSnapshot, id: String, now: Date) {
+    guard let index = s.tells.firstIndex(where: { $0.id == id && $0.isOpen }) else { return }
+    let tell: AutopilotTell = s.tells.remove(at: index)
+    let authority: String = "rule:" + tell.ruleID
+    let burned: [AutopilotReceipt] = s.receipts.filter { receipt in
+      receipt.authority == authority && receipt.outcome == "burned" && receipt.restore != nil
+    }
+    for receipt in burned { restore(&s, receipt: receipt, now: now) }
+    if let act = s.rules.first(where: { $0.id == tell.ruleID }) {
+      var lessons: [AutopilotRule] = s.rules.filter { $0.source == .`operator` }
+      let starters: [AutopilotRule] = s.rules.filter { $0.source == .starter }
+      lessons.removeAll { $0.id == tell.ruleID }
+      var asked = AutopilotQuestion(
+        kind: act.kind, match: pattern(of: act), question: "", why: "", examples: [],
+        count: tell.count, bytes: tell.bytes, asked: tell.date)
+      asked.id = tell.questionID
+      let keep = AutopilotPolicy.lesson(for: asked, verdict: .keep, created: now)
+      AutopilotPolicy.learn(keep, into: &lessons)
+      s.rules = lessons + starters
+    }
+    regroup(&s)
+    recount(&s)
+  }
+
+  /// The question a lesson BZ made on its own answered, as its pattern: what it asked about, how
+  /// long it sat unused and its subject, without the safe values the lesson added around it.
+  private static func pattern(of rule: AutopilotRule) -> [String: [String]] {
+    var match = [String: [String]]()
+    let recency: String = rule.kind == .process ? "idle" : "stale"
+    if let floor = rule.match[recency]?.first { match[recency] = [floor] }
+    let subject: String = rule.kind == .process ? "family" : "folder"
+    if rule.kind != .worktree, let kept = rule.match[subject] { match[subject] = kept }
+    return match
   }
 
   static func setStarter(_ s: inout AutopilotSnapshot, id: String, enabled: Bool) {
@@ -278,6 +468,11 @@ enum AutopilotLocal {
       askAgain(&s.entries[i], why: "You started my training over, so I'm asking again.")
     }
     s.answers = 0
+    // Nothing is learned or trusted anymore, so there is nothing to show or to tell; whether BZ may
+    // act on its own is the owner's setting and stays.
+    s.lessons = []
+    s.tells = []
+    s.progress = AutopilotProgress()
     recount(&s)
   }
 
@@ -329,6 +524,7 @@ struct AutopilotMenuSection: View {
   @ObservedObject var model: AppModel
   @State private var tick = Date()
   var openQuestions: Int { model.autopilot.questions.filter(\.isOpen).count }
+  var openTells: [AutopilotTell] { model.autopilot.tells.filter { AutopilotText.shows($0) } }
   var dot: Color {
     let sweep = model.autopilot.sweep
     if !sweep.enabled { return BurnTheme.muted }
@@ -344,22 +540,14 @@ struct AutopilotMenuSection: View {
         Spacer(minLength: 0)
       }
       if openQuestions > 0 {
-        Button {
-          model.openTeach?()
-        } label: {
-          HStack(spacing: 10) {
-            Image(systemName: "questionmark.bubble.fill").font(.system(size: 18, weight: .semibold))
-            Text(AutopilotText.questions(openQuestions)).font(.system(size: 15, weight: .bold))
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold))
-          }
-          .foregroundStyle(Color.black.opacity(0.86))
-          .padding(.horizontal, 16)
-          .padding(.vertical, 12)
-          .background(BurnTheme.orange, in: RoundedRectangle(cornerRadius: 12))
-          .contentShape(RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(.plain).clickPointer()
-          .accessibilityIdentifier("autopilot-questions")
+        prompt(
+          symbol: "questionmark.bubble.fill", text: AutopilotText.questions(openQuestions),
+          id: "autopilot-questions")
+      } else if !openTells.isEmpty {
+        // BZ acts instead of asking, so a tell comes exactly when there is no question to prompt.
+        prompt(
+          symbol: "flame.fill", text: AutopilotText.burnedOnItsOwn(openTells),
+          id: "autopilot-tells")
       }
       HStack(spacing: 16) {
         link("Teach BZ", symbol: "graduationcap.fill") { model.openTeach?() }
@@ -372,6 +560,25 @@ struct AutopilotMenuSection: View {
     .padding(.horizontal, 20).padding(.vertical, 14)
     .frame(maxWidth: .infinity, alignment: .leading)
     .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { tick = $0 }
+  }
+  /// The orange button that takes the owner to Teach BZ.
+  private func prompt(symbol: String, text: String, id: String) -> some View {
+    Button {
+      model.openTeach?()
+    } label: {
+      HStack(spacing: 10) {
+        Image(systemName: symbol).font(.system(size: 18, weight: .semibold))
+        Text(text).font(.system(size: 15, weight: .bold))
+        Spacer(minLength: 0)
+        Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold))
+      }
+      .foregroundStyle(Color.black.opacity(0.86))
+      .padding(.horizontal, 16)
+      .padding(.vertical, 12)
+      .background(BurnTheme.orange, in: RoundedRectangle(cornerRadius: 12))
+      .contentShape(RoundedRectangle(cornerRadius: 12))
+    }.buttonStyle(.plain).clickPointer()
+      .accessibilityIdentifier(id)
   }
   private func link(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
     Button(action: action) {

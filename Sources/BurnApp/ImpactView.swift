@@ -253,6 +253,8 @@ struct MiniImpactView: View {
   @ObservedObject var model: AppModel
   var numbers: ImpactNumbers { .make(model, period: .today) }
   var totals: ImpactNumbers { .make(model, period: model.miniImpactPeriod) }
+  /// What BZ burned on its own that the owner hasn't called good or undone yet.
+  var openTells: [AutopilotTell] { model.autopilot.tells.filter { AutopilotText.shows($0) } }
   /// What Autopilot found and hasn't burned yet.
   var found: UInt64 {
     model.autopilot.entries.filter { $0.status == .unsure || $0.status == .burn }
@@ -301,6 +303,23 @@ struct MiniImpactView: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }.buttonStyle(.plain).clickPointer().padding(.top, 16)
           .accessibilityLabel("Answer BZ's quick questions")
+      } else if model.autopilotAvailable, !openTells.isEmpty {
+        // BZ acts instead of asking, so a tell comes when there is no question to prompt: the same
+        // slot. The sentence is the whole message, so it gets the room the questions' size takes.
+        Button {
+          model.openTeach?()
+        } label: {
+          HStack(spacing: 8) {
+            Image(systemName: "flame.fill").font(.system(size: 16, weight: .bold))
+            Text(AutopilotText.burnedOnItsOwn(openTells))
+              .font(.system(size: 15, weight: .bold)).lineLimit(1).minimumScaleFactor(0.8)
+            Spacer(minLength: 4)
+            Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold))
+          }.foregroundStyle(.black).padding(.horizontal, 14).frame(height: 40)
+            .background(BurnTheme.orange, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }.buttonStyle(.plain).clickPointer().padding(.top, 16)
+          .accessibilityLabel("See what BZ burned on its own")
       } else {
         Text("Dead weight. Gone.").font(BurnTheme.display(28))
           .frame(height: 40, alignment: .leading).padding(.top, 16)

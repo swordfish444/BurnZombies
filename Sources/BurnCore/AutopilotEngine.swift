@@ -490,6 +490,7 @@ public actor Autopilot {
     result.progress = AutopilotPolicy.progress(
       memory, receipts: receipts, impact: try? store.impact(), now: now)
     result.tells = memory.tells.filter { !$0.isClosed }
+    result.actsOnItsOwn = memory.actsOnItsOwn
     return result
   }
 

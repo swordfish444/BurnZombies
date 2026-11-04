@@ -528,8 +528,9 @@ extension AutopilotPolicy {
     return table.compactMap { key, words in match[key]?.first.flatMap { words[$0] } }
   }
 
-  /// "14.4 GB" or "300 MB": one decimal is plenty for deciding.
-  static func roughly(_ bytes: UInt64) -> String {
+  /// "14.4 GB" or "300 MB": one decimal is plenty for deciding. Public so a tell card says its size
+  /// the way a question card says what it frees.
+  public static func roughly(_ bytes: UInt64) -> String {
     bytes >= 1_000_000_000
       ? String(format: "%.1f GB", Double(bytes) / 1e9) : String(format: "%.0f MB", Double(bytes) / 1e6)
   }

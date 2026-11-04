@@ -271,6 +271,11 @@ import UserNotifications
   var autopilotRunner: ((AutopilotCommand) async -> AutopilotSnapshot?)?
   /// The Autopilot surfaces appear once an engine is attached, or in the demo.
   var autopilotAvailable: Bool { demo || autopilotRunner != nil }
+  /// What the owner pressed on a tell that the engine hasn't finished yet, by tell id. Teach BZ
+  /// hides a tell called good at once and shows one being undone as "Bringing them back…"; a command
+  /// the engine couldn't do clears its entry and the tell comes back with its buttons.
+  enum TellAction { case good, undo }
+  @Published private(set) var tellActions: [String: TellAction] = [:]
   @Published var findingSelection: String?
   @Published var findingBusy = Set<String>()
   let demo: Bool
@@ -776,6 +781,32 @@ import UserNotifications
   func forgetRule(_ r: AutopilotRule) {
     sendAutopilot(.forgetRule(ruleID: r.id)) { AutopilotLocal.forget(&$0, rule: r) }
   }
+  /// Forgets every lesson of a group, with the answers they were made from.
+  func forgetLesson(_ group: AutopilotLessonGroup) {
+    let ids = group.ruleIDs
+    sendAutopilot(.forgetLesson(ruleIDs: ids)) { AutopilotLocal.forgetLesson(&$0, ruleIDs: ids) }
+  }
+  /// "Good call": the owner agrees with what BZ did on its own.
+  func tellGood(_ tell: AutopilotTell) {
+    guard tellActions[tell.id] == nil else { return }
+    tellActions[tell.id] = .good
+    sendAutopilot(
+      .tellGood(id: tell.id), local: { AutopilotLocal.tellGood(&$0, id: tell.id) },
+      finished: { [weak self] in self?.tellActions[tell.id] = nil })
+  }
+  /// "Undo": the owner takes back what BZ did on its own. The copies come back over a few moments,
+  /// so the tell shows as undoing until the engine answers.
+  func tellUndo(_ tell: AutopilotTell) {
+    guard tellActions[tell.id] == nil else { return }
+    tellActions[tell.id] = .undo
+    sendAutopilot(
+      .tellUndo(id: tell.id), local: { AutopilotLocal.tellUndo(&$0, id: tell.id, now: Date()) },
+      finished: { [weak self] in self?.tellActions[tell.id] = nil })
+  }
+  /// Settings → Autopilot → Act on its own when sure.
+  func setActsOnItsOwn(_ acts: Bool) {
+    sendAutopilot(.setActsOnItsOwn(acts)) { $0.actsOnItsOwn = acts }
+  }
   func setStarter(_ id: String, enabled: Bool) {
     sendAutopilot(.setStarter(ruleID: id, enabled: enabled)) {
       AutopilotLocal.setStarter(&$0, id: id, enabled: enabled)
@@ -793,7 +824,11 @@ import UserNotifications
   func sweepNow() {
     sendAutopilot(.sweepNow) { AutopilotLocal.sweepNow(&$0, now: Date()) }
   }
-  private func sendAutopilot(_ command: AutopilotCommand, local: (inout AutopilotSnapshot) -> Void) {
+  /// `finished` runs once the command is done, whether or not the engine could do it.
+  private func sendAutopilot(
+    _ command: AutopilotCommand, local: (inout AutopilotSnapshot) -> Void,
+    finished: (@MainActor () -> Void)? = nil
+  ) {
     if let runner = autopilotRunner {
       Task { [weak self] in
         if let next = await runner(command) {
@@ -803,16 +838,19 @@ import UserNotifications
             self?.message = "Autopilot couldn't finish that. Try again in a moment."
           }
         }
+        finished?()
       }
       return
     }
     guard demo else {
       message = "Autopilot isn't connected yet."
+      finished?()
       return
     }
     var next = autopilot
     local(&next)
     autopilot = next
+    finished?()
   }
   func quit() {
     Task {
