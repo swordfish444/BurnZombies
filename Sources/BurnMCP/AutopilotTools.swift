@@ -60,7 +60,7 @@ enum AutopilotTools {
     Tool(
       name: "autopilot_burn", title: "Burn authorized items",
       description:
-        "Burn items the policy authorizes (owner rules, starter rules, or your confident verdict for eligible items). Programs get a graceful stop; old copies are saved in a restore point first; junk folders are deleted. Unauthorized items are refused with a reason.",
+        "Burn items the policy authorizes (owner rules, starter rules, or your confident verdict for eligible items). Programs get a graceful stop; old copies are saved in a restore point first; junk folders are deleted. Unauthorized items are refused with a reason. An item refused earlier for the same facts waits a few hours, and burning it again returns that reason at once.",
       inputSchema: .object([
         "type": "object",
         "properties": .object([

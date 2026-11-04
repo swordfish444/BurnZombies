@@ -2,6 +2,33 @@ import BurnCore
 import Darwin
 import Foundation
 
+private final class PreparationGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var closed = false
+  private var continuation: CheckedContinuation<Void, Never>?
+  var ready: Bool { lock.withLock { continuation != nil } }
+  func close() { lock.withLock { closed = true } }
+  func hold() async {
+    await withCheckedContinuation { continuation in
+      let resumeNow = lock.withLock {
+        if !closed { return true }
+        self.continuation = continuation
+        return false
+      }
+      if resumeNow { continuation.resume() }
+    }
+  }
+  func release() {
+    let waiting = lock.withLock {
+      closed = false
+      let saved = continuation
+      continuation = nil
+      return saved
+    }
+    waiting?.resume()
+  }
+}
+
 func machineReviewProof() async throws {
   let now = Date()
   var signal = HarnessHook.Signal(
@@ -255,22 +282,26 @@ func machineReviewProof() async throws {
     .init(
       observedAt: now, processCount: 123, residentBytes: 100, pressure: "Low", reviewEvidence: multi
     ), store: manualStore)
+  let preparation = PreparationGate()
   let manualReviewer = try MachineReviewer(
     root: manualRoot, accessCheck: fixtureAccess,
-    prepareHunt: {
-      try await Task.sleep(nanoseconds: 150_000_000)
-    })
+    prepareHunt: { await preparation.hold() })
   await manualReviewer.tick(now: now)
   let automaticOff = await manualReviewer.snapshot()
   check(automaticOff.lastStarted == nil, "Automatic-off prevents automatic work")
+  // Hold the manual hunt in native preparation until it is checked, so a slow runner can't
+  // let the first model invocation start before the checks read.
+  preparation.close()
   let manualTask = Task { await manualReviewer.hunt(now: now) }
-  try await Task.sleep(nanoseconds: 50_000_000)
+  for _ in 0..<500 where !preparation.ready { try await Task.sleep(nanoseconds: 10_000_000) }
+  check(preparation.ready, "The manual hunt reached native preparation")
   let preparing = await manualReviewer.snapshot()
   equal(preparing.phase, "reviewing", "Native preparation is part of the active hunt")
   equal(try HuntSnapshot.load(root: manualRoot).phase, "hunting")
   equal(
     try ReviewLedger.load(store: manualStore).entries.count, 0,
     "Native preparation consumes no model invocation")
+  preparation.release()
   await manualTask.value
   let manualHunt = try HuntSnapshot.load(root: manualRoot)
   equal(
