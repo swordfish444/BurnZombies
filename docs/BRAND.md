@@ -16,26 +16,25 @@ Anton is bundled from the [Google Fonts Anton directory](https://github.com/goog
 
 ## Public previews
 
-The README opens with `docs/media/readme-hero.png`, rendered from `docs/media/readme-hero.html`. Its panel, `docs/media/panel-real.png`, is the author's own compact panel on the All time tab after two days of Autopilot (2026-11-02 to 11-04), rendered offscreen from a copy of that Mac's catalog and Autopilot tally. It shows totals only: no names, paths or process details. The other README images use the app's isolated example data, and the README says so.
+The README opens with `docs/media/readme-hero.png`, rendered from `docs/media/readme-hero.html`. Its panel, `docs/media/panel-real.png`, is the author's own compact panel on the All time tab after two days of Autopilot (2026-11-02 to 11-04), rendered offscreen from a copy of that Mac's catalog and Autopilot tally. It shows totals only: no names, paths or process details. Phones get `docs/media/readme-hero-phone.png` (from `readme-hero-phone.html`, rendered the same way at 390 × 470) with the same two-day totals in larger type. The question card uses the app's isolated example data, and the README says so.
 
-Refresh the example images without opening a window or starting an observer:
+Refresh the example question card without opening a window or starting an observer:
 
 ```sh
 swift build --product BurnZombiesApp
-.build/debug/BurnZombiesApp --mini-proof /tmp/bz-readme-mini
 .build/debug/BurnZombiesApp --autopilot-proof /tmp/bz-readme-autopilot
-.build/debug/BurnZombiesApp --hunt-scene-proof /tmp/bz-readme-hunt
-sips -s format jpeg -s formatOptions 90 /tmp/bz-readme-mini/newcomer.png --out docs/media/readme-first-minute.jpg
-sips -s format jpeg -s formatOptions 90 /tmp/bz-readme-autopilot/teach.png --out docs/media/readme-question.jpg
-cp /tmp/bz-readme-hunt/burning.png docs/media/readme-hunt.png
+sips -s format jpeg -s formatOptions 90 /tmp/bz-readme-autopilot/teach-caches.png --out docs/media/readme-question.jpg
 ```
 
-Then render the hero at 2x, transparent outside its rounded card:
+Then render the hero at 2x, transparent outside its rounded card (the phone hero likewise), and the 1280 × 640 link-preview card (upload it in the repository's **Settings → Social preview**):
 
 ```sh
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --hide-scrollbars \
   --window-size=900,440 --force-device-scale-factor=2 --default-background-color=00000000 \
   --virtual-time-budget=3000 --screenshot=docs/media/readme-hero.png "file://$PWD/docs/media/readme-hero.html"
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --hide-scrollbars \
+  --window-size=1280,640 --virtual-time-budget=3000 --screenshot=/tmp/social-card.png "file://$PWD/docs/media/social-card.html"
+sips -s format jpeg -s formatOptions 88 /tmp/social-card.png --out docs/media/social-card.jpg
 ```
 
 The render checks exercise the shipped views in memory and use OCR to check what they show. They prohibit app activation and do not create an observer, signal processes, or save production state.
