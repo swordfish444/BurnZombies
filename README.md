@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 - **Minute one:** BZ shows what it found, burns what's clearly safe and asks about the rest.
 - **Around minute 10:** if Claude Code or Codex is signed in, the first AI sweep judges what the rules don't cover.
 - **From then on:** BZ looks every 15 minutes, quietly. AI sweeps run only when there's something new to judge, at most every 30 minutes.
-- **After a restart:** BZ comes back only if **Start at login** is on in Settings, so switch it on once.
+- **After a restart:** BZ starts again when you log in, so it keeps going without you. **Start at login** in Settings turns that off.
 
 ## What it burns
 
@@ -129,7 +129,7 @@ It downloads the release it pins, checks it against that release's SHA-256 check
 <details>
 <summary><b>What does it install, and does it phone home?</b></summary>
 
-One app in `~/Applications`, with its `burnzombies` command inside it, and a data folder in `~/Library/Application Support/BurnZombies`. Setup writes only BZ's own settings, not your agents'. There's no login item until you switch on **Start at login**, no auto-update (run the install line again to update) and no telemetry: BZ itself makes no network requests. The only traffic is your AI sweeps through your own Claude Code or Codex login and, on request, a GitHub CLI lookup of a worktree's pull request.
+One app in `~/Applications`, with its `burnzombies` command inside it, a data folder in `~/Library/Application Support/BurnZombies`, and a login item so BZ comes back after a restart (switch off **Start at login** in Settings to remove it; updates keep your choice). Setup writes only BZ's own settings, not your agents'. There's no auto-update (run the install line again to update) and no telemetry: BZ itself makes no network requests. The only traffic is your AI sweeps through your own Claude Code or Codex login and, on request, a GitHub CLI lookup of a worktree's pull request.
 
 </details>
 
@@ -145,7 +145,7 @@ Yes. Give it this prompt:
 <details>
 <summary><b>How do I uninstall?</b></summary>
 
-Stop BZ, then delete the app and its data folder. Restore points stay in your repos until you delete them. [Three steps →](docs/INSTALL.md#uninstall)
+Switch off **Start at login** and stop BZ, then delete the app and its data folder. Restore points stay in your repos until you delete them. [Three steps →](docs/INSTALL.md#uninstall)
 
 </details>
 

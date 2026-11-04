@@ -114,6 +114,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       }
       exit(0)
     }
+    if CommandLine.arguments.contains("--start-at-login") {
+      do { try startAtLoginProof() } catch { failTest("Start at login: \(error)") }
+      if failures == 0 { print("PASS Start at login") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--autopilot-policy") {
       do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
       if failures == 0 { print("PASS Autopilot policy") }
@@ -464,6 +469,10 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       (
         "review model/effort migration, persistence, provider arguments and defaults",
         reviewSelectionProof
+      ),
+      (
+        "start at login on a fresh install, kept off through updates, older installs unchanged",
+        startAtLoginProof
       ),
       ("agent execution safety boundaries", d.testExecutionBoundaries),
       ("owner-scoped recurrence", d.testRecurrenceScope),
