@@ -117,6 +117,16 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       }
       exit(0)
     }
+    if CommandLine.arguments.contains("--quick") {
+      // The everyday check, well under a minute with the build. Everything else runs only on
+      // request: scripts/test.sh --full, or the manual GitHub workflow.
+      coreProofs()
+      let beforePolicy = failures
+      do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
+      if failures == beforePolicy { print("PASS Autopilot policy") }
+      print("Quick checks completed; \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--start-at-login") {
       do { try startAtLoginProof() } catch { failTest("Start at login: \(error)") }
       if failures == 0 { print("PASS Start at login") }
@@ -454,51 +464,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       }
       return
     }
-    let d = SafetyTests()
-    let s = StorageNativeTests()
-    let pressure = PressureTests()
-    let tests: [(String, () throws -> Void)] = [
-      ("durable cleanup intent and bounded explicit workflow rules", intentProof),
-      ("owner-managed BuildKit cleanup plans and receipts", managedCacheProof),
-      (
-        "whole-machine disk discovery, APFS clones, grouped advice and scope safety",
-        diskDiscoveryProof
-      ),
-      ("cumulative awake CPU savings and stable nonnegative speed impact", impactMetricsProof),
-      (
-        "impact periods, completion dates, DST, empty history and preview accounting",
-        impactPeriodProof
-      ),
-      (
-        "review model/effort migration, persistence, provider arguments and defaults",
-        reviewSelectionProof
-      ),
-      (
-        "start at login on a fresh install, kept off through updates, older installs unchanged",
-        startAtLoginProof
-      ),
-      ("agent execution safety boundaries", d.testExecutionBoundaries),
-      ("owner-scoped recurrence", d.testRecurrenceScope),
-      ("checkpoint", s.testCheckpointRoundTripAndPermissions),
-      ("corruption", s.testCorruptionFailsClosed), ("symlink", s.testSymlinkReadRejected),
-      ("single instance", s.testOnlyOneMonitorOwnsCatalog),
-      ("retention", s.testRetentionCapsRecordsAndEvents),
-      ("native process identity", s.testActualProcessIdentityAndGracefulStop),
-      ("storage budget", s.testPrivateBudgetEnforced),
-      ("verification failure and respawn", s.testVerificationFailureAndRecurrence),
-      ("interrupted verification", s.testInterruptedVerificationGetsNoCredit),
-      ("real hung process", s.testHungProcessNotForceKilled),
-      ("real kernel zombie", s.testRealKernelZombie),
-      ("real wrapper cancellation", s.testWrapperCancellation),
-      ("32 real zombies with 8 live controls across 5 scans", pressure.testMixedKernelBurst),
-      ("4096 mixed mechanical safety simulations", pressure.testMixedSafetyPressure),
-      ("bounded CPU time projection", pressure.testCPUProjection),
-    ]
-    for (name, test) in tests {
-      let before = failures
-      do { try test() } catch { failTest("\(name): \(error)") }
-      if failures == before { print("PASS \(name)") }
-    }
+    coreProofs()
     do { try worktreeVisibilityProof() } catch { failTest("Worktree visibility: \(error)") }
     do { try await fullDiskAccessProof() } catch { failTest("Full Disk Access: \(error)") }
     do { try await protectedLocationsProof() } catch { failTest("Protected locations: \(error)") }
@@ -568,6 +534,55 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     }
     print("All proof groups completed; \(failures) failures")
     exit(failures == 0 ? 0 : 1)
+  }
+  /// Core safety, storage and process-identity checks: about ten seconds. The quick check and
+  /// the full run both start here.
+  static func coreProofs() {
+    let d = SafetyTests()
+    let s = StorageNativeTests()
+    let pressure = PressureTests()
+    let tests: [(String, () throws -> Void)] = [
+      ("durable cleanup intent and bounded explicit workflow rules", intentProof),
+      ("owner-managed BuildKit cleanup plans and receipts", managedCacheProof),
+      (
+        "whole-machine disk discovery, APFS clones, grouped advice and scope safety",
+        diskDiscoveryProof
+      ),
+      ("cumulative awake CPU savings and stable nonnegative speed impact", impactMetricsProof),
+      (
+        "impact periods, completion dates, DST, empty history and preview accounting",
+        impactPeriodProof
+      ),
+      (
+        "review model/effort migration, persistence, provider arguments and defaults",
+        reviewSelectionProof
+      ),
+      (
+        "start at login on a fresh install, kept off through updates, older installs unchanged",
+        startAtLoginProof
+      ),
+      ("agent execution safety boundaries", d.testExecutionBoundaries),
+      ("owner-scoped recurrence", d.testRecurrenceScope),
+      ("checkpoint", s.testCheckpointRoundTripAndPermissions),
+      ("corruption", s.testCorruptionFailsClosed), ("symlink", s.testSymlinkReadRejected),
+      ("single instance", s.testOnlyOneMonitorOwnsCatalog),
+      ("retention", s.testRetentionCapsRecordsAndEvents),
+      ("native process identity", s.testActualProcessIdentityAndGracefulStop),
+      ("storage budget", s.testPrivateBudgetEnforced),
+      ("verification failure and respawn", s.testVerificationFailureAndRecurrence),
+      ("interrupted verification", s.testInterruptedVerificationGetsNoCredit),
+      ("real hung process", s.testHungProcessNotForceKilled),
+      ("real kernel zombie", s.testRealKernelZombie),
+      ("real wrapper cancellation", s.testWrapperCancellation),
+      ("32 real zombies with 8 live controls across 5 scans", pressure.testMixedKernelBurst),
+      ("4096 mixed mechanical safety simulations", pressure.testMixedSafetyPressure),
+      ("bounded CPU time projection", pressure.testCPUProjection),
+    ]
+    for (name, test) in tests {
+      let before = failures
+      do { try test() } catch { failTest("\(name): \(error)") }
+      if failures == before { print("PASS \(name)") }
+    }
   }
   static func integration() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(
