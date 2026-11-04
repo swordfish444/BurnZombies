@@ -41,16 +41,17 @@ private func copyItem(
 }
 
 private func programItem(
-  _ id: String, agent: String = "codex", listening: String = "no", orphaned: String = "yes",
-  bytes: UInt64 = 1_500_000_000, idle: String = "1h", used: Date?
+  _ id: String, repo: String = "api", agent: String = "codex", listening: String = "no",
+  orphaned: String = "yes", bytes: UInt64 = 1_500_000_000, idle: String = "1h", used: Date?
 ) -> AutopilotItem {
   let facts: [String: String] = [
     "program": "node", "family": "node", "orphaned": orphaned, "thread": "none",
-    "agent": agent, "idle": idle, "listening": listening, "repo": "none",
+    "agent": agent, "idle": idle, "listening": listening, "repo": repo,
   ]
+  // Named the way a real program is: by its name, and by its project when it has one.
+  let name = repo == "none" ? "node" : "node in " + repo
   return AutopilotItem(
-    id: "process:" + id, kind: .process, name: "node", bytes: bytes, facts: facts,
-    lastUsed: used, title: "node")
+    id: "process:" + id, kind: .process, name: name, bytes: bytes, facts: facts, lastUsed: used)
 }
 
 private func folderItem(_ id: String, bytes: UInt64, used: Date?) -> AutopilotItem {
@@ -120,8 +121,8 @@ private func ownerCardProof() throws {
   equal(card.rows.map(\.subtitle), ["web-app", "web-app", "docs"])
   equal(card.rows.map(\.when), ["yesterday 5 pm", "yesterday 1 pm", "yesterday 7 pm"])
   equal(card.more, 2)
-  equal(card.facts, ["Unused since yesterday"], "the facts are what they were")
-  equal(card.cautions, ["Unused since yesterday"], "and so are the cautions")
+  equal(card.facts, [], "how long they sat unused is in the headline, not listed again")
+  equal(card.cautions, [])
   equal(card.note, "Each one is backed up first, so you can undo it.")
   equal([card.yes, card.no], ["Yes, burn them", "No, keep them"])
 
@@ -168,9 +169,9 @@ private func ownerCardProof() throws {
   let riskyCard = AutopilotPolicy.card(riskyQuestion, now: cardNow, calendar: utc)
   equal(riskyCard.headline, "Burn 3 copies untouched since Saturday?")
   equal(
-    riskyCard.cautions,
-    ["Unused since yesterday", "1 has work only on this Mac", "2 have unsaved changes"],
-    "cautions stay counted")
+    riskyCard.cautions, ["1 has work only on this Mac", "2 have unsaved changes"],
+    "counted cautions stay, without the age the headline already says")
+  equal(riskyCard.facts, riskyCard.cautions)
 }
 
 // MARK: Days
@@ -241,11 +242,19 @@ private func calendarWordsProof() {
     AutopilotPolicy.card(undated, now: cardNow, calendar: utc).headline,
     "Burn 3 copies used in the last day?")
   equal(
-    AutopilotPolicy.card(undated, now: cardNow, calendar: utc).facts, ["Used in the last day"],
-    "the missing phrase for things used today")
+    AutopilotPolicy.card(undated, now: cardNow, calendar: utc).facts, [],
+    "an age in the headline is not listed again, even one read from the pattern")
+  equal(AutopilotPolicy.card(undated, now: cardNow, calendar: utc).cautions, [])
+  // The phrase for things used today is still how a rule's title says it.
   equal(
-    AutopilotPolicy.card(undated, now: cardNow, calendar: utc).cautions, ["Used in the last day"],
-    "which is as risky as its sibling, things used yesterday")
+    AutopilotPolicy.ruleTitle(undated, answer: .yes),
+    "Burn: Old project copies · Used in the last day")
+  // With no age at all there is nothing to leave out.
+  let ageless = AutopilotQuestion(
+    kind: .worktree, match: ["saved": ["merged"]], question: "", why: "", examples: [], count: 3,
+    bytes: 3_000_000_000)
+  equal(AutopilotPolicy.card(ageless, now: cardNow, calendar: utc).headline, "Burn 3 copies?")
+  equal(AutopilotPolicy.card(ageless, now: cardNow, calendar: utc).facts, ["Already merged"])
   var tools = AutopilotQuestion(
     kind: .disk, match: ["folder": ["package-cache"], "stale": ["month"]], question: "", why: "",
     examples: [], count: 4, bytes: 4_000_000_000)
@@ -329,9 +338,11 @@ private func programWordsProof() {
   let programs = [
     programItem("p1", used: cardNow.addingTimeInterval(-3 * 3600)),
     programItem(
-      "p2", agent: "claude", bytes: 1_200_000_000, used: cardNow.addingTimeInterval(-5 * 3600)),
+      "p2", repo: "web", agent: "claude", bytes: 1_200_000_000,
+      used: cardNow.addingTimeInterval(-5 * 3600)),
     programItem(
-      "p3", agent: "none", bytes: 1_000_000_000, used: cardNow.addingTimeInterval(-9 * 3600)),
+      "p3", repo: "none", agent: "none", bytes: 1_000_000_000,
+      used: cardNow.addingTimeInterval(-9 * 3600)),
   ]
   guard
     let question = AutopilotPolicy.proposeQuestions(
@@ -343,11 +354,29 @@ private func programWordsProof() {
   let card = AutopilotPolicy.card(question, now: cardNow, calendar: utc)
   equal(card.headline, "Burn 3 leftover Node programs idle for 3 hours?")
   equal(card.frees, "Frees 3.7 GB of memory")
-  equal(card.rows.map(\.title), ["node", "node", "node"])
+  equal(
+    card.rows.map(\.title), ["node in api", "node in web", "node"],
+    "each row is the program's name, with its project")
   equal(card.rows.map(\.subtitle), ["started by Codex", "started by Claude", nil])
   equal(card.rows.map(\.when), ["idle 3 h", "idle 5 h", "idle 9 h"])
   equal(card.more, 0, "never below zero")
   equal(card.note, "They just get asked to quit.")
+  equal(card.facts, [], "how long they sat idle is in the headline, not listed again")
+  equal(card.cautions, [])
+
+  // Without a date the headline has no age, so the idle phrase stays, in amber when it warns.
+  var idleOnly = AutopilotQuestion(
+    kind: .process, match: ["family": ["node"], "idle": ["10m"]], question: "", why: "",
+    examples: [], count: 2, bytes: 2_000_000_000)
+  var idleCard = AutopilotPolicy.card(idleOnly, now: cardNow, calendar: utc)
+  equal(idleCard.headline, "Burn 2 leftover Node programs?")
+  equal(idleCard.facts, ["Idle 10+ minutes"])
+  equal(idleCard.cautions, ["Idle 10+ minutes"])
+  idleOnly.newest = cardNow.addingTimeInterval(-40 * 60)
+  idleCard = AutopilotPolicy.card(idleOnly, now: cardNow, calendar: utc)
+  equal(idleCard.headline, "Burn 2 leftover Node programs idle for 40 minutes?")
+  equal(idleCard.facts, [], "with a date the headline says it")
+  equal(idleCard.cautions, [])
 }
 
 // MARK: Rows and the safe line
@@ -418,6 +447,9 @@ private func rowsAndLinesProof() {
     now: cardNow)
   equal(folders.first?.rows?.first?.title, "node_modules in api")
   equal(folders.first?.rows?.first?.subtitle, nil, "folders carry no project fact")
+  var inProject = folderItem("web", bytes: 2 << 30, used: daysBefore(10))
+  inProject.facts["repo"] = "web"
+  equal(subtitle(inProject), nil, "and a folder's name already says its project")
   equal(folders.first?.line, nil)
   let folderCard = AutopilotPolicy.card(folders[0], now: cardNow, calendar: utc)
   equal(folderCard.headline, "Burn 1 node_modules folder untouched for a week?")
@@ -470,13 +502,14 @@ private func rowsAndLinesProof() {
   card = AutopilotPolicy.card(older, now: cardNow, calendar: utc)
   equal(card.more, 0)
   equal(card.rows.map(\.when), ["", "", "Sat 9 am"])
-  // Nothing about the card changed for the things the old one already said.
+  // An older question says what it did before, except how long it sat unused: that is in the
+  // headline now.
   let agent = AutopilotQuestion(
     kind: .worktree, match: ["saved": ["pushed"], "stale": ["week"], "place": ["patrol6"]],
     question: "", why: "", examples: [], count: 92, bytes: 14_390_000_000)
   let agentCard = AutopilotPolicy.card(agent, now: cardNow, calendar: utc)
   equal(agentCard.headline, "Burn 92 copies unused for a week?")
-  equal(agentCard.facts, ["Saved on GitHub", "Unused for a week", "Made by Patrol6 agents"])
+  equal(agentCard.facts, ["Saved on GitHub", "Made by Patrol6 agents"])
   equal(agentCard.more, 92, "no rows to show, all of them more")
 }
 
@@ -484,11 +517,9 @@ private func rowsAndLinesProof() {
 
 private func humanizeProof() {
   equal(AutopilotPolicy.humanize(branch: "codex/fix-login-selector"), "fix login selector")
-  equal(
-    AutopilotPolicy.humanize(branch: "claude/charming-brahmagupta-da5a12"),
-    "charming brahmagupta da5a12")
+  equal(AutopilotPolicy.humanize(branch: "claude/happy-otter-1a2b3c"), "happy otter 1a2b3c")
   equal(AutopilotPolicy.humanize(branch: "feature/add_dark_mode"), "add dark mode")
-  equal(AutopilotPolicy.humanize(branch: "users/skylar/fix-bug"), "fix bug", "after the last slash")
+  equal(AutopilotPolicy.humanize(branch: "users/dev/fix-bug"), "fix bug", "after the last slash")
   equal(AutopilotPolicy.humanize(branch: "main"), "main")
   equal(AutopilotPolicy.humanize(branch: "fix--login__selector"), "fix login selector", "runs collapse")
   equal(AutopilotPolicy.humanize(branch: "x/-fix-"), "fix", "no spaces at either end")

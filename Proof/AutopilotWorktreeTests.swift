@@ -266,6 +266,21 @@ private func apDirectProof() {
   equal(named.title, "Newest chat title", "the newest chat that has a title")
   equal(named.lastUsed, untitled.lastActive, "a newer chat without one still counts as use")
   equal(one(record("u"), threads: [untitled]).title, "feature u", "an untitled chat names nothing")
+  // A chat belongs to a copy the same way for its chat fact and for its title: one in the folder
+  // or anywhere inside it, with or without a trailing slash, and never one whose folder only
+  // starts with the same letters.
+  let within = AgentThread(
+    id: "t7", agent: "claude", cwd: "/bz-test/git/project-m/src", live: true,
+    title: "Inside the copy", lastActive: now)
+  let beside = AgentThread(
+    id: "t8", agent: "claude", cwd: "/bz-test/git/project-mm", live: true, title: "Beside it",
+    lastActive: now)
+  for path in ["/bz-test/git/project-m", "/bz-test/git/project-m/"] {
+    equal(AgentThreads.state(for: path, threads: [within, beside]).thread, "live", path)
+    equal(AgentThreads.chatTitle(for: path, threads: [within, beside]), "Inside the copy", path)
+    equal(AgentThreads.state(for: path, threads: [beside]).thread, "none", path)
+    isNil(AgentThreads.chatTitle(for: path, threads: [beside]))
+  }
 
   // The finished-copies starter rule promises "untouched for a month".
   func starter(_ days: Double) -> AutopilotStatus {

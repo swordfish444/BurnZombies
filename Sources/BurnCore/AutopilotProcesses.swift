@@ -239,7 +239,7 @@ public enum AutopilotProcesses {
           detail: describe(o.name, repo: repo, facts: facts, children: tree.count),
           path: o.executable, bytes: bytes, facts: facts, protectedReason: reason,
           observedAt: o.time, pid: o.identity.pid, processKey: o.identity.key,
-          lastUsed: lastUsed, title: o.name))
+          lastUsed: lastUsed))
     }
     return items.sorted { $0.bytes > $1.bytes }
   }

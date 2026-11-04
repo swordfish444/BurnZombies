@@ -35,8 +35,8 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
   /// program's last busy moment (or its start), a folder's last change. Not a fact, so it never
   /// changes `revision`.
   public var lastUsed: Date?
-  /// What the owner would call it: the chat or branch a copy was made for, a program's name.
-  /// Not a fact either.
+  /// What the owner would call it: the chat or branch a copy was made for. Programs and folders
+  /// have none; a card row uses their name ("node in api"). Not a fact either.
   public var title: String?
   public init(
     id: String, kind: AutopilotKind, name: String, detail: String = "", path: String? = nil,

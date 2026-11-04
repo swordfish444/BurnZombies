@@ -55,8 +55,7 @@ public enum AgentThreads {
   public static func state(for path: String, threads: [AgentThread]) -> (
     thread: String, lastActive: Date?
   ) {
-    let root = path.hasSuffix("/") ? path : path + "/"
-    let matching = threads.filter { $0.cwd == path || $0.cwd.hasPrefix(root) }
+    let matching = working(in: path, threads)
     guard !matching.isEmpty else { return ("none", nil) }
     return (matching.contains(where: \.live) ? "live" : "ended", matching.map(\.lastActive).max())
   }
@@ -64,9 +63,15 @@ public enum AgentThreads {
   /// The title of the newest chat that worked inside `path` and has one, which is how people
   /// remember the work. Reads only the threads already indexed.
   public static func chatTitle(for path: String, threads: [AgentThread]) -> String? {
-    let root = path.hasSuffix("/") ? path : path + "/"
-    let named = threads.filter { ($0.cwd == path || $0.cwd.hasPrefix(root)) && $0.title != nil }
+    let named = working(in: path, threads).filter { $0.title != nil }
     return named.max { $0.lastActive < $1.lastActive }?.title
+  }
+
+  /// The chats that worked in `path` or in a folder inside it, and not in one whose name only
+  /// starts the same way.
+  private static func working(in path: String, _ threads: [AgentThread]) -> [AgentThread] {
+    let root = path.hasSuffix("/") ? path : path + "/"
+    return threads.filter { $0.cwd == path || $0.cwd.hasPrefix(root) }
   }
 
   /// Running chats: Claude Code keeps one small file per process, live while its pid exists.

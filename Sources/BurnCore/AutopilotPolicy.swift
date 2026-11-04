@@ -417,6 +417,8 @@ public enum AutopilotPolicy {
 public struct AutopilotCard: Equatable, Sendable {
   public var headline: String
   public var frees: String
+  /// What is true of what it covers, in a few words each, with the counted cautions. How long it
+  /// sat unused is left out when the headline already says it.
   public var facts: [String]
   public var note: String
   public var yes: String
@@ -532,10 +534,12 @@ extension AutopilotPolicy {
       ? String(format: "%.1f GB", Double(bytes) / 1e9) : String(format: "%.0f MB", Double(bytes) / 1e6)
   }
 
-  /// Facts that make burning riskier: work that exists nowhere else, things still in use.
+  /// Facts that make burning riskier: work that exists nowhere else, things still in use. How
+  /// long something sat unused is not one: a card says that in its headline and leaves it out of
+  /// its facts, and only a program with no date lists its idle time here.
   static let cautions: Set<String> = [
-    "Work only on this Mac", "Has unsaved changes", "Used in the last day",
-    "Unused since yesterday", "Still running a server", "Still busy", "Idle 10+ minutes",
+    "Work only on this Mac", "Has unsaved changes", "Still running a server", "Still busy",
+    "Idle 10+ minutes",
   ]
 
   /// The card for a question as it reads at `now`. The headline is "Burn 5 copies you used
@@ -559,7 +563,10 @@ extension AutopilotPolicy {
       question.kind, newest: question.newest, match: question.match, now: now, calendar: calendar)
     let words: [String] = ["Burn", String(question.count), one ? single : plural, age]
     let headline: String = words.filter { !$0.isEmpty }.joined(separator: " ") + "?"
-    let shown = facts(question.kind, match: question.match)
+    // When the headline says how long it sat unused, the facts and cautions don't say it again.
+    var described = question.match
+    if !age.isEmpty, let recency = recencyFacts[question.kind] { described[recency] = nil }
+    let shown = facts(question.kind, match: described)
     let rows = cardRows(question, now: now, calendar: calendar)
     var card = AutopilotCard(
       headline: headline,

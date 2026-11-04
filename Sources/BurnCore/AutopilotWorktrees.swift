@@ -73,8 +73,7 @@ public enum AutopilotWorktrees {
         "thread": chat.thread, "inUse": inUseFact(record), "size": sizeFact(record.allocated),
       ]
       let sentence = detail(
-        repo: repo, branch: branchName(record), saved: saved, changes: changes, newest: newest,
-        now: now)
+        repo: repo, branch: branch, saved: saved, changes: changes, newest: newest, now: now)
       result.append(
         AutopilotItem(
           id: "worktree:" + record.id, kind: .worktree,

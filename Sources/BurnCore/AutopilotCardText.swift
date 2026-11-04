@@ -40,15 +40,18 @@ extension AutopilotPolicy {
     }
   }
 
-  /// Who started a program, or the project a copy or folder belongs to.
+  /// Who started a program, or the project a copy belongs to. A folder says nothing more: its
+  /// name already carries its project ("node_modules in api").
   static func subtitle(of item: AutopilotItem) -> String? {
     switch item.kind {
     case .process:
       guard let agent = item.facts["agent"], !["", "none"].contains(agent) else { return nil }
       return "started by " + agent.capitalized
-    case .worktree, .disk:
+    case .worktree:
       guard let repo = item.facts["repo"], !["", "none"].contains(repo) else { return nil }
       return repo
+    case .disk:
+      return nil
     }
   }
 

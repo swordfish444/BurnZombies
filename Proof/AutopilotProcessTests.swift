@@ -191,12 +191,13 @@ func autopilotProcessProof() async throws {
   equal(found(cpu: 120)?.facts["idle"], "active", "real work since it started: watch it first")
   equal(found(cpu: 0.4, busy: Date())?.facts["idle"], "active", "seen busy just now")
 
-  // A program was last used when it was last busy, or when it started if it never was; the card
-  // names it by its program.
+  // A program was last used when it was last busy, or when it started if it never was. It has no
+  // title of its own: a card row names it as the item is named.
   let sinceStart = found(cpu: 0.4)
   let startSecond = Date(timeIntervalSince1970: Double(UInt64(started.timeIntervalSince1970)))
   equal(sinceStart?.lastUsed, startSecond, "never busy: last used when it started")
-  equal(sinceStart?.title, "node", "named by its program")
+  isNil(sinceStart?.title)
+  equal(sinceStart?.name, "node", "a program in no project is named by its program")
   let busyAt = Date().addingTimeInterval(-5_400)
   let wasBusy = found(cpu: 120, busy: busyAt)
   equal(wasBusy?.lastUsed, busyAt, "last used when it was last busy, to the moment")
@@ -224,4 +225,27 @@ func autopilotProcessProof() async throws {
   ).first
   equal(tree?.lastUsed, helperBusy, "the helper was busy more recently than its parent")
   equal(tree?.facts["idle"], "10m", "which is also what the idle age says")
+
+  // A program in a project is named with it, and a card row says that, beside who started it.
+  let project = root.appendingPathComponent("api")
+  for folder in [".git", "src"] {
+    try FileManager.default.createDirectory(
+      at: project.appendingPathComponent(folder), withIntermediateDirectories: true)
+  }
+  let inProject = AutopilotProcessProbe(
+    listening: { _ in false }, agent: { _ in "codex" }, cwd: { _ in project.path + "/src" },
+    alive: { _ in false })
+  var big = observation(99_994, parent: 1)
+  big.rss = 2 << 30
+  big.cpuNS = 400_000_000
+  let named = AutopilotProcesses.items(
+    [big.identity.key: Record(big)], threads: [], protectedPIDs: [], probe: inProject
+  ).first
+  equal(named?.facts["repo"], "api")
+  equal(named?.name, "node in api")
+  isNil(named?.title)
+  guard let named, let asked = AutopilotPolicy.proposeQuestions([named], memory: AutopilotMemory()).first
+  else { return failTest("a question about the program in a project") }
+  equal(asked.rows?.map(\.title), ["node in api"], "the row is the program's name")
+  equal(asked.rows?.map(\.subtitle), ["started by Codex"])
 }
