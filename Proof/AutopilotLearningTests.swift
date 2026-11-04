@@ -110,6 +110,37 @@ func lessonsProof() async throws {
   equal(
     rules.first.map(AutopilotPolicy.questionIDs), ["q2", "q1", "q3"],
     "every answer the lesson was made from")
+  equal(rules.first?.formerIDs, [a.id, c.id], "and the joined answer's id")
+  // Merging carries everything along: a lesson's earlier answers and earlier ids, whichever
+  // side of the merge it is on, as when old rules are learned again.
+  var older = lesson("q5", ["stale": ["month", "older"]])
+  older.from = ["q4"]
+  older.formerIDs = ["old-q5"]
+  var wider = lesson("q6", ["stale": ["week", "month", "older"]])
+  wider.from = ["q7"]
+  var pile = [older]
+  equal(AutopilotPolicy.learn(wider, into: &pile), wider.id)
+  equal(pile.first?.from, ["q7", "q5", "q4"], "its own answers, then the absorbed lesson's")
+  equal(pile.first?.formerIDs, [older.id, "old-q5"], "the absorbed lesson's id and former ids")
+  var relearned = lesson("q8", ["saved": ["merged"], "stale": ["month", "older"]])
+  relearned.from = ["q9"]
+  relearned.formerIDs = ["old-q8"]
+  equal(AutopilotPolicy.learn(relearned, into: &pile), wider.id, "joins the covering lesson")
+  equal(pile.first?.from, ["q7", "q5", "q4", "q8", "q9"], "with every answer it was made from")
+  equal(
+    pile.first?.formerIDs, [older.id, "old-q5", relearned.id, "old-q8"],
+    "and every id it had")
+  // An id another rule still holds stays that rule's, as when memory from before lessons holds a
+  // wide rule and a narrow one side by side.
+  let wide = lesson("qw", ["stale": ["day", "week", "month", "older"]])
+  let narrow = lesson("qn", ["saved": ["merged"], "stale": ["week", "month", "older"]])
+  var sideBySide = [wide, narrow]
+  let again = lesson("qa", ["saved": ["merged"], "stale": ["week", "month", "older"]])
+  equal(again.id, narrow.id, "the same lesson as the narrow rule")
+  equal(AutopilotPolicy.learn(again, into: &sideBySide), wide.id, "the first covering lesson")
+  equal(sideBySide.first?.from, ["qa"])
+  check(sideBySide.first?.formerIDs == nil, "the narrow rule's id isn't taken from it")
+  equal(sideBySide.count, 2)
   // A rule that doesn't pin recency is never absorbed, joined or rewritten.
   let x = lesson("qx", ["repo": ["api"], "saved": ["merged"], "thread": ["none", "ended"]])
   let before = try encoded(x)
@@ -218,12 +249,40 @@ private func lessonEngineProof() async throws {
     Set(memory.rules.first.map(AutopilotPolicy.questionIDs) ?? []),
     Set([pushed.id, ai.id, week.id]), "with every answer behind it")
 
+  // The same answer again, as from a double click, changes nothing: the merged lesson keeps the
+  // answers and ids it took in.
+  let merged = memory
+  equal(merged.rules.first?.from?.count, 2, "the merged lesson took in two answers")
+  equal(merged.rules.first?.formerIDs?.count, 2, "and two ids")
+  _ = try await engine.apply(.answer(questionID: pushed.id, answer: .yes))
+  memory = try store.memory()
+  equal(memory, merged, "a repeated answer is a no-op")
+  equal(memory.rules.first?.from, merged.rules.first?.from, "from survives")
+  equal(memory.rules.first?.formerIDs, merged.rules.first?.formerIDs, "formerIDs survive")
+  // A different answer to an answered question is refused, and nothing changes.
+  for different: AutopilotAnswer in [.no, .skip] {
+    do {
+      _ = try await engine.apply(.answer(questionID: pushed.id, answer: different))
+      failTest("a different answer to an answered question is refused: \(different)")
+    } catch {
+      equal(error.localizedDescription, "That question is already answered.")
+    }
+    equal(try store.memory(), merged, "the rules stay as they were after a refused \(different)")
+  }
+
   // Forget removes the lesson and every answer it was made from, so they can be asked again.
   guard let taught = memory.rules.first else { return failTest("a lesson to forget") }
   _ = try await engine.apply(.forgetRule(ruleID: taught.id))
   memory = try store.memory()
   equal(memory.rules.count, 0, "lesson forgotten")
   equal(memory.questions.map(\.id), [node.id], "with all three answers, and nothing else")
+
+  // A skipped question can still be answered Yes or No, and that teaches its lesson.
+  _ = try await engine.apply(.answer(questionID: node.id, answer: .skip))
+  _ = try await engine.apply(.answer(questionID: node.id, answer: .yes))
+  memory = try store.memory()
+  equal(memory.questions.first?.answer, .yes, "skip, then yes")
+  equal(memory.rules.map(\.questionID), [node.id], "the yes teaches a lesson")
 }
 
 private let replayStart = Date(timeIntervalSinceReferenceDate: 815_000_000)

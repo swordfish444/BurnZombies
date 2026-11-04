@@ -66,20 +66,23 @@ extension AutopilotPolicy {
       return rule.id
     }
     func mergeable(_ other: AutopilotRule) -> Bool {
-      other.source == .operator && other.kind == rule.kind && other.verdict == rule.verdict
-        && pinsRecency(other.kind, other.match)
+      guard other.source == .operator, other.kind == rule.kind, other.verdict == rule.verdict
+      else { return false }
+      return pinsRecency(other.kind, other.match)
     }
     if let i = rules.firstIndex(where: { mergeable($0) && subsumes($0.match, rule.match) }) {
+      var ids: [String] = []
       // An id another rule still has stays that rule's.
-      let taken = rules.contains { $0.id == rule.id }
-      let ids: [String] = (taken ? [] : [rule.id]) + (rule.formerIDs ?? [])
+      if !rules.contains(where: { $0.id == rule.id }) { ids.append(rule.id) }
+      ids.append(contentsOf: rule.formerIDs ?? [])
       rules[i].from = adding(questionIDs(rule), to: rules[i].from, except: rules[i].questionID)
       rules[i].formerIDs = adding(ids, to: rules[i].formerIDs, except: rules[i].id)
       return rules[i].id
     }
     var lesson = rule
     for old in rules where mergeable(old) && subsumes(rule.match, old.match) {
-      let ids: [String] = [old.id] + (old.formerIDs ?? [])
+      var ids: [String] = [old.id]
+      ids.append(contentsOf: old.formerIDs ?? [])
       lesson.from = adding(questionIDs(old), to: lesson.from, except: lesson.questionID)
       lesson.formerIDs = adding(ids, to: lesson.formerIDs, except: lesson.id)
     }
@@ -90,8 +93,10 @@ extension AutopilotPolicy {
 
   /// All question ids a lesson was made from: questionID plus from.
   public static func questionIDs(_ rule: AutopilotRule) -> [String] {
-    let own: [String] = rule.questionID.map { [$0] } ?? []
-    return own + (rule.from ?? [])
+    var ids: [String] = []
+    if let own = rule.questionID { ids.append(own) }
+    ids.append(contentsOf: rule.from ?? [])
+    return ids
   }
 
   /// `list` with each new id appended once; nil stays nil when there is nothing to add.

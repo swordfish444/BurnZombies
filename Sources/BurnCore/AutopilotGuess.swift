@@ -49,6 +49,12 @@ extension AutopilotPolicy {
     return found
   }
 
+  /// A Yes or No the owner gave, not one BZ gave on its own.
+  static func ownerAnswered(_ question: AutopilotQuestion) -> Bool {
+    guard question.answer == .yes || question.answer == .no else { return false }
+    return question.answeredBy != "bz"
+  }
+
   /// A subject is trusted when its last `trustStreak` scores are all right.
   public static func trusted(_ subject: String, scores: [AutopilotScore]) -> Bool {
     let recent = scores.filter { $0.subject == subject }.suffix(trustStreak)
@@ -65,8 +71,8 @@ extension AutopilotPolicy {
   {
     let topic = subject(question.kind, question.match)
     let owned = memory.questions.filter { past in
-      past.id != question.id && (past.answer == .yes || past.answer == .no)
-        && past.answeredBy != "bz"
+      guard past.id != question.id else { return false }
+      return ownerAnswered(past)
     }
     let same = owned.filter { subject($0.kind, $0.match) == topic }
     let pool = same.isEmpty ? owned.filter { $0.kind == question.kind } : same
@@ -79,8 +85,9 @@ extension AutopilotPolicy {
     for past in same where past.answer == .yes { saidYes.formUnion(risks(of: past)) }
     let general = generalize(question.kind, question.match)
     let kept = memory.rules.contains { rule in
-      rule.verdict == .keep && rule.kind == question.kind
-        && subject(rule.kind, rule.match) == topic && overlaps(rule.match, general)
+      guard rule.verdict == .keep, rule.kind == question.kind else { return false }
+      guard subject(rule.kind, rule.match) == topic else { return false }
+      return overlaps(rule.match, general)
     }
     let earned: Bool = trusted(topic, scores: memory.scores) && lean == .yes
     let answeredYes: Bool = same.contains { $0.answer == .yes }
@@ -200,8 +207,8 @@ public enum AutopilotEval {
   /// lesson, acted on when the guess is sure, or asked, and then teaches its lesson.
   public static func replay(_ questions: [AutopilotQuestion]) -> Replay {
     let owned = questions.enumerated().filter { _, question in
-      (question.answer == .yes || question.answer == .no) && question.answered != nil
-        && question.answeredBy != "bz"
+      guard question.answered != nil else { return false }
+      return AutopilotPolicy.ownerAnswered(question)
     }
     let ordered = owned.sorted { a, b in
       let first = a.element.answered ?? .distantPast

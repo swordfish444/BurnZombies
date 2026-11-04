@@ -385,6 +385,14 @@ public actor Autopilot {
         guard let i = memory.questions.firstIndex(where: { $0.id == id }) else {
           throw StoreError.message("That question is no longer open.")
         }
+        // A Yes or No stands. The same answer again (a double click) changes nothing, and any
+        // other is refused: relearning would drop what its lesson took in from other answers.
+        if let given = memory.questions[i].answer, given != .skip {
+          guard given == answer else {
+            throw StoreError.message("That question is already answered.")
+          }
+          return
+        }
         memory.questions[i].answer = answer
         memory.questions[i].answered = now
         if answer == .skip {
