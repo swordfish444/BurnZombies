@@ -83,7 +83,7 @@ On its own, BZ starts an AI sweep when there's something new to judge, at most e
 
 ## Model and cost
 
-Claude Code uses Sonnet by default; Codex uses its own default. To change it, open **Settings → Review intelligence**, choose a model and thinking level, then **Save**. The change applies to the next sweep; a running one finishes as it started. **Use defaults** hands the choice back to Claude Code or Codex.
+Claude Code uses Sonnet at **Medium** thinking by default; Codex uses its own default. BZ sets Claude Code's thinking level for each sweep, so an effort level in your own Claude Code settings (such as max) can't make every sweep think for minutes. To change it, open **Settings → Review intelligence**, choose a model and thinking level, then **Save**. The change applies to the next sweep; a running one finishes as it started. **Use defaults** goes back to these defaults.
 
 On API pricing a sweep costs roughly $0.30–$1.20. On a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. **Settings → Usage & estimated cost** charts tokens and estimated cost by hour or day for 1, 7 or 30 days, for all models or one. Unknown prices and missing usage are marked unavailable, never guessed.
 

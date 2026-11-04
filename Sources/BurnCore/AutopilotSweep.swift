@@ -64,6 +64,8 @@ public enum AutopilotSweeper {
 /// Launches one AI sweep in the selected harness with the autopilot MCP tools.
 public enum AutopilotHarness {
   public static let outOfTime = "The AI sweep ran out of time."
+  /// How hard Claude thinks in a sweep unless the owner picks a level in Settings.
+  public static let claudeEffort = "medium"
   public static let prompt = """
     You are BurnZombies Autopilot, the cleanup brain for this Mac. You sweep for leftovers — zombie programs, old project copies (git worktrees) and junk folders — burn what is safe, and learn what the owner wants. Goal: burn as much as is safely possible with no human help. Ask only when you truly can't tell.
 
@@ -103,17 +105,31 @@ public enum AutopilotHarness {
     let env = ["BURNZOMBIES_HOME": root.path, "BURNZOMBIES_AUTOPILOT": "1"]
     switch c.harness {
     case "claude":
+      func encoded(_ object: Any) throws -> String {
+        String(
+          decoding: try JSONSerialization.data(
+            withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]),
+          as: UTF8.self)
+      }
       let config = [
         "mcpServers": ["burnzombies": ["command": c.server, "args": [String](), "env": env]]
       ]
-      let json = String(
-        decoding: try JSONSerialization.data(
-          withJSONObject: config, options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
+      // Claude Code also loads the owner's own settings, and their `env` outranks `--effort`: an
+      // interactive CLAUDE_CODE_EFFORT_LEVEL=max spent six minutes on one sweep decision. These
+      // settings outrank the owner's, and a burn may take as long as the sweep instead of being
+      // cut off mid-call and tried again.
+      let settings: [String: Any] = [
+        "disableAllHooks": true,
+        "env": [
+          "CLAUDE_CODE_EFFORT_LEVEL": c.reasoningEffort ?? claudeEffort,
+          "MCP_TOOL_TIMEOUT": String(Int(AutopilotSweeper.aiTimeout) * 1000),
+        ],
+      ]
       var selection = c.selectionArguments
       if c.model == nil { selection = ["--model", "sonnet"] + selection }
       return ["-p", prompt] + selection + [
         "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
-        "--mcp-config", json, "--settings", "{\"disableAllHooks\":true}",
+        "--mcp-config", try encoded(config), "--settings", try encoded(settings),
         "--disable-slash-commands", "--permission-mode", "dontAsk", "--permission-prompts",
         "none", "--tools", "Read,Glob,Grep", "--allowedTools", "mcp__burnzombies__*", "Read",
         "Glob", "Grep", "--disallowedTools", "Agent", "Bash", "Edit", "Write", "WebFetch",

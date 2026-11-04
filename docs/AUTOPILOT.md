@@ -53,7 +53,7 @@ Yes and No become rules immediately, and Yes starts burning the matches right aw
 Native code catalogs and applies rules without any model. With Claude Code or Codex signed in, BurnZombies also runs short AI sweeps in the background. Only Claude Code and Codex run sweeps.
 
 - **When.** The first starts about 10 minutes after install, once the first look is complete. After that, a sweep runs when there is something new to judge, at most every 30 minutes, and rechecks every 4 hours. **Hunt Zombies** in the menu bar, or **Sweep now** in **Settings → Autopilot**, starts one right away.
-- **What it uses.** Claude Code uses Sonnet by default; Codex uses its own default. Change it in **Settings → Review intelligence**.
+- **What it uses.** Claude Code uses Sonnet at medium thinking by default, whatever your own Claude Code settings say; Codex uses its own default. Change it in **Settings → Review intelligence**.
 - **What it can do.** Six tools (catalog, inspect, decide, burn, ask, report), plus reading project files to understand what something is. It has no shell, and the app re-checks every burn.
 - **How long.** A few minutes, capped at 15. A sweep that runs out of time after judging things counts as done, and the next picks up the rest.
 - **Failures** back off 15 → 30 → 60 → 120 minutes (at least an hour after a login or usage-limit problem). The loop never stops for good, and your rules keep working while the AI is unavailable.
