@@ -210,7 +210,11 @@ public actor Autopilot {
   }
 
   func execute(_ item: AutopilotItem, authority: String, why: String) async -> AutopilotReceipt {
-    burning.insert(item.id)
+    // One burn per item at a time, whoever asks: a second retire of the same copy would rewrite
+    // the restore point the first one just verified. The first burn's receipt says how it went.
+    guard burning.insert(item.id).inserted else {
+      return .refused(item, authority: authority, "I'm already burning it.")
+    }
     defer { burning.remove(item.id) }
     let sources = sources
     var receipt: AutopilotReceipt

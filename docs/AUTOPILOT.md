@@ -73,6 +73,7 @@ Uninstalling leaves restore points in place; [Uninstall](INSTALL.md#uninstall) s
 
 - Exact identity check (boot, PID, start time, path) immediately before every signal; SIGTERM only.
 - Something the app refused waits 6 hours before it is tried again, unless it or the answer that allows it changes. AI sweeps wait too, so they don't repeat checks the app already refused.
+- One burn per item at a time: while a copy is being backed up and removed, a second burn of it, from the AI or from **Burn now**, is turned away.
 - Old copies are only removed after their restore point verifies; submodules with unsaved work, locked copies and in-progress merges/rebases are refused.
 - Junk folders must be a known rebuildable kind, untracked by git, outside private areas (iCloud, Mail, Messages, Photos, `.ssh`, Keychains), and unused by any program.
 - Without Full Disk Access, nothing in a place macOS protects is read, sized, judged or burned, and neither is a copy whose project lives in one.
