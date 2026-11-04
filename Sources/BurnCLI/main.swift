@@ -232,7 +232,7 @@ do {
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
       install-skill [--home PATH] [--skill-file PATH]   Optional legacy lifecycle instructions (adds working-chat overhead).
-      setup [--harness auto|codex|claude|none] [--model ID|default] [--thinking LEVEL|default] [--observe-only]
+      setup [--harness auto|codex|claude|none] [--model ID|default] [--thinking LEVEL|default] [--observe-only|--with-ai]
         Enable computer-wide background reviews. No chat hooks or live config edits.
       install [--harness auto|all|codex|claude|cursor|copilot|gemini] [--mcp-only]
         Connect installed harnesses. MCP-only mode preserves hooks and permissions.

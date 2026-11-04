@@ -4,103 +4,128 @@
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-macOS 14+, Apple Silicon or Intel. The installer checks the release checksum and signature, installs `~/Applications/BurnZombies.app`, selects an available harness CLI, and starts the menu bar observer in the background. No active chat, special job wrapper or computer reboot is required.
+macOS 14+, Apple Silicon or Intel. The installer checks the download's checksum and signature, puts **BurnZombies.app** in `~/Applications` and starts it in the menu bar: look for the skull. No account, no API key, no sudo, no package manager and no restart.
 
-BurnZombies works as soon as it starts. The observer scans visible processes owned by your macOS user across every project and session, and Autopilot, worktree discovery and the storage map cover every folder except the places macOS protects. The optional Full Disk Access step below adds those places, plus deep hunts from the selected harness, scheduled every four hours by default. Closing your chats does not stop observation or scheduling. Quit BurnZombies to stop the observer; **Start at login** is available in Settings.
+BZ keeps running with no chat open. To bring it back after you restart your Mac, turn on **Start at login** in Settings. To remove it, see [Uninstall](#uninstall).
+
+## With or without Claude Code or Codex
+
+**With Claude Code or Codex installed and signed in,** BZ uses it to judge new things, through your existing login. If you have both, it picks Claude Code. Reinstalling keeps the one you have.
+
+**Without either,** AI judging is off. BZ still cleans with its own rules and your answers. To add AI later, install and sign in to Claude Code or Codex, then run:
+
+```sh
+~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup
+```
+
+Only Claude Code and Codex run AI sweeps. BZ reuses your login without copying or changing it, and never switches to another tool or account on its own. It adds nothing to your chats: no hooks, no reminders, no always-on tools and no edits to your Claude Code or Codex settings. Each AI sweep gets its own private connection to BZ.
+
+## Installer options
+
+Options pass through the pipe:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash -s -- --observe-only
+```
+
+| Option | What it does |
+| --- | --- |
+| `--observe-only` | AI judging off. BZ still burns what its starter rules and your answers cover. Turn it on later with `burnzombies setup --with-ai`. |
+| `--no-open` | Installs without starting the app. |
+| `--mcp claude` or `--mcp codex` | Uses that tool for AI judging. The default, `auto`, picks Claude Code, then Codex. |
+| `--mcp none` | Skips AI setup. |
+
+To install somewhere other than `~/Applications`, set `BURNZOMBIES_INSTALL_DIR`: `curl … | BURNZOMBIES_INSTALL_DIR=/path/to/folder bash`.
+
+Releases are ad-hoc signed, not notarized. The installer never disables Gatekeeper, removes quarantine flags or bypasses permissions. If your Mac's policy blocks the app, [build from source](../CONTRIBUTING.md).
+
+## The first minutes
+
+BZ takes its first look right away and keeps looking every minute for its first half hour, then every 15 minutes (change that with **Settings → Autopilot → Sweep every**). Within about a minute the panel shows how much it found, like **Found 4.2 GB of leftovers**, and **BZ has N quick questions** when there's something to decide. Safe starter rules burn from the first minute. With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. [What BZ burns on its own →](AUTOPILOT.md)
 
 ## Optional Full Disk Access
 
-Without Full Disk Access, BurnZombies skips the places macOS guards with its privacy controls: Desktop, Documents, Downloads, iCloud Drive and other cloud drives (`~/Library/Mobile Documents`, `~/Library/CloudStorage`), Mail, Messages, Photos, other apps' data (`~/Library/Containers`, `~/Library/Group Containers`), and removable and network drives. It decides from the path alone and never reads inside them, so macOS never asks you for access to a folder. A skipped place is reported, never counted as empty: Autopilot's coverage note, the Worktrees window and the storage map say which places were skipped and that Full Disk Access covers them. A copy in one of those places stays listed as **not checked** and keeps its saved details until access returns; a copy whose project lives there is skipped.
+Without Full Disk Access, BZ skips the places macOS guards with its privacy controls: Desktop, Documents, Downloads, iCloud Drive and other cloud drives (`~/Library/Mobile Documents`, `~/Library/CloudStorage`), Mail, Messages, Photos, other apps' data (`~/Library/Containers`, `~/Library/Group Containers`), and removable and network drives. It decides from the path alone and never reads inside them, so macOS never asks you for access to a folder. A skipped place is reported, never counted as empty: Autopilot's coverage note, the Worktrees window and the storage map say which places were skipped. A copy in one of those places stays listed as **not checked** and keeps its saved details until access returns; a copy whose project lives there is skipped.
 
-Turning Full Disk Access on adds:
-
-- those places to Autopilot, worktree discovery, inspection and cleanup, the storage map and the junk-folder inventory;
-- scheduled and manual hunts, background AI reviews and lifecycle evidence from harness sessions;
-- owner maintenance (Gradle daemons, BuildKit cache) and agent requests that inspect or stop programs.
+With Full Disk Access, those places are covered too: Autopilot, the Worktrees window, the storage map and the junk-folder inventory all reach them. AI sweeps run either way. Agent requests that inspect or stop programs through the [MCP tools](MCP.md) still need it.
 
 To turn it on:
 
-1. Click **Allow Full Disk Access** in the small menu-bar banner. It opens **System Settings → Privacy & Security → Full Disk Access** directly. The same link is always available under **Settings cog → Full Disk Access**.
-2. Add and enable **BurnZombies.app**. If it is not listed, use **Copy app path** in BurnZombies Settings, then **+**, **Command–Shift–G** and paste the path into the macOS chooser. The standard installer puts the app in `~/Applications`.
-3. Return to BurnZombies. After that explicit settings visit it checks access once automatically. If macOS asks, choose **Quit & Reopen**. The pending verification survives that restart and runs once automatically. **Check access** remains available in BurnZombies Settings if needed. No computer reboot is needed.
+1. Click **Allow Full Disk Access** in the small menu-bar banner. It opens **System Settings → Privacy & Security → Full Disk Access**. The same link is always under **Settings cog → Full Disk Access**.
+2. Add and enable **BurnZombies.app**. If it isn't listed, use **Copy app path** in BurnZombies Settings, then **+**, **Command–Shift–G**, and paste the path into the macOS chooser.
+3. Return to BurnZombies; it checks access once by itself. If macOS asks, choose **Quit & Reopen**; the check runs after the relaunch. **Check access** stays in Settings if you need it. No restart needed.
 
-The banner's **×** dismisses the reminder and remembers your choice across launches; it does not grant permission or widen what BurnZombies covers. You can finish setup at any time using the Settings cog. Verified access removes the banner and changes the Settings section to a muted **Complete** row with a green checkmark and a **Manage access** link. If previously verified access is lost, the reminder becomes available again. Opening the permission pane never marks setup complete by itself.
+The banner's **×** hides the reminder and remembers your choice; it never grants permission or widens what BZ covers. Verified access removes the banner and turns the Settings section into a muted **Complete** row with a green checkmark and a **Manage access** link. If access is lost later, the reminder comes back. Opening the permission pane never marks setup complete by itself, and BZ never opens System Settings, Finder or an onboarding window on its own. An agent can install BZ, but macOS requires a person to grant this permission.
 
-Until the access check succeeds, BurnZombies keeps skipping the protected places, keeps hunts and background AI reviews paused, and preserves your existing cleanup history. It never opens System Settings, a Finder window or an onboarding window automatically. An agent can install and configure the app with the single command above, but macOS requires a person to grant this permission.
+BZ checks access without reading messages or mail: it opens a protected folder and closes it again without listing what's inside. macOS has no supported way to report Full Disk Access directly, so missing or unclear evidence counts as no access. Only the running app's own check counts; access that a shell or agent has is not proof that BZ has it.
 
-The app verifies access capability without reading messages or mail: it checks directory access, then immediately closes the directory handle without enumerating its contents. macOS has no supported API that reports an authoritative Full Disk Access Boolean. Missing or inconclusive evidence counts as no access. The check is performed by the running app; access inherited by a shell or Codex is not proof that BurnZombies has access.
-
-Check setup from an agent without opening a window:
+Check from an agent without opening a window:
 
 ```sh
 ~/Applications/BurnZombies.app/Contents/MacOS/burnzombies access-status
 ```
 
-**After an update:** macOS keys Full Disk Access to the app's signer. A build signed with the same certificate keeps the grant, and BurnZombies keeps its own access check with it. An ad-hoc build (the default without a certificate, including current releases) is a new app to macOS each time, so it needs the switch and a fresh access check after every update. BurnZombies keeps working in the meantime; only the protected places and hunts wait for the new grant.
+**After an update:** if macOS asks again, re-enable **BurnZombies** in **System Settings → Privacy & Security → Full Disk Access**. macOS ties the permission to the app's signer: a build signed with the same certificate keeps it, while an ad-hoc build (current releases included) is a new app to macOS each time. BZ keeps working in the meantime; only the protected places wait.
 
-**Keep access across your own builds:** run `scripts/ensure-signing-identity.sh` once. It creates a local "BurnZombies Local Signing" code-signing certificate in your login keychain, trusted for code signing only, and macOS asks for your password once. From then on `scripts/build-app.sh` signs every build with it; allow Full Disk Access one last time and later updates keep it. Set `BURNZOMBIES_SIGNING_IDENTITY` to use a certificate you already have. Releases need Developer ID signing for the same continuity.
+**Keep access across your own builds:** run `scripts/ensure-signing-identity.sh` once. It creates a local "BurnZombies Local Signing" certificate in your login keychain, trusted for code signing only, and macOS asks for your password once. From then on `scripts/build-app.sh` signs every build with it, so you allow Full Disk Access one last time. Set `BURNZOMBIES_SIGNING_IDENTITY` to use a certificate you already have.
 
-If the switch is already on but access fails, remove the old BurnZombies entry, add the installed app again and enable it, then reopen the app and check again.
+If the switch is on but access still fails, remove the old BurnZombies entry, add the installed app again and enable it, then reopen BZ and check again.
 
-Full Disk Access enables inspection; it does not approve deletion, bypass ownership or retention checks, or remove all macOS restrictions. Incomplete visibility still blocks raw worktree and folder cleanup. See [Apple's access controls](https://support.apple.com/en-ca/guide/security/secddd1d86a6/web) and [Apple's explanation of access verification](https://developer.apple.com/forums/thread/835851).
+Full Disk Access lets BZ look; it never approves a burn, skips an ownership check or lifts other macOS limits. A place BZ couldn't fully check still blocks cleanup there. See [Apple's access controls](https://support.apple.com/en-ca/guide/security/secddd1d86a6/web) and [Apple's explanation of access verification](https://developer.apple.com/forums/thread/835851).
 
-## Existing harness, existing login
+## Hunt now or choose a schedule
 
-Codex and Claude Code are the supported installation and acceptance targets. Older Cursor, GitHub Copilot and Gemini launch adapters remain for compatibility. The selected CLI must be installed and signed in. Codex's bundled desktop CLI is detected when available. A desktop app without a usable local CLI is not sufficient by itself. Authentication is reused, never copied or changed.
+Click **Hunt Zombies** in the menu bar to start an AI sweep now; it needs Claude Code or Codex. **Hunting Zombies →** opens the live hunt: a side-scrolling scene and an activity log of what BZ found, burned and freed. Finding something isn't burning it; the celebration waits for a verified burn. Closing the window leaves the sweep running. One sweep runs at a time.
 
-Fresh automatic selection tries Codex, then Claude. Reinstallation retains the previous provider; a failed or quota-limited provider is never replaced automatically. Reviews use that harness's existing account and usage allowance. Failed authentication, unsupported CLI options, permission refusals or usage errors pause reviews while native observation continues. Resolve the issue in the harness, then explicitly start a new hunt in BurnZombies.
+On its own, BZ starts an AI sweep when there's something new to judge, at most every 30 minutes, and rechecks every 4 hours. The first waits about 10 minutes after install, until the first look is complete. A sweep takes a few minutes and is capped at 15; one that runs out of time after judging some things counts as done, and the next picks up the rest. If a sweep fails, BZ waits 15, 30, 60, then 120 minutes before trying again (at least an hour after a login or usage-limit problem). It never stops for good, and your rules keep working meanwhile. Scheduled sweeps never open a window or take focus.
 
-Default setup writes only BurnZombies's private reviewer configuration. It retires byte-verified installer-owned lifecycle skills so working chats no longer perform cleanup bookkeeping. Customized copies are preserved and reported. It does not add an always-loaded MCP server to working chats. It does not install chat hooks, inject reminders, or change persistent tool permissions. Per-run MCP configuration connects the reviewer to the local observer. Legacy BurnZombies hooks become inert when computer-wide review is configured.
+**Settings → Autopilot** turns Autopilot, AI included, off and on; sets how often BZ looks (**Sweep every**, 15 minutes by default); starts a sweep (**Sweep now**); and lists the starter rules and **What BZ has learned**.
 
-## Options
+## Model and cost
 
-### Hunt now or choose a schedule
+Claude Code uses Sonnet by default; Codex uses its own default. To change it, open **Settings → Review intelligence**, choose a model and thinking level, then **Save**. The change applies to the next sweep; a running one finishes as it started. **Use defaults** hands the choice back to Claude Code or Codex.
 
-Click **Hunt Zombies** in the menu bar to start a deep review now. Manual hunts use the same ownership, disk-retention and verified-cleanup checks as scheduled hunts. They work even when automatic hunts are off, as long as a harness is configured and Full Disk Access is verified. Only one hunt runs at a time.
+On API pricing a sweep costs roughly $0.30–$1.20. On a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. **Settings → Usage & estimated cost** charts tokens and estimated cost by hour or day for 1, 7 or 30 days, for all models or one. Unknown prices and missing usage are marked unavailable, never guessed.
 
-While a hunt is running, **Hunting Zombies →** opens its progress view. The side-scrolling scene shows the search, scanner and verified-burn celebrations; the activity log below records actual discoveries, decisions and resource totals. Finding a candidate does not count as a completed cleanup. A worktree celebration follows its verified cleanup receipt too. Closing the progress window leaves the hunt running.
-
-Open **Settings → Zombie hunts** to turn automatic hunts on or off, or select **1, 2, 4, 8, 12 or 24 hours** between hunts. The default is **4 hours**. A first eligible automatic hunt can start immediately; later hunts use the selected interval from the previous start. Click **Save** to apply the schedule. Saving does not launch a hunt, interrupt a running hunt, clear an error pause, or change the model. Automatic hunts never open the progress window or take focus.
-
-### Model and thinking level
-
-Open **Settings → Review intelligence** to choose a model and thinking level, then **Save**. The selection applies to the next scheduled review; an active review finishes with its original settings. Saving does not start a review or clear a pause. **Use defaults**, followed by Save, returns control to the harness.
-
-Model IDs are supported by all five adapters. Codex offers suggestions from its local model catalog and filters thinking levels for a selected catalog model; custom IDs work too. Codex, Claude Code and GitHub Copilot expose separate thinking controls. Cursor and Gemini manage thinking through the selected model/harness. Unsupported combinations are reported by the harness and never silently replaced by BurnZombies.
-
-Settings live only in BurnZombies's private configuration. Reinstalling preserves them. Codex's default here is its CLI default, because background reviews deliberately skip global Codex configuration; BurnZombies does not claim an inferred default as a pinned model.
-
-An agent can also configure these without opening a window:
+An agent can set the model without opening a window:
 
 ```sh
-~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup --harness codex --model MODEL_ID --thinking high
+~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup --model MODEL_ID --thinking high
 ```
 
-Use `--model default --thinking default` to clear the overrides. Choosing a different harness clears the previous harness's model/effort selection unless new values are supplied.
+`--model default --thinking default` clears the choice. `--harness claude` or `--harness codex` switches tools; switching clears the old tool's model and thinking level unless you pass new ones. These settings live only in BZ's private configuration, and reinstalling keeps them.
 
-### Installer options
+## Check it's working
 
-`--mcp codex|claude|cursor|copilot|gemini` selects the review provider; `auto` selects one available provider. The older `all` spelling also selects one provider rather than starting five competing reviewers. `--mcp none` skips reviewer configuration. `--no-open` skips starting the app. `BURNZOMBIES_INSTALL_DIR` changes the app destination.
+```sh
+~/Applications/BurnZombies.app/Contents/MacOS/burnzombies doctor
+```
 
-The native command `burnzombies setup --harness NAME` configures the background reviewer. The older `install` subcommand remains available for explicit interactive MCP/skill integration; chat checkpoints now default off. It is not needed for continuous observation or reviews.
+`doctor` is read-only. It checks BZ's own setup, whether Claude Code or Codex is found, and whether the running app answers (`appResponding`, `runningAppMatchesCLI`). It never starts the AI or a burn, and finding a tool doesn't prove you're signed in. Test results and known limits are in [VALIDATION.md](VALIDATION.md).
 
-No `--yolo`, blanket permission bypass, account fallback, quarantine removal or Gatekeeper disablement is used. This release is ad-hoc signed, not Developer ID notarized. [Build from source](../CONTRIBUTING.md) if local macOS policy blocks it.
+## Uninstall
 
-## Acceptance
+1. Stop BZ:
 
-Check the menu bar observer and its selected harness, then verify a bounded hunt against actual completion evidence. An empty queue or already-resolved evidence should not cause repeated model calls. CLI configuration alone is not live model proof. Current validation and remaining harness limits are in [VALIDATION.md](VALIDATION.md).
+   ```sh
+   ~/Applications/BurnZombies.app/Contents/MacOS/burnzombies stop-observer ~/Applications/BurnZombies.app
+   ```
 
+2. Delete `~/Applications/BurnZombies.app`.
+3. Delete `~/Library/Application Support/BurnZombies`.
 
-### Passive evidence without working-chat overhead
+Restore points stay in each repository until you delete them, and they are the only way back for copies BZ burned there. To delete them, run this inside the repository:
 
-Codex children are associated with an owning turn through native process ancestry and a UUID session marker. Claude uses its local session-to-process registry and turn completion events. The collector reads bounded deltas, keeps no prompts, reasoning, raw commands or tool output, and retains only a short redacted completion statement for candidate review. No model runs during observation.
+```sh
+git for-each-ref --format='%(refname)' refs/burnzombies/ | xargs -n1 git update-ref -d
+```
 
-This first passive adapter covers local Codex and Claude Code sessions. The other three reviewer adapters remain available, but missing ownership metadata is preserved as a coverage gap. Explicit lifecycle claims remain supported for integrations; they are no longer injected into every working chat. Existing active claims never expire into disposable work.
-
-Automatic hunts default to every four hours and batch supported evidence across the Mac. The schedule is configurable; an explicit manual hunt can start sooner. Observation and the animated progress display do not make model calls of their own. Settings → Usage & estimated cost is collapsed initially. Expand it for 1, 7 or 30 days of hourly/daily token and API-equivalent cost charts, with full and per-model rollups. Unknown model prices or missing usage are marked unavailable, not fabricated.
+Default setup adds nothing to your chats, so there's nothing else to remove. If you once used the optional chat integration (`burnzombies install`), remove only BurnZombies' entries through your tool's own settings.
 
 ## Agent-led setup
 
-Give Codex or Claude Code the [canonical llms.txt guide](https://raw.githubusercontent.com/swordfish444/BurnZombies/main/llms.txt). Its fresh-install commands use `--observe-only`, verify the bundled CLI with `doctor`, preserve global harness settings and distinguish installed, authenticated, permission-ready and useful. Setup never acts as cleanup approval.
+Give Claude Code or Codex the [agent setup guide](https://raw.githubusercontent.com/swordfish444/BurnZombies/main/llms.txt). It installs BZ, checks the result with `doctor`, keeps your agent settings and never treats setup as permission to clean.
 
-`doctor` is read-only: it checks private configuration, executable/server availability and the running app's response. It does not start a model or claim that CLI availability proves login. `findings` reads the durable inbox, including blockers and unknown coverage.
+## How BZ knows a chat is still working
+
+BZ reads the session records Claude Code and Codex keep on your Mac to learn which chats are still running, and in which folders. It reads small, bounded pieces and keeps no prompts, replies, commands or tool output. Your chats do no bookkeeping for BZ, and looking around makes no AI calls. A program or copy a running chat is working in is never touched.

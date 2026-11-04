@@ -52,12 +52,16 @@ public struct MachineReviewConfiguration: Codable, Sendable {
   }
   public static func detect(_ harness: String) -> String? {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
+    // Isolated tests replace the usual install folders, so a Mac that has a harness can still
+    // play one that has none.
+    let override = ProcessInfo.processInfo.environment["BURNZOMBIES_HARNESS_DIRS"]
     let paths =
       (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
-      + [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+      + (override.map { $0.split(separator: ":").map(String.init) }
+        ?? [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"])
     let names = harness == "cursor" ? ["agent", "cursor-agent"] : [harness]
     var candidates = paths.flatMap { dir in names.map { dir + "/" + $0 } }
-    if harness == "codex" {
+    if harness == "codex", override == nil {
       candidates += [
         "/Applications/Codex.app/Contents/Resources/codex",
         home + "/Applications/Codex.app/Contents/Resources/codex",

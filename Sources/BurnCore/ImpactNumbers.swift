@@ -108,7 +108,10 @@ public struct ImpactNumbers: Sendable {
         : (cpu.isEmpty && !verified.isEmpty ? nil : cpu.reduce(0, +)),
       before: comparison?.before ?? measured?.responseBeforeMS,
       after: comparison?.after ?? measured?.responseAfterMS,
-      last: latestIsWorkspace ? workspace?.verifiedAt : latest?.verificationDate ?? latest?.date,
+      last: [
+        latestIsWorkspace ? workspace?.verifiedAt : latest?.verificationDate ?? latest?.date,
+        cleanups.map(\.date).max(),
+      ].compactMap { $0 }.max(),
       latestCount: latest?.verifiedCount ?? 0,
       latestMemory: latest?.residentBefore ?? 0,
       latestLabel: latestIsWorkspace

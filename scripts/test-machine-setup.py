@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
         state = root/harness
         command = [str(cli), 'setup', '--harness', harness, '--root', str(state)]
         setup = subprocess.run(command, env=env, check=True, capture_output=True, text=True)
-        assert "Full Disk Access" in setup.stdout
+        assert len(setup.stdout.splitlines()) == 1, 'Setup should say one plain line: ' + setup.stdout
         assert not (state/"full-disk-access.json").exists(), "CLI setup must not grant access"
         config = json.loads((state/'machine-review.json').read_text())
         assert config['harness'] == harness and config['enabled']
@@ -72,6 +72,11 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
             assert doctor['configuredHarness'] == harness and doctor['configuredExecutableAvailable']
             assert doctor['mcpServerAvailable'] and not doctor['cleanupRequested']
             assert not doctor['backgroundReviewsEnabled'] and not doctor['appResponding']
+            # After installing with AI judging off, one command turns it back on; a reinstall never does.
+            subprocess.run(command, env=env, check=True, capture_output=True)
+            assert json.loads((state/'machine-review.json').read_text())['enabled'] is False
+            subprocess.run(command+['--with-ai'], env=env, check=True, capture_output=True)
+            assert json.loads((state/'machine-review.json').read_text())['enabled'] is True
     # Installer setup and app migration use the same exclusive migration lock.
     for iteration in range(50):
         state=root/f'concurrent-migration-{iteration}'
@@ -113,4 +118,15 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
     finally:
         if review.poll() is None: review.terminate(); review.wait(timeout=6)
         active.terminate(); active.wait(timeout=5)
-print('PASS five-provider setup, model/effort subprocess arguments, reinstall persistence, defaults, private config and owned cancellation')
+    # A Mac without Claude Code or Codex still gets BurnZombies: AI judging stays off and setup says
+    # how to add it later. Asking for a missing one by name still fails, and nothing is written.
+    empty = root/'no-harness-bin'; empty.mkdir()
+    bare = dict(os.environ, PATH='/usr/bin:/bin', BURNZOMBIES_HARNESS_DIRS=str(empty))
+    state = root/'no-harness'
+    auto = subprocess.run([str(cli), 'setup', '--root', str(state)], env=bare, capture_output=True, text=True)
+    assert auto.returncode == 0, auto.stdout + auto.stderr
+    assert 'No Claude Code or Codex found' in auto.stdout and 'burnzombies setup' in auto.stdout, auto.stdout
+    assert not (state/'machine-review.json').exists(), 'Setup without a harness wrote an AI configuration'
+    named = subprocess.run([str(cli), 'setup', '--harness', 'codex', '--root', str(state)], env=bare, capture_output=True, text=True)
+    assert named.returncode != 0 and not (state/'machine-review.json').exists()
+print('PASS five-provider setup, model/effort subprocess arguments, reinstall persistence, defaults, private config, owned cancellation and setup without a harness')

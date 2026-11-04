@@ -116,15 +116,21 @@ final class AutopilotJunkCache: @unchecked Sendable {
   private let lock = NSLock()
   private var cached: [AutopilotItem] = []
   private var refreshed: Date?
+  private var walked: Set<String> = []
   private var running = false
   func items(_ records: [WorktreeRecord], home: String, protected: ProtectedLocations)
     -> [AutopilotItem]
   {
+    let paths = Set(records.map(\.path))
     let due: Bool = lock.withLock {
-      guard !running, refreshed.map({ Date().timeIntervalSince($0) >= 6 * 3600 }) ?? true else {
-        return false
-      }
+      guard !running else { return false }
+      let age = refreshed.map { Date().timeIntervalSince($0) } ?? .infinity
+      // Copies the last walk didn't know about are walked soon, so junk inside old copies shows up
+      // with a new install's first inventory instead of six hours later.
+      let unseen = !paths.isSubset(of: walked) && (walked.isEmpty || age >= 600)
+      guard age >= 6 * 3600 || unseen else { return false }
       running = true
+      walked = paths
       return true
     }
     if due {

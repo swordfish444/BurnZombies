@@ -301,6 +301,8 @@ public struct AutopilotLogEntry: Codable, Sendable, Identifiable, Equatable {
 public struct AutopilotSweepState: Codable, Sendable, Equatable {
   public var enabled = true
   public var intervalMinutes = 15
+  /// The very first tick of this install; it looks every minute for a while after it.
+  public var firstTick: Date?
   public var lastTick: Date?
   public var lastAISweep: Date?
   /// Digest of unsure item revisions and rules the AI last judged.

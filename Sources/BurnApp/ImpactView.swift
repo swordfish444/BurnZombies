@@ -168,8 +168,9 @@ struct BurnStatus: View {
       if sweep.running || model.huntRunning { return "Hunting Zombies" }
       if !sweep.enabled { return "Autopilot off" }
       if let retry = sweep.retryAfter, retry > Date() { return "Autopilot · AI retrying soon" }
-      // Without Full Disk Access Autopilot skips only the places macOS protects.
-      return model.accessReady ? "Autopilot on" : "Autopilot on · limited"
+      // Without Full Disk Access Autopilot skips only the places macOS protects; the banner says
+      // so in plain words, and once it's dismissed the status keeps saying it.
+      return model.accessReady || model.showsAccessBanner ? "Autopilot on" : "Autopilot on · limited"
     }
     if !model.accessReady { return "Setup required" }
     if model.state.error != nil { return "Needs attention" }
@@ -252,12 +253,19 @@ struct MiniImpactView: View {
   @ObservedObject var model: AppModel
   var numbers: ImpactNumbers { .make(model, period: .today) }
   var totals: ImpactNumbers { .make(model, period: model.miniImpactPeriod) }
+  /// What Autopilot found and hasn't burned yet.
+  var found: UInt64 {
+    model.autopilot.entries.filter { $0.status == .unsure || $0.status == .burn }
+      .reduce(0) { $0 + $1.item.bytes }
+  }
   var lastBurn: String {
     let history = ImpactNumbers.make(model, period: .all)
     if history.last != nil { return "Last burn \(history.age)" }
     if !model.accessReady && !model.autopilotAvailable { return "Waiting for Full Disk Access" }
-    return history.count + history.worktrees == 0
-      ? "Ready for your first burn" : "No burns yet today"
+    guard history.count + history.worktrees == 0 else { return "No burns yet today" }
+    // Before the first burn, what's waiting is the reward in sight.
+    return found >= AutopilotPolicy.worthAsking
+      ? "Found \(ImpactNumbers.bytes(found)) of leftovers" : "Ready for your first burn"
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -282,8 +290,11 @@ struct MiniImpactView: View {
             Image(systemName: "questionmark.bubble.fill").font(.system(size: 16, weight: .bold))
             Text(
               "BZ has \(model.autopilot.questions.count) quick question\(model.autopilot.questions.count == 1 ? "" : "s")"
-            ).font(.system(size: 15, weight: .bold))
+            ).font(.system(size: 15, weight: .bold)).lineLimit(1).minimumScaleFactor(0.8)
             Spacer(minLength: 4)
+            // What answering frees, beside the button that frees it.
+            Text(ImpactNumbers.bytes(model.autopilot.questions.reduce(0) { $0 + $1.bytes }))
+              .font(.system(size: 13, weight: .semibold)).fixedSize()
             Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold))
           }.foregroundStyle(.black).padding(.horizontal, 14).frame(height: 40)
             .background(BurnTheme.orange, in: RoundedRectangle(cornerRadius: 12))
