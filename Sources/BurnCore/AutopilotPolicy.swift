@@ -212,7 +212,8 @@ public enum AutopilotPolicy {
       kind: kind, match: widen(match, verdict: .burn), verdict: .burn, source: .operator, title: "")
   }
 
-  /// A question about the things a pattern covers, with their count, size and cautions.
+  /// A question about the things a pattern covers, with their count, size and cautions, and what
+  /// its card names about them (`describe`).
   static func question(
     _ kind: AutopilotKind, match: [String: [String]], covering: [AutopilotItem], now: Date
   ) -> AutopilotQuestion {
@@ -227,6 +228,7 @@ public enum AutopilotPolicy {
       examples: Array(covering.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name)),
       count: covering.count, bytes: bytes, asked: now)
     question.cautions = mix(kind, covering)
+    describe(&question, covering: covering)
     return question
   }
 
@@ -421,18 +423,54 @@ public struct AutopilotCard: Equatable, Sendable {
   public var no: String
   /// The facts that make burning riskier, shown so they stand out.
   public var cautions: [String] = []
+  /// What every one of the things shares that is safe, as one sentence.
+  public var line: String?
+  /// Up to three of the things the question is about, biggest first.
+  public var rows: [AutopilotCardRow] = []
+  /// How many more there are than the rows show.
+  public var more = 0
+}
+
+/// One thing a question is about, ready to show: what it is called, where it lives and when it
+/// was last used, in words that are right when the card is shown.
+public struct AutopilotCardRow: Equatable, Sendable {
+  public var title: String
+  public var subtitle: String?
+  public var when: String
+  public init(title: String, subtitle: String? = nil, when: String) {
+    self.title = title
+    self.subtitle = subtitle
+    self.when = when
+  }
 }
 
 extension AutopilotPolicy {
   static let stalePhrases = [
-    "day": "Unused since yesterday", "week": "Unused for a week", "month": "Unused for a month",
-    "older": "Unused for 3+ months",
+    "today": "Used in the last day", "day": "Unused since yesterday", "week": "Unused for a week",
+    "month": "Unused for a month", "older": "Unused for 3+ months",
   ]
+
+  /// The project a pattern names, when it names exactly one.
+  static func pinnedRepo(_ match: [String: [String]]) -> String? {
+    guard let repos = match["repo"], repos.count == 1, !["", "none"].contains(repos[0]) else {
+      return nil
+    }
+    return repos[0]
+  }
+
+  /// What a card's headline calls the things, singular and plural: "copy" and "copies", or "copy of
+  /// api" and "copies of api" when the pattern names one project. Programs and folders keep the
+  /// words `noun` gives. The old "old project copies" stays only in rule titles and lessons.
+  static func cardNoun(_ kind: AutopilotKind, match: [String: [String]]) -> (String, String) {
+    guard kind == .worktree else { return noun(kind, match: match) }
+    guard let name = pinnedRepo(match) else { return ("copy", "copies") }
+    return ("copy of " + name, "copies of " + name)
+  }
 
   /// What a question is about, singular and plural, naming the project when there is one.
   static func noun(_ kind: AutopilotKind, match: [String: [String]]) -> (String, String) {
     let value = { (key: String) in match[key]?.first ?? "" }
-    let project = match["repo"]?.count == 1 && !["", "none"].contains(value("repo")) ? value("repo") : nil
+    let project = pinnedRepo(match)
     switch kind {
     case .worktree:
       return project.map { ("old copy of " + $0, "old copies of " + $0) }
@@ -496,13 +534,18 @@ extension AutopilotPolicy {
 
   /// Facts that make burning riskier: work that exists nowhere else, things still in use.
   static let cautions: Set<String> = [
-    "Work only on this Mac", "Has unsaved changes", "Unused since yesterday",
-    "Still running a server", "Still busy", "Idle 10+ minutes",
+    "Work only on this Mac", "Has unsaved changes", "Used in the last day",
+    "Unused since yesterday", "Still running a server", "Still busy", "Idle 10+ minutes",
   ]
 
-  public static func card(_ question: AutopilotQuestion) -> AutopilotCard {
+  /// The card for a question as it reads at `now`. The headline is "Burn 5 copies you used
+  /// yesterday?": what it covers and when the most recently used of it was used, in calendar words
+  /// for `calendar`, so the same question reads differently tomorrow.
+  public static func card(
+    _ question: AutopilotQuestion, now: Date = Date(), calendar: Calendar = .current
+  ) -> AutopilotCard {
     let one = question.count == 1
-    let (single, plural) = noun(question.kind, match: question.match)
+    let (single, plural) = cardNoun(question.kind, match: question.match)
     let note: String
     switch question.kind {
     case .worktree:
@@ -512,12 +555,21 @@ extension AutopilotPolicy {
     case .process: note = one ? "It just gets asked to quit." : "They just get asked to quit."
     case .disk: note = one ? "Your tools rebuild it when needed." : "Your tools rebuild them when needed."
     }
+    let age = when(
+      question.kind, newest: question.newest, match: question.match, now: now, calendar: calendar)
+    let words: [String] = ["Burn", String(question.count), one ? single : plural, age]
+    let headline: String = words.filter { !$0.isEmpty }.joined(separator: " ") + "?"
     let shown = facts(question.kind, match: question.match)
-    return AutopilotCard(
-      headline: "Burn \(question.count) \(one ? single : plural)?",
+    let rows = cardRows(question, now: now, calendar: calendar)
+    var card = AutopilotCard(
+      headline: headline,
       frees: "Frees \(roughly(question.bytes))" + (question.kind == .process ? " of memory" : ""),
       facts: shown + (question.cautions ?? []), note: note,
       yes: one ? "Yes, burn it" : "Yes, burn them", no: one ? "No, keep it" : "No, keep them",
       cautions: shown.filter(cautions.contains) + (question.cautions ?? []))
+    card.line = question.line
+    card.rows = rows
+    card.more = max(0, question.count - rows.count)
+    return card
   }
 }

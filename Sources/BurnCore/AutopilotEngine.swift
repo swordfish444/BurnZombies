@@ -297,6 +297,9 @@ public actor Autopilot {
         memory.questions[i].examples = Array(
           matching.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name))
         memory.questions[i].cautions = AutopilotPolicy.mix(question.kind, matching)
+        // What the card names follows too: the rows, when they were last used, the risks and the
+        // safe line.
+        AutopilotPolicy.describe(&memory.questions[i], covering: matching)
       }
       // Once burns shrink a pattern below what a question is worth, it stops being asked.
       memory.questions.removeAll { $0.isOpen && $0.bytes < AutopilotPolicy.worthAsking }
@@ -722,6 +725,7 @@ public actor Autopilot {
       q.count = matching.count
       q.bytes = bytes
       q.cautions = AutopilotPolicy.mix(question.kind, matching)
+      AutopilotPolicy.describe(&q, covering: matching)
       if q.examples.isEmpty {
         q.examples = Array(matching.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name))
       }

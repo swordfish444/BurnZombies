@@ -155,15 +155,19 @@ public enum AutopilotProcesses {
     return result.reversed()
   }
 
-  /// Since it was last seen busy, or first seen. A program never seen busy that has used under a
+  /// When it was last seen busy, or first seen. A program never seen busy that has used under a
   /// second of CPU in its whole life has been idle since it started, so a new install need not
   /// watch it for hours first.
-  static func idleSince(_ r: Record, now: Date) -> TimeInterval {
+  static func lastActive(_ r: Record) -> Date {
     if r.lastBusy == nil, r.latest.cpuNS < 1_000_000_000 {
       let started = Date(timeIntervalSince1970: Double(r.latest.identity.seconds))
-      return now.timeIntervalSince(min(started, r.firstSeen))
+      return min(started, r.firstSeen)
     }
-    return now.timeIntervalSince(r.lastBusy ?? r.firstSeen)
+    return r.lastBusy ?? r.firstSeen
+  }
+
+  static func idleSince(_ r: Record, now: Date) -> TimeInterval {
+    now.timeIntervalSince(lastActive(r))
   }
 
   public static func items(
@@ -214,6 +218,9 @@ public enum AutopilotProcesses {
         o.pgid.map { $0 > 1 && $0 != o.identity.pid && !probe.alive($0) } ?? false
       let orphaned = record.orphanSince != nil || leaderGone ? "yes" : "maybe"
       let quiet = members.map { idleSince($0, now: now) }.min() ?? 0
+      // The whole tree was last used when its busiest member was; the same moment `quiet` counts
+      // from, kept as a date so it doesn't move with `now`.
+      let lastUsed: Date? = members.map { lastActive($0) }.max()
       let bytes = members.reduce(0) { $0 + $1.latest.rss }
       // A quarter of a core or more over the last minute, across the whole tree.
       let cpu = members.compactMap(\.cpuPercent).reduce(0, +) >= 25 ? "busy" : "calm"
@@ -231,7 +238,8 @@ public enum AutopilotProcesses {
           name: repo == "none" ? o.name : o.name + " in " + repo,
           detail: describe(o.name, repo: repo, facts: facts, children: tree.count),
           path: o.executable, bytes: bytes, facts: facts, protectedReason: reason,
-          observedAt: o.time, pid: o.identity.pid, processKey: o.identity.key))
+          observedAt: o.time, pid: o.identity.pid, processKey: o.identity.key,
+          lastUsed: lastUsed, title: o.name))
     }
     return items.sorted { $0.bytes > $1.bytes }
   }

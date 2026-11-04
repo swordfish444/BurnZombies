@@ -272,7 +272,10 @@ extension AutopilotPolicy {
   static func keepSentence(_ rule: AutopilotRule) -> String {
     var subject: String = keptSubject(rule)
     if let bound = keptBound(rule) { subject += " " + bound }
-    let shown: [String] = facts(rule.kind, match: rule.match)
+    // How recently they were used is the bound's to say, so it isn't listed again as a fact.
+    var listed = rule.match
+    if let recency = recencyFacts[rule.kind] { listed[recency] = nil }
+    let shown: [String] = facts(rule.kind, match: listed)
     guard !shown.isEmpty else { return subject + " stay." }
     return subject + " stay: " + shown.joined(separator: ", ") + "."
   }

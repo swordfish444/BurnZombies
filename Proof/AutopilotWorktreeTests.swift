@@ -229,6 +229,44 @@ private func apDirectProof() {
   equal(stale(40, chat: ended), "today", "chat activity counts as use")
   equal(one(record("s"), threads: [ended]).facts["thread"], "ended", "finished chat fact")
 
+  // A question card names a copy by the task it was for, and says when it was last used: the
+  // newest of the same dates the age is read from.
+  equal(
+    one(record("u")).lastUsed, now.addingTimeInterval(-40 * 86_400),
+    "last used when a file last changed")
+  isNil(one(unwalked).lastUsed)
+  equal(
+    one(record("s"), threads: [ended]).lastUsed, ended.lastActive, "a chat's activity is use too")
+  equal(one(record("u")).title, "feature u", "named by its branch, in words")
+  var nested = record("n")
+  nested.branch = "refs/heads/codex/fix-login-selector"
+  equal(one(nested).title, "fix login selector", "after the last slash")
+  var detached = record("d")
+  detached.branch = nil
+  isNil(one(detached).title)
+  var bare = record("e")
+  bare.branch = "refs/heads/"
+  isNil(one(bare).title)
+  let titled = AgentThread(
+    id: "t3", agent: "claude", cwd: "/bz-test/git/project-u/src", live: false,
+    title: "Fix the login selector", lastActive: now.addingTimeInterval(-7200))
+  let newest = AgentThread(
+    id: "t4", agent: "claude", cwd: "/bz-test/git/project-u", live: false,
+    title: "Newest chat title", lastActive: now.addingTimeInterval(-3600))
+  let untitled = AgentThread(
+    id: "t5", agent: "codex", cwd: "/bz-test/git/project-u", live: false,
+    lastActive: now.addingTimeInterval(-600))
+  let elsewhere = AgentThread(
+    id: "t6", agent: "claude", cwd: "/bz-test/git/project-uu", live: false,
+    title: "Another project", lastActive: now.addingTimeInterval(-60))
+  var named = one(record("u"), threads: [titled, elsewhere])
+  equal(named.title, "Fix the login selector", "a chat's title names the task")
+  equal(named.lastUsed, titled.lastActive, "a chat in another folder is not this copy's")
+  named = one(record("u"), threads: [titled, newest, untitled, elsewhere])
+  equal(named.title, "Newest chat title", "the newest chat that has a title")
+  equal(named.lastUsed, untitled.lastActive, "a newer chat without one still counts as use")
+  equal(one(record("u"), threads: [untitled]).title, "feature u", "an untitled chat names nothing")
+
   // The finished-copies starter rule promises "untouched for a month".
   func starter(_ days: Double) -> AutopilotStatus {
     var r = record("m")

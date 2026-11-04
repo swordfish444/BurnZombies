@@ -153,6 +153,14 @@ private func roundTripProof() throws {
   question.guess = AutopilotGuess(
     answer: .yes, sure: true, why: "You said yes to 1 like this.", source: "ai")
   question.answeredBy = "bz"
+  question.rows = [
+    AutopilotQuestionRow(
+      title: "fix login selector", subtitle: "web-app", bytes: 5,
+      lastUsed: Date(timeIntervalSinceReferenceDate: 7_000)),
+    AutopilotQuestionRow(title: "node_modules in api", subtitle: nil, bytes: 6, lastUsed: nil),
+  ]
+  question.newest = Date(timeIntervalSinceReferenceDate: 7_000)
+  question.line = "Their work is on GitHub. Nothing is unsaved."
   full.questions = [question]
   full.judgments = [
     "worktree:judged": AutopilotJudgment(

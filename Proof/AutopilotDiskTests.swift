@@ -438,6 +438,26 @@ private func adkJunkProof(base: String, now: Date) throws {
     nodes?.detail, "Downloaded packages for p6-bodycam-old. npm rebuilds them when needed.",
     "item detail")
   equal(nodes?.bytes, 3_000_000_000, "item bytes come from the sizer")
+  func touched(_ path: String) -> Date? {
+    let attributes = try? fm.attributesOfItem(atPath: path)
+    return attributes?[.modificationDate] as? Date
+  }
+  func near(_ date: Date?, _ expected: Date?) -> Bool {
+    guard let date, let expected else { return false }
+    return abs(date.timeIntervalSince(expected)) < 1
+  }
+  check(near(nodes?.lastUsed, staleDate), "a folder was last used when it last changed")
+  check(
+    near(item(repo + "/node_modules")?.lastUsed, now.addingTimeInterval(-3 * day)),
+    "in the main checkout too")
+  check(
+    near(item(npm)?.lastUsed, touched(npm)),
+    "a global cache was last used when it last changed")
+  check(
+    near(item(derived + "/MyApp-abc")?.lastUsed, touched(derived + "/MyApp-abc")),
+    "and so was each build folder in DerivedData")
+  check(items.allSatisfy { $0.lastUsed != nil }, "every folder has a date")
+  check(items.allSatisfy { $0.title == nil }, "folders are named by what they are")
   equal(
     item(old + "/packages/web/node_modules")?.name, "node_modules in p6-bodycam-old/packages/web",
     "nested item name")
@@ -460,6 +480,11 @@ private func adkJunkProof(base: String, now: Date) throws {
   let recentNodes = recent.first { $0.path == old + "/node_modules" }
   equal(recentNodes?.facts["home"], "repo", "a copy changed two days ago is not stale")
   equal(recentNodes?.facts["stale"], "day", "copy activity counts toward the stale bucket")
+  // The date a card shows is the one the age comes from: the copy's work counts as use of the
+  // folders in it, even when the folder itself is older.
+  check(
+    abs((recentNodes?.lastUsed ?? .distantFuture).timeIntervalSince(fresh.lastFileChange!)) < 1,
+    "a folder in a copy changed two days ago was used two days ago")
   var unknown = linked
   unknown.lastFileChange = nil
   unknown.lastCommitAt = nil

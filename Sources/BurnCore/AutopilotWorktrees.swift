@@ -62,6 +62,11 @@ public enum AutopilotWorktrees {
       let dates: [Date?] = [record.lastFileChange, record.lastCommitAt, chat.lastActive]
       let newest = record.lastFileChange == nil ? nil : dates.compactMap { $0 }.max()
       let repo = repoName(record)
+      // What the card calls it: the chat that worked in it, else the task its branch names.
+      let branch: String? = branchName(record)
+      let task: String? =
+        AgentThreads.chatTitle(for: record.path, threads: threads)
+        ?? branch.flatMap { AutopilotPolicy.humanize(branch: $0) }
       let facts: [String: String] = [
         "place": placeFact(record), "repo": repo, "saved": saved, "changes": changes,
         "stale": newest.map { AutopilotPolicy.stale(since: $0, now: now) } ?? "unknown",
@@ -76,7 +81,7 @@ public enum AutopilotWorktrees {
           name: (record.path as NSString).lastPathComponent, detail: sentence, path: record.path,
           bytes: record.allocated, facts: facts,
           protectedReason: protectedReason(record, thread: chat.thread),
-          observedAt: record.observedAt))
+          observedAt: record.observedAt, lastUsed: newest, title: task))
     }
     return result
   }

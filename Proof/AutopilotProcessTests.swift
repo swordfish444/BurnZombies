@@ -190,4 +190,38 @@ func autopilotProcessProof() async throws {
   equal(found(cpu: 0.4)?.facts["idle"], "1d", "under a second of CPU in three days: idle since it started")
   equal(found(cpu: 120)?.facts["idle"], "active", "real work since it started: watch it first")
   equal(found(cpu: 0.4, busy: Date())?.facts["idle"], "active", "seen busy just now")
+
+  // A program was last used when it was last busy, or when it started if it never was; the card
+  // names it by its program.
+  let sinceStart = found(cpu: 0.4)
+  let startSecond = Date(timeIntervalSince1970: Double(UInt64(started.timeIntervalSince1970)))
+  equal(sinceStart?.lastUsed, startSecond, "never busy: last used when it started")
+  equal(sinceStart?.title, "node", "named by its program")
+  let busyAt = Date().addingTimeInterval(-5_400)
+  let wasBusy = found(cpu: 120, busy: busyAt)
+  equal(wasBusy?.lastUsed, busyAt, "last used when it was last busy, to the moment")
+  equal(wasBusy?.facts["idle"], "1h", "the same moment the idle age comes from")
+  // With helpers, the tree was last used when its busiest member was.
+  func observation(_ pid: Int32, parent: Int32) -> Observation {
+    var o = Observation(
+      identity: ProcessIdentity(pid: pid, seconds: UInt64(started.timeIntervalSince1970)),
+      executable: "/opt/homebrew/bin/node")
+    o.uid = getuid()
+    o.parent = parent
+    o.cpuNS = 120_000_000_000
+    return o
+  }
+  let parentSeen = observation(99_992, parent: 1)
+  let helperSeen = observation(99_993, parent: 99_992)
+  var parentRecord = Record(parentSeen)
+  parentRecord.lastBusy = Date().addingTimeInterval(-86_400)
+  var helperRecord = Record(helperSeen)
+  let helperBusy = Date().addingTimeInterval(-1_800)
+  helperRecord.lastBusy = helperBusy
+  let tree = AutopilotProcesses.items(
+    [parentSeen.identity.key: parentRecord, helperSeen.identity.key: helperRecord], threads: [],
+    protectedPIDs: [], probe: quiet
+  ).first
+  equal(tree?.lastUsed, helperBusy, "the helper was busy more recently than its parent")
+  equal(tree?.facts["idle"], "10m", "which is also what the idle age says")
 }

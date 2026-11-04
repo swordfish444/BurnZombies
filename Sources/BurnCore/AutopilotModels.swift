@@ -31,10 +31,18 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
   public var observedAt: Date
   public var pid: Int32?
   public var processKey: String?
+  /// When it was last used, as a question card says it: a copy's last change (or its chat's), a
+  /// program's last busy moment (or its start), a folder's last change. Not a fact, so it never
+  /// changes `revision`.
+  public var lastUsed: Date?
+  /// What the owner would call it: the chat or branch a copy was made for, a program's name.
+  /// Not a fact either.
+  public var title: String?
   public init(
     id: String, kind: AutopilotKind, name: String, detail: String = "", path: String? = nil,
     bytes: UInt64 = 0, facts: [String: String], protectedReason: String? = nil,
-    observedAt: Date = Date(), pid: Int32? = nil, processKey: String? = nil
+    observedAt: Date = Date(), pid: Int32? = nil, processKey: String? = nil,
+    lastUsed: Date? = nil, title: String? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -49,6 +57,8 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
     self.observedAt = observedAt
     self.pid = pid
     self.processKey = processKey
+    self.lastUsed = lastUsed
+    self.title = title
     revision = Self.revision(id: id, facts: all)
   }
   public static func revision(id: String, facts: [String: String]) -> String {
@@ -146,6 +156,14 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
   public var guess: AutopilotGuess?
   /// "bz" when BZ answered it on its own; nil when the owner did.
   public var answeredBy: String?
+  /// The things it is about, biggest first and at most three: what its card names. Nil on a
+  /// question asked before cards named things; the card falls back to `examples`.
+  public var rows: [AutopilotQuestionRow]?
+  /// When the most recently used of everything it covers was last used.
+  public var newest: Date?
+  /// One sentence on what all of them share that is safe ("Their work is on GitHub."), worked out
+  /// whenever the question is asked or refreshed.
+  public var line: String?
   public init(
     kind: AutopilotKind, match: [String: [String]], question: String, why: String,
     examples: [String], count: Int, bytes: UInt64, asked: Date = Date(), source: String = "native"
@@ -162,6 +180,22 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
     self.source = source
   }
   public var isOpen: Bool { answer == nil }
+}
+
+/// One of the things a question is about, as its card lists it. The time on the card is worked out
+/// from `lastUsed` when the card is shown.
+public struct AutopilotQuestionRow: Codable, Sendable, Equatable {
+  public var title: String
+  /// The project a copy belongs to, or who started a program.
+  public var subtitle: String?
+  public var bytes: UInt64
+  public var lastUsed: Date?
+  public init(title: String, subtitle: String? = nil, bytes: UInt64, lastUsed: Date? = nil) {
+    self.title = title
+    self.subtitle = subtitle
+    self.bytes = bytes
+    self.lastUsed = lastUsed
+  }
 }
 
 /// BZ's guess at how the owner will answer a question.

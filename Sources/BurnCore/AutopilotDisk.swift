@@ -89,7 +89,7 @@ public enum AutopilotDisk {
           facts: [
             "folder": cache.folder, "home": "global-cache",
             "stale": AutopilotPolicy.stale(since: touched, now: now), "size": scale(bytes),
-          ], observedAt: now)
+          ], observedAt: now, lastUsed: touched)
         found[item.id] = item
       }
     }
@@ -127,7 +127,7 @@ public enum AutopilotDisk {
           facts: [
             "folder": fact, "home": oldCopy ? "stale-worktree" : "repo",
             "stale": AutopilotPolicy.stale(since: newest, now: now), "size": scale(bytes),
-          ], observedAt: now)
+          ], observedAt: now, lastUsed: newest)
         found[item.id] = item
       }
     }
