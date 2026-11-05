@@ -18,7 +18,7 @@ trap 'rm -rf "$certs"' EXIT
 codesign -d --extract-certificates="$certs/cert" "$app" 2>/dev/null || true
 actual="$( [[ -f "$certs/cert0" ]] && shasum -a 256 "$certs/cert0" | awk '{print $1}' || echo 'no certificate (ad-hoc)')"
 if [[ "$actual" != "$expected" ]]; then
-  echo "Signed with $actual, not the release certificate. Build on the Mac that has \"BurnZombies Local Signing\"." >&2
+  echo "Signed with $actual, not the release certificate. Load it with scripts/release-identity.sh load (see AGENTS.md), then build again." >&2
   exit 1
 fi
 

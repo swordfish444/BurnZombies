@@ -16,7 +16,9 @@ Anton is bundled from the [Google Fonts Anton directory](https://github.com/goog
 
 ## Public previews
 
-The README opens with `docs/media/readme-hero.png`, rendered from `docs/media/readme-hero.html`. Its panel, `docs/media/panel-real.png`, is the author's own compact panel on the All time tab after two days of Autopilot (2026-11-02 to 11-04), rendered offscreen from a copy of that Mac's catalog and Autopilot tally. It shows totals only: no names, paths or process details. Phones get `docs/media/readme-hero-phone.png` (from `readme-hero-phone.html`, rendered the same way at 390 × 470) with the same two-day totals in larger type. The question card uses the app's isolated example data, and the README says so.
+The README opens with a 24.5-second film: the agents' mess piling up, the flaming skull burning it (worktrees backed up first), the author's two-day 685.6 GB, and "You build. We burn." It is rendered in 3D with Blender, narrated, and scored with licensed recordings; every source is in [`promo/`](../promo/README.md), and the MP4 is uploaded as a GitHub attachment rather than committed. The author's real panel sits under **How it works**, beside the question card.
+
+The static hero, `docs/media/readme-hero.png`, rendered from `docs/media/readme-hero.html`, is kept for the link preview and anywhere a video can't play. Its panel, `docs/media/panel-real.png`, is the author's own compact panel on the All time tab after two days of Autopilot (2026-11-02 to 11-04), rendered offscreen from a copy of that Mac's catalog and Autopilot tally. It shows totals only: no names, paths or process details. Phones get `docs/media/readme-hero-phone.png` (from `readme-hero-phone.html`, rendered the same way at 390 × 470) with the same two-day totals in larger type. The question card uses the app's isolated example data, and the README says so.
 
 Refresh the example question card without opening a window or starting an observer:
 

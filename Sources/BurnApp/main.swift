@@ -782,16 +782,29 @@ import UserNotifications
   // With no runner (demo and offscreen proofs) the same change is applied in memory so the
   // windows visibly react. A real model without a runner changes nothing and says so.
   /// `q` is the question as its card was drawn, so the answer carries the risks the owner saw.
-  func answer(_ q: AutopilotQuestion, _ a: AutopilotAnswer) {
-    sendAutopilot(.answer(questionID: q.id, answer: a, risks: q.risks)) {
-      AutopilotLocal.answer(&$0, question: q, answer: a, now: Date())
-    }
+  /// What the owner spared or unspared on the card (`sparing`, `releasing`) goes first, in the same
+  /// task, so a Spare still on its way can't be overtaken by the Yes.
+  func answer(
+    _ q: AutopilotQuestion, _ a: AutopilotAnswer, sparing spared: [String] = [],
+    releasing released: [String] = []
+  ) {
+    var commands: [AutopilotCommand] = released.map { AutopilotCommand.unkeep(itemID: $0) }
+    commands += spared.map { AutopilotCommand.keep(itemID: $0) }
+    commands.append(.answer(questionID: q.id, answer: a, risks: q.risks))
+    sendAutopilot(commands) { AutopilotLocal.answer(&$0, question: q, answer: a, now: Date()) }
   }
   func burnNow(_ e: AutopilotEntry) {
     sendAutopilot(.burnNow(itemID: e.id)) { AutopilotLocal.burnNow(&$0, entry: e, now: Date()) }
   }
-  func keepForever(_ e: AutopilotEntry) {
-    sendAutopilot(.keep(itemID: e.id)) { AutopilotLocal.keep(&$0, entry: e) }
+  /// Keep forever in Findings, Spare in Teach BZ. `finished` says why it couldn't be done, or nil.
+  func keepForever(_ e: AutopilotEntry, finished: (@MainActor (String?) -> Void)? = nil) {
+    sendAutopilot(
+      [.keep(itemID: e.id)], local: { AutopilotLocal.keep(&$0, entry: e) }, finished: finished)
+  }
+  /// Unspare in Teach BZ: the owner's keep goes, and BZ decides about it again.
+  func unkeep(_ e: AutopilotEntry, finished: (@MainActor (String?) -> Void)? = nil) {
+    sendAutopilot(
+      [.unkeep(itemID: e.id)], local: { AutopilotLocal.unkeep(&$0, entry: e) }, finished: finished)
   }
   func restore(_ r: AutopilotReceipt) {
     sendAutopilot(.restore(receiptID: r.id)) { AutopilotLocal.restore(&$0, receipt: r, now: Date()) }
@@ -874,11 +887,20 @@ import UserNotifications
     _ command: AutopilotCommand, local: (inout AutopilotSnapshot) -> Void,
     finished: (@MainActor (String?) -> Void)? = nil
   ) {
+    sendAutopilot([command], local: local, finished: finished)
+  }
+  /// Several commands, one after another in one task, so none can overtake another; the snapshot
+  /// after the last one shows. The first that fails stops the rest.
+  private func sendAutopilot(
+    _ commands: [AutopilotCommand], local: (inout AutopilotSnapshot) -> Void,
+    finished: (@MainActor (String?) -> Void)? = nil
+  ) {
     if let runner = autopilotRunner {
       Task { [weak self] in
         do {
-          let next = try await runner(command)
-          self?.autopilot = next
+          var next: AutopilotSnapshot?
+          for command in commands { next = try await runner(command) }
+          if let next { self?.autopilot = next }
           finished?(nil)
         } catch {
           let said: String = error.localizedDescription

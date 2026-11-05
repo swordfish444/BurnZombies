@@ -17,6 +17,8 @@ struct TeachView: View {
     var taught: Taught?
     /// A Yes in look-only: what it taught burns once the owner starts burning.
     var waits = false
+    /// How many the owner spared on the card answered: they stay.
+    var spared = 0
 
     struct Taught: Equatable {
       var questionID: String
@@ -42,11 +44,28 @@ struct TeachView: View {
   @State private var answeredIDs = Set<String>()
   /// The question on screen. It stays until it is answered or gone, whatever arrives meanwhile.
   @State private var pinnedQuestionID: String?
+  /// View details for the question on screen.
+  @State private var details: TeachDetailsState
+  /// The row the pointer rests on, once its card is up.
+  @State private var hover: TeachHover?
+  @StateObject private var tips: TeachTipsModel
 
-  init(model: AppModel, confirmation: Confirmation? = nil) {
+  /// `details` and `tip` start the window in a given state, for offscreen renders.
+  init(
+    model: AppModel, confirmation: Confirmation? = nil,
+    details: TeachDetailsState = TeachDetailsState(), tip: AutopilotTip? = nil
+  ) {
     self.model = model
     _confirmation = State(initialValue: confirmation)
+    _details = State(initialValue: details)
+    _tips = StateObject(
+      wrappedValue: TeachTipsModel(defaults: model.demo ? nil : .standard, showing: tip))
   }
+
+  /// The window's coordinate space, where a row's hover card is placed.
+  static let space = "teach"
+  /// Room kept above a question for the tips.
+  static let tipRoom: CGFloat = 30
 
   @MainActor static func makeWindow(model: AppModel) -> NSWindow {
     let window = NSWindow(
@@ -98,6 +117,8 @@ struct TeachView: View {
       Rectangle().fill(BurnTheme.line).frame(height: 1)
       content.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    .coordinateSpace(.named(Self.space))
+    .overlay { TeachHoverLayer(hover: hover) }
     .foregroundStyle(BurnTheme.cream)
     .background(BurnBackdrop())
     .preferredColorScheme(.dark)
@@ -171,40 +192,146 @@ struct TeachView: View {
 
   // MARK: Question
 
-  /// A short headline, what it frees, one safe line, the things it is about and a reassuring note.
+  /// A short headline, what it frees, one safe line, the things it is about and View details.
   /// Each part is there only when the question has something to say, so no card has an empty gap.
+  /// Opened, the details take the place of the chips and rows; what the owner spares there leaves
+  /// the headline, the size and the answer at once. Tips come and go in the corner above.
   private func questionCard(_ question: AutopilotQuestion) -> some View {
-    let card = AutopilotPolicy.card(question)
-    return TeachCardFrame {
+    let state = details.questionID == question.id ? details : TeachDetailsState()
+    let listed = Self.listed(question, entries: snapshot.entries, overrides: state.overrides)
+    // The engine's numbers stand until the owner spares or unspares something here; what was
+    // spared before is already left out of them.
+    let drawn =
+      state.overrides.isEmpty
+      ? question : AutopilotPolicy.sparing(question, details: listed, changed: true)
+    let card = AutopilotPolicy.card(drawn)
+    let spared = listed.filter(\.spared).count
+    let allSpared = drawn.count == 0 && spared > 0
+    let open = state.open && !listed.isEmpty
+    let place: AutopilotTip.Place = !open ? .question : state.opened == nil ? .list : .entry
+    return TeachCardFrame(topInset: Self.tipRoom) {
       VStack(spacing: 8) {
-        Text(AutopilotLook.emoji(question.kind)).font(.system(size: 34))
-        headline(card.headline)
-        sizeLine(card.frees)
-        if let line = card.line, !line.isEmpty { safeLine(line) }
-        if !card.facts.isEmpty { facts(card.facts, cautions: Set(card.cautions)) }
-        TeachRows(rows: card.rows, more: card.more)
-        Text(card.note).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
-          .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        if !open {
+          Text(AutopilotLook.emoji(question.kind)).font(.system(size: 34))
+            .transition(.opacity.combined(with: .scale(scale: 0.85)))
+        }
+        headline(allSpared ? "Nothing left to burn" : card.headline)
+        sizeLine(allSpared ? "You spared all \(spared)" : card.frees)
+        if open {
+          TeachDetailsPanel(
+            listed: listed, noun: Self.noun(question.kind), state: $details, hover: $hover,
+            spare: toggleSpare, did: { tips.did($0) }
+          )
+          .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+        } else {
+          VStack(spacing: 8) {
+            if let line = card.line, !line.isEmpty { safeLine(line) }
+            if !card.facts.isEmpty || spared > 0 {
+              facts(card.facts, cautions: Set(card.cautions), spared: spared)
+            }
+            TeachRows(rows: card.rows, more: card.more)
+          }
+          .transition(.opacity)
+        }
+        if listed.isEmpty {
+          Text(card.note).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
+            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        } else {
+          Button {
+            toggleDetails(question)
+          } label: {
+            Text(open ? "Hide details" : "View details").font(.system(size: 13)).underline()
+              .foregroundStyle(BurnTheme.muted)
+          }
+          .buttonStyle(.plain).clickPointer().accessibilityIdentifier("teach-details")
+          .keyboardShortcut(open && state.opened == nil ? .cancelAction : nil)
+        }
       }
     } actions: {
       HStack(spacing: 14) {
         answerButton(
           card.yes, fill: AutopilotTheme.green, text: Color.black.opacity(0.86),
-          stroke: Color.clear, id: "teach-yes"
-        ) { answer(question, .yes) }
+          stroke: Color.clear, id: "teach-yes", off: allSpared
+        ) { answer(drawn, .yes, spared: spared) }
         answerButton(
           card.no, fill: Color.white.opacity(0.10), text: BurnTheme.cream,
           stroke: Color.white.opacity(0.22), id: "teach-no"
-        ) { answer(question, .no) }
+        ) { answer(drawn, .no) }
       }
       Button {
-        answer(question, .skip)
+        answer(drawn, .skip)
       } label: {
         Text("Not sure — skip").font(.system(size: 13)).underline()
           .foregroundStyle(BurnTheme.muted)
       }.buttonStyle(.plain).clickPointer().accessibilityIdentifier("teach-skip")
     }
-    .onChange(of: question.id, initial: true) { _, id in pinnedQuestionID = id }
+    .overlay(alignment: .topLeading) {
+      TeachTipsView(model: tips).padding(.leading, 28).padding(.trailing, 28).padding(.top, 12)
+    }
+    .onChange(of: question.id, initial: true) { _, id in
+      pinnedQuestionID = id
+      if details.questionID != id {
+        details = TeachDetailsState(questionID: id)
+        hover = nil
+      }
+      let filters = AutopilotPolicy.detailFilters(listed).contains(where: \.risky)
+      tips.start(kind: question.kind, filters: filters)
+    }
+    .onChange(of: place, initial: true) { _, now in tips.at(now) }
+    .onDisappear { tips.stop() }
+  }
+
+  /// What a question's details list, with what the owner spared or unspared on its card shown that
+  /// way before the engine says so.
+  static func listed(
+    _ question: AutopilotQuestion, entries: [AutopilotEntry], overrides: [String: Bool]
+  ) -> [AutopilotDetail] {
+    let found = AutopilotPolicy.details(
+      question, entries: entries, now: Date(), calendar: .current, including: Set(overrides.keys))
+    return found.map { detail in
+      guard let spared = overrides[detail.id] else { return detail }
+      var changed = detail
+      changed.spared = spared
+      return changed
+    }
+  }
+
+  /// What one of the things a question is about is called.
+  static func noun(_ kind: AutopilotKind) -> String {
+    switch kind {
+    case .worktree: return "copy"
+    case .process: return "program"
+    case .disk: return "folder"
+    }
+  }
+
+  private func toggleDetails(_ question: AutopilotQuestion) {
+    hover = nil
+    let opening = !(details.questionID == question.id && details.open)
+    withAnimation(.spring(response: 0.36, dampingFraction: 0.9)) {
+      if details.questionID != question.id { details = TeachDetailsState(questionID: question.id) }
+      details.open = opening
+      details.opened = nil
+    }
+    if opening { tips.did("details") }
+  }
+
+  /// Spare or Unspare: the card shows it at once and the engine is told right away, so it holds
+  /// even if the window closes before an answer. If the engine can't, the card shows what it holds.
+  private func toggleSpare(_ detail: AutopilotDetail) {
+    let sparing = !detail.spared
+    hover = nil
+    withAnimation(.easeOut(duration: 0.2)) { details.overrides[detail.id] = sparing }
+    let id = detail.id
+    let undo: @MainActor (String?) -> Void = { problem in
+      if problem != nil { details.overrides[id] = nil }
+    }
+    if sparing {
+      tips.did("spare")
+      model.keepForever(detail.entry, finished: undo)
+    } else {
+      model.unkeep(detail.entry, finished: undo)
+    }
   }
 
   private func headline(_ text: String) -> some View {
@@ -224,26 +351,41 @@ struct TeachView: View {
       .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
   }
 
-  /// Two chips per row, so no fact is ever cut short; the risky ones stand out in amber.
-  private func facts(_ facts: [String], cautions: Set<String>) -> some View {
-    VStack(spacing: 6) {
-      ForEach(Array(stride(from: 0, to: facts.count, by: 2)), id: \.self) { start in
+  /// Two chips per row, so no fact is ever cut short; the risky ones stand out in amber, and what
+  /// the owner spared shows in green.
+  private func facts(_ facts: [String], cautions: Set<String>, spared: Int = 0) -> some View {
+    let sparedChip: String = "\(spared) spared"
+    let chips: [String] = spared > 0 ? facts + [sparedChip] : facts
+    return VStack(spacing: 6) {
+      ForEach(Array(stride(from: 0, to: chips.count, by: 2)), id: \.self) { start in
         HStack(spacing: 8) {
-          ForEach(facts[start..<min(start + 2, facts.count)], id: \.self) { fact in
+          ForEach(chips[start..<min(start + 2, chips.count)], id: \.self) { fact in
             let caution = cautions.contains(fact)
+            let kept = spared > 0 && fact == sparedChip
             HStack(spacing: 5) {
               if caution { Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 11)) }
+              if kept { Image(systemName: "hand.raised.fill").font(.system(size: 11)) }
               Text(fact)
             }
             .font(.system(size: 13.5, weight: .semibold))
-            .foregroundStyle(caution ? Color.orange : BurnTheme.cream)
+            .foregroundStyle(caution ? Color.orange : kept ? AutopilotTheme.green : BurnTheme.cream)
             .padding(.horizontal, 12).padding(.vertical, 5)
-            .background(caution ? Color.orange.opacity(0.14) : Color.white.opacity(0.08), in: Capsule())
-            .overlay(Capsule().strokeBorder(caution ? Color.orange.opacity(0.5) : BurnTheme.line))
+            .background(chipFill(caution: caution, kept: kept), in: Capsule())
+            .overlay(Capsule().strokeBorder(chipStroke(caution: caution, kept: kept)))
           }
         }
       }
     }
+  }
+
+  private func chipFill(caution: Bool, kept: Bool) -> Color {
+    if caution { return Color.orange.opacity(0.14) }
+    return kept ? AutopilotTheme.green.opacity(0.12) : Color.white.opacity(0.08)
+  }
+
+  private func chipStroke(caution: Bool, kept: Bool) -> Color {
+    if caution { return Color.orange.opacity(0.5) }
+    return kept ? AutopilotTheme.green.opacity(0.4) : BurnTheme.line
   }
 
   /// A big answer button. Off, it keeps its words but loses its color, so it reads as waiting and
@@ -389,6 +531,11 @@ struct TeachView: View {
           .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BurnTheme.line))
           .accessibilityIdentifier("teach-lesson")
       }
+      if note.spared > 0 {
+        Label(Self.sparedLine(note.spared), systemImage: "hand.raised.fill")
+          .font(.system(size: 15, weight: .semibold)).foregroundStyle(AutopilotTheme.green)
+          .accessibilityIdentifier("teach-spared")
+      }
       if note.taught != nil {
         Text(note.waits ? AutopilotText.handlingLookOnly : AutopilotText.handling)
           .font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
@@ -414,25 +561,40 @@ struct TeachView: View {
     }.padding(36)
   }
 
-  /// `question` is the one its card was drawn from: the answer carries the risks that card showed.
-  private func answer(_ question: AutopilotQuestion, _ answer: AutopilotAnswer) {
+  /// `question` is the one its card was drawn from, with what the owner spared left out: the answer
+  /// carries the risks that card showed, and what was spared or unspared on it goes first.
+  private func answer(_ question: AutopilotQuestion, _ answer: AutopilotAnswer, spared: Int = 0) {
     confirmation = Self.confirmation(
-      for: question, answer, lookOnly: model.autopilot.sweep.lookOnly == true)
+      for: question, answer, lookOnly: model.autopilot.sweep.lookOnly == true, spared: spared)
     answeredHere += 1
     answeredIDs.insert(question.id)
     pinnedQuestionID = nil
-    model.answer(question, answer)
+    let changes = details.questionID == question.id ? details.overrides : [:]
+    let sparing: [String] = changes.filter(\.value).map(\.key).sorted()
+    let releasing: [String] = changes.filter { !$0.value }.map(\.key).sorted()
+    model.answer(question, answer, sparing: sparing, releasing: releasing)
+    details = TeachDetailsState()
+    hover = nil
+  }
+
+  /// "The 2 you spared stay, now and later."
+  static func sparedLine(_ spared: Int) -> String {
+    spared == 1
+      ? "The one you spared stays, now and later." : "The \(spared) you spared stay, now and later."
   }
 
   /// The note after an answer: "Got it!" for a Yes or No, which also says what it taught, or the
-  /// words for a skip, which teaches nothing. In look-only a Yes says its burns wait.
+  /// words for a skip, which teaches nothing. In look-only a Yes says its burns wait; a Yes says
+  /// what the owner spared stays.
   static func confirmation(
-    for question: AutopilotQuestion, _ answer: AutopilotAnswer, lookOnly: Bool = false
+    for question: AutopilotQuestion, _ answer: AutopilotAnswer, lookOnly: Bool = false,
+    spared: Int = 0
   ) -> Confirmation {
     let taught = Confirmation.Taught(questionID: question.id)
     switch answer {
     case .yes:
-      return Confirmation(text: "Got it!", symbol: "flame.fill", taught: taught, waits: lookOnly)
+      return Confirmation(
+        text: "Got it!", symbol: "flame.fill", taught: taught, waits: lookOnly, spared: spared)
     case .no: return Confirmation(text: "Got it!", symbol: "hand.raised.fill", taught: taught)
     case .skip:
       return Confirmation(text: "No problem. I'll ask again tomorrow.", symbol: "clock.fill")
@@ -445,8 +607,14 @@ struct TeachView: View {
 private struct TeachCardFrame<Details: View, Actions: View>: View {
   let details: Details
   let actions: Actions
+  /// Room kept clear above, for the tips: what it says is centered below it.
+  let topInset: CGFloat
 
-  init(@ViewBuilder _ details: () -> Details, @ViewBuilder actions: () -> Actions) {
+  init(
+    topInset: CGFloat = 0, @ViewBuilder _ details: () -> Details,
+    @ViewBuilder actions: () -> Actions
+  ) {
+    self.topInset = topInset
     self.details = details()
     self.actions = actions()
   }
@@ -455,7 +623,8 @@ private struct TeachCardFrame<Details: View, Actions: View>: View {
     VStack(spacing: 12) {
       GeometryReader { proxy in
         ScrollView(.vertical) {
-          details.frame(maxWidth: .infinity).frame(minHeight: proxy.size.height)
+          details.frame(maxWidth: .infinity)
+            .frame(minHeight: max(0, proxy.size.height - topInset)).padding(.top, topInset)
         }.scrollBounceBehavior(.basedOnSize)
       }
       VStack(spacing: 10) { actions }

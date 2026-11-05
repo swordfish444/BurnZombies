@@ -17,6 +17,18 @@ extension AutopilotPolicy {
 
   // MARK: What a question stores
 
+  /// A question worked out again for the things it covers now: how many, what they free, the
+  /// biggest, the counted cautions and what its card names. The engine's refresh and Teach BZ's
+  /// Spare both use it, so a card never says anything the engine wouldn't.
+  public static func refresh(_ question: inout AutopilotQuestion, covering items: [AutopilotItem]) {
+    question.count = items.count
+    question.bytes = items.reduce(0) { $0 + $1.bytes }
+    let biggest: [AutopilotItem] = items.sorted { $0.bytes > $1.bytes }
+    question.examples = Array(biggest.prefix(3).map(\.name))
+    question.cautions = mix(question.kind, items)
+    describe(&question, covering: items)
+  }
+
   /// What a card names about the things a question covers, kept with the question: the three
   /// biggest, the most recent use among all of them, the risks among them and the safe line.
   /// When any of them has no date the most recent use is unknown, and the card falls back to the

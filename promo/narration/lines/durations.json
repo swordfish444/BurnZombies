@@ -1,0 +1,62 @@
+[
+ {
+  "id": "V1",
+  "at": 0.4,
+  "dur": 2.588,
+  "text": "Your AI agents never sleep."
+ },
+ {
+  "id": "V2",
+  "at": 3.1,
+  "dur": 1.417,
+  "text": "But they leave a mess."
+ },
+ {
+  "id": "V3a",
+  "at": 4.65,
+  "dur": 1.462,
+  "text": "Zombie processes."
+ },
+ {
+  "id": "V3b",
+  "at": 6.4,
+  "dur": 1.24,
+  "text": "Stale worktrees."
+ },
+ {
+  "id": "V3c",
+  "at": 7.8,
+  "dur": 1.524,
+  "text": "Gigabytes of build junk."
+ },
+ {
+  "id": "V4",
+  "at": 10.7,
+  "dur": 3.01,
+  "text": "BurnZombies burns it all, on its own."
+ },
+ {
+  "id": "V5",
+  "at": 13.85,
+  "dur": 2.33,
+  "text": "Every worktree is backed up first."
+ },
+ {
+  "id": "V6",
+  "at": 16.35,
+  "dur": 3.73,
+  "text": "Six hundred and eighty-five gigabytes, freed in two days."
+ },
+ {
+  "id": "V7a",
+  "at": 20.6,
+  "dur": 0.769,
+  "text": "You build."
+ },
+ {
+  "id": "V7b",
+  "at": 21.6,
+  "dur": 0.657,
+  "text": "We burn."
+ }
+]
