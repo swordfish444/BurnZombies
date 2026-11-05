@@ -662,6 +662,33 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     !stalledView.has("Undo") && !stalledView.has("bring them back"),
     "A stalled program tell never says it brings anything back. OCR saw: \(stalledView.raw)")
 
+  // An Undo that couldn't bring every copy back stays in view, undone, saying which and why, with
+  // one OK.
+  let unrestored = AppModel(demo: true)
+  let unrestoredNote = "1 copy couldn't come back. The restore point is gone."
+  unrestored.autopilot.tells[0].state = "undone"
+  unrestored.autopilot.tells[0].note = unrestoredNote
+  unrestored.autopilot.tells[0].seen = false
+  let unrestoredView = try render(
+    TeachView(model: unrestored), size: TeachView.size, name: "teach-tell-unrestored",
+    directory: directory)
+  try require(
+    unrestoredView,
+    [AutopilotText.tellHeadline(demoTell), "Undo finished", "1 copy couldn't come back", "OK"],
+    in: "teach-tell-unrestored")
+  try check(
+    unrestoredView.hasWords(of: unrestoredNote),
+    "teach-tell-unrestored is missing the reason. OCR saw: \(unrestoredView.raw)")
+  try check(
+    unrestoredView.text.components(separatedBy: " ").contains("ok")
+      && !unrestoredView.has("Good call") && !unrestoredView.has("You'd have said yes"),
+    "An undone tell with a note offers OK and nothing else. OCR saw: \(unrestoredView.raw)")
+  let unrestoredTell: AutopilotTell = unrestored.autopilot.tells[0]
+  unrestored.tellSeen(unrestoredTell)
+  try check(
+    !unrestored.autopilot.tellsWaiting.contains { $0.id == unrestoredTell.id },
+    "OK closes what an Undo left to read")
+
   // A tell that burned nothing says nothing, and one program or folder reads in the singular. Every
   // surface asks the snapshot for the tells that wait.
   var nothing = demoTell
@@ -806,7 +833,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       && abs(windowHeight - TeachView.size.height) < 1,
     "Teach BZ window should be \(Int(TeachView.size.width)) wide and unshown")
   print(
-    "PASS autopilot UI Teach BZ render: question card with rows, heavier cards, copy, program and folder tells, working, failed and stalled tells, a tell that waits for the card on screen, lesson confirmation and empty state"
+    "PASS autopilot UI Teach BZ render: question card with rows, heavier cards, copy, program and folder tells, working, failed and stalled tells, an Undo that left a copy behind, a tell that waits for the card on screen, lesson confirmation and empty state"
   )
 
   // Findings: an entry that needs the operator is selected so the detail card shows.
@@ -1175,6 +1202,25 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     actGone && keptAges.contains("week") && keptAges.contains("today") && keepShown && actHidden,
     "Undo must turn the lesson into a keep, wider toward riskier, and show it as one")
   try tidy(undo, "good call and undo")
+  // When a newer answer of the owner's took BZ's lesson in, Undo learns no keep, and the tell stays
+  // saying the newer answer stands until OK.
+  let newer = AppModel(demo: true)
+  guard let absorbed = newer.autopilot.tells.first,
+    let actIndex = newer.autopilot.rules.firstIndex(where: { $0.id == absorbed.ruleID })
+  else { throw StoreError.message("Demo has no tell with a lesson") }
+  var wider: AutopilotRule = newer.autopilot.rules[actIndex]
+  wider.id = "demo-owner-wider"
+  wider.tellID = nil
+  wider.formerIDs = [absorbed.ruleID]
+  newer.autopilot.rules[actIndex] = wider
+  newer.tellUndo(absorbed)
+  let left: AutopilotTell? = newer.autopilot.tellsWaiting.first { $0.id == absorbed.id }
+  try check(
+    left?.waitsForOK == true && left?.note == AutopilotPolicy.newerAnswerStands
+      && !newer.autopilot.rules.contains { $0.verdict == .keep && $0.questionID == absorbed.questionID },
+    "An Undo under a newer answer must learn no keep and say so until OK")
+  if let left { newer.tellSeen(left) }
+  try check(newer.autopilot.tellsWaiting.isEmpty, "OK must close it")
   // Whether BZ acts on its own is the owner's setting: on by default, and start over keeps it.
   let own = AppModel(demo: true)
   try check(own.autopilot.actsOnItsOwn, "BZ should act on its own when sure by default")
@@ -1232,6 +1278,12 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   var secondTell = firstTell
   secondTell.id = "demo-tell-2"
   wired.autopilot.tells.append(secondTell)
+  var thirdTell = firstTell
+  thirdTell.id = "demo-tell-3"
+  thirdTell.state = "undone"
+  thirdTell.note = "1 copy couldn't come back. The restore point is gone."
+  thirdTell.seen = false
+  wired.autopilot.tells.append(thirdTell)
   wired.answer(q, .no)
   wired.burnNow(e)
   wired.keepForever(e)
@@ -1245,6 +1297,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   wired.sweepNow()
   wired.tellGood(firstTell)
   wired.tellUndo(secondTell)
+  wired.tellSeen(thirdTell)
   wired.setActsOnItsOwn(false)
   wired.forgetLesson(group)
   let expected: [AutopilotCommand] = [
@@ -1252,8 +1305,8 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     .restore(receiptID: rcpt.id), .forgetRule(ruleID: rule.id),
     .setStarter(ruleID: "starter-finished-copies", enabled: false), .setEnabled(false),
     .setLookOnly(false), .setInterval(minutes: 60), .resetTraining, .sweepNow,
-    .tellGood(id: firstTell.id), .tellUndo(id: secondTell.id), .setActsOnItsOwn(false),
-    .forgetLesson(ruleIDs: group.ruleIDs),
+    .tellGood(id: firstTell.id), .tellUndo(id: secondTell.id), .tellSeen(id: thirdTell.id),
+    .setActsOnItsOwn(false), .forgetLesson(ruleIDs: group.ruleIDs),
   ]
   let deadline = Date().addingTimeInterval(3)
   while (sent.count < expected.count || wired.autopilot != marker) && Date() < deadline {
@@ -1303,7 +1356,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     throw StoreError.message("Demo has no tell for the failing engine proof")
   }
   print(
-    "PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, forget a whole lesson, Good call, Undo, act on its own, starter switch, reset, interval, sweep now, look-only and engine hand-off"
+    "PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, forget a whole lesson, Good call, Undo, OK on an undone tell, act on its own, starter switch, reset, interval, sweep now, look-only and engine hand-off"
   )
 }
 #endif

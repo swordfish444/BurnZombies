@@ -194,10 +194,13 @@ enum AutopilotText {
   }
   /// How many more than its rows it burned.
   static func tellMore(_ tell: AutopilotTell) -> Int { max(0, tell.count - tell.rows.count) }
-  /// A tell worth showing: still open or being undone, and it burned something. When every burn
-  /// in its act was refused it burned nothing and says nothing.
+  /// Shown on an undone tell above what the Undo left the owner to read.
+  static let tellUndoneLine = "Undo finished."
+  /// A tell worth showing: still open, being undone, or undone with a note the owner hasn't pressed
+  /// OK on, and it burned something. When every burn in its act was refused it burned nothing and
+  /// says nothing.
   static func shows(_ tell: AutopilotTell) -> Bool {
-    (tell.isOpen || tell.state == "undoing") && tell.count > 0
+    (tell.isOpen || tell.state == "undoing" || tell.waitsForOK) && tell.count > 0
   }
   /// The prompt in the menu while tells wait: "BZ burned 3 things on its own".
   static func burnedOnItsOwn(_ tells: [AutopilotTell]) -> String {
@@ -456,8 +459,14 @@ enum AutopilotLocal {
     s.tells.removeAll { $0.id == id && $0.isOpen }
   }
 
+  /// OK on what an Undo left to read: the tell leaves the list.
+  static func tellSeen(_ s: inout AutopilotSnapshot, id: String) {
+    s.tells.removeAll { $0.id == id && $0.waitsForOK }
+  }
+
   /// Undo, without the real restores: the tell closes, what its lesson burned comes back and is
-  /// kept, and the lesson becomes the keep a No teaches.
+  /// kept, and the lesson becomes the keep a No teaches. When a newer answer took the lesson in,
+  /// no keep is learned and the tell stays, saying so, until the owner's OK.
   static func tellUndo(_ s: inout AutopilotSnapshot, id: String, now: Date) {
     guard let index = s.tells.firstIndex(where: { $0.id == id && $0.isOpen }) else { return }
     let tell: AutopilotTell = s.tells.remove(at: index)
@@ -477,6 +486,12 @@ enum AutopilotLocal {
       let keep = AutopilotPolicy.lesson(for: asked, verdict: .keep, created: now)
       AutopilotPolicy.learn(keep, into: &lessons)
       s.rules = lessons + starters
+    } else if s.rules.contains(where: { $0.formerIDs?.contains(tell.ruleID) == true }) {
+      var undone: AutopilotTell = tell
+      undone.state = "undone"
+      undone.note = AutopilotPolicy.newerAnswerStands
+      undone.seen = false
+      s.tells.insert(undone, at: index)
     }
     regroup(&s)
     recount(&s)

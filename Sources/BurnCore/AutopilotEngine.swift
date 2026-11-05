@@ -519,7 +519,7 @@ public actor Autopilot {
     result.lessons = AutopilotPolicy.lessonGroups(memory)
     result.progress = AutopilotPolicy.progress(
       memory, receipts: receipts, impact: try? store.impact(), now: now)
-    result.tells = memory.tells.filter { !$0.isClosed }
+    result.tells = memory.tells.filter(\.waitsForOwner)
     result.actsOnItsOwn = memory.actsOnItsOwn
     return result
   }
@@ -626,6 +626,8 @@ public actor Autopilot {
       try store.updateMemory { try AutopilotPolicy.callGood(id, memory: &$0, now: now) }
     case .tellUndo(let id):
       try await undo(tell: id, now: now)
+    case .tellSeen(let id):
+      try store.updateMemory { try AutopilotPolicy.seen(id, memory: &$0) }
     case .setActsOnItsOwn(let acts):
       try store.updateMemory { $0.actsOnItsOwn = acts }
     case .forgetLesson(let ids):
@@ -672,22 +674,24 @@ public actor Autopilot {
     guard let tell = begun else { return }
     let authority = "rule:" + tell.ruleID
     while burning.values.contains(authority) { try? await Task.sleep(nanoseconds: 50_000_000) }
-    var failure: String?
-    var lost = false
+    var failed = 0
+    var reason: String?
+    var missing = 0
     for receipt in AutopilotPolicy.burns(of: tell, receipts: try store.receipts()) {
       guard receipt.outcome == "burned", receipt.restore != nil else {
-        lost = true
+        missing += 1
         continue
       }
       do {
         try await restore(receiptID: receipt.id)
       } catch {
-        if failure == nil { failure = error.localizedDescription }
+        failed += 1
+        if reason == nil { reason = error.localizedDescription }
       }
     }
-    // Under an owner's newer answer, BZ won't ask next time: that answer covers these things.
-    let newer: Bool = tell.note == AutopilotPolicy.newerAnswerStands
-    let note: String? = newer ? failure : (failure ?? (lost ? AutopilotPolicy.cantComeBack : nil))
+    // What didn't come back stays on the tell, in Teach BZ, until the owner has read it.
+    let note: String? = AutopilotPolicy.undoNote(
+      kind: tell.kind, failed: failed, reason: reason, missing: missing)
     try store.updateMemory { try AutopilotPolicy.finishUndo(id, note: note, memory: &$0) }
   }
 

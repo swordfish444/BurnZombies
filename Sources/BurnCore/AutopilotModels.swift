@@ -269,8 +269,10 @@ public struct AutopilotTell: Codable, Sendable, Identifiable, Equatable {
   public var date: Date
   /// "open"; "undoing" while an Undo runs; then "good", "undone" or "expired".
   public var state: String
-  /// Why an undo couldn't bring everything back, or that a newer answer of the owner's stands.
+  /// What an Undo couldn't bring back and why, or that a newer answer of the owner's stands.
   public var note: String?
+  /// For an Undo that left a note: false until the owner presses OK on it, then true. Nil otherwise.
+  public var seen: Bool?
   public init(
     id: String, questionID: String, ruleID: String, kind: AutopilotKind, count: Int,
     bytes: UInt64, rows: [AutopilotQuestionRow], why: String, date: Date,
@@ -291,6 +293,10 @@ public struct AutopilotTell: Codable, Sendable, Identifiable, Equatable {
   public var isOpen: Bool { state == "open" }
   /// Called good, undone or expired: nothing more happens to it.
   public var isClosed: Bool { state == "good" || state == "undone" || state == "expired" }
+  /// Undone, with a note the owner hasn't pressed OK on yet.
+  public var waitsForOK: Bool { state == "undone" && seen == false }
+  /// Still something for the owner: open, being undone, or undone with a note to read.
+  public var waitsForOwner: Bool { !isClosed || waitsForOK }
 }
 
 /// What one lesson has done: the burns it authorized, what they freed, and how many the owner
@@ -611,7 +617,8 @@ public struct AutopilotSnapshot: Codable, Sendable, Equatable {
   /// How I'm doing (`AutopilotPolicy.progress`).
   public var progress = AutopilotProgress()
   /// What BZ did on its own that the owner hasn't called good or undone yet, oldest first, with
-  /// any Undo still running ("undoing"), so one cut short by a quit can be clicked again.
+  /// any Undo still running ("undoing"), so one cut short by a quit can be clicked again, and any
+  /// undone one whose note the owner hasn't pressed OK on.
   public var tells: [AutopilotTell] = []
   /// Whether BZ acts on its own when sure (Settings → Autopilot): the owner's setting, not
   /// something it learned.
@@ -655,6 +662,8 @@ public enum AutopilotCommand: Codable, Sendable, Equatable {
   /// The owner undoes what BZ did on its own: copies come back, the lesson becomes a keep and the
   /// guess scores wrong.
   case tellUndo(id: String)
+  /// OK on what an Undo left the owner to read: the tell leaves Teach BZ.
+  case tellSeen(id: String)
   case setActsOnItsOwn(Bool)
   /// Forgets every lesson of a group, as Settings shows them.
   case forgetLesson(ruleIDs: [String])

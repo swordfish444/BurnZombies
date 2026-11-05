@@ -20,7 +20,7 @@ func tellProof() async throws {
 // MARK: A Mac BZ has learned about
 
 /// What an engine's fake sources did. Something burned is gone until it is restored. A copy can
-/// take `delay` to retire, the way Git takes its time.
+/// take `delay` to retire, the way Git takes its time, and restores can be made to fail.
 final class TellWorld: @unchecked Sendable {
   let burns = Calls()
   let restores = Calls()
@@ -28,6 +28,10 @@ final class TellWorld: @unchecked Sendable {
   private let lock = NSLock()
   private var items: [AutopilotItem]
   private var started: [String: Date] = [:]
+  private var restoreRefusal: String?
+  /// Every restore from now on fails, saying `reason`.
+  func refuseRestores(_ reason: String) { lock.withLock { restoreRefusal = reason } }
+  private func refusal() -> String? { lock.withLock { restoreRefusal } }
   init(copies: [AutopilotItem] = [], programs: [AutopilotItem] = [], delay: TimeInterval = 0) {
     items = copies + programs
     self.delay = delay
@@ -67,7 +71,10 @@ final class TellWorld: @unchecked Sendable {
           itemID: item.id, kind: .worktree, name: item.name, authority: authority,
           outcome: "burned", detail: "", bytes: item.bytes, restore: backup)
       },
-      restoreWorktree: { receipt in self.restores.add(receipt.itemID) })
+      restoreWorktree: { receipt in
+        if let reason = self.refusal() { throw StoreError.message(reason) }
+        self.restores.add(receipt.itemID)
+      })
   }
 }
 
@@ -455,13 +462,13 @@ private func programUndoProof() async throws {
   equal(tell.kind, .process)
   equal(tell.count, 2)
   equal(Set(world.burns.all), ["process:vite", "process:storybook"], "both stopped")
-  _ = try await engine.apply(.tellUndo(id: tell.id), now: now)
+  let undone = try await engine.apply(.tellUndo(id: tell.id), now: now)
   equal(world.restores.all, [], "nothing can be restored")
   let after = try store.memory()
   equal(after.tells.first?.state, "undone")
-  let note = after.tells.first?.note ?? ""
-  check(note.contains("can't come back"), "the tell says so: \(note)")
-  equal(note, "Stopped programs and deleted folders can't come back; I'll ask next time.")
+  // The card said so before the press, so the Undo leaves nothing more to read.
+  isNil(after.tells.first?.note)
+  check(undone.tells.isEmpty, "the tell closes")
   let keep = AutopilotPolicy.lessonMatch(
     .process, ["family": ["node"], "idle": ["6h"]], verdict: .keep)
   let flipped = after.rules.first { $0.questionID == tell.questionID }

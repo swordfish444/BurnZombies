@@ -436,7 +436,7 @@ public enum Demo {
     snapshot.lessons = AutopilotPolicy.lessonGroups(learned.memory)
     snapshot.progress = AutopilotPolicy.progress(
       learned.memory, receipts: receipts, impact: impact, now: now)
-    snapshot.tells = learned.memory.tells.filter { !$0.isClosed }
+    snapshot.tells = learned.memory.tells.filter(\.waitsForOwner)
     snapshot.actsOnItsOwn = learned.memory.actsOnItsOwn
     snapshot.answers = learned.memory.answers
     snapshot.trainingProgress = AutopilotPolicy.trainingProgress(learned.memory)

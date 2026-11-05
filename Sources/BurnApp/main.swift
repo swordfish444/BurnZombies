@@ -276,9 +276,9 @@ import UserNotifications
   /// The Autopilot surfaces appear once an engine is attached, or in the demo.
   var autopilotAvailable: Bool { demo || autopilotRunner != nil }
   /// What the owner pressed on a tell that the engine hasn't finished yet, by tell id. Teach BZ
-  /// hides a tell called good at once and shows one being undone as under way; a command the engine
-  /// couldn't do clears its entry and the tell comes back with its buttons.
-  enum TellAction { case good, undo }
+  /// hides a tell called good or seen at once and shows one being undone as under way; a command the
+  /// engine couldn't do clears its entry and the tell comes back with its buttons.
+  enum TellAction { case good, undo, seen }
   @Published private(set) var tellActions: [String: TellAction] = [:]
   /// Why the last Good call or Undo on a tell couldn't be done, by tell id, so Teach BZ can say so
   /// on the card and not only in the footer. A new press clears it.
@@ -823,6 +823,19 @@ import UserNotifications
     tellProblems[tell.id] = nil
     sendAutopilot(
       .tellUndo(id: tell.id), local: { AutopilotLocal.tellUndo(&$0, id: tell.id, now: Date()) },
+      finished: { [weak self] problem in
+        self?.tellActions[tell.id] = nil
+        self?.tellProblems[tell.id] = problem
+      })
+  }
+  /// OK on what an Undo left the owner to read, such as a copy that couldn't come back: the tell
+  /// leaves Teach BZ.
+  func tellSeen(_ tell: AutopilotTell) {
+    guard tellActions[tell.id] == nil else { return }
+    tellActions[tell.id] = .seen
+    tellProblems[tell.id] = nil
+    sendAutopilot(
+      .tellSeen(id: tell.id), local: { AutopilotLocal.tellSeen(&$0, id: tell.id) },
       finished: { [weak self] problem in
         self?.tellActions[tell.id] = nil
         self?.tellProblems[tell.id] = problem

@@ -7,9 +7,24 @@ import Foundation
 extension AutopilotPolicy {
   /// Open tells close on their own after this long, without a score.
   public static let tellLifetime: TimeInterval = 7 * 86_400
-  /// What an undo says when some of what BZ burned can't be brought back.
-  public static let cantComeBack =
-    "Stopped programs and deleted folders can't come back; I'll ask next time."
+
+  /// What an Undo of copies tells the owner about the ones that didn't come back: how many failed
+  /// to restore, with the first reason, and how many had no restore point. Stopped programs and
+  /// deleted folders never come back, and their card says so before the press, so they need none.
+  static func undoNote(kind: AutopilotKind, failed: Int, reason: String?, missing: Int) -> String? {
+    guard kind == .worktree else { return nil }
+    var parts: [String] = []
+    if failed > 0 {
+      let copies: String = failed == 1 ? "1 copy" : "\(failed) copies"
+      let why: String = reason ?? "The restore failed."
+      parts.append(copies + " couldn't come back. " + why)
+    }
+    if missing > 0 {
+      let copies: String = missing == 1 ? "1 copy" : "\(missing) copies"
+      parts.append(copies + " had no backup to come back from.")
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " ")
+  }
 
   /// BZ's guess at a question it is about to ask, sure only when it is sure of everything a yes
   /// would burn. The lesson a Yes teaches can reach further than the question's own matches: one the
@@ -181,12 +196,14 @@ extension AutopilotPolicy {
     trimTells(&memory)
   }
 
-  /// Keeps the last `maximumClosedTells` closed tells; open and undoing ones always stay.
+  /// Keeps the last `maximumClosedTells` closed tells; open and undoing ones always stay, and so does
+  /// an undone one whose note waits for the owner's OK.
   static func trimTells(_ memory: inout AutopilotMemory) {
-    var excess = memory.tells.filter(\.isClosed).count - maximumClosedTells
+    let done: [AutopilotTell] = memory.tells.filter { !$0.waitsForOwner }
+    var excess = done.count - maximumClosedTells
     guard excess > 0 else { return }
     memory.tells.removeAll { tell in
-      guard excess > 0, tell.isClosed else { return false }
+      guard excess > 0, !tell.waitsForOwner else { return false }
       excess -= 1
       return true
     }
@@ -271,7 +288,8 @@ extension AutopilotPolicy {
   }
 
   /// An Undo's last step, once the act's burns that can come back are back: the tell closes, with
-  /// what couldn't come back added to its note.
+  /// what couldn't come back added to its note. A tell with a note stays in Teach BZ until the owner
+  /// presses OK, so a copy that didn't come back is never missed.
   static func finishUndo(_ id: String, note: String?, memory: inout AutopilotMemory) throws {
     guard let t = memory.tells.firstIndex(where: { $0.id == id }) else {
       throw StoreError.message("I can't find that anymore.")
@@ -280,6 +298,18 @@ extension AutopilotPolicy {
     let parts: [String] = [memory.tells[t].note, note].compactMap { $0 }
     memory.tells[t].note = parts.isEmpty ? nil : parts.joined(separator: " ")
     memory.tells[t].state = "undone"
+    if !parts.isEmpty { memory.tells[t].seen = false }
+    trimTells(&memory)
+  }
+
+  /// OK on what an Undo left the owner to read: the tell has been seen and leaves Teach BZ. Any
+  /// other tell is left as it is.
+  static func seen(_ id: String, memory: inout AutopilotMemory) throws {
+    guard let t = memory.tells.firstIndex(where: { $0.id == id }) else {
+      throw StoreError.message("I can't find that anymore.")
+    }
+    guard memory.tells[t].waitsForOK else { return }
+    memory.tells[t].seen = true
     trimTells(&memory)
   }
 

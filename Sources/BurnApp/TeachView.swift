@@ -66,10 +66,13 @@ struct TeachView: View {
   private var waiting: [AutopilotQuestion] {
     snapshot.questions.filter { $0.isOpen && !answeredIDs.contains($0.id) }
   }
-  /// What BZ did on its own that still waits for the owner, oldest first. One called good is gone
-  /// at once; one being undone stays, with its buttons off.
+  /// What BZ did on its own that still waits for the owner, oldest first. One called good, or whose
+  /// note was seen, is gone at once; one being undone stays, with its buttons off.
   private var tells: [AutopilotTell] {
-    snapshot.tellsWaiting.filter { model.tellActions[$0.id] != .good }
+    snapshot.tellsWaiting.filter { tell in
+      let pressed: AppModel.TellAction? = model.tellActions[tell.id]
+      return pressed != .good && pressed != .seen
+    }
   }
   private var showing: Card {
     Self.card(
@@ -124,7 +127,9 @@ struct TeachView: View {
     case .confirmation:
       if let confirmation { confirmationCard(confirmation) }
     case .tell(let id):
-      if let tell = tells.first(where: { $0.id == id }) { tellCard(tell) }
+      if let tell = tells.first(where: { $0.id == id }) {
+        if tell.waitsForOK { undoneCard(tell) } else { tellCard(tell) }
+      }
     case .question(let id):
       if let question = waiting.first(where: { $0.id == id }) { questionCard(question) }
     case .caughtUp:
@@ -285,12 +290,7 @@ struct TeachView: View {
           softLine(cantComeBack).accessibilityIdentifier("teach-cant-come-back")
         }
         if let note = tell.note, !note.isEmpty { softLine(note, size: 13.5) }
-        if let problem = model.tellProblems[tell.id] {
-          Text(problem)
-            .font(.system(size: 14, weight: .semibold)).foregroundStyle(AutopilotTheme.red)
-            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-            .accessibilityIdentifier("teach-problem")
-        }
+        problemLine(tell)
       }
     } actions: {
       HStack(spacing: 14) {
@@ -303,6 +303,41 @@ struct TeachView: View {
           text: BurnTheme.cream, stroke: Color.white.opacity(0.22), id: "teach-undo", off: working
         ) { model.tellUndo(tell) }
       }
+    }
+  }
+
+  /// An Undo that left something to read, such as a copy that couldn't come back and why: the tell
+  /// as it was, that the Undo finished, and the note, with one OK that closes it.
+  private func undoneCard(_ tell: AutopilotTell) -> some View {
+    let rows = AutopilotText.tellRows(tell, now: Date(), calendar: .current)
+    return TeachCardFrame {
+      VStack(spacing: 8) {
+        Text(AutopilotLook.emoji(tell.kind)).font(.system(size: 34))
+        headline(AutopilotText.tellHeadline(tell))
+        TeachRows(rows: rows, more: AutopilotText.tellMore(tell))
+        statusLine(AutopilotText.tellUndoneLine).accessibilityIdentifier("teach-undone")
+        if let note = tell.note, !note.isEmpty {
+          Text(note).font(.system(size: 15, weight: .semibold)).foregroundStyle(BurnTheme.cream)
+            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("teach-note")
+        }
+        problemLine(tell)
+      }
+    } actions: {
+      answerButton(
+        "OK", fill: AutopilotTheme.green, text: Color.black.opacity(0.86), stroke: Color.clear,
+        id: "teach-ok"
+      ) { model.tellSeen(tell) }
+    }
+  }
+
+  /// Why the last press on a tell couldn't be done, when it couldn't.
+  @ViewBuilder private func problemLine(_ tell: AutopilotTell) -> some View {
+    if let problem = model.tellProblems[tell.id] {
+      Text(problem)
+        .font(.system(size: 14, weight: .semibold)).foregroundStyle(AutopilotTheme.red)
+        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("teach-problem")
     }
   }
 

@@ -11,6 +11,51 @@ func undoSafetyProof() async throws {
   try await scopeProof()
   try await leftoverUndoProof()
   try await tellBookkeepingProof()
+  try await failedRestoreProof()
+}
+
+/// A restore that fails during an Undo: the tell stays in view, undone, saying what didn't come
+/// back and why. The lesson and trust still flip.
+private func failedRestoreProof() async throws {
+  let now = Date()
+  let world = TellWorld(copies: threeCopies(now))
+  let (engine, store, root) = try tellEngine("undo-failed", world, trustedCopies(now: now))
+  defer { try? FileManager.default.removeItem(at: root) }
+  guard let tell = await engine.tick(now: now).tells.first else {
+    return failTest("failed restore: a tell to undo")
+  }
+  world.refuseRestores("The restore point is gone.")
+  let undone = try await engine.apply(.tellUndo(id: tell.id), now: now)
+  equal(world.restores.all, [], "failed restore: nothing came back")
+  guard let shown = undone.tells.first(where: { $0.id == tell.id }) else {
+    return failTest("failed restore: the tell stays in view after the Undo")
+  }
+  equal(shown.state, "undone", "failed restore: the Undo itself is done")
+  equal(
+    shown.note, "3 copies couldn't come back. The restore point is gone.",
+    "failed restore: the tell says which didn't come back, and why")
+  check(shown.waitsForOK, "failed restore: the tell waits for the owner's OK")
+  let after = try store.memory()
+  equal(after.rules.first { $0.questionID == tell.questionID }?.verdict, .keep, "the lesson flips")
+  equal(after.scores.last?.right, false, "and BZ's guess scores wrong")
+
+  // OK closes it. A second OK changes nothing, and OK on an open tell leaves it open.
+  let seen = try await engine.apply(.tellSeen(id: tell.id), now: now)
+  checkFalse(seen.tells.contains { $0.id == tell.id }, "failed restore: OK closes it")
+  let read = try store.memory()
+  equal(read.tells.first?.seen, true, "failed restore: the note was seen")
+  equal(read.tells.first?.note, shown.note, "and keeps what it said")
+  _ = try await engine.apply(.tellSeen(id: tell.id), now: now)
+  equal(try store.memory().tells, read.tells, "failed restore: a second OK changes nothing")
+  let openWorld = TellWorld(copies: threeCopies(now))
+  let (open, openStore, openRoot) = try tellEngine("undo-ok-open", openWorld, trustedCopies(now: now))
+  defer { try? FileManager.default.removeItem(at: openRoot) }
+  guard let waiting = await open.tick(now: now).tells.first else {
+    return failTest("failed restore: an open tell")
+  }
+  let stillOpen = try await open.apply(.tellSeen(id: waiting.id), now: now)
+  equal(stillOpen.tells.map(\.id), [waiting.id], "OK on an open tell leaves it open")
+  equal(try openStore.memory().tells.first?.state, "open")
 }
 
 /// The owner clicks Undo while BZ is still retiring the copies it acted on. Nothing starts to burn
@@ -139,6 +184,7 @@ private func absorbedUndoProof() async throws {
   equal(Set(world.restores.all), Set(world.copies.map(\.id)), "BZ's burns come back")
   equal(after.tells.first?.state, "undone")
   equal(after.tells.first?.note, "Your newer answer stands.")
+  check(after.tells.first?.waitsForOK == true, "the note stays in view until the owner's OK")
   equal(after.scores.count, before.scores.count + 1)
   equal(after.scores.last?.right, false, "BZ's guess scores wrong")
   checkFalse(after.rules.contains { $0.verdict == .keep }, "no keep is learned")
