@@ -10,7 +10,7 @@ BurnZombies cleans up on its own. It looks for three kinds of leftovers right aw
 
 ## How it decides
 
-Only things worth it are looked at: anything freeing at least 100 MB of disk or memory, or a program keeping a CPU core at least a quarter busy. Smaller things are not shown, asked about, judged or burned. Old copies that haven't been measured yet are sized a little at each look before they count.
+Only things worth it are looked at: anything freeing at least 100 MB of disk or memory, or a program keeping a CPU core at least a quarter busy. Smaller things are not shown, asked about, judged or burned. Old copies that haven't been measured yet are sized a little at each look before they count. BZ remembers those sizes, and the ages it finds, across restarts and updates, so they don't drop out again while they are measured.
 
 Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: node_modules"). Then, in order:
 
