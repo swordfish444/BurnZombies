@@ -299,12 +299,7 @@ public enum AutopilotWorktrees {
         throw Refusal("I could not check it safely, so I left it alone.")
       }
     }
-    switch inUse(path) {
-    case 0: break
-    case 1: throw Refusal("Something is using it right now.")
-    default:
-      throw Refusal("I could not check whether something is using it, so I left it alone.")
-    }
+    try unused(path, inUse, else: "Something is using it right now.")
 
     // What the catalog said must still be true, recomputed from the current HEAD. A fact it
     // had not checked yet may only turn out safe; anything riskier is judged again.
@@ -401,9 +396,7 @@ public enum AutopilotWorktrees {
     guard again == tree, headAgain == head else {
       throw Refusal("It changed while I was backing it up, so I left it alone.")
     }
-    guard inUse(path) == 0 else {
-      throw Refusal("Something started using it, so I left it alone.")
-    }
+    try unused(path, inUse, else: "Something started using it, so I left it alone.")
     var branch: String?
     if let symbolic = try? line(path, ["symbolic-ref", "-q", "HEAD"]),
       symbolic.hasPrefix("refs/heads/")
@@ -430,6 +423,18 @@ public enum AutopilotWorktrees {
         ? "Removed. Your unsaved changes are backed up, so you can restore it."
         : "Removed. Everything in it was already saved, so you can restore it.",
       bytes: item.bytes, restore: recovery)
+  }
+
+  /// Why a copy was left when the check for programs using it couldn't finish.
+  static let uncheckedUse = "I could not check whether something is using it, so I left it alone."
+
+  /// Refuses with `busy` when a program uses the copy, and says so when the check couldn't tell.
+  private static func unused(_ path: String, _ inUse: (String) -> Int32, else busy: String) throws {
+    switch inUse(path) {
+    case 0: return
+    case 1: throw Refusal(busy)
+    default: throw Refusal(uncheckedUse)
+    }
   }
 
   /// Same buckets as the catalog, from a fresh `git status`.

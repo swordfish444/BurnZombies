@@ -16,6 +16,7 @@ func autopilotDiskProof() async throws {
   try adkJunkProof(base: base + "/junk", now: now)
   try adkCopyAgeProof(base: base + "/age", now: now)
   try await adkJunkCacheProof(base: base + "/cache", now: now)
+  try await adkOwnWalkProof(base: base + "/walks", now: now)
 }
 
 private func adkWrite(_ text: String, to path: String, modified: Date? = nil) throws {
@@ -835,5 +836,122 @@ private func adkJunkCacheProof(base: String, now: Date) async throws {
   checkFalse(
     items.contains { later.contains($0.path ?? "") },
     "checkouts already walked, main checkouts included, wait for the six-hourly walk")
+  await monitor.shutdownWorktrees()
+}
+
+/// BZ's own junk walk counted as a program using what it burned: the check sees every program of
+/// this user, BZ included. A copy dated in the same look it burned was walked at that moment, and
+/// its refusal stood for six hours. Here the walk holds each folder it measures open, as the native
+/// walker does for a moment with every folder it reads, and stays there until a burn wants it out.
+private func adkOwnWalkProof(base: String, now: Date) async throws {
+  let fm = FileManager.default
+  let home = base + "/home"
+  let repo = home + "/git/shop"
+  try adkRepository(repo)
+  try adkWrite("node_modules/\n", to: repo + "/.gitignore")
+  try adkGit(repo, ["add", "."])
+  try adkGit(repo, ["commit", "-m", "fixture"])
+  let chunk = base + "/chunk"
+  try Data(count: 104_857_600).write(to: URL(fileURLWithPath: chunk))
+  var primary = WorktreeRecord(id: "shop", path: repo, repository: repo + "/.git")
+  primary.main = true
+  func copy(_ name: String) throws -> WorktreeRecord {
+    let path = home + "/git/" + name
+    try adkGit(repo, ["worktree", "add", "--detach", path])
+    try fm.createDirectory(atPath: path + "/node_modules/pkg", withIntermediateDirectories: true)
+    if clonefile(chunk, path + "/node_modules/pkg/part", 0) != 0 {
+      try fm.copyItem(atPath: chunk, toPath: path + "/node_modules/pkg/part")
+    }
+    var record = WorktreeRecord(id: name, path: path, repository: repo + "/.git")
+    record.lastFileChange = now.addingTimeInterval(-40 * 86_400)
+    record.lastCommitAt = record.lastFileChange
+    return record
+  }
+  let retired = try copy("shop-a")
+  let cleared = try copy("shop-b")
+  let held = try copy("shop-c")
+  let later = try copy("shop-d")
+  func junkOf(_ record: WorktreeRecord) -> String { record.path + "/node_modules" }
+  let copyItem = AutopilotItem(
+    id: "worktree:shop-a", kind: .worktree, name: "shop-a", path: retired.path, bytes: 100 << 20,
+    facts: ["saved": "merged", "changes": "none"])
+  let junkItem = AutopilotItem(
+    id: "disk:" + AutopilotItem.hash(junkOf(cleared)), kind: .disk, name: "node_modules in shop-b",
+    path: junkOf(cleared), bytes: 100 << 20, facts: ["folder": "node_modules"])
+
+  let reached = Calls()
+  let released = Calls()
+  let junk = AutopilotJunkCache(sizer: { folder, stop in
+    let handle = open(folder, O_RDONLY | O_DIRECTORY)
+    defer { if handle >= 0 { close(handle) } }
+    reached.add(folder)
+    let deadline = Date().addingTimeInterval(20)
+    while released.all.isEmpty, !stop(), Date() < deadline { usleep(2_000) }
+    return AutopilotDisk.allocatedSize(folder, stop: stop)
+  })
+  let state = URL(fileURLWithPath: base + "/state")
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: state, accessCheck: fixtureAccess)
+  let sources = AutopilotSources.live(monitor: monitor, root: state, home: home, junk: junk)
+  func reach(_ folder: String) async -> Bool {
+    let deadline = Date().addingTimeInterval(20)
+    while !reached.all.contains(folder), Date() < deadline {
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return reached.all.contains(folder)
+  }
+
+  // The walk is in the first copy, the one to burn.
+  _ = sources.disk([primary, retired, cleared])
+  let first = await reach(junkOf(retired))
+  check(first, "the walk measures the first copy's junk")
+  let refused = AutopilotWorktrees.retire(copyItem, authority: "operator", root: state)
+  equal(
+    refused.detail, "Something is using it right now.",
+    "BZ's own walk in a copy counts as something using it")
+  let burned = sources.retireWorktree(copyItem, "operator")
+  equal(burned.outcome, "burned", "the burn steps the walk out of the copy first: \(burned.detail)")
+  checkFalse(fm.fileExists(atPath: retired.path), "the copy is gone")
+
+  // It went on to the next copy, whose junk is to go.
+  let next = await reach(junkOf(cleared))
+  check(next, "the walk goes on to the next copy")
+  let kept = AutopilotDisk.reclaim(junkItem, authority: "operator", home: home)
+  equal(
+    kept.detail, "Something is using that folder right now, so I left it alone.",
+    "BZ's own walk in a junk folder counts as something using it")
+  let reclaimed = sources.reclaimDisk(junkItem, "operator")
+  equal(
+    reclaimed.outcome, "burned", "the burn steps the walk out of the folder: \(reclaimed.detail)")
+  checkFalse(fm.fileExists(atPath: junkOf(cleared)), "the junk is gone")
+  released.add("measure at full speed")
+
+  // A walk that starts while a copy burns doesn't go in; once the burn is over, it does.
+  let records = [primary, retired, cleared, held, later]
+  func listed(_ items: [AutopilotItem], _ record: WorktreeRecord) -> Bool {
+    items.contains { $0.path == junkOf(record) }
+  }
+  let during = junk.clearing(held.path) {
+    var items = sources.disk(records)
+    let deadline = Date().addingTimeInterval(20)
+    while !listed(items, later), Date() < deadline {
+      Thread.sleep(forTimeInterval: 0.05)
+      items = sources.disk(records)
+    }
+    return items
+  }
+  check(listed(during, later), "a walk measures the copies nothing burns")
+  checkFalse(listed(during, held), "but not the copy being burned")
+  checkFalse(reached.all.contains(junkOf(held)), "it doesn't even look inside")
+  var after = sources.disk(records)
+  let deadline = Date().addingTimeInterval(20)
+  while !listed(after, held), Date() < deadline {
+    try await Task.sleep(nanoseconds: 50_000_000)
+    after = sources.disk(records)
+  }
+  check(listed(after, held), "a copy left for a burn that didn't happen is walked again")
+  checkFalse(
+    listed(after, retired) || listed(after, cleared),
+    "what burned is not listed: \(after.map(\.name))")
   await monitor.shutdownWorktrees()
 }

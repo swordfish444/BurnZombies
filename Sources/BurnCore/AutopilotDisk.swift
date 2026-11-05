@@ -59,12 +59,13 @@ public enum AutopilotDisk {
   /// Rebuildable folders of at least 100 MB: inside live checkouts (with `mains`, also the main
   /// checkout each one belongs to) and, with `caches`, in the global developer caches. Nothing
   /// outside `home`, no link, no private area, nothing Git tracks. Work stops at a time budget;
-  /// the rest comes next time.
+  /// the rest comes next time. With `walks`, nothing being burned is walked: a checkout or cache
+  /// folder a burn wants is skipped, or left at the next step.
   public static func items(
     worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), caches: Bool = true,
     mains: Bool = true, now: Date = Date(),
     sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) },
-    protected: ProtectedLocations? = nil
+    protected: ProtectedLocations? = nil, walks: AutopilotWalks? = nil
   ) -> [AutopilotItem] {
     let protected = protected ?? .limited(homes: [home])
     let base = WorkspaceSafety.canonical(home)
@@ -84,8 +85,10 @@ public enum AutopilotDisk {
       }
       for target in targets {
         guard Date() < deadline, refusal(target, home: base, protected: protected) == nil,
-          let bytes = sizer(target),
-          bytes >= minimumBytes, let touched = modified(target)
+          walks?.enter(target) ?? true
+        else { continue }
+        defer { walks?.leave(target, early: false) }
+        guard let bytes = sizer(target), bytes >= minimumBytes, let touched = modified(target)
         else { continue }
         let child = leaf(target)
         let name = cache.children ? child + " in " + cache.label : cache.label + " cache"
@@ -103,14 +106,22 @@ public enum AutopilotDisk {
 
     for checkout in checkouts(worktrees, home: base, mains: mains, protected: protected) {
       guard Date() < deadline else { break }
+      guard walks?.enter(checkout.path) ?? true else { continue }
+      var early = false
+      defer { walks?.leave(checkout.path, early: early) }
+      // Whether a burn wants the walk out of this checkout. Once it does, nothing more is read.
+      func away() -> Bool {
+        if !early { early = walks?.wanted(checkout.path) ?? false }
+        return early
+      }
       // Git is asked about the checkout, so its Git data must be within reach too.
       guard refusal(checkout.path, home: base, protected: protected) == nil,
         protected.pointerPlace(checkout.path) == nil
       else { continue }
-      let folders = rebuildableFolders(under: checkout.path).filter {
+      let folders = rebuildableFolders(under: checkout.path, stop: away).filter {
         refusal($0.path, home: base, protected: protected) == nil
       }
-      guard !folders.isEmpty,
+      guard !folders.isEmpty, !away(),
         let blocked = trackedFolders(folders.map { $0.path }, in: checkout.path)
       else { continue }
       // Another repository inside a folder is somebody's project, not build output.
@@ -118,9 +129,9 @@ public enum AutopilotDisk {
       guard !junk.isEmpty else { continue }
       let place = leaf(checkout.path)
       let worked = lastWorked(
-        checkout, skipping: Set(junk.map { $0.path }), now: now, until: deadline)
+        checkout, skipping: Set(junk.map { $0.path }), now: now, until: deadline, stop: away)
       for folder in junk {
-        guard Date() < deadline else { break }
+        guard Date() < deadline, !away() else { break }
         guard let bytes = sizer(folder.path), bytes >= minimumBytes,
           let touched = modified(folder.path)
         else { continue }
@@ -144,9 +155,11 @@ public enum AutopilotDisk {
 
   /// Disk space a folder really uses (allocated blocks) with the native read-only fts walker:
   /// no symlinks, no other volumes, no hydration of online-only files. Nil when the path is
-  /// not a plain folder or the time limit passes first.
-  public static func allocatedSize(_ path: String, deadline: TimeInterval = 30) -> UInt64? {
-    walk(path, deadline: deadline, partial: false)
+  /// not a plain folder, or the time limit passes or `stop` says so first.
+  public static func allocatedSize(
+    _ path: String, deadline: TimeInterval = 30, stop: () -> Bool = { false }
+  ) -> UInt64? {
+    walk(path, deadline: deadline, partial: false, stop: stop)
   }
 
   /// Like `allocatedSize`, but when the time limit passes it returns what it counted so far:
@@ -155,7 +168,9 @@ public enum AutopilotDisk {
     walk(path, deadline: deadline, partial: true)
   }
 
-  private static func walk(_ path: String, deadline: TimeInterval, partial: Bool) -> UInt64? {
+  private static func walk(
+    _ path: String, deadline: TimeInterval, partial: Bool, stop: () -> Bool = { false }
+  ) -> UInt64? {
     var info = stat()
     guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
       let handle = bz_disk_open(path, 1)
@@ -167,13 +182,16 @@ public enum AutopilotDisk {
         ? root.allocated : nil
     }
     let limit = ProcessInfo.processInfo.systemUptime + deadline
-    while !Task.isCancelled, ProcessInfo.processInfo.systemUptime < limit {
+    while !Task.isCancelled, !stop(), ProcessInfo.processInfo.systemUptime < limit {
       let step = bz_disk_step(handle, 5000)
       if step < 0 { return nil }
       if step == 1 { return total() }
     }
     return partial ? total() ?? 0 : nil
   }
+
+  /// Why a junk folder was left when the check for programs using it couldn't finish.
+  static let uncheckedUse = "I couldn't tell if something is using that folder, so I left it alone."
 
   /// Removes one junk folder after checking every rail again on the live path. Never throws;
   /// a refusal leaves the folder untouched. Known kinds are deleted and measured first; any
@@ -226,7 +244,7 @@ public enum AutopilotDisk {
     switch inUse(path) {
     case 0: break
     case 1: return refuse("Something is using that folder right now, so I left it alone.")
-    default: return refuse("I couldn't tell if something is using that folder, so I left it alone.")
+    default: return refuse(uncheckedUse)
     }
     // One last look right before removing it.
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
@@ -375,13 +393,16 @@ public enum AutopilotDisk {
   /// record's complete walk or, when that walk couldn't finish, a walk here past its junk. A copy
   /// that walk can't finish either has an unknown age, which is never old.
   private static func lastWorked(
-    _ checkout: Checkout, skipping junk: Set<String>, now: Date, until deadline: Date
+    _ checkout: Checkout, skipping junk: Set<String>, now: Date, until deadline: Date,
+    stop: () -> Bool
   ) -> (date: Date?, old: Bool) {
     guard checkout.linked, let known = checkout.activity else { return (nil, false) }
     let stale = now.timeIntervalSince(known) > staleAfter
     // No walk makes a recent copy older.
     if !stale || checkout.walked { return (known, stale) }
-    guard let files = newestChange(under: checkout.path, skipping: junk, until: deadline) else {
+    guard
+      let files = newestChange(under: checkout.path, skipping: junk, until: deadline, stop: stop)
+    else {
       return (known, false)
     }
     let latest = max(known, files)
@@ -390,11 +411,13 @@ public enum AutopilotDisk {
 
   /// Rebuildable folders up to three levels below a checkout root. Never enters `.git`, other
   /// repositories, links or the folders it finds.
-  private static func rebuildableFolders(under root: String) -> [(path: String, name: String)] {
+  private static func rebuildableFolders(under root: String, stop: () -> Bool)
+    -> [(path: String, name: String)]
+  {
     var found: [(path: String, name: String)] = []
     var queue: [(path: String, depth: Int)] = [(path: root, depth: 0)]
     var listed = 0
-    while !queue.isEmpty, listed < directoryBudget, found.count < candidateLimit {
+    while !queue.isEmpty, listed < directoryBudget, found.count < candidateLimit, !stop() {
       let (directory, depth) = queue.removeFirst()
       guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else {
         continue
@@ -416,9 +439,10 @@ public enum AutopilotDisk {
 
   /// The newest change to anything in a copy, folders included, except Git's data and what is
   /// inside the given junk folders (their own times count). Never follows links or leaves the
-  /// volume. Nil when it can't see everything within the entry budget and the deadline.
+  /// volume. Nil when it can't see everything within the entry budget and the deadline, or `stop`
+  /// says so first.
   private static func newestChange(
-    under root: String, skipping junk: Set<String>, until deadline: Date
+    under root: String, skipping junk: Set<String>, until deadline: Date, stop: () -> Bool
   ) -> Date? {
     var info = stat()
     guard lstat(root, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
@@ -427,7 +451,7 @@ public enum AutopilotDisk {
     var pending = [root]
     var seen = 0
     while let directory = pending.popLast() {
-      guard Date() < deadline,
+      guard Date() < deadline, !stop(),
         let names = try? FileManager.default.contentsOfDirectory(atPath: directory)
       else { return nil }
       for name in names where name != ".git" {

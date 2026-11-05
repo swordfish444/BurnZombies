@@ -203,17 +203,27 @@ public actor Autopilot {
   }
 
   /// A refusal stands for the facts and authority it saw until either changes or a while
-  /// passes. Keyed by `refusalKey`; the latest refusal says why.
+  /// passes. Keyed by `refusalKey`; the latest refusal says why. A check for programs using the
+  /// item that couldn't finish says nothing about the item, so the next look tries once more;
+  /// a second one stands like any other.
   static func standingRefusals(_ receipts: [AutopilotReceipt], now: Date)
     -> [String: AutopilotReceipt]
   {
     var standing = [String: AutopilotReceipt]()
+    var unchecked = Set<String>()
     for r in receipts
     where r.outcome == "refused" && now.timeIntervalSince(r.date) < retryRefusalsAfter {
-      if let revision = r.revision { standing[refusalKey(r.itemID, revision, r.authority)] = r }
+      guard let revision = r.revision else { continue }
+      let key = refusalKey(r.itemID, revision, r.authority)
+      if uncheckedUse.contains(r.detail), unchecked.insert(key).inserted { continue }
+      standing[key] = r
     }
     return standing
   }
+
+  static let uncheckedUse: Set<String> = [
+    AutopilotWorktrees.uncheckedUse, AutopilotDisk.uncheckedUse,
+  ]
 
   static func refusalKey(_ id: String, _ revision: String, _ authority: String) -> String {
     [id, revision, authority].joined(separator: "@")

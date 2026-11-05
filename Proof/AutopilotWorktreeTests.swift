@@ -538,7 +538,8 @@ private func apRefusalProof(_ world: APWorld, _ items: [String: AutopilotItem]) 
       return 1
     })
   equal(asked, [busy.path!], "the in-use check looked at the copy")
-  try apExpectRefusal(world, busy, "consumers unknown", inUse: { _ in -1 })
+  let unknown = try apExpectRefusal(world, busy, "consumers unknown", inUse: { _ in -1 })
+  equal(unknown.detail, "I could not check whether something is using it, so I left it alone.")
 
   // A merge in progress.
   let busyPath = world.path("busy")
@@ -583,6 +584,25 @@ private func apRefusalProof(_ world: APWorld, _ items: [String: AutopilotItem]) 
   let gone = AutopilotWorktrees.retire(
     ghost, authority: "operator", root: world.state, inUse: { _ in 0 })
   equal(gone.outcome, "refused", "missing folder")
+
+  // Checked again once the backup is written: something started using it, or the check couldn't
+  // tell, which says nothing about the copy.
+  for (answer, reason) in [
+    (Int32(1), "Something started using it, so I left it alone."),
+    (-1, "I could not check whether something is using it, so I left it alone."),
+  ] {
+    var checks = 0
+    let late = AutopilotWorktrees.retire(
+      busy, authority: "operator", root: world.state,
+      inUse: { _ in
+        checks += 1
+        return checks == 1 ? 0 : answer
+      })
+    equal(late.outcome, "refused", "second check \(answer)")
+    equal(late.detail, reason, "second check \(answer)")
+    equal(checks, 2, "second check \(answer): both checks ran")
+    equal(apRead(busyPath + "/tracked.txt"), "original\n", "second check \(answer): the copy stays")
+  }
 }
 
 // MARK: Retire and restore
