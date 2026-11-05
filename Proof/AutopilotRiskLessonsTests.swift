@@ -9,6 +9,63 @@ func riskLessonsProof() async throws {
   try await reaskProof()
   try await keepNewRisksProof()
   try await keepEveryMemberProof()
+  try await keepUncheckedProof()
+}
+
+/// A No to a card asked again for copies BZ couldn't check keeps each of them, and what it taught
+/// says so: the "Got it!" sentence and each keep's title name what couldn't be checked, so neither
+/// reads as keeping every copy at that age.
+private func keepUncheckedProof() async throws {
+  let now = Date()
+  /// A copy untouched for a week, clean unless told otherwise.
+  func aged(
+    _ name: String, saved: String = "pushed", changes: String = "none", inUse: String = "no"
+  ) -> AutopilotItem {
+    AutopilotItem(
+      id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
+      facts: [
+        "repo": "web-app", "place": "patrol6", "saved": saved, "changes": changes,
+        "stale": "week", "inUse": inUse, "thread": "none",
+      ], lastUsed: now.addingTimeInterval(-10 * 86_400))
+  }
+  let world = TellWorld(copies: [aged("fix-login"), aged("dark-mode")])
+  let (engine, _, root) = try tellEngine("keep-unchecked", world, AutopilotMemory())
+  defer { try? FileManager.default.removeItem(at: root) }
+  guard let clean = await engine.tick(now: now).questions.first(where: { $0.kind == .worktree })
+  else { return failTest("unchecked: a question about the clean copies") }
+  _ = try await engine.apply(.answer(questionID: clean.id, answer: .yes), now: now)
+  await eventually { world.burns.all.count == 2 }
+
+  world.add(aged("odd-saved", saved: "unknown"))
+  world.add(aged("odd-changes", changes: "unknown"))
+  world.add(aged("odd-use", inUse: "unknown"))
+  let asked = await engine.tick(now: now.addingTimeInterval(60))
+  guard let again = asked.questions.first(where: { $0.kind == .worktree }) else {
+    return failTest("unchecked: the copies BZ couldn't check are asked about")
+  }
+  equal(again.risks, ["changes=unknown", "inUse=unknown", "saved=unknown"])
+  let refused = try await engine.apply(.answer(questionID: again.id, answer: .no), now: now)
+  for name in ["odd-saved", "odd-changes", "odd-use"] {
+    let status = refused.entries.first { $0.item.id == "worktree:" + name }?.status
+    equal(status, .keep, "unchecked: \(name) is kept")
+  }
+  // "Got it!" shows the sentence of the lesson group holding what the answer taught.
+  let taught: [String] = refused.rules.filter { $0.questionID == again.id }.map(\.id)
+  let gotIt: String? = refused.lessons.first { group in
+    group.ruleIDs.contains(where: taught.contains)
+  }?.sentence
+  equal(
+    gotIt,
+    "Copies used in the last month stay: Where its work is saved couldn't be checked, Unsaved changes couldn't be checked, Couldn't check if it's in use.",
+    "unchecked: the Got it! sentence names what couldn't be checked")
+  let titles: Set<String> = Set(refused.rules.filter { $0.questionID == again.id }.map(\.title))
+  let start = "Keep: Old project copies · Unused for a week · "
+  equal(
+    titles,
+    [
+      start + "Where its work is saved couldn't be checked",
+      start + "Unsaved changes couldn't be checked", start + "Couldn't check if it's in use",
+    ], "unchecked: each keep's title names what it keeps")
 }
 
 /// R31: an owner's Yes covers only the risks shown on that card, kept within them the way BZ's own
@@ -334,6 +391,10 @@ private func keepNewRisksProof() async throws {
     $0.verdict == .keep
   }?.sentence
   equal(sentence, "Java helpers serving a port stay while idle less than 6 hours.")
+  equal(
+    answered.rules.first { $0.questionID == again.id }?.title,
+    "Keep: Leftover Java helpers · Idle 1+ hour · Still running a server",
+    "its title names the risk it keeps")
 
   // Clean helpers at that age still burn under the earlier Yes; no server burns.
   world.add(helper("gradle-c", listening: false, bytes: 600_000_000))
@@ -385,7 +446,14 @@ private func keepNewRisksProof() async throws {
   equal(keepGroups.count, 1, "read as one lesson")
   equal(
     keepGroups.first?.sentence,
-    "Copies used in the last month stay: Work only on this Mac, Has unsaved changes.")
+    "Copies used in the last month stay: Work only on this Mac, Has lots of unsaved changes.")
+  let copyTitles: Set<String> = Set(refused.rules.filter { $0.questionID == twice.id }.map(\.title))
+  equal(
+    copyTitles,
+    [
+      "Keep: Old project copies · Unused for a week · Work only on this Mac",
+      "Keep: Old project copies · Unused for a week · Has lots of unsaved changes",
+    ], "each keep's title names the risk it keeps")
   let grouped: [String] = keepGroups.first?.ruleIDs ?? []
   let taught: [String] = copyKeeps.map(\.id)
   equal(Set(grouped), Set(taught), "the group holds both keeps")

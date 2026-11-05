@@ -493,15 +493,14 @@ public actor Autopilot {
       result.bytes[entry.status.rawValue, default: 0] += entry.item.bytes
     }
     result.questions = memory.openQuestions.filter { $0.count > 0 }
-    // Rules taught by a question read like its card, even rules taught with older words.
+    // Rules taught by a question read like its card, even rules taught with older words, and a keep
+    // narrowed to some risks names them.
     let taught = AutopilotPolicy.questionsByID(memory.questions)
     result.rules =
       memory.rules.map { rule in
-        guard var question = rule.questionID.flatMap({ taught[$0] }) else { return rule }
-        // A lesson names only the facts it kept, so its title leaves out what it generalized.
-        question.match = question.match.filter { rule.match[$0.key] != nil }
+        guard let question = rule.questionID.flatMap({ taught[$0] }) else { return rule }
         var shown = rule
-        shown.title = AutopilotPolicy.ruleTitle(question, answer: rule.verdict == .burn ? .yes : .no)
+        shown.title = AutopilotPolicy.lessonTitle(rule, question: question)
         return shown
       }
       + AutopilotPolicy.starterRules.map { rule in

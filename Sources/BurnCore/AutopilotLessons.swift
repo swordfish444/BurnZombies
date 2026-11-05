@@ -167,10 +167,11 @@ extension AutopilotPolicy {
       guard !kept.isEmpty else { continue }
       var match: [String: [String]] = wide.match
       match[fact] = kept
-      keeps.append(
-        AutopilotRule(
-          kind: question.kind, match: match, verdict: .keep, source: .operator, title: wide.title,
-          created: wide.created, questionID: question.id))
+      var keep = AutopilotRule(
+        kind: question.kind, match: match, verdict: .keep, source: .operator, title: wide.title,
+        created: wide.created, questionID: question.id)
+      keep.title = lessonTitle(keep, question: question)
+      keeps.append(keep)
     }
     return keeps
   }

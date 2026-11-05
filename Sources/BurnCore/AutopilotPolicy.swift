@@ -559,20 +559,19 @@ extension AutopilotPolicy {
     }
   }
 
-  /// A pattern's facts in two to four words each, most decisive first.
-  static func facts(_ kind: AutopilotKind, match: [String: [String]]) -> [String] {
-    let table: [(String, [String: String])]
+  /// The facts cards and lessons name, most decisive first, with each value in two to four words.
+  static func factWords(_ kind: AutopilotKind) -> [(fact: String, words: [String: String])] {
     switch kind {
     case .worktree:
-      table = [
+      return [
         ("saved", ["merged": "Already merged", "pushed": "Saved on GitHub", "local": "Work only on this Mac"]),
-        ("changes", ["none": "No unsaved changes", "small": "Has unsaved changes", "large": "Has unsaved changes"]),
+        ("changes", ["none": "No unsaved changes", "small": "Has unsaved changes", "large": "Has lots of unsaved changes"]),
         ("stale", stalePhrases),
         ("place", ["patrol6": "Made by Patrol6 agents", "codex": "Made by Codex", "claude": "Made by Claude", "conductor": "Made by Conductor"]),
         ("thread", ["ended": "Its chat is finished"]),
       ]
     case .process:
-      table = [
+      return [
         ("listening", ["yes": "Still running a server", "no": "Not serving anything"]),
         ("idle", ["active": "Still busy", "10m": "Idle 10+ minutes", "1h": "Idle 1+ hour", "6h": "Idle 6+ hours", "1d": "Idle 1+ day"]),
         ("orphaned", ["yes": "Its app is gone"]),
@@ -580,12 +579,94 @@ extension AutopilotPolicy {
         ("agent", ["codex": "Started by Codex", "claude": "Started by Claude", "cursor": "Started by Cursor"]),
       ]
     case .disk:
-      table = [
+      return [
         ("stale", stalePhrases),
         ("home", ["stale-worktree": "Inside old project copies", "repo": "Inside your projects"]),
       ]
     }
-    return table.compactMap { key, words in match[key]?.first.flatMap { words[$0] } }
+  }
+
+  /// A pattern's facts in two to four words each, most decisive first: a card's chips, by the first
+  /// value of each fact.
+  static func facts(_ kind: AutopilotKind, match: [String: [String]]) -> [String] {
+    factWords(kind).compactMap { row in match[row.fact]?.first.flatMap { row.words[$0] } }
+  }
+
+  /// A fact BZ couldn't check, as a lesson names it.
+  static let uncheckedWords: [String: String] = [
+    "saved": "Where its work is saved couldn't be checked",
+    "changes": "Unsaved changes couldn't be checked",
+    "inUse": "Couldn't check if it's in use",
+    "listening": "Its port couldn't be checked",
+  ]
+
+  /// What a lesson's facts cover, naming every value of each, so a keep narrowed to the risks its
+  /// card showed never reads as keeping more: "Work only on this Mac or where its work is saved
+  /// couldn't be checked". A lesson tells a few unsaved changes from lots of them, and whether a copy
+  /// is in use is named only when BZ couldn't check it, since a copy in use is never burned.
+  static func lessonFacts(_ kind: AutopilotKind, match: [String: [String]]) -> [String] {
+    var rows: [(fact: String, words: [String: String])] = []
+    for row in factWords(kind) {
+      var words: [String: String] = row.words
+      if row.fact == "changes" { words["small"] = "Has a few unsaved changes" }
+      rows.append((fact: row.fact, words: words))
+      if kind == .worktree && row.fact == "changes" { rows.append((fact: "inUse", words: [:])) }
+    }
+    var described: [String] = []
+    for row in rows {
+      guard let values = match[row.fact] else { continue }
+      if let phrase = lessonPhrase(kind, row.fact, values, row.words) { described.append(phrase) }
+    }
+    return described
+  }
+
+  /// One fact of a lesson in words: each value it allows, joined with "or", and what BZ couldn't
+  /// check last. Small and large unsaved changes together read as unsaved changes. Nil when it allows
+  /// every known value the fact can take, or a value with no words.
+  static func lessonPhrase(
+    _ kind: AutopilotKind, _ fact: String, _ values: [String], _ words: [String: String]
+  ) -> String? {
+    let known: [String] = values.filter { $0 != "unknown" }
+    let risky: [String] = riskFacts[kind]?.first { $0.fact == fact }?.values ?? []
+    let every: [String] = (safety[fact] ?? risky).filter { $0 != "unknown" }
+    if !every.isEmpty && Set(every).isSubset(of: Set(known)) { return nil }
+    var phrases: [String] = []
+    if fact == "changes" && known.contains("large") && known.contains("small") {
+      phrases.append("Has unsaved changes")
+    } else {
+      for value in known {
+        guard let phrase = words[value] else { return nil }
+        if !phrases.contains(phrase) { phrases.append(phrase) }
+      }
+    }
+    if values.contains("unknown") {
+      guard let unchecked = uncheckedWords[fact] else { return nil }
+      phrases.append(unchecked)
+    }
+    guard var text = phrases.first else { return nil }
+    for phrase in phrases.dropFirst() {
+      let first: String = phrase.prefix(1).lowercased()
+      text += " or " + first + phrase.dropFirst()
+    }
+    return text
+  }
+
+  /// A lesson's title in its question's words, for the facts it kept: "Keep: Old project copies ·
+  /// Unused for a week". A keep narrowed to the risks its card showed also names every value of each
+  /// narrowed fact: "… · Work only on this Mac".
+  public static func lessonTitle(_ rule: AutopilotRule, question: AutopilotQuestion) -> String {
+    var named: AutopilotQuestion = question
+    // A lesson names only the facts it kept, so its title leaves out what it generalized.
+    named.match = question.match.filter { rule.match[$0.key] != nil }
+    let answer: AutopilotAnswer = rule.verdict == .burn ? .yes : .no
+    let title: String = ruleTitle(named, answer: answer)
+    guard rule.verdict == .keep else { return title }
+    var narrowed: [String: [String]] = [:]
+    for (fact, _) in riskFacts[rule.kind] ?? [] where named.match[fact] == nil {
+      if let values = rule.match[fact] { narrowed[fact] = values }
+    }
+    let words: [String] = lessonFacts(rule.kind, match: narrowed)
+    return ([title] + words).joined(separator: " · ")
   }
 
   /// "14.4 GB" or "300 MB": one decimal is plenty for deciding. Public so a tell card says its size
@@ -599,8 +680,8 @@ extension AutopilotPolicy {
   /// long something sat unused is not one: a card says that in its headline and leaves it out of
   /// its facts, and only a program with no date lists its idle time here.
   static let cautions: Set<String> = [
-    "Work only on this Mac", "Has unsaved changes", "Still running a server", "Still busy",
-    "Idle 10+ minutes",
+    "Work only on this Mac", "Has unsaved changes", "Has lots of unsaved changes",
+    "Still running a server", "Still busy", "Idle 10+ minutes",
   ]
 
   /// The card for a question as it reads at `now`. The headline is "Burn 5 copies you used

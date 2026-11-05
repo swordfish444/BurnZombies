@@ -275,9 +275,22 @@ extension AutopilotPolicy {
     if families.count == 1 {
       subject = keptProgramNames[families[0]] ?? otherPrograms(families[0])
     }
-    if rule.match["listening"] == ["yes"] { subject += " serving a port" }
+    subject += serving(rule.match["listening"])
     guard let below = idleCeiling(rule) else { return subject + " stay." }
     return subject + " stay while idle less than " + below + "."
+  }
+
+  /// Which programs a keep holds by what they serve: " serving a port", " whose port couldn't be
+  /// checked", both joined with "or", or nothing when it holds them whatever they serve.
+  static func serving(_ values: [String]?) -> String {
+    guard let values else { return "" }
+    let known: Set<String> = Set(values.filter { $0 != "unknown" })
+    if known == ["yes", "no"] { return "" }
+    var parts: [String] = []
+    if known == ["yes"] { parts.append("serving a port") }
+    if known == ["no"] { parts.append("serving nothing") }
+    if values.contains("unknown") { parts.append("whose port couldn't be checked") }
+    return parts.isEmpty ? "" : " " + parts.joined(separator: " or ")
   }
 
   /// The idle floor just above everything a keep covers: "an hour" for active and 10m.
@@ -288,14 +301,15 @@ extension AutopilotPolicy {
     return idleBelow[order[top + 1]]
   }
 
-  /// "Copies used in the last week stay: Work only on this Mac, Has unsaved changes."
+  /// "Copies used in the last week stay: Work only on this Mac, Has unsaved changes." Every value
+  /// each fact keeps is named, so a keep narrowed to some risks never reads as keeping everything.
   static func keepSentence(_ rule: AutopilotRule) -> String {
     var subject: String = keptSubject(rule)
     if let bound = keptBound(rule) { subject += " " + bound }
     // How recently they were used is the bound's to say, so it isn't listed again as a fact.
     var listed = rule.match
     if let recency = recencyFacts[rule.kind] { listed[recency] = nil }
-    let shown: [String] = facts(rule.kind, match: listed)
+    let shown: [String] = lessonFacts(rule.kind, match: listed)
     guard !shown.isEmpty else { return subject + " stay." }
     return subject + " stay: " + shown.joined(separator: ", ") + "."
   }

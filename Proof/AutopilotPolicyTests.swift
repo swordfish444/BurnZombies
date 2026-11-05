@@ -148,7 +148,7 @@ func autopilotPolicyProof() throws {
     "Burn 2 copies of frontier-rpg unused since yesterday?")
   equal(
     AutopilotPolicy.ruleTitle(gameCopies, answer: .yes),
-    "Burn: Old copies of frontier-rpg · Has unsaved changes · Unused since yesterday")
+    "Burn: Old copies of frontier-rpg · Has lots of unsaved changes · Unused since yesterday")
   let orbitServers = AutopilotQuestion(
     kind: .process, match: ["family": ["node"], "repo": ["orbit-web"], "idle": ["1d"]],
     question: "", why: "", examples: [], count: 3, bytes: 3_000_000_000)

@@ -219,11 +219,59 @@ private func templateProof() {
   equal(group(kept, "rule:" + today.id)?.sentence, "Copies of api used in the last day stay.")
   equal(
     group(kept, "rule:" + edits.id)?.sentence,
-    "Copies used in the last 3 months stay: Has unsaved changes.")
+    "Copies used in the last 3 months stay: Has lots of unsaved changes.")
   equal(
     group(kept, "rule:" + local.id)?.sentence, "Copies stay: Work only on this Mac.",
     "kept at every age: no bound")
   equal(group(kept, "rule:" + caches.id)?.sentence, "Tool caches used in the last month stay.")
+
+  // A keep narrowed to the risks a card showed names every value it keeps, so it never reads as
+  // keeping everything: what BZ couldn't check, a few or lots of unsaved changes, joined with "or".
+  let week: [String] = ["today", "day", "week"]
+  let narrow: [(match: [String: [String]], sentence: String)] = [
+    (["saved": ["unknown"]], "Where its work is saved couldn't be checked"),
+    (["inUse": ["unknown"]], "Couldn't check if it's in use"),
+    (["changes": ["unknown"]], "Unsaved changes couldn't be checked"),
+    (["changes": ["large"]], "Has lots of unsaved changes"),
+    (["changes": ["small"]], "Has a few unsaved changes"),
+    (["changes": ["large", "small"]], "Has unsaved changes"),
+    (
+      ["saved": ["unknown", "local"]],
+      "Work only on this Mac or where its work is saved couldn't be checked"
+    ),
+    (
+      ["changes": ["unknown", "large"]],
+      "Has lots of unsaved changes or unsaved changes couldn't be checked"
+    ),
+    (["saved": ["local", "pushed"]], "Work only on this Mac or saved on GitHub"),
+    (["saved": ["unknown", "local", "pushed", "merged"]], ""),
+  ]
+  for (facts, words) in narrow {
+    var one = AutopilotMemory()
+    var match: [String: [String]] = facts
+    match["stale"] = week
+    _ = teach(&one, .worktree, match, .keep)
+    let expected: String =
+      words.isEmpty
+      ? "Copies used in the last month stay." : "Copies used in the last month stay: " + words + "."
+    equal(AutopilotPolicy.lessonGroups(one).first?.sentence, expected, "a keep of \(facts)")
+  }
+  let programKeeps: [(listening: [String], sentence: String)] = [
+    (["unknown"], "Java helpers whose port couldn't be checked stay while idle less than 6 hours."),
+    (
+      ["unknown", "yes"],
+      "Java helpers serving a port or whose port couldn't be checked stay while idle less than 6 hours."
+    ),
+    (["yes", "no"], "Java helpers stay while idle less than 6 hours."),
+  ]
+  for (listening, sentence) in programKeeps {
+    var one = AutopilotMemory()
+    let match: [String: [String]] = [
+      "family": ["java"], "idle": ["active", "10m", "1h"], "listening": listening,
+    ]
+    _ = teach(&one, .process, match, .keep)
+    equal(AutopilotPolicy.lessonGroups(one).first?.sentence, sentence, "a keep of \(listening)")
+  }
   equal(group(kept, "rule:" + drafts.id)?.verdict, .keep)
   equal(group(kept, "rule:" + drafts.id)?.kind, .worktree)
   equal(group(kept, "rule:" + drafts.id)?.evidence, "From 1 answer", "keeps have no tally part")
