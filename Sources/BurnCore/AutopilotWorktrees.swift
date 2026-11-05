@@ -728,44 +728,87 @@ public enum AutopilotWorktrees {
   }
 }
 
+/// A copy's size as `AutopilotSizes` measured it.
+public struct AutopilotSize: Codable, Sendable, Equatable {
+  public var bytes: UInt64
+  public var measured: Date
+  public init(bytes: UInt64, measured: Date) {
+    self.bytes = bytes
+    self.measured = measured
+  }
+}
+
 /// Sizes old copies the worktree inventory never measured, a bounded amount of time per tick,
 /// and remembers each size for a day. Until measured a copy counts as 0 bytes, so it waits
 /// outside the assessment; one too big to finish in time gets what was counted, a lower bound.
 public final class AutopilotSizes: @unchecked Sendable {
   private let lock = NSLock()
-  private var known: [String: (bytes: UInt64, measured: Date)] = [:]
+  private var known: [String: AutopilotSize]
+  private let store: AutopilotStore?
   private let sizer: (String, TimeInterval) -> UInt64?
+  /// With `store`, sizes outlive a restart: sizing every copy again takes many ticks, and each
+  /// one is out of the catalog until then.
   public init(
+    store: AutopilotStore? = nil,
     sizer: @escaping (String, TimeInterval) -> UInt64? = {
       AutopilotDisk.countedSize($0, deadline: $1)
     }
   ) {
+    self.store = store
     self.sizer = sizer
+    known = (try? store?.sizes()) ?? [:]
   }
 
   public func fill(_ records: [WorktreeRecord], budget: TimeInterval = 20, now: Date = Date())
     -> [WorktreeRecord]
   {
     let limit = ProcessInfo.processInfo.systemUptime + budget
-    return records.map { record in
+    var measured = false
+    let result: [WorktreeRecord] = records.map { record in
       guard record.allocated == 0, !record.missing, !record.retired, !record.bare,
         record.protectedPlace == nil
       else {
         return record
       }
       var sized = record
-      if let size = lock.withLock({ known[record.id] }),
-        now.timeIntervalSince(size.measured) < 86_400
-      {
+      if let size = lock.withLock({ known[record.id] }), Self.good(size, now: now) {
         sized.allocated = size.bytes
         return sized
       }
       let left = limit - ProcessInfo.processInfo.systemUptime
       guard left > 0, let bytes = sizer(record.path, min(30, left)) else { return sized }
-      lock.withLock { known[record.id] = (bytes, now) }
+      lock.withLock { known[record.id] = AutopilotSize(bytes: bytes, measured: now) }
+      measured = true
       sized.allocated = bytes
       return sized
     }
+    // Sizes no longer good go; a store that can't be written leaves them in memory only.
+    if measured {
+      lock.withLock {
+        known = known.filter { Self.good($0.value, now: now) }
+        try? store?.save(sizes: known)
+      }
+    }
+    return result
+  }
+
+  private static func good(_ size: AutopilotSize, now: Date) -> Bool {
+    now.timeIntervalSince(size.measured) < 86_400
+  }
+}
+
+/// What one look of `AutopilotAges` found: when the copy was last worked in, nil when the look
+/// found no date, and the HEAD and changes the inventory saw when it looked.
+public struct AutopilotLook: Codable, Sendable, Equatable {
+  public var date: Date?
+  public var at: Date
+  public var head: String?
+  public var status: String
+  public init(date: Date?, at: Date, head: String?, status: String) {
+    self.date = date
+    self.at = at
+    self.head = head
+    self.status = status
   }
 }
 
@@ -774,27 +817,25 @@ public final class AutopilotSizes: @unchecked Sendable {
 /// Until dated a copy's age is unknown, so no lesson or question reaches it. A date holds for an
 /// hour, or until the inventory sees the copy's HEAD or changes move.
 public final class AutopilotAges: @unchecked Sendable {
-  private struct Look {
-    var date: Date?
-    var at: Date
-    var head: String?
-    var status: String
-  }
   private let lock = NSLock()
-  private var known: [String: Look] = [:]
+  private var known: [String: AutopilotLook]
+  private let store: AutopilotStore?
   private let walks: AutopilotWalks?
   private let prober: (String, TimeInterval, () -> Bool) -> Date?
-  /// With `walks`, the junk walk's, a burn of a copy waits for its look and stops it: the check
-  /// for programs using a copy would otherwise find BZ itself inside. `prober` is told to stop
-  /// through its last argument.
+  /// With `store`, looks outlive a restart, each for the rest of its hour. With `walks`, the junk
+  /// walk's, a burn of a copy waits for its look and stops it: the check for programs using a
+  /// copy would otherwise find BZ itself inside. `prober` is told to stop through its last
+  /// argument.
   public init(
-    walks: AutopilotWalks? = nil,
+    store: AutopilotStore? = nil, walks: AutopilotWalks? = nil,
     prober: @escaping (String, TimeInterval, () -> Bool) -> Date? = {
       AutopilotWorktrees.lastWorked(path: $0, seconds: $1, stop: $2)
     }
   ) {
+    self.store = store
     self.walks = walks
     self.prober = prober
+    known = (try? store?.ages()) ?? [:]
   }
 
   /// Starts no more than `limit` looks, and none once `budget` seconds have passed; each look
@@ -807,7 +848,8 @@ public final class AutopilotAges: @unchecked Sendable {
     let end = ProcessInfo.processInfo.systemUptime + budget
     let walks = self.walks
     var looked = 0
-    return records.map { record in
+    var remembered = false
+    let result: [WorktreeRecord] = records.map { record in
       // Without a status the inventory never read Git there: it may not look into that folder.
       guard record.lastFileChange == nil, !record.status.isEmpty, !record.main, !record.missing,
         !record.retired, !record.bare, record.protectedPlace == nil
@@ -816,7 +858,7 @@ public final class AutopilotAges: @unchecked Sendable {
       }
       var dated = record
       if let look = lock.withLock({ known[record.id] }), look.head == record.head,
-        look.status == record.status, now.timeIntervalSince(look.at) < 3600
+        look.status == record.status, Self.good(look, now: now)
       {
         dated.lastFileChange = look.date
         return dated
@@ -832,10 +874,23 @@ public final class AutopilotAges: @unchecked Sendable {
       }
       walks?.leave(real, early: early)
       guard !early else { return record }
-      let look = Look(date: date, at: now, head: record.head, status: record.status)
+      let look = AutopilotLook(date: date, at: now, head: record.head, status: record.status)
       lock.withLock { known[record.id] = look }
+      remembered = true
       dated.lastFileChange = date
       return dated
     }
+    // Looks past their hour go; a store that can't be written leaves them in memory only.
+    if remembered {
+      lock.withLock {
+        known = known.filter { Self.good($0.value, now: now) }
+        try? store?.save(ages: known)
+      }
+    }
+    return result
+  }
+
+  private static func good(_ look: AutopilotLook, now: Date) -> Bool {
+    now.timeIntervalSince(look.at) < 3600
   }
 }
