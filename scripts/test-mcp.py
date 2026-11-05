@@ -61,8 +61,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
             # can take longer. Wait beyond their bounded product deadlines while
             # retaining the ordinary frame bound for cheap status calls.
             response = send("tools/call", {"name": name, "arguments": args},
-                        timeout=60 if name in {"burnzombies_workspace_preview", "burnzombies_workspace_clean"}
-                        or (name == "burnzombies_workspace" and args.get("action") == "create") else 10)
+                        timeout=60 if name in {"burnzombies_workspace", "burnzombies_workspace_preview", "burnzombies_workspace_clean"} else 10)
             if response.get('result', {}).get('isError'):
                 print('MCP refusal', name, json.dumps(response['result'])[:1600], flush=True)
             return response

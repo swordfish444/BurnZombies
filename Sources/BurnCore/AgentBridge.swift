@@ -907,10 +907,8 @@ public enum AgentConnection {
     var buffer = [CChar](repeating: 0, count: 262_144)
     // Preserve the existing bounded wire deadline for storage callers. Cached
     // inspection returns promptly; optional analysis runs outside the request.
-    let workspaceCreate = request.operation == "workspace" && request.action == "create"
     let worktree =
-      ["worktrees", "worktrees_read", "workspace_clean"].contains(request.operation)
-      || workspaceCreate
+      ["worktrees", "worktrees_read", "workspace", "workspace_clean"].contains(request.operation)
     // Legacy preview performs two complete native consumer passes. Its read-only
     // budget must not inherit the fast status deadline or outlast preservation.
     let workspacePreview = request.operation == "workspace_preview"
