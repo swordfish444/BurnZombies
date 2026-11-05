@@ -154,6 +154,21 @@ public final class AutopilotStore: @unchecked Sendable {
     }
   }
 
+  /// Sizes and ages of old copies the worktree inventory couldn't measure, by worktree record id.
+  /// They outlive a restart: measuring every copy again takes many ticks.
+  public func sizes() throws -> [String: AutopilotSize] {
+    try lock.withLock { try load("sizes.json", limit: 4 << 20, empty: [String: AutopilotSize]()) }
+  }
+  public func save(sizes: [String: AutopilotSize]) throws {
+    try lock.withLock { try save(sizes, "sizes.json", limit: 4 << 20) }
+  }
+  public func ages() throws -> [String: AutopilotLook] {
+    try lock.withLock { try load("ages.json", limit: 4 << 20, empty: [String: AutopilotLook]()) }
+  }
+  public func save(ages: [String: AutopilotLook]) throws {
+    try lock.withLock { try save(ages, "ages.json", limit: 4 << 20) }
+  }
+
   public func sweep() throws -> AutopilotSweepState {
     try lock.withLock { try load("sweep.json", limit: 1 << 20, empty: AutopilotSweepState()) }
   }

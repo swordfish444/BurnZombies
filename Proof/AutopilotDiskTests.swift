@@ -305,6 +305,27 @@ private func adkSizeProof(base: String) throws {
   equal(measured.count, 3, "a size is remembered; an unreadable copy is tried again")
   _ = sizes.fill(records, now: now.addingTimeInterval(2 * 86_400))
   equal(measured.filter { $0.hasSuffix("/new") }.count, 2, "a day later it is measured again")
+
+  // Sizes are kept with Autopilot's state: after a restart yesterday's are still good, and only
+  // a size a day old, or a copy that couldn't be measured, is measured again.
+  let root = URL(fileURLWithPath: base + "/state", isDirectory: true)
+  var counted = [String]()
+  func restarted() throws -> AutopilotSizes {
+    AutopilotSizes(store: try AutopilotStore(root: root)) { path, _ in
+      counted.append(path)
+      return path.hasSuffix("unreadable") ? nil : 7_000_000_000
+    }
+  }
+  _ = try restarted().fill(records + [record("gone")], now: now.addingTimeInterval(-23 * 3600))
+  equal(counted.count, 3, "every unmeasured copy is sized")
+  equal(
+    try restarted().fill(records, now: now).map(\.allocated), [2_000_000, 7_000_000_000, 0],
+    "a restart keeps yesterday's sizes")
+  equal(counted.count, 4, "only the copy that couldn't be measured is tried again")
+  _ = try restarted().fill(records, now: now.addingTimeInterval(2 * 3600))
+  equal(counted.filter { $0.hasSuffix("/new") }.count, 2, "a size a day old is measured again")
+  equal(
+    try AutopilotStore(root: root).sizes().keys.sorted(), ["id-new"], "and an old one isn't kept")
 }
 
 private func adkJunkProof(base: String, now: Date) throws {
