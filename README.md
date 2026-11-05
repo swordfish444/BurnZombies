@@ -44,7 +44,7 @@ To BZ, burning means stopping a program or deleting a folder.
 - 🧟 **Zombie processes**: Node workers, headless browsers and build watchers left running after their app or chat is gone.<br>
   **Safety net:** a polite `SIGTERM`, sent only after an exact identity check.
 - 📁 **Stale worktrees** nothing is using.<br>
-  **Safety net:** first, a Git ref inside the repo saves every commit, uncommitted change and untracked file, plus small ignored files. If BZ can't verify that backup, the worktree stays. Branches are kept. Restore in one click from **Findings** for 30 days; the ref stays in the repo after that.
+  **Safety net:** first, a Git ref inside the repo saves every commit, uncommitted change and untracked file, plus small ignored files. Browser profiles that test runs leave behind aren't kept. If BZ can't verify that backup, the worktree stays. Branches are kept. Restore in one click from **Findings** for 30 days; the ref stays in the repo after that.
 - 🗑️ **Rebuildable junk**: `node_modules`, build output, DerivedData.<br>
   **Safety net:** your tools rebuild it when needed.
 
@@ -95,7 +95,7 @@ Already installed? Switch on **Look only** in **Settings → Autopilot**. `--obs
 <details>
 <summary><b>Can I undo a burn?</b></summary>
 
-Worktrees, yes: **Restore** in **Findings** for 30 days. The restore point is a Git ref in the repo that holds every commit and local change, small ignored files such as `.env` included; ignored files over 5 MB and anything inside rebuildable folders aren't kept. The ref stays local unless you push `refs/burnzombies/*` yourself, for example with `git push --mirror`. It stays after 30 days, so you can also restore by hand, without the app:
+Worktrees, yes: **Restore** in **Findings** for 30 days. The restore point is a Git ref in the repo that holds every commit and local change, small ignored files such as `.env` included; ignored files over 5 MB, anything inside rebuildable folders and browser profiles left by test runs aren't kept. The ref stays local unless you push `refs/burnzombies/*` yourself, for example with `git push --mirror`. It stays after 30 days, so you can also restore by hand, without the app:
 
 ```sh
 git for-each-ref refs/burnzombies/retired          # list restore points
