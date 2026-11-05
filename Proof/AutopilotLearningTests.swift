@@ -17,32 +17,24 @@ func autopilotLearningProof() async throws {
 /// Simulated owners (spec 4.3): three owners with fixed policies over 8 rounds of a Mac that gains
 /// new copies, programs and folders every round. From a cold start BZ never burns what an owner
 /// would keep, asks less, and handles more without asking, in the last four rounds than in the
-/// first four. The liberal owner's general lessons settle every subject, so its questions fall to
-/// none (R35a). A liberal owner with history, as a Mac has it after migration, gets tells; after
-/// they undo one in round 6, BZ tells nothing more on that subject in round 7 (R35b, R3).
+/// first four. The liberal owner's general lessons settle every subject, so it asks nothing in the
+/// last two rounds (R35a). Owners with history, as a Mac has them after migration, get BZ's own
+/// calls: the liberal one undoes one in round 6, and BZ tells nothing more on that subject in
+/// round 7 (R35b, R3); the cautious one never sees BZ burn a copy with unsaved work, acts
+/// included.
 func simulatedOwnersProof() async throws {
   let liberal = try await simulateOwner(.liberal)
   let cautious = try await simulateOwner(.cautious)
   let keeper = try await simulateOwner(.serverKeeper)
   for run in [liberal, cautious, keeper] {
-    print("  owner \(run.line)")
-    print("    asked: " + run.askedLine)
-    print("    subjects: " + run.subjects.joined(separator: "; "))
-    equal(run.wrong, [], "\(run.persona): BZ never burns what the owner would keep, tells included")
-    let early: Int = run.questions(1...4)
-    let late: Int = run.questions(5...8)
-    check(late < early, "\(run.persona): fewer questions in rounds 5-8 (\(late)) than 1-4 (\(early))")
-    // Spec 4.3: what BZ handles without asking rises.
-    let before: UInt64 = run.handled(1...4)
-    let after: UInt64 = run.handled(5...8)
-    check(after > before, "\(run.persona): more handled without asking in rounds 5-8 than 1-4")
+    report(run)
+    learns(run)
   }
-  // R35a: lessons handle it. The liberal owner's questions fall to none within rounds 5-8 and
-  // stay there.
-  let lastAsked: Int = liberal.rounds.filter { $0.questions > 0 }.map(\.round).max() ?? 0
-  check(
-    lastAsked < 8,
-    "liberal: questions fall to 0 within rounds 5-8 and stay there (last asked in round \(lastAsked))")
+  // R35a: lessons handle it. The liberal owner asks nothing in rounds 7 and 8.
+  for round in [7, 8] {
+    let asked: Int = liberal.rounds.first { $0.round == round }?.questions ?? -1
+    equal(asked, 0, "liberal: no question in round \(round)")
+  }
 
   // R35b: a liberal owner with history. Earlier yes answers on copies cover every risk this owner
   // takes, and BZ's replay guessed the last 5 right, so BZ acts on copies and tells the owner, who
@@ -50,12 +42,8 @@ func simulatedOwnersProof() async throws {
   let earlier: Date = Date().addingTimeInterval(-30 * 86_400)
   let seasoned = try await simulateOwner(
     .liberal, undoRound: 6, history: ownerHistory(at: earlier), judgesTells: false)
-  print("  owner \(seasoned.line) (with history)")
-  print("    asked: " + seasoned.askedLine)
-  print("    subjects: " + seasoned.subjects.joined(separator: "; "))
-  equal(
-    seasoned.wrong, [],
-    "liberal with history: BZ never burns what the owner would keep, acts included")
+  report(seasoned, "with history")
+  learns(seasoned, "with history")
   check(
     seasoned.tells > 0, "liberal with history: BZ tells the owner what it did on its own by round 8")
   guard let undone = seasoned.undone else {
@@ -66,6 +54,40 @@ func simulatedOwnersProof() async throws {
   checkFalse(
     seventh.contains(undone.subject),
     "liberal with history: no tell on \(undone.subject) in round 7, after the Undo")
+
+  // A cautious owner with history: yes only to clean copies before, and BZ trusts itself on
+  // copies. Its own calls never reach a copy with unsaved work, and nor does any other burn.
+  let careful = try await simulateOwner(
+    .cautious, history: cautiousHistory(at: earlier), catalog: cleanFirstItems)
+  report(careful, "with history")
+  learns(careful, "with history")
+  check(careful.acted.count > 0, "cautious with history: BZ burns copies on its own calls")
+  let unsaved: [String] = careful.acted.filter { item in
+    item.kind == .worktree && item.facts["changes"] != "none"
+  }.map(\.id)
+  equal(unsaved, [], "cautious with history: no own call burns a copy with unsaved work")
+}
+
+/// Prints a run's lines for the report.
+private func report(_ run: OwnerRun, _ label: String = "") {
+  let suffix: String = label.isEmpty ? "" : " (" + label + ")"
+  print("  owner \(run.line)" + suffix)
+  print("    asked: " + run.askedLine)
+  print("    subjects: " + run.subjects.joined(separator: "; "))
+}
+
+/// What every learning run shows: BZ never burns what the owner would keep, tells included; and it
+/// asks less, and handles more without asking, in rounds 5-8 than in rounds 1-4.
+private func learns(_ run: OwnerRun, _ label: String = "") {
+  let name: String = run.persona + (label.isEmpty ? "" : " " + label)
+  equal(run.wrong, [], "\(name): BZ never burns what the owner would keep, tells included")
+  let early: Int = run.questions(1...4)
+  let late: Int = run.questions(5...8)
+  check(late < early, "\(name): fewer questions in rounds 5-8 (\(late)) than 1-4 (\(early))")
+  // Spec 4.3: what BZ handles without asking rises.
+  let before: UInt64 = run.handled(1...4)
+  let after: UInt64 = run.handled(5...8)
+  check(after > before, "\(name): more handled without asking in rounds 5-8 than 1-4")
 }
 
 private func copy(_ id: String, _ facts: [String: String], bytes: UInt64 = 1 << 30)
@@ -307,9 +329,8 @@ private func lessonEngineProof() async throws {
     [["saved": ["pushed", "merged"], "stale": ["day", "week", "month", "older"]]],
     "a wider answer absorbs the lesson")
   equal(memory.rules.first?.questionID, pushed.id, "the wider answer teaches it")
-  equal(
-    Set(memory.rules.first.map(AutopilotPolicy.questionIDs) ?? []),
-    Set([pushed.id, ai.id, week.id]), "with every answer behind it")
+  let behind: [String] = memory.rules.first.map(AutopilotPolicy.questionIDs) ?? []
+  equal(Set(behind), Set([pushed.id, ai.id, week.id]), "with every answer behind it")
 
   // The same answer again, as from a double click, changes nothing: the merged lesson keeps the
   // answers and ids it took in.

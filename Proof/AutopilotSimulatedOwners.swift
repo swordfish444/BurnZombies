@@ -176,6 +176,8 @@ struct OwnerRun {
   var rounds: [OwnerRound] = []
   /// Burns, tells included, of things the persona would keep.
   var wrong: [String] = []
+  /// Things BZ burned on its own calls (acts).
+  var acted: [AutopilotItem] = []
   /// The subject of the tell the owner undid, and the round.
   var undone: (subject: String, round: Int)?
   var goodCalls = 0
@@ -208,7 +210,8 @@ struct OwnerRun {
     var text: String = persona + ": questions " + asked
     text += " · handled without asking " + handled + " GB"
     text += " · tells " + told + " · unsure " + waiting
-    text += " · good calls \(goodCalls) · wrong burns \(wrong.count)"
+    text += " · good calls \(goodCalls) · burned on its own calls \(acted.count)"
+    text += " · wrong burns \(wrong.count)"
     if let undone { text += " · undid \(undone.subject) in round \(undone.round)" }
     return text
   }
@@ -263,10 +266,11 @@ private let burnt: Set<String> = ["burned", "verifying", "restored"]
 /// yes only when they would burn every thing it is about. With `undoRound`, the owner undoes BZ's
 /// first open tell that round whatever they think of it. `history` is the memory BZ starts with;
 /// an owner who doesn't `judgesTells` leaves what BZ did on its own for later, apart from that
-/// Undo.
+/// Undo. `catalog` says what shows up each round.
 func simulateOwner(
   _ persona: OwnerPersona, rounds: Int = 8, undoRound: Int? = nil,
-  history: AutopilotMemory? = nil, judgesTells: Bool = true
+  history: AutopilotMemory? = nil, judgesTells: Bool = true,
+  catalog: (Int, Date) -> [AutopilotItem] = ownerItems
 ) async throws -> OwnerRun {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent(
     "bz-autopilot-owner-" + UUID().uuidString)
@@ -282,7 +286,7 @@ func simulateOwner(
   for round in 1...rounds {
     let now: Date = start.addingTimeInterval(Double(round) * 86_400)
     var result = OwnerRound(round: round)
-    mac.add(ownerItems(round: round, now: now))
+    mac.add(catalog(round, now))
     let before = Set(try store.receipts().map(\.id))
     // A look finishes its own burns before it returns.
     var snapshot: AutopilotSnapshot = await engine.tick(now: now)
@@ -337,11 +341,14 @@ func simulateOwner(
     result.unsure = await engine.snapshot(now: now).count(.unsure)
     run.rounds.append(result)
   }
+  let final: AutopilotMemory = try store.memory()
+  let actRules = Set(final.tells.map { "rule:" + $0.ruleID })
   for receipt in try store.receipts() where burnt.contains(receipt.outcome) {
     guard let item = mac.item(receipt.itemID) else { continue }
+    if actRules.contains(receipt.authority) { run.acted.append(item) }
     if !persona.burns(item) { run.wrong.append(item.id + " under " + receipt.authority) }
   }
-  run.subjects = subjectLines(try store.memory())
+  run.subjects = subjectLines(final)
   return run
 }
 
@@ -376,6 +383,61 @@ func ownerHistory(at date: Date) -> AutopilotMemory {
       date: date.addingTimeInterval(Double(i) * 60), replayed: true)
   }
   return memory
+}
+
+/// Memory as a cautious owner's Mac has it after migration: they said yes only to old copies with
+/// their work on GitHub and nothing unsaved, untouched for a week or a month, and BZ's replay of
+/// their answers guessed the last 5 right on copies. BZ trusts itself on copies but has no risk the
+/// owner said yes to, so it can only act on copies with nothing risky about them.
+func cautiousHistory(at date: Date) -> AutopilotMemory {
+  func yes(_ match: [String: [String]], minutes: Double) -> AutopilotQuestion {
+    var question = AutopilotQuestion(
+      kind: .worktree, match: match, question: "Can I burn these old copies?", why: "",
+      examples: [], count: 3, bytes: 3_000_000_000, asked: date.addingTimeInterval(minutes * 60))
+    question.answer = .yes
+    question.answered = date.addingTimeInterval(minutes * 60 + 30)
+    question.risks = []
+    return question
+  }
+  var memory = AutopilotMemory()
+  memory.questions = [
+    yes(["saved": ["pushed"], "changes": ["none"], "stale": ["month"]], minutes: 0),
+    yes(["saved": ["merged"], "changes": ["none"], "stale": ["week"]], minutes: 10),
+  ]
+  for question in memory.questions {
+    let lesson = AutopilotPolicy.lesson(
+      for: question, verdict: .burn, created: question.answered ?? date)
+    AutopilotPolicy.learn(lesson, into: &memory.rules)
+  }
+  memory.scores = (0..<AutopilotPolicy.trustStreak).map { i in
+    AutopilotScore(
+      questionID: "replayed-\(i)", subject: "worktree:", guess: .yes, answer: .yes, right: true,
+      date: date.addingTimeInterval(Double(i) * 60), replayed: true)
+  }
+  return memory
+}
+
+/// The usual catalog, except that the first round's copies are all clean: their work is on GitHub
+/// and nothing is unsaved, untouched for a day or a week. A Mac where BZ, trusted on copies, can
+/// make its own call before any risky copy turns up.
+func cleanFirstItems(round: Int, now: Date) -> [AutopilotItem] {
+  let usual: [AutopilotItem] = ownerItems(round: round, now: now)
+  guard round == 1 else { return usual }
+  let clean: [(String, String, String)] = [
+    ("clean-1", "pushed", "day"), ("clean-2", "merged", "day"), ("clean-3", "pushed", "week"),
+  ]
+  var items: [AutopilotItem] = usual.filter { $0.kind != .worktree }
+  for (name, saved, age) in clean {
+    let facts: [String: String] = [
+      "repo": "web-app", "place": "patrol6", "saved": saved, "changes": "none", "stale": age,
+      "inUse": "no", "thread": "none",
+    ]
+    items.append(
+      AutopilotItem(
+        id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000, facts: facts,
+        lastUsed: lastUsed(age, now: now), title: name.replacingOccurrences(of: "-", with: " ")))
+  }
+  return items
 }
 
 /// "process:node 3 answered, 2 scored, best run 2": what trust on each subject could rest on. Trust

@@ -186,9 +186,8 @@ private func reaskProof() async throws {
   equal(Set(world.burns.all), Set(world.programs.map(\.id)), "the yes burns the servers too")
   let lessons = try store.memory().rules.filter { $0.kind == .process }
   equal(lessons.count, 1, "the wider lesson takes the first one in")
-  equal(
-    Set(lessons.first.map(AutopilotPolicy.questionIDs) ?? []), [first.id, again.id],
-    "with both answers behind it")
+  let behind: [String] = lessons.first.map(AutopilotPolicy.questionIDs) ?? []
+  equal(Set(behind), [first.id, again.id], "with both answers behind it")
   equal(lessons.first?.match["listening"], ["yes", "no"], "servers and programs serving nothing")
 
   // Straight from the policy: an answer from before cards named their risks keeps its pattern
@@ -387,7 +386,9 @@ private func keepNewRisksProof() async throws {
   equal(
     keepGroups.first?.sentence,
     "Copies used in the last month stay: Work only on this Mac, Has unsaved changes.")
-  equal(Set(keepGroups.first?.ruleIDs ?? []), Set(copyKeeps.map(\.id)))
+  let grouped: [String] = keepGroups.first?.ruleIDs ?? []
+  let taught: [String] = copyKeeps.map(\.id)
+  equal(Set(grouped), Set(taught), "the group holds both keeps")
   copies.add(aged("tidy-footer", saved: "pushed", changes: "none"))
   _ = await copyEngine.tick(now: now.addingTimeInterval(120))
   check(copies.burns.all.contains("worktree:tidy-footer"), "a clean copy at that age still burns")
