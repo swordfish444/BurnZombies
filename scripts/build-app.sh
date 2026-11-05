@@ -35,13 +35,17 @@ cp -R "$built/BurnZombies_BurnCore.bundle" "$bundle/Contents/Resources/"
 mkdir -p "$bundle/Contents/Resources/burnzombies"
 cp skills/burnzombies/SKILL.md "$bundle/Contents/Resources/burnzombies/SKILL.md"
 mkdir -p "$bundle/Contents/Resources/ThirdPartyNotices"
+# Dependencies are checked out where they were built. A universal build keeps them under its own
+# scratch path, so a fresh checkout has no .build/checkouts.
+checkouts=.build/checkouts
+if $universal; then checkouts=.build/universal-arm64/checkouts; fi
 for dependency in swift-sdk swift-system swift-log eventsource TOMLKit; do
-  for license in .build/checkouts/"$dependency"/LICENSE*; do
+  for license in "$checkouts/$dependency"/LICENSE*; do
     [[ -f "$license" ]] || continue
     cp -f "$license" "$bundle/Contents/Resources/ThirdPartyNotices/$dependency-$(basename "$license")"
   done
 done
-cp -f .build/checkouts/TOMLKit/tomlplusplus/LICENSE "$bundle/Contents/Resources/ThirdPartyNotices/tomlplusplus-LICENSE"
+cp -f "$checkouts/TOMLKit/tomlplusplus/LICENSE" "$bundle/Contents/Resources/ThirdPartyNotices/tomlplusplus-LICENSE"
 cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -50,8 +54,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>BurnZombies</string>
 <key>CFBundleExecutable</key><string>BurnZombiesApp</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.13.0</string>
-<key>CFBundleVersion</key><string>54</string>
+<key>CFBundleShortVersionString</key><string>0.14.0</string>
+<key>CFBundleVersion</key><string>59</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
@@ -59,8 +63,9 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 PLIST
 # macOS keys privacy grants such as Full Disk Access to the signer. One stable identity keeps
 # them across updates; an ad-hoc signature makes every build a new app that must be allowed again.
+# The certificate need not be trusted on this Mac: codesign and Full Disk Access don't check that.
 identity="${BURNZOMBIES_SIGNING_IDENTITY:-BurnZombies Local Signing}"
-if security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
+if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
   signer="$identity"
   signature="signed by \"$identity\", so macOS keeps Full Disk Access across updates"
 else

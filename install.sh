@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.13.0"
+version="0.14.0"
 client="auto"
 launch=true
 look_only=false

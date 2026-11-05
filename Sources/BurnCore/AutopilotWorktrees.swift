@@ -80,7 +80,8 @@ public enum AutopilotWorktrees {
           name: (record.path as NSString).lastPathComponent, detail: sentence, path: record.path,
           bytes: record.allocated, facts: facts,
           protectedReason: protectedReason(record, thread: chat.thread),
-          observedAt: record.observedAt, lastUsed: newest, title: task))
+          observedAt: record.observedAt, lastUsed: newest, title: task, branch: branch,
+          unsaved: record.status.isEmpty ? nil : record.changes))
     }
     return result
   }

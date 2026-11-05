@@ -336,7 +336,10 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   for confusing in ["trained", "on my own", "%"] {
     try check(!teach.raw.contains(confusing), "teach shows \"\(confusing)\". OCR saw: \(teach.raw)")
   }
-  hint(teach, "teach", ["Not sure", card.note])
+  let listed = TeachView.listed(questions[0], entries: asking.autopilot.entries, overrides: [:])
+  hint(teach, "teach", ["Not sure", listed.isEmpty ? card.note : "View details"])
+  try teachDetailsProof(
+    asking, question: questions[0], listed: listed, directory: directory, hint: hint)
   // Real questions come in many shapes; every one stays readable with its rows, and none leaves an
   // empty gap where chips would be. The first has three chips and a long title, the last has none.
   let used: Date = Date().addingTimeInterval(-9 * 86_400)
@@ -403,7 +406,10 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       try check(
         shown.hasWords(of: row.title), "\(name) lost \"\(row.title)\". OCR saw: \(shown.raw)")
     }
-    hint(shown, name, ["Not sure", busyCard.note, "\(busyCard.more) more"])
+    let busyListed = TeachView.listed(question, entries: busyModel.autopilot.entries, overrides: [:])
+    hint(
+      shown, name,
+      ["Not sure", busyListed.isEmpty ? busyCard.note : "View details", "\(busyCard.more) more"])
     if name == "teach-caches" {
       try check(
         busyCard.facts.isEmpty, "The tool-caches card should have no chips to leave a gap")
@@ -1361,6 +1367,77 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   }
   print(
     "PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, forget a whole lesson, Good call, Undo, OK on an undone tell, act on its own, starter switch, reset, interval, sweep now, look-only and engine hand-off"
+  )
+}
+
+/// View details on the question card, rendered: the list with its filters in place of the chips and
+/// rows, one copy opened with its facts and ‹ ›, a Spare that takes it off the card at once, a tip in
+/// the corner, and the note after a Yes that says what was spared stays.
+@MainActor private func teachDetailsProof(
+  _ model: AppModel, question: AutopilotQuestion, listed: [AutopilotDetail], directory: URL,
+  hint: (Reading, String, [String]) -> Void
+) throws {
+  func check(_ condition: Bool, _ message: String) throws {
+    if !condition { throw StoreError.message(message) }
+  }
+  guard let first = listed.first(where: { !$0.spared }) else {
+    throw StoreError.message("The demo question should list what it is about in its details")
+  }
+  let open = TeachDetailsState(open: true, questionID: question.id)
+  let list = try render(
+    TeachView(model: model, details: open), size: TeachView.size, name: "teach-details",
+    directory: directory)
+  try require(list, ["Hide details", "All", "Spare"], in: "teach-details")
+  try check(
+    list.hasWords(of: first.title), "teach-details lost \"\(first.title)\". OCR saw: \(list.raw)")
+  try check(!list.has("View details"), "teach-details still says View details. OCR saw: \(list.raw)")
+  hint(list, "teach-details", [first.size] + first.tags.map(\.text))
+
+  var opened = open
+  opened.opened = first.id
+  let page = try render(
+    TeachView(model: model, details: opened), size: TeachView.size, name: "teach-detail",
+    directory: directory)
+  let position = "\((listed.firstIndex { $0.id == first.id } ?? 0) + 1) of \(listed.count)"
+  try require(page, [position, "Spare this copy", "Last used"], in: "teach-detail")
+  try check(
+    page.hasWords(of: first.title), "teach-detail lost \"\(first.title)\". OCR saw: \(page.raw)")
+  hint(page, "teach-detail", ["All copies", "Where", "esc back"])
+
+  var spared = open
+  spared.overrides[first.id] = true
+  let after = TeachView.listed(question, entries: model.autopilot.entries, overrides: spared.overrides)
+  let left = AutopilotPolicy.sparing(question, details: after, changed: true)
+  let before: Int = listed.filter { !$0.spared }.count
+  try check(left.count == before - 1, "Spare should leave \(before - 1) on the card: \(left.count)")
+  let sparedCard = AutopilotPolicy.card(left)
+  let sparing = try render(
+    TeachView(model: model, details: spared), size: TeachView.size, name: "teach-spared",
+    directory: directory)
+  try require(sparing, ["Spared"], in: "teach-spared")
+  try check(
+    sparing.hasWords(of: sparedCard.headline),
+    "teach-spared should count what's left: \"\(sparedCard.headline)\". OCR saw: \(sparing.raw)")
+  hint(sparing, "teach-spared", [sparedCard.frees])
+
+  let tip = AutopilotPolicy.tips(for: question.kind, filters: true)[0]
+  let tipped = try render(
+    TeachView(model: model, tip: tip), size: TeachView.size, name: "teach-tip",
+    directory: directory)
+  try check(tipped.hasWords(of: tip.text), "teach-tip lost the tip. OCR saw: \(tipped.raw)")
+  hint(tipped, "teach-tip", ["TIP"])
+
+  let thanks = TeachView.Confirmation(
+    text: "Got it!", symbol: "flame.fill",
+    taught: TeachView.Confirmation.Taught(questionID: question.id), spared: 2)
+  let note = try render(
+    TeachView(model: model, confirmation: thanks), size: TeachView.size,
+    name: "teach-spared-note", directory: directory)
+  try check(
+    note.hasWords(of: TeachView.sparedLine(2)),
+    "The note after a Yes should say what was spared stays. OCR saw: \(note.raw)")
+  print(
+    "PASS autopilot UI Teach BZ details: \(listed.count) listed with filters, one opened (\(position)), a Spare that leaves \(left.count) on the card, a tip and the note that spared copies stay"
   )
 }
 #endif

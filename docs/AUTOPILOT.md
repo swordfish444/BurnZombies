@@ -59,7 +59,7 @@ The card names the things it is about and when each was last used:
 > **add dark mode toggle** web-app · yesterday 1 pm
 > **tidy the footer** web-app · yesterday 7 pm
 > \+ 2 more
-> Each one is backed up first, so you can undo it. — *Yes, burn them* · *No, keep them* · *Not sure — skip*
+> View details — *Yes, burn them* · *No, keep them* · *Not sure — skip*
 
 - **The headline** says how many and when the most recent one was used: "you used yesterday", "untouched since Monday", "untouched for 2 weeks"; for programs, "idle for 3 hours".
 - **The rows** name up to three of them, biggest first. A copy shows its task (its chat's title, or its branch in plain words), its project and when a file last changed; a program shows its name, who started it and how long it sat idle; a folder shows which one it is ("node_modules in api") and when it last changed. Then how many more.
@@ -67,6 +67,14 @@ The card names the things it is about and when each was last used:
 - **Facts that make burning riskier** show in amber, counted: work only on this Mac, unsaved changes ("2 have unsaved changes", or "1 has lots of unsaved changes" when there are many), still running a server, and anything BZ couldn't check ("1 couldn't be checked").
 
 The header shows where you are in the current round of questions, never a percentage.
+
+### View details, Spare and tips
+
+**View details** sits where the card's reassuring line was, styled like *Not sure — skip*. It opens everything the card is about in the space the chips and rows took, biggest first, with filters for the risky ones (*Only on this Mac*, *Unsaved changes*, anything BZ couldn't check) and for what you spared. Each row shows its name, project, size, when it was last used and its risks; rest the pointer on a row for a moment and a card shows everything BZ knows: its folder, branch, where it lives, how its work is saved, how many files are unsaved and what burning it does. Click a row to open it; **‹ ›** or the arrow keys flip to the next one in the same list, and **Back** or Esc returns to the same spot. *Hide details* puts the card back.
+
+**Spare** takes a thing out of the fire, now and later: it is the same keep as *Keep forever* in **Findings**, so no lesson, starter rule or AI call burns it. A spared row stays in the list, greyed out, so you can change your mind: on a spared row the button reads *Spared*, and under the pointer it turns into **Unspare**, which hands it back to BZ. The headline, the size and the chips follow at once, and so does what a *Yes* covers: risks that only spared things had leave the card, so the lesson doesn't cover them. The card counts what you spared ("2 spared"), and after a *Yes* the note says they stay.
+
+**Tips** come and go in the quiet corner above the question, the way games show loading-screen tips: one short tip fades in, stays 12 seconds and fades out, and the next comes 8 seconds later. The pointer on a tip stops its clock and shows *Next*. The first is the card's own reassurance ("Every copy is backed up before it burns, so you can undo it."); tips for where you are (the list, one thing opened) come before the rest, none repeats until the others had their turn, each shows at most three times, and one about something you have done, such as opening the details or sparing a copy, never shows again.
 
 The AI's questions follow the same rules: it may reword or replace the open question about a subject but never adds a second one, waits a day after you skip one, and never asks about things used today.
 

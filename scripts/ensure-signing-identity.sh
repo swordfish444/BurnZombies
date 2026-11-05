@@ -8,12 +8,15 @@
 # identity exists. Set BURNZOMBIES_SIGNING_IDENTITY to use an identity you already have; an
 # Apple Developer ID Application certificate also allows notarization.
 #
+# Building releases needs the release identity itself, not a new one: see scripts/release-identity.sh.
+#
 # Creating the identity adds a certificate to your login keychain and trusts it for code
 # signing only; macOS asks for your password once.
 set -euo pipefail
 identity="${BURNZOMBIES_SIGNING_IDENTITY:-BurnZombies Local Signing}"
 
-if security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
+# A copy that isn't marked trusted (scripts/release-identity.sh load) counts too.
+if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
   echo "$identity"
   exit 0
 fi

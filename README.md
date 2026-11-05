@@ -1,9 +1,4 @@
-<p align="center">
-  <picture>
-    <source media="(max-width: 600px)" srcset="docs/media/readme-hero-phone.png">
-    <img src="docs/media/readme-hero.png" width="900" alt="A Mac menu-bar app for Claude Code, Codex and Cursor. Run your agents forever. Let BurnZombies handle the exhaust: zombie processes, stale worktrees, node_modules and build junk. Beside it, the author's real menu-bar panel after two days of Autopilot: 685.6 GB of disk reclaimed and 453 worktrees cleaned.">
-  </picture>
-</p>
+https://github.com/user-attachments/assets/d56b8996-09ee-49c4-8125-85eba52c32e0
 
 <h3 align="center">BurnZombies (BZ) cleans up after your AI coding agents, on its own.</h3>
 
@@ -26,8 +21,10 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 3. **BZ burns the exhaust.** From the first minute, and every 15 minutes after, it stops orphaned processes and deletes stale worktrees and rebuildable junk, backing up each worktree first. When it isn't sure, it asks you once, and your answer becomes a rule.
 
 <p align="center">
-  <img src="docs/media/readme-question.jpg" width="480" alt="A Teach BZ question card, with example data: Burn 5 tool caches? Frees 20.3 GB. Unused for a month. Inside your projects. Your tools rebuild them when needed. Yes, burn them or No, keep them.">
-  <br><sub>When BZ isn't sure, it asks. One tap, and it remembers. (Example data.)</sub>
+  <img src="docs/media/panel-real.png" height="360" alt="The author's real BurnZombies menu-bar panel on the All time tab after two days of Autopilot: 685.6 GB of disk reclaimed and 453 worktrees cleaned.">
+  &nbsp;
+  <img src="docs/media/readme-question.jpg" height="360" alt="A Teach BZ question card, with example data: Burn 5 tool caches? Frees 20.3 GB. Unused for a month. Inside your projects. Your tools rebuild them when needed. Yes, burn them or No, keep them.">
+  <br><sub>Left: the author's real panel after two days of Autopilot. Right: when BZ isn't sure, it asks. One tap, and it remembers. (Example data.)</sub>
 </p>
 
 ## What happens next
@@ -124,7 +121,7 @@ No. Without it, BZ skips the places macOS protects (Desktop, Documents, Download
 <details>
 <summary><b>What does the install script do?</b></summary>
 
-It downloads the release it pins, checks it against that release's SHA-256 checksums, checks the archive's paths and the app's code signature, and puts BurnZombies.app in `~/Applications`. No sudo. Releases are signed with BurnZombies' own certificate but aren't notarized by Apple yet. Prefer a fixed version? Swap `main` in the URL for a release tag, such as `v0.13.0`. [Read install.sh](install.sh) · [Installer options →](docs/INSTALL.md#installer-options)
+It downloads the release it pins, checks it against that release's SHA-256 checksums, checks the archive's paths and the app's code signature, and puts BurnZombies.app in `~/Applications`. No sudo. Releases are signed with BurnZombies' own certificate but aren't notarized by Apple yet. Prefer a fixed version? Swap `main` in the URL for a release tag, such as `v0.14.0`. [Read install.sh](install.sh) · [Installer options →](docs/INSTALL.md#installer-options)
 
 </details>
 

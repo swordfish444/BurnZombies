@@ -9,6 +9,7 @@ func autopilotLearningProof() async throws {
   try await migrationProof()
   try await groupsProof()
   try await cardProof()
+  try await spareEngineProof()
   try await tellProof()
   try await skipProof()
   try await evalRequestProof()
