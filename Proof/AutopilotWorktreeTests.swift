@@ -1012,7 +1012,7 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
   let cut = AutopilotAges(walks: junk.walks) { path, _, stop in
     guard !interrupted else { return later }
     interrupted = true
-    Thread.detachNewThread { junk.clearing(path) { burned.signal() } }
+    Thread.detachNewThread { _ = junk.clearing(path) { burned.signal() } }
     let limit = Date().addingTimeInterval(5)
     while !stop() && Date() < limit { usleep(1000) }
     return later
