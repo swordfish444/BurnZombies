@@ -269,7 +269,8 @@ public enum AutopilotPolicy {
     return question
   }
 
-  /// What makes some of the matches riskier, counted: "2 have work only on this Mac". Things
+  /// What makes some of the matches riskier, counted: "2 have work only on this Mac". Small and
+  /// large unsaved changes are counted apart ("1 has lots of unsaved changes"). Things
   /// whose saving, unsaved work, use or port BZ couldn't check are counted too, since a lesson
   /// only covers them when a card said so.
   static func mix(_ kind: AutopilotKind, _ items: [AutopilotItem]) -> [String]? {
@@ -286,9 +287,10 @@ public enum AutopilotPolicy {
     case .worktree:
       found = [
         count({ $0.facts["saved"] == "local" }, "has work only on this Mac", "have work only on this Mac"),
+        count({ $0.facts["changes"] == "small" }, "has unsaved changes", "have unsaved changes"),
         count(
-          { ["small", "large"].contains($0.facts["changes"] ?? "") }, "has unsaved changes",
-          "have unsaved changes"),
+          { $0.facts["changes"] == "large" }, "has lots of unsaved changes",
+          "have lots of unsaved changes"),
       ]
     case .process:
       found = [

@@ -124,8 +124,11 @@ extension AutopilotPolicy {
   /// The risky copies any lesson in the group covers.
   static func copyEven(_ rules: [AutopilotRule]) -> String {
     var risks: [String] = []
-    if rules.contains(where: { covers($0, "changes", any: ["small", "large"]) }) {
+    // Large changes are unsaved work; a lesson that stops at small ones says so.
+    if rules.contains(where: { covers($0, "changes", any: ["large"]) }) {
       risks.append("unsaved work")
+    } else if rules.contains(where: { covers($0, "changes", any: ["small"]) }) {
+      risks.append("a few unsaved changes")
     }
     if rules.contains(where: { covers($0, "saved", any: ["local"]) }) {
       risks.append("work only on this Mac")

@@ -182,8 +182,9 @@ private func ownerCardProof() throws {
   let riskyCard = AutopilotPolicy.card(riskyQuestion, now: cardNow, calendar: utc)
   equal(riskyCard.headline, "Burn 3 copies untouched since Saturday?")
   equal(
-    riskyCard.cautions, ["1 has work only on this Mac", "2 have unsaved changes"],
-    "counted cautions stay, without the age the headline already says")
+    riskyCard.cautions,
+    ["1 has work only on this Mac", "1 has unsaved changes", "1 has lots of unsaved changes"],
+    "counted cautions stay, small and large changes apart, without the age the headline says")
   equal(riskyCard.facts, riskyCard.cautions)
 }
 

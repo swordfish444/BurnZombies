@@ -76,6 +76,10 @@ private func answerRisksProof() async throws {
   equal(smallCard.risks, ["changes=small"], "the card showed small unsaved changes")
   let smallLesson = try smallStore.memory().rules.first { $0.questionID == smallCard.id }
   equal(smallLesson?.match["changes"], ["small", "none"], "small unsaved changes and none")
+  equal(
+    AutopilotPolicy.lessonGroups(try smallStore.memory()).first?.sentence,
+    "Copies nobody touched for a week are done once their work is on GitHub, even with a few unsaved changes.",
+    "a lesson that covers small changes only says so")
   smallWorld.add(aged("half-done", changes: "small"))
   smallWorld.add(aged("rewrite", changes: "large"))
   _ = await small.tick(now: now.addingTimeInterval(60))
@@ -258,7 +262,7 @@ private func reaskProof() async throws {
   equal(
     copies.map(\.id), [AutopilotRule.key(kind: .worktree, match: week) + ":changes=large"],
     "asked again about the copies with unsaved changes")
-  equal(copies.first?.cautions, ["2 have unsaved changes"], "and the card says so")
+  equal(copies.first?.cautions, ["2 have lots of unsaved changes"], "and the card says so")
   // Copies BZ couldn't check are a risk the clean card didn't show either, and their card says so.
   var unchecked = aged("unchecked-a", changes: "none")
   unchecked.facts["saved"] = "unknown"
