@@ -685,7 +685,8 @@ public actor MachineReviewer {
       process.arguments = ["review-worker", "--", c.executable] + args
     }
     process.currentDirectoryURL = directory
-    var env = ProcessInfo.processInfo.environment
+    // Never the session of whoever started BZ: an agent that installed it, say.
+    var env = AgentSessionEnvironment.harness(ProcessInfo.processInfo.environment)
     env["BURNZOMBIES_HOME"] = root.path
     env["PATH"] =
       (env["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/bin:"
