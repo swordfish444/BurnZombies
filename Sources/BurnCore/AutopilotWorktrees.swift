@@ -228,63 +228,25 @@ public enum AutopilotWorktrees {
   // MARK: Age
 
   /// When a copy the inventory couldn't walk was last worked in: the newest of its HEAD commit,
-  /// its index (Git rewrites it on add, commit, checkout and reset), its own folder and every path
-  /// `git status` lists. A deleted file counts by the nearest folder still there, and an ignored
-  /// folder by its own time, as a junk folder does. Nil when Git can't say or the look doesn't
-  /// finish within `seconds`: anything partial could only make a copy look older than it is.
+  /// its index (Git rewrites it on add, commit, checkout and reset) and everything in it but
+  /// Git's own data and what is inside its junk folders, whose own times count. Unlike the
+  /// inventory's walk, this one doesn't stop at hard links, projects inside or special files.
+  /// Nil when Git can't say or the walk can't see everything within `seconds`: anything partial
+  /// could only make a copy look older than it is.
   public static func lastWorked(path: String, seconds: TimeInterval) -> Date? {
-    let end = ProcessInfo.processInfo.systemUptime + seconds
-    func left() -> Double? {
-      let remaining = end - ProcessInfo.processInfo.systemUptime
-      return remaining > 0.001 ? min(remaining, 180) : nil
-    }
+    let deadline = Date().addingTimeInterval(seconds)
     func ask(_ args: [String]) -> String? {
-      guard let wait = left() else { return nil }
+      let wait = min(deadline.timeIntervalSinceNow, 180)
+      guard wait > 0.001 else { return nil }
       return try? line(path, args, seconds: wait)
     }
+    guard let committed = ask(["log", "-1", "--format=%ct"]), let stamp = TimeInterval(committed),
+      let index = ask(["rev-parse", "--path-format=absolute", "--git-path", "index"]),
+      let files = AutopilotDisk.newestChange(in: path, until: deadline)
+    else { return nil }
+    var newest = max(files, Date(timeIntervalSince1970: stamp))
     var info = stat()
-    guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
-    var newest = AutopilotDisk.changed(info)
-    guard let committed = ask(["log", "-1", "--format=%ct"]), let stamp = TimeInterval(committed)
-    else { return nil }
-    newest = max(newest, Date(timeIntervalSince1970: stamp))
-    guard let index = ask(["rev-parse", "--path-format=absolute", "--git-path", "index"]) else {
-      return nil
-    }
     if lstat(index, &info) == 0 { newest = max(newest, AutopilotDisk.changed(info)) }
-    let statusArguments = [
-      "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching",
-    ]
-    // Git's runner keeps at most 8 MB of output, plus a byte that shows a list was cut short.
-    guard let wait = left(),
-      let listing = try? WorktreeGit.run(path, statusArguments, seconds: wait),
-      listing.count <= 8 << 20
-    else { return nil }
-    let root = Array(path.utf8) + [UInt8(ascii: "/")]
-    var entries = listing.split(separator: 0)[...]
-    var counted = 0
-    while let entry = entries.popFirst() {
-      guard entry.count > 3 else { continue }
-      // A rename or copy names where it came from next; that path is gone or unchanged.
-      let code = entry.prefix(2)
-      if code.contains(UInt8(ascii: "R")) || code.contains(UInt8(ascii: "C")) {
-        _ = entries.popFirst()
-      }
-      counted += 1
-      if counted % 512 == 0 && left() == nil { return nil }
-      var relative = Array(entry.dropFirst(3))
-      if relative.last == UInt8(ascii: "/") { relative.removeLast() }
-      while true {
-        let full: [CChar] = (root + relative).map { CChar(bitPattern: $0) } + [0]
-        if lstat(full, &info) == 0 {
-          newest = max(newest, AutopilotDisk.changed(info))
-          break
-        }
-        guard errno == ENOENT || errno == ENOTDIR else { return nil }
-        guard let slash = relative.lastIndex(of: UInt8(ascii: "/")) else { break }
-        relative.removeSubrange(slash...)
-      }
-    }
     return newest
   }
 
@@ -801,9 +763,9 @@ public final class AutopilotSizes: @unchecked Sendable {
 }
 
 /// Dates old copies the worktree inventory looked into but couldn't walk (a hard-linked file, a
-/// project inside it or a special file stops the walk), a few per tick, from what Git says
-/// changed. Until dated a copy's age is unknown, so no lesson or question reaches it. A date holds
-/// for an hour, or until the inventory sees the copy's HEAD or changes move.
+/// project inside it or a special file stops its walk), a few per tick, with a look of its own.
+/// Until dated a copy's age is unknown, so no lesson or question reaches it. A date holds for an
+/// hour, or until the inventory sees the copy's HEAD or changes move.
 public final class AutopilotAges: @unchecked Sendable {
   private struct Look {
     var date: Date?
@@ -822,8 +784,9 @@ public final class AutopilotAges: @unchecked Sendable {
     self.prober = prober
   }
 
-  /// Looks at no more than `limit` copies, for no more than `budget` seconds in all. A look that
-  /// found no date is remembered too, so a copy Git can't date doesn't take every tick's turn.
+  /// Starts no more than `limit` looks, and none once `budget` seconds have passed; each look
+  /// gets 10 seconds, since a cut-short one says nothing. A look that found no date is
+  /// remembered too, so a copy that can't be dated doesn't take every tick's turn.
   public func fill(
     _ records: [WorktreeRecord], limit: Int = 8, budget: TimeInterval = 10, now: Date = Date()
   ) -> [WorktreeRecord] {
@@ -843,10 +806,9 @@ public final class AutopilotAges: @unchecked Sendable {
         dated.lastFileChange = look.date
         return dated
       }
-      let left = end - ProcessInfo.processInfo.systemUptime
-      guard looked < limit, left > 0 else { return record }
+      guard looked < limit, ProcessInfo.processInfo.systemUptime < end else { return record }
       looked += 1
-      let date = prober(record.path, min(10, left))
+      let date = prober(record.path, 10)
       let look = Look(date: date, at: now, head: record.head, status: record.status)
       lock.withLock { known[record.id] = look }
       dated.lastFileChange = date

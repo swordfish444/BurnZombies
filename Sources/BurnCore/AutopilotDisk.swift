@@ -414,6 +414,22 @@ public enum AutopilotDisk {
     return found
   }
 
+  /// The newest change in a checkout past its junk: rebuildable folders Git doesn't track and no
+  /// other project lives in. Nil when Git can't say what it tracks or the walk can't see
+  /// everything by `deadline`.
+  static func newestChange(in checkout: String, until deadline: Date) -> Date? {
+    let folders = rebuildableFolders(under: checkout).map { $0.path }
+    var junk = Set<String>()
+    if !folders.isEmpty {
+      let wait = min(deadline.timeIntervalSinceNow, 15)
+      guard wait > 0.001, let tracked = trackedFolders(folders, in: checkout, seconds: wait) else {
+        return nil
+      }
+      junk = Set(folders.filter { !tracked.contains($0) && !exists($0 + "/.git") })
+    }
+    return newestChange(under: checkout, skipping: junk, until: deadline)
+  }
+
   /// The newest change to anything in a copy, folders included, except Git's data and what is
   /// inside the given junk folders (their own times count). Never follows links or leaves the
   /// volume. Nil when it can't see everything within the entry budget and the deadline.
@@ -446,11 +462,13 @@ public enum AutopilotDisk {
 
   /// Candidate folders in which Git tracks anything (a committed build/ is not junk), asked
   /// in one call. Nil when Git cannot say, so nothing in that checkout is offered.
-  private static func trackedFolders(_ folders: [String], in root: String) -> Set<String>? {
+  private static func trackedFolders(_ folders: [String], in root: String, seconds: Double = 15)
+    -> Set<String>?
+  {
     let relatives = folders.map { String($0.dropFirst(root.count + 1)) }
     guard
       let listing = try? WorktreeGit.run(
-        root, ["--literal-pathspecs", "ls-files", "-z", "--"] + relatives)
+        root, ["--literal-pathspecs", "ls-files", "-z", "--"] + relatives, seconds: seconds)
     else { return nil }
     let files = listing.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
     var blocked = Set<String>()

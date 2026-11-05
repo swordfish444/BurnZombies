@@ -748,8 +748,8 @@ private func apSubmoduleProof(_ world: APWorld) throws {
 // MARK: Copies the inventory couldn't walk
 
 /// The inventory's file walk stops at a hard-linked file (or a project inside a copy, or a special
-/// file), and such a copy had no age, so no lesson or question reached it. It gets one from what
-/// Git says changed, a few copies per look.
+/// file), and such a copy had no age, so no lesson or question reached it. It gets one from a look
+/// of its own, a few copies per tick.
 private func apUnwalkedAgeProof(_ world: APWorld) throws {
   let fm = FileManager.default
   let day: TimeInterval = 86_400
@@ -782,7 +782,7 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
   try apGit(deleted, ["commit", "-m", "guide"])
   try fm.removeItem(atPath: deleted + "/docs/guide.txt")
   try touch(deleted + "/docs", later - day / 2)
-  // An ignored folder counts by its own time, like a junk folder.
+  // A junk folder counts by its own time.
   let installed = try stuck("stuck-installed")
   try apWrite(installed + "/node_modules/pkg/index.js", "module.exports = 1\n")
   try touch(installed + "/node_modules", later - 2 * day)
@@ -807,8 +807,10 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
   equal(stale(records), unknown, "no walk, no age")
 
   var probed: [String] = []
+  var given: Set<TimeInterval> = []
   let ages = AutopilotAges { path, seconds in
     probed.append(path)
+    given.insert(seconds)
     return AutopilotWorktrees.lastWorked(path: path, seconds: seconds)
   }
   equal(stale(ages.fill(records, budget: 0, now: later)), unknown, "no budget, no look")
@@ -823,6 +825,7 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
     stale(ages.fill(records, limit: 2, now: later)), ["month", "day", "week", "today", "day"],
     "within three looks every copy has an age")
   equal(probed, paths, "each copy is looked at once")
+  equal(given, [10], "each look gets its full time, however much of the tick's is left")
   let card = items(ages.fill([records[1]], now: later))[0]
   let lastUsed = card.lastUsed?.timeIntervalSince(later - 3.5 * day) ?? .infinity
   check(
@@ -859,8 +862,24 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
   records[0] = try apRecord(untouched, in: world.main)
   equal(stale(ages.fill(records, now: later))[0], "today", "a copy seen changing is dated again")
   equal(probed.count, paths.count + 1)
+  try apGit(edited, ["commit", "--allow-empty", "-m", "more"])
+  records[1] = try apRecord(edited, in: world.main)
+  _ = ages.fill(records, now: later)
+  equal(probed.count, paths.count + 2, "so is one whose HEAD moved")
   _ = ages.fill(records, now: later + 3601)
-  equal(probed.count, 2 * paths.count + 1, "an hour later each copy is looked at again")
+  equal(probed.count, 2 * paths.count + 2, "an hour later each copy is looked at again")
+
+  // The look sees inside what Git lists as one entry: a project inside the copy, and an ignored
+  // folder that isn't junk.
+  let nested = try stuck("stuck-nested")
+  try apGit(world.base, ["init", "--initial-branch=main", nested + "/vendor/lib"])
+  try apWrite(nested + "/vendor/lib/src/lib.c", "int lib;\n")
+  try touch(nested + "/vendor/lib/src/lib.c", later - 1.5 * day)
+  let ignored = try stuck("stuck-ignored")
+  try apWrite(ignored + "/.env/keys.txt", "KEY=1\n")
+  try touch(ignored + "/.env/keys.txt", later - 1.5 * day)
+  let inside = try [nested, ignored].map { try apRecord($0, in: world.main) }
+  equal(stale(ages.fill(inside, now: later)), ["day", "day"], "dated by the file inside")
 
   // A look that can't finish says nothing: anything partial could only make a copy look older.
   isNil(AutopilotWorktrees.lastWorked(path: edited, seconds: 0))
@@ -868,6 +887,13 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
   let plain = world.path("not-a-copy")
   try fm.createDirectory(atPath: plain, withIntermediateDirectories: true)
   isNil(AutopilotWorktrees.lastWorked(path: plain, seconds: 10))
+  let closed = nested + "/closed"
+  try fm.createDirectory(atPath: closed, withIntermediateDirectories: true)
+  try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: closed)
+  let unreadable = AutopilotWorktrees.lastWorked(path: nested, seconds: 10)
+  try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: closed)
+  isNil(unreadable)
+  check(AutopilotWorktrees.lastWorked(path: nested, seconds: 10) != nil, "readable again")
   // A copy Git can't date stays unknown, and isn't looked at again on every tick.
   var failed = 0
   let blind = AutopilotAges { _, _ in
