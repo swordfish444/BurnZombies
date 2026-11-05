@@ -7,14 +7,22 @@ public struct AutopilotProcessProbe: Sendable {
   public var agent: @Sendable (Int32) -> String?
   public var cwd: @Sendable (Int32) -> String?
   public var alive: @Sendable (Int32) -> Bool
+  /// The live command line, one entry per argument. Read only to recognize robot browsers.
+  public var arguments: @Sendable (Int32) -> [String]?
+  /// How many clients are connected to the ports the process listens on; nil when unknown.
+  public var clients: @Sendable (Int32) -> Int?
   public init(
     listening: @escaping @Sendable (Int32) -> Bool?, agent: @escaping @Sendable (Int32) -> String?,
-    cwd: @escaping @Sendable (Int32) -> String?, alive: @escaping @Sendable (Int32) -> Bool
+    cwd: @escaping @Sendable (Int32) -> String?, alive: @escaping @Sendable (Int32) -> Bool,
+    arguments: @escaping @Sendable (Int32) -> [String]? = { _ in nil },
+    clients: @escaping @Sendable (Int32) -> Int? = { _ in nil }
   ) {
     self.listening = listening
     self.agent = agent
     self.cwd = cwd
     self.alive = alive
+    self.arguments = arguments
+    self.clients = clients
   }
   public static let live = AutopilotProcessProbe(
     listening: { Native().listening($0) }, agent: { Native().agent($0) },
@@ -22,7 +30,7 @@ public struct AutopilotProcessProbe: Sendable {
     alive: { pid in
       if case .found = Native().probe(pid) { return true }
       return false
-    })
+    }, arguments: { Native().arguments($0) }, clients: { Native().clients($0) })
 }
 
 /// Zombies: processes reparented to launchd whose job or chat ended. Only these orphan
@@ -40,7 +48,7 @@ public enum AutopilotProcesses {
   /// Hard rails for one process. A non-nil reason means it is never burned.
   public static func rail(
     _ record: Record, protectedPIDs: Set<Int32>, preferences: Preferences, now: Date = Date(),
-    home: String = NSHomeDirectory()
+    home: String = NSHomeDirectory(), robot: Bool = false
   ) -> String? {
     let o = record.latest
     if o.uid != getuid() || o.identity.pid <= 1 || protectedPIDs.contains(o.identity.pid) {
@@ -57,7 +65,9 @@ public enum AutopilotProcesses {
     }
     if systemPrefixes.contains(where: o.executable.hasPrefix) { return "It's part of macOS." }
     if protectedNames.contains(o.name) { return "It's an agent or a system helper you rely on." }
-    if bundled(o.executable, home: home) { return "It's part of an app you use." }
+    // A robot browser, and its own helpers, run from a browser the owner may also use; the
+    // owner's own copy never carries a robot's flags, so it stays protected here.
+    if !robot, bundled(o.executable, home: home) { return "It's part of an app you use." }
     return nil
   }
 
@@ -72,6 +82,36 @@ public enum AutopilotProcesses {
       "/private/tmp/", "/tmp/",
     ]
     return !(automation.contains(where: path.hasPrefix) || path.contains("/node_modules/"))
+  }
+
+  /// The robot browsers among `members`, by PID, and every process that belongs to one: its
+  /// main process and its own helpers, the descendants inside the same app bundle.
+  public static func robots(in members: [Record], arguments: (Int32) -> [String]?) -> (
+    browsers: [Int32: RobotBrowser], members: Set<Int32>
+  ) {
+    var browsers: [Int32: RobotBrowser] = [:]
+    var children: [Int32: [Record]] = [:]
+    for member in members {
+      children[member.latest.parent, default: []].append(member)
+      let pid = member.latest.identity.pid
+      guard RobotBrowser.isBrowser(member.latest.executable), let argv = arguments(pid),
+        let robot = RobotBrowser.fingerprint(executable: member.latest.executable, arguments: argv)
+      else { continue }
+      browsers[pid] = robot
+    }
+    var owned = Set(browsers.keys)
+    for member in members where browsers[member.latest.identity.pid] != nil {
+      guard let bundle = RobotBrowser.bundle(member.latest.executable) else { continue }
+      var frontier = [member.latest.identity.pid]
+      while let next = frontier.popLast() {
+        for child in children[next] ?? [] where child.latest.executable.hasPrefix(bundle) {
+          if owned.insert(child.latest.identity.pid).inserted {
+            frontier.append(child.latest.identity.pid)
+          }
+        }
+      }
+    }
+    return (browsers, owned)
   }
 
   public static func family(_ executable: String) -> String {
@@ -90,8 +130,7 @@ public enum AutopilotProcesses {
     if ["ruby", "rails", "bundle", "puma", "sidekiq"].contains(name) { return "ruby" }
     if name == "java" || name.hasPrefix("kotlin") || path.contains("/gradle") { return "java" }
     if path.contains("ms-playwright") || path.contains("puppeteer")
-      || ["chromium", "chrome", "chrome-headless-shell", "firefox", "msedge"].contains(name)
-      || name.contains("google chrome for testing") || name.contains("chromium helper")
+      || RobotBrowser.isBrowser(executable) || name.contains("chromium helper")
     {
       return "browser"
     }
@@ -183,23 +222,47 @@ public enum AutopilotProcesses {
       guard o.parent == 1, o.uid == getuid(), !o.zombie, o.identity.pid != getpid(),
         !launchAgents.contains(o.identity.pid)
       else { continue }
+      // A robot browser is the one program inside an app that may be a leftover.
+      let robotRoot =
+        RobotBrowser.isBrowser(o.executable)
+        ? probe.arguments(o.identity.pid).flatMap {
+          RobotBrowser.fingerprint(executable: o.executable, arguments: $0)
+        } : nil
       var reason = rail(
-        record, protectedPIDs: protectedPIDs, preferences: preferences, now: now, home: home)
+        record, protectedPIDs: protectedPIDs, preferences: preferences, now: now, home: home,
+        robot: robotRoot != nil)
       // macOS services, apps, harnesses and unreadable processes are not leftovers at all.
       if let reason, reason != "You asked me to keep it." { continue }
       let tree = descendants(of: o.identity.pid, in: records)
       let members = [record] + tree
+      let robots = robots(in: members, arguments: probe.arguments)
       if reason == nil,
         tree.contains(where: {
-          rail($0, protectedPIDs: protectedPIDs, preferences: preferences, now: now, home: home)
-            != nil
+          rail(
+            $0, protectedPIDs: protectedPIDs, preferences: preferences, now: now, home: home,
+            robot: robots.members.contains($0.latest.identity.pid)) != nil
         })
       {
         reason = "Part of it is something I must not touch."
       }
+      // A robot browser nothing can drive anymore: its launcher is gone and it was driven over a
+      // pipe, or it has a throwaway profile and nothing is connected to its port. Anything else
+      // holding or being a robot browser is still driven, or could be.
+      let robot: String = {
+        guard let root = robots.browsers[o.identity.pid] else {
+          return robots.browsers.isEmpty ? "no" : "driven"
+        }
+        if root.control == .pipe { return "abandoned" }
+        let attached = robots.members.contains { probe.clients($0).map { $0 > 0 } ?? true }
+        return root.throwawayProfile && !attached ? "abandoned" : "driven"
+      }()
       let cwd = probe.cwd(o.identity.pid)
       let thread = cwd.map { AgentThreads.state(for: $0, threads: threads).thread } ?? "none"
-      if reason == nil, thread == "live" { reason = "A chat is still working in this project." }
+      // No chat can reach a pipe browser whose launcher is gone, and it holds the profile that
+      // chat's next browser needs.
+      if reason == nil, thread == "live", robots.browsers[o.identity.pid]?.control != .pipe {
+        reason = "A chat is still working in this project."
+      }
       if reason == nil, members.contains(where: { claimed.contains($0.id) }) {
         reason = "A chat said it still needs this."
       }
@@ -216,7 +279,7 @@ public enum AutopilotProcesses {
       }()
       let leaderGone =
         o.pgid.map { $0 > 1 && $0 != o.identity.pid && !probe.alive($0) } ?? false
-      let orphaned = record.orphanSince != nil || leaderGone ? "yes" : "maybe"
+      let orphaned = robot == "abandoned" || record.orphanSince != nil || leaderGone ? "yes" : "maybe"
       let quiet = members.map { idleSince($0, now: now) }.min() ?? 0
       // The whole tree was last used when its busiest member was; the same moment `quiet` counts
       // from, kept as a date so it doesn't move with `now`.
@@ -226,17 +289,21 @@ public enum AutopilotProcesses {
       let cpu = members.compactMap(\.cpuPercent).reduce(0, +) >= 25 ? "busy" : "calm"
       let repo = cwd.flatMap { repository($0, protected: protected) } ?? "none"
       let program = o.name.lowercased()
-      let facts = [
+      var facts = [
         "program": program, "family": family(o.executable), "orphaned": orphaned,
         "thread": thread, "agent": probe.agent(o.identity.pid) ?? "none",
         "idle": idle(quiet), "listening": listening, "memory": memory(bytes), "cpu": cpu,
         "repo": repo,
       ]
+      // Only where a robot browser is involved, so nothing else is judged anew.
+      if robot != "no" { facts["robot"] = robot }
+      let shown = robotRoot != nil ? o.name + " (robot)" : o.name
       items.append(
         AutopilotItem(
           id: "process:" + o.identity.key, kind: .process,
-          name: repo == "none" ? o.name : o.name + " in " + repo,
-          detail: describe(o.name, repo: repo, facts: facts, children: tree.count),
+          name: repo == "none" ? shown : shown + " in " + repo,
+          detail: describe(
+            o.name, repo: repo, facts: facts, children: tree.count, robot: robotRoot != nil),
           path: o.executable, bytes: bytes, facts: facts, protectedReason: reason,
           observedAt: o.time, pid: o.identity.pid, processKey: o.identity.key,
           lastUsed: lastUsed))
@@ -244,17 +311,27 @@ public enum AutopilotProcesses {
     return items.sorted { $0.bytes > $1.bytes }
   }
 
-  static func describe(_ name: String, repo: String, facts: [String: String], children: Int)
-    -> String
-  {
+  static func describe(
+    _ name: String, repo: String, facts: [String: String], children: Int, robot: Bool = false
+  ) -> String {
     let idle =
       [
         "active": "is still doing work", "10m": "has been idle for a few minutes",
         "1h": "has been idle for over an hour", "6h": "has been idle for over 6 hours",
         "1d": "has been idle for over a day",
       ][facts["idle"] ?? ""] ?? "is running"
-    var text = "A \(name) program" + (repo == "none" ? "" : " from \(repo)") + " that " + idle + "."
-    if facts["orphaned"] == "yes" { text += " The app or chat that started it is gone." }
+    let kind = robot ? "A robot \(name) browser" : "A \(name) program"
+    var text = kind + (repo == "none" ? "" : " from \(repo)") + " that " + idle + "."
+    switch facts["robot"] {
+    case "abandoned":
+      text += " Nothing can drive it anymore: the program that started it is gone."
+    case "driven" where robot:
+      text += " Something can still drive it."
+    case "driven":
+      text += " It is still driving a robot browser."
+    default:
+      if facts["orphaned"] == "yes" { text += " The app or chat that started it is gone." }
+    }
     if facts["listening"] == "yes" { text += " It's still serving a web page or port." }
     if children > 0 { text += " It has \(children) helper\(children == 1 ? "" : "s") of its own." }
     return text

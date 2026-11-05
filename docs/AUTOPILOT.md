@@ -6,7 +6,7 @@ BurnZombies cleans up on its own. It looks for three kinds of leftovers right aw
 | --- | --- | --- |
 | **Zombies** | Programs whose app or chat is gone: test runners, build watchers, robot browsers, dev servers from finished chats. | A graceful stop (SIGTERM) for the program and everything it started. Never a force-kill. |
 | **Old copies** | Git worktrees you or your agents made and stopped using. | Every commit and local change is saved in a restore point inside the repository, then the folder is removed. **Restore** puts it back. |
-| **Junk folders** | Rebuildable output: `node_modules`, build folders, Xcode DerivedData, tool caches. | The folder is deleted. Your tools rebuild it when needed. |
+| **Junk folders** | Rebuildable output: `node_modules`, build folders, Xcode DerivedData, tool caches, old Playwright browser builds (never the newest one, never a profile), and what robot browsers left in your temp folder. | The folder is deleted. Your tools rebuild it when needed. |
 
 ## How it decides
 
@@ -18,9 +18,12 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 2. **Your keeps win.** "Keep forever" on an item, a "No, keep them" answer, an Undo, or a confident AI "keep" always blocks burning.
 3. **Your yes answers** burn everything their lesson covers, now and later. So do the calls BZ makes on its own once it has earned your trust ([Act, then tell](#act-then-tell)).
 4. **Starter rules** burn the obvious from the first minute (with look-only, once you start burning). Switch each off in **Settings → Autopilot**:
+   - robot browsers nothing can drive anymore, idle for 10+ minutes. A robot browser is one Playwright, Puppeteer, chromedriver or an MCP server started: it has a control pipe, or a debugging port plus automation signs (headless, a fake keychain, WebDriver flags or a throwaway profile). Nothing can drive it once the program that started it is gone and it was driven over a pipe, or it has a throwaway profile and nothing is connected to its port. Its helpers go with it. A pipe-driven one goes even while a chat works in its folder: that chat can't reach it, and it holds the profile the chat's next browser needs. The browser you use never has these flags, so it stays protected;
+   - programs still driving a robot browser (a Playwright CLI daemon, an MCP server, a test runner) an hour after the chat that worked in their folder ended, when they serve no network port;
    - programs whose app or chat is gone, idle for 6+ hours, with no open port. A program that has barely used the CPU since it started counts as idle from its start, so old leftovers go right away;
    - old copies already merged, unchanged and untouched for a month (not ones made by Codex, Claude or Conductor). They are always backed up first;
-   - rebuildable folders (`node_modules`, build output, Xcode build folders) inside copies untouched for two weeks.
+   - rebuildable folders (`node_modules`, build output, Xcode build folders) inside copies untouched for two weeks;
+   - the throwaway profiles and recordings robot browsers leave in your temp folder (`playwright_chromiumdev_profile-…`, `playwright-artifacts-…`, `puppeteer_dev_chrome_profile-…`, chromedriver's `.org.chromium.Chromium.…`), once they add up to 100 MB. Each must be untouched for an hour, unlocked by a running browser and unused by any program when it is removed.
 5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor.
 6. Everything else is **unsure** and becomes a question.
 

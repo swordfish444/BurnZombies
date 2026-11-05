@@ -87,6 +87,7 @@ public enum AutopilotHarness {
     How to judge:
     - Zombie program: its app or chat is gone. Burn leftover test runners, build watchers, headless browsers, language servers, dev servers from finished chats and stuck scripts. Keep databases, things the owner clearly runs on purpose (ollama, postgres, redis, tunnels, sync tools), anything recently active, and anything you cannot identify.
     - Old copy: burning removes the folder, but the app first saves every commit and local change in a restore point, so mistakes are recoverable. Burn copies whose work is merged or pushed and that nobody touched in weeks. Be careful with copies changed in the last few days or holding unmerged work: ask instead.
+    - Robot browser (fact `robot`): a browser Playwright, Puppeteer, chromedriver or an MCP server drives. `abandoned` means nothing can drive it anymore, so it can go. `driven` means a program (often a Playwright CLI daemon or an MCP server) or a client can still drive it: burn that program once its chat has ended and it sits idle, keep it while a chat works.
     - Junk folder: rebuildable output such as node_modules, build folders and caches. Burn it when the project is not being worked on right now.
 
     The owner's lessons (catalog `lessons`) are their intent and your brief: judge unsure items by why they burn or keep things, ask only where no lesson reaches, never contradict one.

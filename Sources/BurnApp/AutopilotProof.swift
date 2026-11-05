@@ -165,8 +165,10 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   try check(questions.count == 3, "Demo should have exactly three open questions")
   let learnedRules = snapshot.rules.filter { $0.source == .`operator` }
   try check(
-    !learnedRules.isEmpty && snapshot.rules.filter { $0.source == .starter }.count == 3,
-    "Demo should have learned rules and three starter rules")
+    !learnedRules.isEmpty
+      && snapshot.rules.filter { $0.source == .starter }.count
+        == AutopilotPolicy.starterRules.count,
+    "Demo should have learned rules and every starter rule")
   // What the owner taught shows as a few plain lessons, each rule in exactly one of them.
   let grouped = snapshot.lessons.flatMap(\.ruleIDs)
   try check(
@@ -253,7 +255,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       && AutopilotText.sweepLine(looking, now: Date()).hasPrefix("Look-only · next sweep in"),
     "The menu line should cover off, paused and look-only")
   print(
-    "PASS autopilot UI demo data: \(snapshot.entries.count) entries across every status and kind, 3 questions, \(snapshot.lessons.count) lessons from \(learnedRules.count) learned rules, 3 starter rules, \(snapshot.progress.lines.count) progress lines and 1 tell"
+    "PASS autopilot UI demo data: \(snapshot.entries.count) entries across every status and kind, 3 questions, \(snapshot.lessons.count) lessons from \(learnedRules.count) learned rules, \(AutopilotPolicy.starterRules.count) starter rules, \(snapshot.progress.lines.count) progress lines and 1 tell"
   )
   for group in snapshot.lessons { print("  lesson: \(group.sentence) [\(group.evidence)]") }
   for line in snapshot.progress.lines { print("  doing: \(line)") }

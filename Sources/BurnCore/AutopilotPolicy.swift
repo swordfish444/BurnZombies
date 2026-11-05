@@ -10,6 +10,24 @@ public enum AutopilotPolicy {
 
   /// Safe floor that works before the operator answers anything. Each can be switched off.
   public static let starterRules: [AutopilotRule] = [
+    // A browser Playwright, Puppeteer, chromedriver or an MCP server started, whose launcher is
+    // gone and that nobody can reconnect to (`robot` is worked out in AutopilotProcesses).
+    AutopilotRule(
+      id: "starter-robot-browsers", kind: .process,
+      match: ["robot": ["abandoned"], "idle": ["10m", "1h", "6h", "1d"]], verdict: .burn,
+      source: .starter, title: "Robot browsers nothing can drive anymore, idle 10+ minutes",
+      created: Date(timeIntervalSinceReferenceDate: 0)),
+    // A Playwright CLI daemon, MCP server or test runner still holding a robot browser after the
+    // chat that worked in its folder ended. One serving a network port may be a service someone
+    // still uses, so it isn't covered.
+    AutopilotRule(
+      id: "starter-robot-drivers", kind: .process,
+      match: [
+        "robot": ["driven"], "orphaned": ["yes", "maybe"], "thread": ["ended"],
+        "listening": ["no"], "idle": ["1h", "6h", "1d"],
+      ], verdict: .burn, source: .starter,
+      title: "Programs still driving a robot browser an hour after their chat ended",
+      created: Date(timeIntervalSinceReferenceDate: 0)),
     AutopilotRule(
       id: "starter-leftover-programs", kind: .process,
       match: [
@@ -32,6 +50,11 @@ public enum AutopilotPolicy {
         "home": ["stale-worktree"], "folder": ["node_modules", "build-output", "xcode-derived"],
       ], verdict: .burn, source: .starter,
       title: "Rebuildable folders inside old copies",
+      created: Date(timeIntervalSinceReferenceDate: 0)),
+    AutopilotRule(
+      id: "starter-browser-trail", kind: .disk, match: ["folder": ["browser-temp"]],
+      verdict: .burn, source: .starter,
+      title: "Profiles and recordings robot browsers left in the temp folder",
       created: Date(timeIntervalSinceReferenceDate: 0)),
   ]
 
@@ -389,11 +412,13 @@ public enum AutopilotPolicy {
           "node_modules": "downloaded packages (node_modules)",
           "build-output": "build leftovers", "xcode-derived": "Xcode build leftovers",
           "package-cache": "tool caches", "python-env": "Python environments",
+          "browser-temp": "what robot browsers left behind",
         ][value("folder") ?? ""] ?? "these folders"
       let home =
         [
           "stale-worktree": " inside old copies of your projects",
           "repo": " inside your projects", "global-cache": " on your Mac",
+          "temp": " in your temp folder",
         ][value("home") ?? ""] ?? ""
       let stale =
         [
@@ -562,6 +587,7 @@ extension AutopilotPolicy {
         "xcode-derived": ("Xcode build folder", "Xcode build folders"),
         "package-cache": ("tool cache", "tool caches"),
         "python-env": ("Python environment", "Python environments"),
+        "browser-temp": ("robot-browser leftover", "robot-browser leftovers"),
       ][value("folder")] ?? ("folder", "folders")
     }
   }

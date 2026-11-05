@@ -21,6 +21,8 @@ int bz_fd_summary(int32_t pid, int *sockets, int *files);
 int bz_listening(int32_t pid);
 int bz_agent_markers(int32_t pid);
 int bz_command_line(int32_t pid, char *out, int capacity);
+int bz_arguments(int32_t pid, char *out, int capacity);
+int bz_listen_peers(int32_t pid);
 int bz_path_in_use(const char *root);
 void bz_guard_paths(const char *const *paths, int count);
 int bz_worktree_pid_paths(int pid, void (*visit)(void *, const char *), void *context, char *gap, size_t gap_size);

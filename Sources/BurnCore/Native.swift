@@ -80,6 +80,25 @@ public struct Native {
     guard bz_command_line(pid, &buffer, Int32(buffer.count)) == 1 else { return nil }
     return String(cString: buffer)
   }
+  /// The live arguments, the program first, one entry each. Read to recognize robot browsers;
+  /// never persisted.
+  public func arguments(_ pid: Int32, limit: Int = 131_072) -> [String]? {
+    var buffer = [UInt8](repeating: 0, count: limit)
+    let used = buffer.withUnsafeMutableBufferPointer { raw in
+      raw.baseAddress!.withMemoryRebound(to: CChar.self, capacity: raw.count) {
+        bz_arguments(pid, $0, Int32(raw.count))
+      }
+    }
+    defer { buffer.withUnsafeMutableBytes { _ = memset_s($0.baseAddress, $0.count, 0, $0.count) } }
+    guard used > 0 else { return nil }
+    return buffer[..<Int(used)].split(separator: 0, omittingEmptySubsequences: false).dropLast()
+      .map { String(decoding: $0, as: UTF8.self) }
+  }
+  /// How many clients are connected to the ports the process listens on; nil when unknown.
+  public func clients(_ pid: Int32) -> Int? {
+    let count = bz_listen_peers(pid)
+    return count < 0 ? nil : Int(count)
+  }
   public func currentDirectory(_ pid: Int32) -> String? {
     var buffer = [CChar](repeating: 0, count: 4096)
     guard bz_cwd(pid, &buffer, Int32(buffer.count)) == 1 else { return nil }

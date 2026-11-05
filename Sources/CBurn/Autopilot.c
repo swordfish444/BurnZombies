@@ -83,3 +83,45 @@ int bz_command_line(int32_t pid, char *out, int capacity) {
     struct bz_command_context c = {out, capacity, 0};
     return bz_procargs(pid, bz_command_visit, &c);
 }
+
+struct bz_arguments_context { char *out; int capacity; int used; int truncated; };
+static void bz_arguments_visit(void *context, const char *entry, size_t length, int is_env) {
+    struct bz_arguments_context *c = context;
+    if (is_env || c->truncated) return;
+    if ((size_t)(c->capacity - c->used) < length + 1) { c->truncated = 1; return; }
+    memcpy(c->out + c->used, entry, length);
+    c->used += (int)length;
+    c->out[c->used++] = 0;
+}
+// The live arguments (argv), each ending in a zero byte; never the environment. Returns the
+// bytes written, or -1 when unreadable or longer than capacity. Never persisted.
+int bz_arguments(int32_t pid, char *out, int capacity) {
+    if (!out || capacity < 1) return -1;
+    struct bz_arguments_context c = {out, capacity, 0, 0};
+    if (bz_procargs(pid, bz_arguments_visit, &c) != 1 || c.truncated) return -1;
+    return c.used;
+}
+
+// Clients connected to the process's own listening TCP ports: its established connections whose
+// local port is one it listens on. -1 when it cannot be inspected.
+int bz_listen_peers(int32_t pid) {
+    struct proc_fdinfo f[2048];
+    int n = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, f, sizeof(f));
+    if (n < 0 || n >= (int)sizeof(f)) return -1;
+    int ports[64], listening = 0, established[2048], open = 0;
+    for (int i = 0; i < n / (int)sizeof(f[0]); i++) {
+        if (f[i].proc_fdtype != PROX_FDTYPE_SOCKET) continue;
+        struct socket_fdinfo s;
+        if (proc_pidfdinfo(pid, f[i].proc_fd, PROC_PIDFDSOCKETINFO, &s, sizeof(s)) != (int)sizeof(s)) continue;
+        if (s.psi.soi_kind != SOCKINFO_TCP) continue;
+        int state = s.psi.soi_proto.pri_tcp.tcpsi_state;
+        int port = s.psi.soi_proto.pri_tcp.tcpsi_ini.insi_lport;
+        if (state == TSI_S_LISTEN) { if (listening < 64) ports[listening++] = port; else return -1; }
+        else if (state == TSI_S_ESTABLISHED) established[open++] = port;
+    }
+    int peers = 0;
+    for (int i = 0; i < open; i++)
+        for (int j = 0; j < listening; j++)
+            if (established[i] == ports[j]) { peers++; break; }
+    return peers;
+}

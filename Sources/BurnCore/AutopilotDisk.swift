@@ -38,6 +38,7 @@ public enum AutopilotDisk {
     [
       ("Library/Developer/Xcode/DerivedData", "xcode-derived", "Xcode", true),
       ("Library/Caches/ms-playwright", "package-cache", "Playwright", true),
+      (".cache/ms-playwright", "package-cache", "Playwright", true),
       (".npm/_cacache", "package-cache", "npm", false),
       ("Library/Caches/Yarn", "package-cache", "Yarn", false),
       ("Library/Caches/Homebrew", "package-cache", "Homebrew", false),
@@ -46,6 +47,48 @@ public enum AutopilotDisk {
       (".gradle/caches", "package-cache", "Gradle", false),
       ("Library/Developer/CoreSimulator/Caches", "xcode-derived", "Simulator", false),
     ]
+
+  /// Where Playwright keeps its browsers, relative to the home folder. Beside them are profiles
+  /// its tools keep, logins included (`mcp-chrome`, `daemon`), which are never listed.
+  static let playwrightCaches: Set<String> = ["Library/Caches/ms-playwright", ".cache/ms-playwright"]
+
+  /// The browser builds among the names in a Playwright cache that may go: every one but the
+  /// newest of its kind, which is the one the installed Playwright uses. Deleting that one only
+  /// makes the next run download it again.
+  public static func playwrightBuilds(_ names: [String]) -> [String] {
+    var newest: [String: Int] = [:]
+    for name in names {
+      if let (kind, version) = build(name) { newest[kind] = max(newest[kind] ?? version, version) }
+    }
+    return names.filter { name in
+      guard let (kind, version) = build(name) else { return false }
+      return version < newest[kind] ?? version
+    }
+  }
+
+  /// A Playwright build folder's kind and version ("chromium_headless_shell-1200"), or nil.
+  private static func build(_ name: String) -> (kind: String, version: Int)? {
+    guard let dash = name.lastIndex(of: "-"), let version = Int(name[name.index(after: dash)...]),
+      version > 0
+    else { return nil }
+    let kind = String(name[..<dash])
+    let letters = kind.unicodeScalars.allSatisfy {
+      CharacterSet.lowercaseLetters.contains($0) || $0 == "_" || $0 == "-"
+    }
+    guard !kind.isEmpty, letters, !kind.hasPrefix("mcp") else { return nil }
+    return (kind, version)
+  }
+
+  /// Why a folder in a Playwright cache stays, or nil when it is an old browser build.
+  private static func playwrightRefusal(_ path: String, home: String) -> String? {
+    let relative = String(path.dropFirst(home.count + 1))
+    guard playwrightCaches.contains(parent(relative)) else { return nil }
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: parent(path))) ?? []
+    if playwrightBuilds(names).contains(leaf(path)) { return nil }
+    return build(leaf(path)) == nil
+      ? "That's a browser profile or file a Playwright tool keeps, so I left it alone."
+      : "That's the newest Playwright browser of its kind, the one your tools use, so I left it alone."
+  }
 
   private struct Checkout {
     var path: String
@@ -65,7 +108,7 @@ public enum AutopilotDisk {
     worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), caches: Bool = true,
     mains: Bool = true, now: Date = Date(),
     sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) },
-    protected: ProtectedLocations? = nil, walks: AutopilotWalks? = nil
+    protected: ProtectedLocations? = nil, walks: AutopilotWalks? = nil, trail: String? = nil
   ) -> [AutopilotItem] {
     let protected = protected ?? .limited(homes: [home])
     let base = WorkspaceSafety.canonical(home)
@@ -80,7 +123,8 @@ public enum AutopilotDisk {
       }
       var targets = [location]
       if cache.children {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: location)) ?? []
+        var names = (try? FileManager.default.contentsOfDirectory(atPath: location)) ?? []
+        if playwrightCaches.contains(cache.path) { names = playwrightBuilds(names) }
         targets = names.sorted().map { location + "/" + $0 }
       }
       for target in targets {
@@ -102,6 +146,14 @@ public enum AutopilotDisk {
           ], observedAt: now, lastUsed: touched)
         found[item.id] = item
       }
+    }
+
+    // What robot browsers left in the temp folder, sized with the caches.
+    if caches, let trail, Date() < deadline,
+      let item = AutopilotBrowserTrail.item(
+        in: trail, now: now, minimumBytes: minimumBytes, sizer: sizer)
+    {
+      found[item.id] = item
     }
 
     for checkout in checkouts(worktrees, home: base, mains: mains, protected: protected) {
@@ -212,6 +264,10 @@ public enum AutopilotDisk {
     guard item.kind == .disk, let path = item.path else {
       return refuse("That isn't a junk folder, so I left it alone.")
     }
+    // The temp folder isn't in the home folder; its leftovers have checks of their own.
+    if item.facts["folder"] == "browser-temp" {
+      return AutopilotBrowserTrail.reclaim(item, authority: authority)
+    }
     let folder = item.facts["folder"] ?? "other"
     let known = kinds.contains(folder)
     guard known || authority.hasPrefix("rule:") || authority == "operator" else {
@@ -222,6 +278,7 @@ public enum AutopilotDisk {
       return refuse("I can't find your home folder, so I left this alone.")
     }
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
+    if let reason = playwrightRefusal(path, home: base) { return refuse(reason) }
     if known && recognized(path, home: base) != folder {
       return refuse("That doesn't look like a folder I know how to rebuild, so I left it alone.")
     }
@@ -531,7 +588,7 @@ public enum AutopilotDisk {
   }
 
   /// `medium` under 1 GB, `large` under 10 GB, otherwise `huge`.
-  private static func scale(_ bytes: UInt64) -> String {
+  static func scale(_ bytes: UInt64) -> String {
     bytes < 1_000_000_000 ? "medium" : bytes < 10_000_000_000 ? "large" : "huge"
   }
 

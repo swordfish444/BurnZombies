@@ -1624,9 +1624,13 @@ public actor Monitor {
       throw StoreError.message("I can't confirm my own process tree right now.")
     }
     let tree = AutopilotProcesses.descendants(of: root.latest.identity.pid, in: catalog.records)
+    // Robot browsers are recognized again from their live flags; only they and their own
+    // helpers may be inside an app.
+    let robots = AutopilotProcesses.robots(in: [root] + tree, arguments: { native.arguments($0) })
     for r in [root] + tree {
       if let reason = AutopilotProcesses.rail(
-        r, protectedPIDs: protectedPIDs, preferences: catalog.preferences)
+        r, protectedPIDs: protectedPIDs, preferences: catalog.preferences,
+        robot: robots.members.contains(r.latest.identity.pid))
       {
         throw StoreError.message("PID \(r.latest.identity.pid): \(reason)")
       }
@@ -1634,7 +1638,19 @@ public actor Monitor {
         throw StoreError.message("A chat said it still needs this, so I left it running.")
       }
     }
-    let targets = (tree + [root]).map(\.latest)
+    // Something may have connected to a robot browser's port since it was judged: it is being
+    // driven again. Only the owner's own Burn stops it then.
+    if authority != "operator", robots.browsers[root.latest.identity.pid]?.control == .port,
+      robots.members.contains(where: { (native.clients($0) ?? 1) > 0 })
+    {
+      throw StoreError.message("Something connected to that browser again, so I left it running.")
+    }
+    // Deepest first, except that a robot browser is asked before its helpers: it closes them
+    // and saves its profile itself.
+    let order = tree + [root]
+    let targets =
+      (order.filter { robots.browsers[$0.latest.identity.pid] != nil }
+      + order.filter { robots.browsers[$0.latest.identity.pid] == nil }).map(\.latest)
     var event = CleanupEvent(
       leaseID: UUID(), label: label, date: Date(), targets: targets.map(Member.init),
       residentBefore: targets.reduce(0) { $0 + $1.rss }, outcome: "verifying",

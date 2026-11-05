@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 To BZ, burning means stopping a program or deleting a folder.
 
-- 🧟 **Zombie processes**: Node workers, headless browsers and build watchers left running after their app or chat is gone.<br>
+- 🧟 **Zombie processes**: robot browsers that Playwright, Puppeteer or an MCP server left open (often 1–3 GB each), plus Node workers and build watchers left running after their app or chat is gone.<br>
   **Safety net:** a polite `SIGTERM`, sent only after an exact identity check.
 - 📁 **Stale worktrees** nothing is using.<br>
   **Safety net:** first, a Git ref inside the repo saves every commit, uncommitted change and untracked file, plus small ignored files. Browser profiles that test runs leave behind aren't kept. If BZ can't verify that backup, the worktree stays. Branches are kept. Restore in one click from **Findings** for 30 days; the ref stays in the repo after that.
@@ -54,7 +54,14 @@ To BZ, burning means stopping a program or deleting a folder.
 <details>
 <summary><b>Exactly what it burns on its own</b></summary>
 
-- **Starter rules** (switch each off in **Settings → Autopilot**): orphaned programs that have barely used the CPU for 6+ hours and have no open port, merged worktrees with no local changes untouched for a month, and junk inside worktrees untouched for two weeks.
+- **Starter rules** (switch each off in **Settings → Autopilot**):
+  - robot browsers nothing can drive anymore, once idle 10+ minutes;
+  - programs still driving a robot browser, an hour after their chat ended;
+  - orphaned programs that have barely used the CPU for 6+ hours and have no open port;
+  - merged worktrees with no local changes untouched for a month;
+  - junk inside worktrees untouched for two weeks;
+  - the throwaway profiles and recordings that robot browsers leave in your temp folder.
+- **Robot browsers** are browsers a tool started with automation flags: a control pipe, or a debugging port plus headless mode, a fake keychain or a throwaway profile. The browser you use has none of these, so it is never touched, and neither are logged-in profiles a tool keeps.
 - **The AI,** if on, may burn a low-risk item only when it rates itself at least 85% sure: an orphaned program with no open port, a known junk folder, or a worktree nothing uses. Every burn it asks for passes BZ's own checks.
 - **Never on its own:** worktrees made by Claude Code, Codex or the Conductor app. Other worktrees, such as ones Cursor or your scripts make, follow the two rules above.
 - **Your yes answers:** a question says what it covers, like "Burn 5 tool caches?", and **Yes** also covers new matches later. Forget any rule in **Settings → Autopilot → What BZ has learned**.

@@ -338,6 +338,8 @@ private func adkJunkProof(base: String, now: Date) throws {
   let external = base + "/external"
   let derived = home + "/Library/Developer/Xcode/DerivedData"
   let playwright = home + "/Library/Caches/ms-playwright/chromium-1"
+  // The newest build is the one Playwright uses, so it is never junk.
+  let newestPlaywright = home + "/Library/Caches/ms-playwright/chromium-2"
   let npm = home + "/.npm/_cacache"
   let ssh = home + "/.ssh/keys-repo"
   let cloud = home + "/Library/Mobile Documents/com~apple~CloudDocs/synced"
@@ -396,6 +398,7 @@ private func adkJunkProof(base: String, now: Date) throws {
   try adkWrite(filler, to: derived + "/Small-def/x.o")
   try adkWrite("plist", to: derived + "/info.plist")
   try adkWrite(filler, to: playwright + "/chrome")
+  try adkWrite(filler, to: newestPlaywright + "/chrome")
   try adkWrite(filler, to: home + "/Library/Caches/Yarn/v6/x")
   try adkWrite(filler, to: npm + "/content/x")
 
@@ -415,6 +418,7 @@ private func adkJunkProof(base: String, now: Date) throws {
   sizes[derived + "/MyApp-abc"] = 2_000_000_000
   sizes[derived + "/Small-def"] = 50_000_000
   sizes[playwright] = 300_000_000
+  sizes[newestPlaywright] = 300_000_000
   sizes[home + "/Library/Caches/Yarn"] = 10_000_000
   sizes[npm] = 700_000_000
   var asked: [String] = []
