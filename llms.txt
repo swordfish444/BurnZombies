@@ -64,7 +64,7 @@ Claude Code uses Sonnet by default; Codex uses its own default. Roughly $0.30–
 
 ## Full Disk Access (optional, human only)
 
-Without it, BZ covers everything except the places macOS protects (Desktop, Documents, Downloads, iCloud Drive, Mail, Messages, Photos, other apps' data, external drives) and says what it skipped. With it, those are covered too. AI sweeps run either way. Granting it needs the human: Allow Full Disk Access in the menu-bar banner, or System Settings → Privacy & Security → Full Disk Access → enable BurnZombies. If macOS asks again after an update, re-enable it there. `"$bz" access-check` re-verifies an existing grant; it cannot grant access.
+Without it, BZ covers everything except the places macOS protects (Desktop, Documents, Downloads, iCloud Drive, Mail, Messages, Photos, other apps' data, external drives) and says what it skipped. With it, those are covered too. AI sweeps run either way. Granting it needs the human: Allow Full Disk Access in the menu-bar banner puts BurnZombies in System Settings → Privacy & Security → Full Disk Access and opens it; the human switches BurnZombies on and enters their password. If macOS asks again after an update, re-enable it there. `"$bz" access-check` re-verifies an existing grant; it cannot grant access.
 
 ## Update
 

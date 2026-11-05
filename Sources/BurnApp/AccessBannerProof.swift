@@ -17,9 +17,13 @@ import Vision
   defer { preferences.removePersistentDomain(forName: suite) }
   var opened: [URL] = [], checks = 0, opensSuccessfully = true
   var result = FullDiskAccessStatus(state: .required, detail: "Access is still blocked.")
+  // Fixture listing: never a protected folder. Records how many panes were open at the time.
+  var listedWithPanesOpen: [Int] = [], guides: [AccessGuide?] = []
   let model = AppModel(demo: true, accessPreferences: preferences, accessOpener: { url in
     opened.append(url); return opensSuccessfully
-  }, accessChecker: { checks += 1; return result })
+  }, accessChecker: { checks += 1; return result },
+    accessLister: { listedWithPanesOpen.append(opened.count); return .listed },
+    accessGuide: { guides.append($0) })
   model.state.fullDiskAccess = result
   let initialHistory = model.state.catalog.lifetimeVerified
   let host = NSHostingView(rootView: MiniImpactView(model: model))
@@ -63,7 +67,9 @@ import Vision
     guard !surface.isVisible, !surface.isKeyWindow else { throw StoreError.message("Proof surfaced a window") }
     return text
   }
-  guard model.showsAccessBanner, checks == 0, opened.isEmpty else { throw StoreError.message("Setup caused an automatic action") }
+  guard model.showsAccessBanner, checks == 0, opened.isEmpty, listedWithPanesOpen.isEmpty, guides.isEmpty else {
+    throw StoreError.message("Setup caused an automatic action")
+  }
   model.accessSetupDidBecomeActive(); model.accessSetupDidResignActive(); model.accessSetupDidBecomeActive()
   settle()
   guard checks == 0 else { throw StoreError.message("Normal activation must not probe access") }
@@ -71,10 +77,16 @@ import Vision
   try click(150, 354)
   guard opened.count == 1, opened[0].absoluteString == "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
     !model.accessReady, checks == 0 else { throw StoreError.message("Banner did not open the exact pane, or assumed access") }
+  guard listedWithPanesOpen == [0], guides == [.turnOn], model.accessGuide == .turnOn else {
+    throw StoreError.message("Allow did not list BurnZombies before opening the pane, or showed no switch guide")
+  }
   model.accessSetupDidBecomeActive(); settle()
-  guard checks == 0 else { throw StoreError.message("Opening pane without leaving triggered a check") }
+  guard checks == 0, model.accessGuide == .turnOn else {
+    throw StoreError.message("Opening pane without leaving triggered a check or closed the guide")
+  }
   model.accessSetupDidResignActive(); model.accessSetupDidBecomeActive()
   try completeCheck(1)
+  guard model.accessGuide == nil, guides == [.turnOn, nil] else { throw StoreError.message("Returning left the guide open") }
   model.accessSetupDidResignActive(); model.accessSetupDidBecomeActive(); settle()
   guard checks == 1, !model.accessReady else { throw StoreError.message("Activation loop rechecked or granted denied access") }
   try click(314, 354)
@@ -98,6 +110,7 @@ import Vision
   guard checks == 1 else { throw StoreError.message("Busy observer raced access verification") }
   model.working = false; try completeCheck(2)
   opensSuccessfully = false; model.openFullDiskAccessSettings()
+  guard model.accessGuide == nil else { throw StoreError.message("Failed pane open showed the guide") }
   model.accessSetupDidResignActive(); model.accessSetupDidBecomeActive(); settle()
   guard checks == 2 else { throw StoreError.message("Failed pane open armed an access probe") }
   result = .init(state: .granted, detail: "Fixture verification succeeded.")
@@ -105,6 +118,11 @@ import Vision
   guard model.accessReady, !model.showsAccessBanner, !model.accessBannerDismissed,
     !preferences.bool(forKey: AppModel.accessBannerDismissedKey) else { throw StoreError.message("Verified access did not clear banner/dismissal") }
   _ = try render("verified")
+  // Manage access after setup only opens the pane: no listing attempt, no setup guide.
+  let listedBeforeManage = listedWithPanesOpen.count, panesBeforeManage = opened.count
+  model.openFullDiskAccessSettings()
+  guard listedWithPanesOpen.count == listedBeforeManage, opened.count == panesBeforeManage + 1,
+    model.accessGuide == nil else { throw StoreError.message("Manage access listed again or showed the setup guide") }
   model.state.fullDiskAccess = .init(state: .required, detail: "Access was revoked.")
   guard model.showsAccessBanner, model.state.catalog.lifetimeVerified == initialHistory else {
     throw StoreError.message("Revocation failed to restore setup or changed cleanup history")
@@ -160,7 +178,60 @@ import Vision
   let beforeFailedRestart = restartChecks
   _ = launch(); settle()
   guard restartChecks == beforeFailedRestart else { throw StoreError.message("Failed settings launch left a restart probe armed") }
+  // Access macOS already allows is verified at once: no pane, no guide.
+  var readableChecks = 0, readablePanes = 0, readableGuides = 0
+  let readable = AppModel(demo: true, accessOpener: { _ in readablePanes += 1; return true },
+    accessChecker: { readableChecks += 1; return .init(state: .granted) },
+    accessLister: { .alreadyReadable }, accessGuide: { _ in readableGuides += 1 })
+  readable.state.fullDiskAccess = .init()
+  readable.openFullDiskAccessSettings()
+  let readableDeadline = Date().addingTimeInterval(3)
+  while (readableChecks != 1 || readable.working) && Date() < readableDeadline { settle() }
+  guard readableChecks == 1, readablePanes == 0, readableGuides == 0, readable.accessReady else {
+    throw StoreError.message("Access macOS already allows was not verified directly")
+  }
+  // Nothing was refused, so BurnZombies isn't listed: the guide asks for a drag instead.
+  var dragGuides: [AccessGuide?] = []
+  let unlisted = AppModel(demo: true, accessOpener: { _ in true }, accessChecker: { .init() },
+    accessLister: { .unavailable }, accessGuide: { dragGuides.append($0) })
+  unlisted.state.fullDiskAccess = .init()
+  unlisted.openFullDiskAccessSettings()
+  unlisted.closeAccessGuide()
+  guard dragGuides == [.dragIn, nil], unlisted.accessGuide == nil else {
+    throw StoreError.message("Unlisted app did not get the drag guide, or it would not close")
+  }
+  // The guide itself, rendered offscreen and read back.
+  let fixtureApp = Bundle.main.bundleURL.pathExtension == "app"
+    ? Bundle.main.bundleURL : URL(fileURLWithPath: "/Applications/BurnZombies.app")
+  for (guide, name, expected) in [
+    (AccessGuide.turnOn, "guide-turn-on", ["Turn on BurnZombies", "password or Touch ID", "Drag this icon"]),
+    (AccessGuide.dragIn, "guide-drag-in", ["Add BurnZombies", "password or Touch ID", "Quit & Reopen"]),
+  ] {
+    let guideHost = NSHostingView(rootView: AccessGuideView(guide: guide, appURL: fixtureApp, close: {}))
+    guideHost.frame = NSRect(origin: .zero, size: guideHost.fittingSize)
+    let guideWindow = NSWindow(contentRect: guideHost.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    guideWindow.contentView = guideHost
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    guideHost.layoutSubtreeIfNeeded(); guideHost.displayIfNeeded()
+    guard let bitmap = guideHost.bitmapImageRepForCachingDisplay(in: guideHost.bounds) else {
+      throw StoreError.message("Guide render unavailable")
+    }
+    guideHost.cacheDisplay(in: guideHost.bounds, to: bitmap)
+    guard let image = bitmap.cgImage, let png = bitmap.representation(using: .png, properties: [:]) else {
+      throw StoreError.message("Guide PNG unavailable")
+    }
+    try png.write(to: directory.appendingPathComponent(name + ".png"))
+    let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+    recognition.recognitionLanguages = ["en-US"]
+    try VNImageRequestHandler(cgImage: image, options: [:]).perform([recognition])
+    let text = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    try text.write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
+    guard !guideWindow.isVisible, expected.allSatisfy({ text.contains($0) }) else {
+      throw StoreError.message("Guide \(name) surfaced a window or lost its instructions")
+    }
+  }
   print("PASS native direct-pane/dismiss hits, isolated persistent dismissal, one-shot return check, busy deferral, denied/failed-open refusal, verified completion and revocation; no windows or live permission changes")
   print("PASS Quit & Reopen verification, denied pre-restart return recovery, and denied/unknown restart consumption without loops")
+  print("PASS listing before the pane opens, switch and drag guides shown and closed, Manage access without listing, already-allowed access verified without Settings")
 }
 #endif

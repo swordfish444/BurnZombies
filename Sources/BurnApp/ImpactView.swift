@@ -423,7 +423,7 @@ struct MiniImpactView: View {
           Image(systemName: "lock.shield").font(.system(size: 23)).foregroundStyle(BurnTheme.orange)
           VStack(alignment: .leading, spacing: 5) {
             Text("Allow Full Disk Access").font(.system(size: 12.5, weight: .semibold))
-            Text("Open System Settings ↗").font(.system(size: 10.5)).foregroundStyle(
+            Text("One switch in System Settings ↗").font(.system(size: 10.5)).foregroundStyle(
               BurnTheme.muted)
           }
           Spacer(minLength: 0)

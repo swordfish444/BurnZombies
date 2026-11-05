@@ -45,6 +45,25 @@ func fullDiskAccessProof() async throws {
   checkFalse(unknown.canScan)
   checkFalse(FullDiskAccess.status(root: root, identity: "build-a", probe: allowed).canScan)
   equal(calls, 2)
+  // Listing BurnZombies in Settings: the first folder that answers decides, and a refusal
+  // stops at once, so one click costs at most one refused open.
+  var opened: [String] = []
+  func listing(_ answers: [String: FullDiskAccess.ProbeResult]) -> FullDiskAccess.Listing {
+    opened = []
+    return FullDiskAccess.list(paths: ["mail", "messages", "safari"]) { path in
+      opened.append(path)
+      return answers[path] ?? .missing
+    }
+  }
+  equal(listing(["mail": .denied, "messages": .denied]), .listed)
+  equal(opened, ["mail"], "Listing must stop at the first refusal")
+  equal(listing(["messages": .denied]), .listed)
+  equal(opened, ["mail", "messages"], "A missing folder must not end listing")
+  equal(listing(["mail": .unavailable, "safari": .readable]), .alreadyReadable)
+  equal(opened, ["mail", "messages", "safari"])
+  equal(listing([:]), .unavailable, "No refused folder must not claim the app is listed")
+  equal(listing(["mail": .readable, "messages": .denied]), .alreadyReadable)
+  equal(opened, ["mail"], "A readable folder must stop listing")
   equal(
     FullDiskAccess.evaluate(paths: ["mail", "messages"], probe: { _ in .missing }).state, .unknown)
   equal(

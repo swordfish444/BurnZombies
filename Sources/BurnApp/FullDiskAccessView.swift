@@ -31,29 +31,21 @@ struct FullDiskAccessView: View {
             + ProtectedLocations.summary + ".")
           .font(.caption).foregroundStyle(.secondary)
         VStack(alignment: .leading, spacing: 7) {
-          Text("1. Open Privacy & Security → Full Disk Access.")
-          Text("2. Add BurnZombies with + and turn it on.")
-          Text("3. Return to BurnZombies, or choose Quit & Reopen if macOS asks. We’ll verify access automatically.")
+          Text("1. Click Allow Full Disk Access. BurnZombies puts itself in the list for you.")
+          Text("2. Switch on BurnZombies and enter your Mac password or use Touch ID.")
+          Text("3. Choose Quit & Reopen if macOS asks. We’ll verify access automatically.")
         }.font(.caption).fixedSize(horizontal: false, vertical: true)
-        HStack(alignment: .top, spacing: 8) {
-          Text(model.installedAppPath).font(.caption2.monospaced()).textSelection(.enabled)
-            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-          Spacer(minLength: 0)
-          Button { model.copyInstalledAppPath() } label: { Image(systemName: "doc.on.doc") }
-            .buttonStyle(.plain).foregroundStyle(.secondary).clickPointer()
-            .help("Copy app path for +, then Command-Shift-G").accessibilityLabel("Copy app path")
-        }
         Text("This permission allows access to protected files. Active work, personal data and uncertain cleanup targets remain protected by BurnZombies’ safety checks.")
           .font(.caption).foregroundStyle(.secondary)
         VStack(alignment: .leading, spacing: 8) {
-          Button("Open Full Disk Access") { model.openFullDiskAccessSettings() }
+          Button("Allow Full Disk Access") { model.openFullDiskAccessSettings() }
             .buttonStyle(.borderedProminent).tint(BurnTheme.orange).clickPointer()
             .accessibilityIdentifier("open-full-disk-access")
           Button("Check access") { model.recheckFullDiskAccess() }
             .buttonStyle(.bordered).clickPointer().disabled(model.working)
             .accessibilityIdentifier("check-full-disk-access")
         }
-        Text("If an update needs access again, remove the old entry, add this copy of BurnZombies, then enable it.")
+        Text("If an update needs access again, remove the old BurnZombies entry with −, then click Allow Full Disk Access.")
           .font(.caption).foregroundStyle(.secondary)
         Text(model.state.fullDiskAccess.detail).font(.caption).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
