@@ -1369,7 +1369,6 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     "PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, forget a whole lesson, Good call, Undo, OK on an undone tell, act on its own, starter switch, reset, interval, sweep now, look-only and engine hand-off"
   )
 }
-#endif
 
 /// View details on the question card, rendered: the list with its filters in place of the chips and
 /// rows, one copy opened with its facts and ‹ ›, a Spare that takes it off the card at once, a tip in
@@ -1441,3 +1440,4 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     "PASS autopilot UI Teach BZ details: \(listed.count) listed with filters, one opened (\(position)), a Spare that leaves \(left.count) on the card, a tip and the note that spared copies stay"
   )
 }
+#endif
