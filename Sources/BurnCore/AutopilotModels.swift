@@ -38,11 +38,16 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
   /// What the owner would call it: the chat or branch a copy was made for. Programs and folders
   /// have none; a card row uses their name ("node in api"). Not a fact either.
   public var title: String?
+  /// A copy's branch, for Teach BZ's details. Not a fact.
+  public var branch: String?
+  /// How many files a copy has unsaved, when Git said; the `changes` fact only buckets it. Not a
+  /// fact.
+  public var unsaved: Int?
   public init(
     id: String, kind: AutopilotKind, name: String, detail: String = "", path: String? = nil,
     bytes: UInt64 = 0, facts: [String: String], protectedReason: String? = nil,
     observedAt: Date = Date(), pid: Int32? = nil, processKey: String? = nil,
-    lastUsed: Date? = nil, title: String? = nil
+    lastUsed: Date? = nil, title: String? = nil, branch: String? = nil, unsaved: Int? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -59,6 +64,8 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
     self.processKey = processKey
     self.lastUsed = lastUsed
     self.title = title
+    self.branch = branch
+    self.unsaved = unsaved
     revision = Self.revision(id: id, facts: all)
   }
   public static func revision(id: String, facts: [String: String]) -> String {
@@ -651,7 +658,11 @@ public enum AutopilotCommand: Codable, Sendable, Equatable {
   /// Without them, the answer teaches from the question as BZ last saw it.
   case answer(questionID: String, answer: AutopilotAnswer, risks: [String]? = nil)
   case burnNow(itemID: String)
+  /// The owner keeps it for good (Findings' Keep forever, Teach BZ's Spare): no lesson, starter
+  /// rule or AI call burns it.
   case keep(itemID: String)
+  /// Takes back the owner's keep (Teach BZ's Unspare): BZ decides about it again.
+  case unkeep(itemID: String)
   case restore(receiptID: UUID)
   case forgetRule(ruleID: String)
   case setStarter(ruleID: String, enabled: Bool)
