@@ -35,7 +35,7 @@ On a real Mac with 27 answers, three things went wrong:
   - on a subject the owner has never answered;
   - on a risk the owner hasn't said yes to before;
   - against any No.
-- The four owner rules made from earlier "even if used today" AI questions burn at any age. That was the owner's choice, and they stay exactly as they are. In general, a rule with no recency fact is never rewritten, absorbed or migrated.
+- A rule with no recency fact is never rewritten, absorbed or migrated; it stays exactly as it was, id included. That covers owner rules from earlier "even if used today" AI questions that name no age; they burn at any age, which was the owner's choice. An earlier rule that does name its ages, "used today" included, is an answer that said how recent things were, so migration generalizes it like any other. On the first live Mac, two of the four "even if used today" rules named no age and stayed unchanged. One named ages from yesterday on and was already inside a broader lesson, so absorbing it changed nothing. The last became part of "Copies are done the same day once their work is on GitHub and nothing is unsaved". `memory.v1.json` keeps the originals.
 - Copies whose age BZ couldn't read (`stale: unknown`) stay out of rules and questions. That's a separate follow-up.
 
 ## Part 1: The question card (owner chose card A, "show the copies")
