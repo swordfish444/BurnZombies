@@ -11,6 +11,39 @@ func autopilotLearningProof() async throws {
   try await cardProof()
   try await tellProof()
   try await evalRequestProof()
+  try await simulatedOwnersProof()
+}
+
+/// Simulated owners (spec 4.3): three owners with fixed policies over 8 rounds of a Mac that gains
+/// new copies, programs and folders every round. BZ never burns what an owner would keep, tells
+/// included; it asks less, and handles more without asking, in the last four rounds than in the
+/// first four; the liberal owner gets tells; and after the liberal owner undoes one in round 6, BZ
+/// tells nothing more on that subject in round 7 (R3).
+func simulatedOwnersProof() async throws {
+  let liberal = try await simulateOwner(.liberal, undoRound: 6)
+  let cautious = try await simulateOwner(.cautious)
+  let keeper = try await simulateOwner(.serverKeeper)
+  for run in [liberal, cautious, keeper] {
+    print("  owner \(run.line)")
+    print("    subjects: " + run.subjects.joined(separator: "; "))
+    equal(run.wrong, [], "\(run.persona): BZ never burns what the owner would keep, tells included")
+    let early: Int = run.questions(1...4)
+    let late: Int = run.questions(5...8)
+    check(late < early, "\(run.persona): fewer questions in rounds 5-8 (\(late)) than 1-4 (\(early))")
+    // Spec 4.3: what BZ handles without asking rises.
+    let before: UInt64 = run.handled(1...4)
+    let after: UInt64 = run.handled(5...8)
+    check(after > before, "\(run.persona): more handled without asking in rounds 5-8 than 1-4")
+  }
+  check(liberal.tells > 0, "liberal: BZ tells the owner what it did on its own by round 8")
+  guard let undone = liberal.undone else {
+    return failTest("liberal: a tell to undo in round 6")
+  }
+  equal(undone.round, 6, "liberal: the Undo is in round 6")
+  let seventh: [String] = liberal.rounds.first { $0.round == 7 }?.tellSubjects ?? []
+  checkFalse(
+    seventh.contains(undone.subject),
+    "liberal: no tell on \(undone.subject) in round 7, after the Undo")
 }
 
 private func copy(_ id: String, _ facts: [String: String], bytes: UInt64 = 1 << 30)
