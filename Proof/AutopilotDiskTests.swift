@@ -474,6 +474,14 @@ private func adkJunkProof(base: String, now: Date) throws {
     Set(copiesOnly.compactMap { $0.path }),
     expected.subtracting([derived + "/MyApp-abc", playwright, npm]),
     "without the global caches, only junk in checkouts")
+  let copyOnly = AutopilotDisk.items(
+    worktrees: [stale] + guarded, home: home, caches: false, mains: false, now: now, sizer: sizer)
+  let copyJunk: Set<String> = [
+    old + "/node_modules", old + "/.build", old + "/packages/web/node_modules",
+  ]
+  equal(
+    Set(copyOnly.compactMap { $0.path }), copyJunk,
+    "without main checkouts either, only junk in the copy itself")
 
   let both = AutopilotDisk.items(worktrees: [primary, stale], home: home, now: now, sizer: sizer)
   equal(both.count, expected.count, "listing the main checkout as well adds nothing")
@@ -646,6 +654,15 @@ private func adkJunkCacheProof(base: String, now: Date) async throws {
   var pending = inspected
   pending.lastFileChange = nil
   pending.lastCommitAt = nil
+  // Another project, found later: its main checkout has junk of its own.
+  let toolsPath = home + "/git/tools"
+  try adkRepository(toolsPath)
+  try adkWrite("node_modules/\n", to: toolsPath + "/.gitignore")
+  try adkGit(toolsPath, ["add", "."])
+  try adkGit(toolsPath, ["commit", "-m", "fixture"])
+  try junk(toolsPath + "/node_modules/pkg")
+  var tools = WorktreeRecord(id: "tools", path: toolsPath, repository: toolsPath + "/.git")
+  tools.main = true
 
   let state = URL(fileURLWithPath: base + "/state")
   let monitor = try Monitor(
@@ -669,7 +686,9 @@ private func adkJunkCacheProof(base: String, now: Date) async throws {
 
   var items = await ask([primary, first]) { place(first, $0) != nil }
   equal(place(first, items), "stale-worktree", "the first walk lists junk in an old copy")
-  try junk(first.path + "/dist")
+  // Junk that appears later in checkouts already walked waits for the six-hourly walk.
+  let later = [first.path + "/dist", repo + "/dist"]
+  for folder in later { try junk(folder) }
   items = await ask([primary, first, late]) { place(late, $0) != nil }
   equal(
     place(late, items), "stale-worktree",
@@ -680,11 +699,13 @@ private func adkJunkCacheProof(base: String, now: Date) async throws {
   equal(
     place(inspected, items), "stale-worktree", "a copy is walked again once its age is known")
   check(place(first, items) != nil && place(late, items) != nil, "earlier walks' junk stays listed")
-  items = await ask([primary, first, late, inspected], seconds: 1) {
-    $0.contains { $0.path == first.path + "/dist" }
+  items = await ask([primary, first, late, inspected, tools]) { place(tools, $0) != nil }
+  equal(place(tools, items), "repo", "a new project's main checkout is walked with its record")
+  items = await ask([primary, first, late, inspected, tools], seconds: 1) { items in
+    items.contains { later.contains($0.path ?? "") }
   }
   checkFalse(
-    items.contains { $0.path == first.path + "/dist" },
-    "a copy already walked waits for the six-hourly walk instead of being walked every tick")
+    items.contains { later.contains($0.path ?? "") },
+    "checkouts already walked, main checkouts included, wait for the six-hourly walk")
   await monitor.shutdownWorktrees()
 }

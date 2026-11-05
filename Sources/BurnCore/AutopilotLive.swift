@@ -142,9 +142,11 @@ final class AutopilotJunkCache: @unchecked Sendable {
     }
     if let walk {
       Thread.detachNewThread { [self] in
-        // Only the full walk measures the global caches again.
+        // Only the full walk measures the global caches and each copy's main checkout again. A new
+        // project's main checkout has a record of its own, so it is walked with the new copies.
         let fresh = AutopilotDisk.items(
-          worktrees: walk.records, home: home, caches: walk.everything, protected: protected)
+          worktrees: walk.records, home: home, caches: walk.everything, mains: walk.everything,
+          protected: protected)
         lock.withLock {
           if walk.everything {
             cached = fresh

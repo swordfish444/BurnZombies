@@ -231,7 +231,8 @@ private func lookOnlyAfterward(
     "look-only: every copy stays")
   check(kill(helper, 0) == 0, "look-only: the helper keeps running")
   check(last.count(.burn) > 0, "look-only: BZ shows what it would burn")
-  let junk = paused.appendingPathComponent("node_modules").path
+  // BZ lists folders by their real path: /private/var, not /var.
+  let junk = WorkspaceSafety.canonical(paused.appendingPathComponent("node_modules").path)
   check(
     last.entries.contains { $0.item.path == junk && $0.status == .burn },
     "look-only: the paused copy's junk is among what BZ would burn")
