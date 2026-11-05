@@ -38,6 +38,9 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
   /// What the owner would call it: the chat or branch a copy was made for. Programs and folders
   /// have none; a card row uses their name ("node in api"). Not a fact either.
   public var title: String?
+  /// A copy's unsaved files too big to back up, as the refusal that found them named them, for its
+  /// card. Not a fact: the fact is `bigFiles=yes`.
+  public var bigFiles: [AutopilotBigFiles]?
   public init(
     id: String, kind: AutopilotKind, name: String, detail: String = "", path: String? = nil,
     bytes: UInt64 = 0, facts: [String: String], protectedReason: String? = nil,
@@ -172,6 +175,9 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
   /// sorted "fact=value" lists, one per distinct mix. A No, and an Undo of BZ's own call, check
   /// that their keeps hold every one of them at the card's age, so nothing on the card burns after.
   public var profiles: [[String]]?
+  /// How much of what it covers is unsaved files too big to back up, which a Yes deletes for good.
+  /// Nil when it covers none.
+  public var bigBytes: UInt64?
   public init(
     kind: AutopilotKind, match: [String: [String]], question: String, why: String,
     examples: [String], count: Int, bytes: UInt64, asked: Date = Date(), source: String = "native"
@@ -198,6 +204,8 @@ public struct AutopilotQuestionRow: Codable, Sendable, Equatable {
   public var subtitle: String?
   public var bytes: UInt64
   public var lastUsed: Date?
+  /// A copy's unsaved files too big to back up: what a Yes deletes.
+  public var bigFiles: [AutopilotBigFiles]?
   public init(title: String, subtitle: String? = nil, bytes: UInt64, lastUsed: Date? = nil) {
     self.title = title
     self.subtitle = subtitle
@@ -424,6 +432,8 @@ public struct AutopilotReceipt: Codable, Sendable, Identifiable, Equatable {
   public var eventID: UUID?
   /// The item revision a refusal saw, so an unchanged item is not retried every tick.
   public var revision: String?
+  /// Unsaved files too big to back up: what a refusal found, or what a burn deleted.
+  public var bigFiles: [AutopilotBigFiles]?
   public init(
     id: UUID = UUID(), itemID: String, kind: AutopilotKind, name: String, authority: String,
     outcome: String, detail: String, bytes: UInt64 = 0, date: Date = Date(),

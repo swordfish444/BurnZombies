@@ -783,6 +783,107 @@ private func apBrowserProfileRetire(_ world: APWorld) throws {
   equal(try burn(fixture).outcome, "refused", "a profile Git tracks part of is somebody's work")
 }
 
+/// Unsaved files too big to back up don't keep a copy for good. Retire names them, so the owner can
+/// be asked, and drops them only from a copy known to hold them (`bigFiles=yes`) that burns under
+/// an owner's lesson: the policy lets no other lesson burn such a copy. A folder of throwaway
+/// checkouts goes as one, ignored files inside it too, while the small new files beside it are
+/// backed up and come back on restore. The owner's Burn now and the AI still leave such a copy
+/// alone, and so does a project inside the big files.
+private func apBigFilesRetire(_ world: APWorld) throws {
+  // Sparse: counts its full size, takes no disk.
+  func big(_ path: String, megabytes: UInt64) throws {
+    try apWrite(path, "")
+    let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
+    try handle.truncate(atOffset: megabytes << 20)
+    try handle.close()
+  }
+  var cache: [String: AutopilotDelivery] = [:]
+  func burn(_ path: String, known: Bool, _ authority: String) throws -> AutopilotReceipt {
+    var item = try apItem(path, world, cache: &cache)
+    if known { item.facts["bigFiles"] = "yes" }
+    return AutopilotWorktrees.retire(
+      item, authority: authority, root: world.state, inUse: { _ in 0 })
+  }
+  let checkouts: UInt64 = 7 * (90 << 20)
+
+  let copy = try world.addWorktree("checkouts", branch: "feature-checkouts")
+  try apWrite(copy + "/.gitignore", "*.local\n")
+  try apGit(copy, ["add", ".gitignore"])
+  try apGit(copy, ["commit", "-q", "-m", "Ignore local settings"])
+  for n in 1...7 { try big(copy + "/tmp/checkouts/c\(n)/game.ts", megabytes: 90) }
+  try apWrite(copy + "/tmp/checkouts/c1/settings.local", "token=1\n")
+  try apWrite(copy + "/tmp/results.json", "{\"wins\": 3}\n")
+  try apWrite(copy + "/tools/balance.ts", "export const damage = 7\n")
+  for (known, authority, who) in [
+    (true, "operator", "the owner's Burn now"), (true, "ai:0.95", "the AI"),
+    (false, "rule:lesson", "a lesson, before the copy was known to hold them"),
+  ] {
+    let receipt = try burn(copy, known: known, authority)
+    equal(receipt.outcome, "refused", who + " leaves it alone")
+    equal(receipt.detail, "It has big files that aren't saved anywhere else, so I left it alone.")
+    equal(receipt.bigFiles?.map(\.path), ["tmp/checkouts"], who + ": the refusal names them")
+  }
+  let named = try burn(copy, known: false, "rule:lesson").bigFiles?.first
+  equal(named?.bytes, checkouts)
+  equal(named?.files, 7)
+  equal(named?.kind, "TypeScript files")
+  check(
+    (named?.changed).map { abs($0.timeIntervalSinceNow) < 600 } == true,
+    "with when they last changed")
+  check(apExists(copy + "/tmp/checkouts/c1/game.ts"), "and leaves them there")
+
+  let receipt = try burn(copy, known: true, "rule:lesson")
+  equal(receipt.outcome, "burned", "an owner's lesson that let them go burns it: " + receipt.detail)
+  let gone = "Its big unsaved files (" + AutopilotPolicy.roughly(checkouts)
+  check(
+    receipt.detail.hasSuffix(gone + " in tmp/checkouts) were deleted for good."),
+    "the receipt says what went: " + receipt.detail)
+  equal(receipt.bigFiles?.map(\.path), ["tmp/checkouts"])
+  checkFalse(apExists(copy), "the copy is gone")
+  if let restore = receipt.restore {
+    let listing = try apGit(world.main, ["ls-tree", "-r", "--name-only", restore.ref])
+    let names = listing.split(separator: "\n").map(String.init)
+    check(names.contains("tmp/results.json"), "the small unsaved files are backed up")
+    check(names.contains("tools/balance.ts"), "the new script too")
+    checkFalse(names.contains { $0.hasPrefix("tmp/checkouts") }, "the checkouts aren't, ignored or not")
+    try AutopilotWorktrees.restore(receipt)
+    equal(apRead(copy + "/tools/balance.ts"), "export const damage = 7\n", "the script is back")
+    checkFalse(apExists(copy + "/tmp/checkouts"), "the checkouts aren't")
+  } else {
+    failTest("the burn left no way to restore it")
+  }
+
+  // A single big file goes alone; the note beside it is backed up.
+  let dump = try world.addWorktree("dump", branch: "feature-dump")
+  try big(dump + "/dump.sql", megabytes: 600)
+  try apWrite(dump + "/notes.txt", "keep me\n")
+  let dropped = try burn(dump, known: true, "rule:lesson")
+  equal(dropped.outcome, "burned", dropped.detail)
+  equal(dropped.bigFiles?.map(\.path), ["dump.sql"])
+  if let restore = dropped.restore {
+    let listing = try apGit(world.main, ["ls-tree", "-r", "--name-only", restore.ref])
+    let names = listing.split(separator: "\n").map(String.init)
+    check(names.contains("notes.txt"), "the note is backed up")
+    checkFalse(names.contains("dump.sql"), "the dump isn't")
+  } else {
+    failTest("the dump's copy left no way to restore it")
+  }
+
+  // A project inside the big files keeps the copy, as it does when Git would back it up.
+  let nested = try world.addWorktree("nested", branch: "feature-nested")
+  for n in 1...7 { try big(nested + "/tmp/checkouts/c\(n)/game.ts", megabytes: 90) }
+  let inner = nested + "/tmp/checkouts/c1/inner"
+  try FileManager.default.createDirectory(atPath: inner, withIntermediateDirectories: true)
+  try apGit(inner, ["init", "-q"])
+  try apGit(inner, ["commit", "-q", "--allow-empty", "-m", "Work that exists only here"])
+  let kept = try burn(nested, known: true, "rule:lesson")
+  equal(kept.outcome, "refused", "a project inside the big files keeps the copy")
+  equal(
+    kept.detail,
+    "There is another project folder inside it that I can't back up, so I left it alone.")
+  check(apExists(inner + "/.git"), "and it's still there")
+}
+
 private func apSubmoduleProof(_ world: APWorld) throws {
   let libOrigin = world.path("lib.git")
   let libSeed = world.path("lib-seed")
@@ -1113,6 +1214,7 @@ func autopilotWorktreeProof() async throws {
   try apUncheckedRetire(world, items["pushed"]!)
   try apDirtyRetire(world, items["dirty"]!)
   try apBrowserProfileRetire(world)
+  try apBigFilesRetire(world)
   try apUnwalkedAgeProof(world)
   try apSubmoduleProof(world)
   try await apRestartProof(world)

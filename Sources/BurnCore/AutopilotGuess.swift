@@ -12,8 +12,8 @@ extension AutopilotPolicy {
   /// Facts that make burning riskier: work only on this Mac, unsaved changes, a running server,
   /// recent use. Any fact BZ couldn't check (`unknown`) is risky too.
   static let riskyFacts: Set<String> = [
-    "saved=local", "changes=small", "changes=large", "listening=yes", "stale=today",
-    "idle=active", "idle=10m",
+    "saved=local", "changes=small", "changes=large", "bigFiles=yes", "listening=yes",
+    "stale=today", "idle=active", "idle=10m",
   ]
   /// Caution text on older questions, and the risk each one names.
   static let cautionRisks: [(text: String, risk: String)] = [
@@ -82,7 +82,7 @@ extension AutopilotPolicy {
     let lean: AutopilotAnswer = yes.count > no ? .yes : .no
     let asked = risks(of: question)
     let saidYes = approvedRisks(topic, memory, besides: question.id)
-    let general = generalize(question.kind, question.match)
+    let general = askedPattern(question)
     let kept = memory.rules.contains { rule in
       guard rule.verdict == .keep, rule.kind == question.kind else { return false }
       guard subject(rule.kind, rule.match) == topic else { return false }
@@ -91,7 +91,9 @@ extension AutopilotPolicy {
     let earned: Bool = trusted(topic, scores: memory.scores) && lean == .yes
     let answeredYes: Bool = same.contains { $0.answer == .yes }
     let known: Bool = asked.isSubset(of: saidYes)
-    let sure: Bool = earned && answeredYes && known && !kept
+    // Only the owner's Yes deletes files that exist nowhere else; BZ asks instead.
+    let deletes: Bool = !asked.isDisjoint(with: namedRisks(question.kind))
+    let sure: Bool = earned && answeredYes && known && !kept && !deletes
     // The words name only risks the owner said yes to among the answers counted.
     var seen = Set<String>()
     for past in yes { seen.formUnion(risks(of: past)) }
@@ -232,8 +234,8 @@ extension AutopilotPolicy {
       words.insert(word)
     }
     let order = [
-      "work only on this Mac", "unsaved changes", "a running server", "things I couldn't check",
-      "recent use",
+      "work only on this Mac", "unsaved changes", "big unsaved files", "a running server",
+      "things I couldn't check", "recent use",
     ]
     return order.filter(words.contains)
   }
@@ -244,6 +246,7 @@ extension AutopilotPolicy {
     switch fact {
     case "saved": return value == "local" ? "work only on this Mac" : nil
     case "changes": return "unsaved changes"
+    case "bigFiles": return value == "yes" ? "big unsaved files" : nil
     case "listening": return value == "yes" ? "a running server" : nil
     case "stale": return value == "today" ? "recent use" : nil
     case "idle": return "recent use"
@@ -339,13 +342,14 @@ public enum AutopilotEval {
     memory: inout AutopilotMemory
   ) -> Step {
     let subject = AutopilotPolicy.subject(question.kind, question.match)
-    let general = AutopilotPolicy.generalize(question.kind, question.match)
+    // A card that showed big unsaved files is about them: only a lesson that names them settles it.
+    let general = AutopilotPolicy.askedPattern(question)
     let lessons = memory.rules.filter { $0.kind == question.kind }
     let kept = lessons.contains {
       $0.verdict == .keep && AutopilotPolicy.overlaps($0.match, general)
     }
     let burned = lessons.contains {
-      $0.verdict == .burn && AutopilotPolicy.subsumes($0.match, general)
+      $0.verdict == .burn && AutopilotPolicy.subsumes(AutopilotPolicy.effective($0), general)
     }
     var lean: AutopilotAnswer?
     var outcome = "settled"

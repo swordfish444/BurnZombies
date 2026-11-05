@@ -26,7 +26,7 @@ public enum AutopilotWorktrees {
   private static let ignoredTotalLimit: UInt64 = 100 << 20
   private static let walkLimit = 100_000
   /// Untracked, unignored content larger than this is never copied into a safety commit.
-  static let maximumUnsavedBytes: UInt64 = 512 << 20
+  public static let maximumUnsavedBytes: UInt64 = 512 << 20
   private static let refPrefix = "refs/burnzombies/retired/"
   private static let stateFiles = [
     "locked", "index.lock", "HEAD.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD",

@@ -442,4 +442,6 @@ func autopilotPolicyProof() throws {
   var permissions = stat()
   _ = lstat(store.directory.appendingPathComponent("memory.json").path, &permissions)
   equal(permissions.st_mode & 0o777, 0o600, "private file")
+
+  try bigFilesPolicyProof()
 }

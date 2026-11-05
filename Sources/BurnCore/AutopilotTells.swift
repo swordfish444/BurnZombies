@@ -86,13 +86,15 @@ extension AutopilotPolicy {
 
   /// The risk facts a Yes and BZ's own act are kept within, so that BZ never burns on a risk the
   /// owner hasn't said yes to, by kind, with every value each can take, riskiest first: work only
-  /// on this Mac, unsaved changes, a running server, and anything BZ couldn't check (`unknown`). A
-  /// copy in use is protected and never burned, so "yes" isn't listed for `inUse`.
+  /// on this Mac, unsaved changes, unsaved files too big to back up, a running server, and anything
+  /// BZ couldn't check (`unknown`). A copy in use is protected and never burned, so "yes" isn't
+  /// listed for `inUse`.
   static let riskFacts: [AutopilotKind: [(fact: String, values: [String])]] = [
     .worktree: [
       (fact: "saved", values: ["unknown", "local", "pushed", "merged"]),
       (fact: "changes", values: ["unknown", "large", "small", "none"]),
       (fact: "inUse", values: ["unknown", "no"]),
+      (fact: "bigFiles", values: ["yes", "no"]),
     ],
     .process: [(fact: "listening", values: ["unknown", "yes", "no"])],
     .disk: [],
@@ -108,12 +110,13 @@ extension AutopilotPolicy {
   /// said yes to on the subject (`approved`), through the same `narrowed` as an owner's Yes. Each
   /// risk fact allows its safe values and the risky values the owner approved, and `unknown` only
   /// when approved. A later thing with a risk the owner never saw isn't burned under it, but asked
-  /// about. It is this act's alone: its id carries the tell's, so every burn it authorizes is
-  /// the act's.
+  /// about. A named risk is never BZ's to approve: only the owner's Yes deletes big unsaved files.
+  /// It is this act's alone: its id carries the tell's, so every burn it authorizes is the act's.
   static func actLesson(
     for question: AutopilotQuestion, approved: Set<String>, created: Date, tellID: String
   ) -> AutopilotRule {
-    var rule = lesson(for: question, verdict: .burn, created: created, approved: approved)
+    let mine: Set<String> = approved.subtracting(namedRisks(question.kind))
+    var rule = lesson(for: question, verdict: .burn, created: created, approved: mine)
     let key: String = AutopilotRule.key(kind: rule.kind, match: rule.match)
     rule.id = key + ":burn:" + tellID
     rule.tellID = tellID

@@ -35,9 +35,11 @@ public enum AutopilotPolicy {
       created: Date(timeIntervalSinceReferenceDate: 0)),
   ]
 
+  /// Every fact of the rule has one of its values. A burn that leaves out a named risk covers only
+  /// things clear of it, and a thing without the fact is clear (`namedRisks`).
   public static func matches(_ rule: AutopilotRule, _ item: AutopilotItem) -> Bool {
     rule.kind == item.kind
-      && rule.match.allSatisfy { key, values in item.facts[key].map(values.contains) ?? false }
+      && effective(rule).allSatisfy { key, values in value(item, key).map(values.contains) ?? false }
   }
 
   /// Order: rails, the operator's own keeps, confident AI keeps, operator burn rules,
@@ -81,8 +83,9 @@ public enum AutopilotPolicy {
       return f["listening"] == "no" && f["thread"] != "live"
         && (f["orphaned"] == "yes" || f["thread"] == "ended")
     case .worktree:
+      // Big unsaved files go for good when a copy burns: only the owner's Yes lets them.
       return !ownerManagedPlaces.contains(f["place"] ?? "") && f["inUse"] == "no"
-        && f["thread"] != "live"
+        && f["thread"] != "live" && f["bigFiles"] != "yes"
     case .disk:
       return (f["folder"] ?? "other") != "other"
     }
@@ -217,14 +220,20 @@ public enum AutopilotPolicy {
     let past: [AutopilotQuestion] = memory.questions.filter { question in
       question.kind == kind && question.match == match && ownerAnswered(question)
     }
-    if past.contains(where: { $0.risks == nil }) { return true }
     guard !past.isEmpty else { return false }
+    // No card showed a named risk before cards named their risks, so such an answer leaves things
+    // carrying one to a question of their own.
+    let legacy: Bool = past.contains { $0.risks == nil }
+    let named = namedRisks[kind] ?? []
     let ids = Set(past.map(\.id))
     // A lesson an answer was taken into carries the answer's id in `from`.
     let taught: [AutopilotRule] = memory.rules.filter { rule in
       questionIDs(rule).contains(where: ids.contains)
     }
-    return covering.allSatisfy { item in taught.contains { matches($0, item) } }
+    return covering.allSatisfy { item in
+      if legacy && !named.contains(where: { item.facts[$0.fact] == $0.risky }) { return true }
+      return taught.contains { matches($0, item) }
+    }
   }
 
   /// A native question's id: its pattern's key, then the risks its card shows when it shows any, so
@@ -263,10 +272,14 @@ public enum AutopilotPolicy {
   }
 
   /// What a yes to a pattern burns: the pattern and everything safer. A question is about the
-  /// unsure things this covers.
+  /// unsure things this covers, those carrying a named risk too: its card shows the risk, and only
+  /// a Yes to that card lets them go.
   public static func coverage(_ kind: AutopilotKind, _ match: [String: [String]]) -> AutopilotRule {
-    AutopilotRule(
-      kind: kind, match: widen(match, verdict: .burn), verdict: .burn, source: .operator, title: "")
+    var wide: [String: [String]] = widen(match, verdict: .burn)
+    for named in namedRisks[kind] ?? [] where wide[named.fact] == nil {
+      wide[named.fact] = [named.risky, named.clear]
+    }
+    return AutopilotRule(kind: kind, match: wide, verdict: .burn, source: .operator, title: "")
   }
 
   /// A question about the things a pattern covers, with their count, size and cautions, and what
@@ -312,6 +325,8 @@ public enum AutopilotPolicy {
         count(
           { $0.facts["changes"] == "large" }, "has lots of unsaved changes",
           "have lots of unsaved changes"),
+        count(
+          { $0.facts["bigFiles"] == "yes" }, "has big unsaved files", "have big unsaved files"),
       ]
     case .process:
       found = [
@@ -424,6 +439,10 @@ public enum AutopilotPolicy {
       return
         "It just stops. If something needs it again, a fresh one starts. Nothing you're working on uses it."
     case .worktree:
+      if item.facts["bigFiles"] == "yes" {
+        return
+          "The folder goes away. Its code and smaller unsaved files are backed up so you can restore it, but its big unsaved files are deleted for good."
+      }
       return
         "The folder goes away, but nothing is lost: your code is saved and I keep a backup you can restore."
     case .disk:
@@ -506,10 +525,13 @@ public struct AutopilotCardRow: Equatable, Sendable {
   public var title: String
   public var subtitle: String?
   public var when: String
-  public init(title: String, subtitle: String? = nil, when: String) {
+  /// Dim lines under it: a copy's big unsaved files, which a Yes deletes.
+  public var details: [String]
+  public init(title: String, subtitle: String? = nil, when: String, details: [String] = []) {
     self.title = title
     self.subtitle = subtitle
     self.when = when
+    self.details = details
   }
 }
 
@@ -573,6 +595,7 @@ extension AutopilotPolicy {
       return [
         ("saved", ["merged": "Already merged", "pushed": "Saved on GitHub", "local": "Work only on this Mac"]),
         ("changes", ["none": "No unsaved changes", "small": "Has unsaved changes", "large": "Has lots of unsaved changes"]),
+        ("bigFiles", ["yes": "Has big unsaved files"]),
         ("stale", stalePhrases),
         ("place", ["patrol6": "Made by Patrol6 agents", "codex": "Made by Codex", "claude": "Made by Claude", "conductor": "Made by Conductor"]),
         ("thread", ["ended": "Its chat is finished"]),
@@ -688,7 +711,7 @@ extension AutopilotPolicy {
   /// its facts, and only a program with no date lists its idle time here.
   static let cautions: Set<String> = [
     "Work only on this Mac", "Has unsaved changes", "Has lots of unsaved changes",
-    "Still running a server", "Still busy", "Idle 10+ minutes",
+    "Has big unsaved files", "Still running a server", "Still busy", "Idle 10+ minutes",
   ]
 
   /// The card for a question as it reads at `now`. The headline is "Burn 5 copies you used
@@ -701,6 +724,8 @@ extension AutopilotPolicy {
     let (single, plural) = cardNoun(question.kind, match: question.match)
     let note: String
     switch question.kind {
+    case .worktree where risks(of: question).contains("bigFiles=yes"):
+      note = bigFilesNote(question, one: one)
     case .worktree:
       note = one
         ? "It's backed up first, so you can undo it."
