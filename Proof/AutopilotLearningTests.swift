@@ -12,6 +12,7 @@ func autopilotLearningProof() async throws {
   try await tellProof()
   try await skipProof()
   try await evalRequestProof()
+  try await summaryRequestProof()
   try await simulatedOwnersProof()
 }
 
@@ -616,4 +617,35 @@ func evalRequestProof() async throws {
   let (brokenOK, brokenJSON) = await brokenEngine.handle(AutopilotRequest(tool: "eval"))
   checkFalse(brokenOK, "unreadable memory is an error: \(brokenJSON)")
   check(brokenJSON.contains("\"error\""), brokenJSON)
+}
+
+/// `burnzombies autopilot`, the summary, shows what Settings shows of what BZ learned: each lesson's
+/// sentence with what it rests on and did, and How I'm doing.
+func summaryRequestProof() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-autopilot-summary-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let memory = AutopilotPolicy.migrate(teachHistoryVersion1(try teachHistory()), receipts: [])
+  try AutopilotStore(root: root).save(memory: memory)
+  let engine = try Autopilot(root: root, sources: AutopilotSources())
+  let (ok, json) = await engine.handle(AutopilotRequest(tool: "snapshot"))
+  check(ok, json)
+  let summary = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+  let lessons: [String] = summary?["lessons"] as? [String] ?? []
+  let progress: [String] = summary?["progress"] as? [String] ?? []
+  let shown: AutopilotSnapshot = await engine.snapshot()
+  equal(lessons.count, shown.lessons.count, "one line per lesson Settings shows")
+  check(
+    lessons.contains(
+      "Java helpers serving a port stay while idle less than an hour. (From 1 answer)"),
+    "a lesson reads as in Settings, with its evidence: \(lessons)")
+  let sentences: [String] = shown.lessons.map(\.sentence)
+  check(
+    zip(lessons, sentences).allSatisfy { line, sentence in line.hasPrefix(sentence + " (") },
+    "in Settings' order")
+  equal(progress, shown.progress.lines, "How I'm doing, line for line")
+  check(
+    progress.contains(
+      "Replaying your 27 answers, I'd have asked 17 and handled the other 10 on my own the way you would have."
+    ), "with the replay of the owner's answers: \(progress)")
 }

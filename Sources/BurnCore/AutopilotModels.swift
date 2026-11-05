@@ -646,7 +646,10 @@ public struct AutopilotCatalog: Codable, Sendable {
 /// Everything the operator can do from the UI or CLI. The engine applies each command
 /// and returns a fresh snapshot.
 public enum AutopilotCommand: Codable, Sendable, Equatable {
-  case answer(questionID: String, answer: AutopilotAnswer)
+  /// The owner's answer to a question, with the risks its card showed (`AutopilotQuestion.risks` as
+  /// drawn), so a look that refreshed the question since can't widen what the answer approves.
+  /// Without them, the answer teaches from the question as BZ last saw it.
+  case answer(questionID: String, answer: AutopilotAnswer, risks: [String]? = nil)
   case burnNow(itemID: String)
   case keep(itemID: String)
   case restore(receiptID: UUID)

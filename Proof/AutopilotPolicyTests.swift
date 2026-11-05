@@ -293,7 +293,7 @@ func autopilotPolicyProof() throws {
         "local-\(i)",
         [
           "place": "patrol6", "saved": "local", "changes": "none", "stale": "older",
-          "thread": "ended",
+          "thread": "ended", "inUse": "no",
         ], bytes: 2 << 30))
   }
   for i in 0..<10 {
@@ -337,6 +337,10 @@ func autopilotPolicyProof() throws {
     "nothing touched today is asked about")
   memory.questions[0].answer = .yes
   memory.questions[0].answered = Date()
+  // The Yes teaches its lesson, as the engine does, and the lesson covers the copies.
+  memory.rules = [
+    AutopilotPolicy.lesson(for: memory.questions[0], verdict: .burn, created: Date())
+  ]
   let modulesLeft = (0..<3).map {
     junk("modules-\($0)", ["folder": "node_modules", "home": "repo", "stale": "month"])
   }
@@ -346,6 +350,14 @@ func autopilotPolicyProof() throws {
   check(
     AutopilotPolicy.proposeQuestions(unsure, memory: memory).isEmpty,
     "the copies were asked about: no second question about them")
+  // An answer settles only what its lessons cover: copies they leave unsure are asked about again,
+  // under an id of their own.
+  var untaught = memory
+  untaught.rules = []
+  let again = AutopilotPolicy.proposeQuestions(unsure, memory: untaught).first {
+    $0.kind == .worktree
+  }
+  equal(again?.id, questions[0].id + "#2", "copies no lesson covers are asked again")
   memory.questions[1].answer = .skip
   memory.questions[1].snoozedUntil = Date().addingTimeInterval(86400)
   checkFalse(
@@ -392,6 +404,15 @@ func autopilotPolicyProof() throws {
   let wideKeep = AutopilotPolicy.widen(["saved": ["pushed"], "changes": ["small"]], verdict: .keep)
   equal(wideKeep["saved"], ["local", "pushed"], "keeping pushed work keeps local work")
   equal(wideKeep["changes"], ["large", "small"], "keeping small changes keeps large ones")
+
+  // An answer from a caller that doesn't say what its card showed, as the command line sends one,
+  // still decodes; one that does keeps the risks.
+  let bare = Data(#"{"answer":{"questionID":"q","answer":"yes"}}"#.utf8)
+  equal(
+    try JSONDecoder().decode(AutopilotCommand.self, from: bare),
+    .answer(questionID: "q", answer: .yes, risks: nil))
+  let shown = AutopilotCommand.answer(questionID: "q", answer: .no, risks: ["saved=local"])
+  equal(try JSONDecoder().decode(AutopilotCommand.self, from: JSONEncoder().encode(shown)), shown)
 
   // Rule titles are plain English.
   let title = AutopilotPolicy.ruleTitle(copies, answer: .yes)

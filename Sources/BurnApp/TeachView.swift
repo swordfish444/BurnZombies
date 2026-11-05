@@ -414,6 +414,7 @@ struct TeachView: View {
     }.padding(36)
   }
 
+  /// `question` is the one its card was drawn from: the answer carries the risks that card showed.
   private func answer(_ question: AutopilotQuestion, _ answer: AutopilotAnswer) {
     confirmation = Self.confirmation(
       for: question, answer, lookOnly: model.autopilot.sweep.lookOnly == true)

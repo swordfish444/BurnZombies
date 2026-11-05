@@ -46,7 +46,7 @@ Turn it on and the next inventory refresh brings those places in. Leftover progr
 
 ## Training
 
-BurnZombies asks one question per subject: old project copies, each kind of program (Node, Java, …) and each kind of folder (node_modules, tool caches, …). A question covers everything in its subject that sat unused at least as long as its most recent member, so one answer can settle the whole subject; what makes some of them riskier is counted on the card. After a No, the next question is about the older ones only. A Yes covers only the risks its card showed, so leftovers that turn up later with a risk that card didn't show get a question of their own, which names that risk ([Lessons](#lessons)). It must free at least 1 GB to be asked; the biggest subjects come first, at most three at a time, one big card at a time.
+BurnZombies asks one question per subject: old project copies, each kind of program (Node, Java, …) and each kind of folder (node_modules, tool caches, …). A question covers everything in its subject that sat unused at least as long as its most recent member, so one answer can settle the whole subject; what makes some of them riskier is counted on the card. After a No, the next question is about the older ones only. A Yes covers only the risks its card showed, so leftovers that turn up later with a risk that card didn't show get a question of their own, which names that risk ([Lessons](#lessons)). So does anything else your answers leave undecided, such as a copy with two risks you said yes to on separate cards. It must free at least 1 GB to be asked; the biggest subjects come first, at most three at a time, one big card at a time.
 
 ### The question card
 
@@ -74,7 +74,7 @@ The AI's questions follow the same rules: it may reword or replace the open ques
 
 Yes and No each become a lesson right away, and Yes starts burning what it covers (with look-only, once you start burning). Skip hides the question for a day and teaches nothing; after that it can be asked again, as a new card.
 
-A lesson is about why, not which project: it leaves out the project, where the copy lives and which tool made it, so one answer about one project's copies covers every project's. A Yes also covers things left unused even longer. A No keeps everything as recent as the newest thing on its card, and anything newer; the older things on the card get the next question. A Yes covers only the risks its card showed: when every copy on the card had its work on GitHub and nothing unsaved, a later copy with unsaved work isn't burned under it. That copy gets a question of its own, which names the new risk. A No to that question keeps the copies on that card, as recent as its newest and newer, but not the clean copies your earlier Yes covers: those still go. A lesson that covers another takes it in, so a few lessons hold all your answers.
+A lesson is about why, not which project: it leaves out the project, where the copy lives and which tool made it, so one answer about one project's copies covers every project's. A Yes also covers things left unused even longer. A No keeps everything as recent as the newest thing on its card, and anything newer; the older things on the card get the next question. A Yes covers only the risks its card showed, as you saw it, even if BZ found more while the card was on screen: when every copy on the card had its work on GitHub and nothing unsaved, a later copy with unsaved work isn't burned under it. That copy gets a question of its own, which names the new risk. A No to that question keeps the copies on that card, as recent as its newest and newer, but not the clean copies your earlier Yes covers: those still go. A lesson that covers another takes it in, so a few lessons hold all your answers.
 
 "Got it!" after an answer shows the lesson in one sentence. **Settings → Autopilot → What BZ has learned** lists them all:
 
@@ -161,7 +161,7 @@ The command isn't on your PATH; call it from the app:
 
 ```sh
 bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
-"$bz" autopilot              # snapshot: counts, questions, rules
+"$bz" autopilot              # snapshot: counts, questions, lessons, how it's doing, rules
 "$bz" autopilot catalog      # items, unsure first
 "$bz" autopilot inspect ID   # live detail for one item
 "$bz" autopilot sweep        # run an AI sweep now
