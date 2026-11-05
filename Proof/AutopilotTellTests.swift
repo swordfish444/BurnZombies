@@ -340,7 +340,8 @@ private func tellRowsProof() async throws {
   equal(acted.rows.map(\.subtitle), ["web-app", "web-app", "web-app"], "their project")
   check(acted.rows.allSatisfy { $0.lastUsed != nil }, "and when each was last used")
   let later = await engine.tick(now: now.addingTimeInterval(15 * 60))
-  let catalogued = try store.catalog()?.items.filter { $0.kind == .worktree } ?? []
+  let items: [AutopilotItem] = try store.catalog()?.items ?? []
+  let catalogued: [AutopilotItem] = items.filter { $0.kind == .worktree }
   check(catalogued.isEmpty, "the burned copies are gone from the catalog: \(catalogued.map(\.id))")
   guard let kept = later.tells.first else { return failTest("the tell is still open") }
   equal(kept.rows, acted.rows, "the rows from the act stay")

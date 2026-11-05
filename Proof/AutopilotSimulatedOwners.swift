@@ -85,10 +85,13 @@ func ownerItems(round: Int, now: Date) -> [AutopilotItem] {
   let agents: [String] = ["codex", "claude", "none"]
   for (j, family) in ["node", "node", "java", "java"].enumerated() {
     let n: Int = round * 4 + j
+    let orphaned: String = (j + round) % 2 == 0 ? "yes" : "maybe"
+    let thread: String = (j + round) % 4 == 0 ? "ended" : "none"
+    let listening: String = (j + round) % 3 == 0 ? "yes" : "no"
+    let idle: String = idles[(j + 2 * round) % 5]
     let facts: [String: String] = [
-      "family": family, "orphaned": (j + round) % 2 == 0 ? "yes" : "maybe",
-      "thread": (j + round) % 4 == 0 ? "ended" : "none", "idle": idles[(j + 2 * round) % 5],
-      "listening": (j + round) % 3 == 0 ? "yes" : "no", "agent": agents[n % 3],
+      "family": family, "orphaned": orphaned, "thread": thread, "idle": idle,
+      "listening": listening, "agent": agents[n % 3],
     ]
     let name: String = "\(family)-\(round)-\(j)"
     let bytes: UInt64 = 500_000_000 + UInt64(n % 3) * 150_000_000
@@ -191,8 +194,9 @@ struct OwnerRun {
     let handled: String = rounds.map { gigabytes($0.handledBytes) }.joined(separator: " ")
     let told: String = rounds.map { String($0.tells) }.joined(separator: " ")
     let waiting: String = rounds.map { String($0.unsure) }.joined(separator: " ")
-    var text: String = persona + ": questions " + asked + " · handled without asking " + handled
-    text += " GB · tells " + told + " · unsure " + waiting
+    var text: String = persona + ": questions " + asked
+    text += " · handled without asking " + handled + " GB"
+    text += " · tells " + told + " · unsure " + waiting
     text += " · good calls \(goodCalls) · wrong burns \(wrong.count)"
     if let undone { text += " · undid \(undone.subject) in round \(undone.round)" }
     return text
