@@ -121,7 +121,7 @@ No. Without it, BZ skips the places macOS protects (Desktop, Documents, Download
 <details>
 <summary><b>What does the install script do?</b></summary>
 
-It downloads the release it pins, checks it against that release's SHA-256 checksums, checks the archive's paths and the app's code signature, and puts BurnZombies.app in `~/Applications`. No sudo. Releases are signed with BurnZombies' own certificate but aren't notarized by Apple yet. Prefer a fixed version? Swap `main` in the URL for a release tag, such as `v0.13.0`. [Read install.sh](install.sh) · [Installer options →](docs/INSTALL.md#installer-options)
+It downloads the release it pins, checks it against that release's SHA-256 checksums, checks the archive's paths and the app's code signature, and puts BurnZombies.app in `~/Applications`. No sudo. Releases are signed with BurnZombies' own certificate but aren't notarized by Apple yet. Prefer a fixed version? Swap `main` in the URL for a release tag, such as `v0.14.0`. [Read install.sh](install.sh) · [Installer options →](docs/INSTALL.md#installer-options)
 
 </details>
 
