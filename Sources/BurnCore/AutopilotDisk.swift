@@ -25,6 +25,8 @@ public enum AutopilotDisk {
   private static let maximumDepth = 3
   private static let directoryBudget = 5_000
   private static let candidateLimit = 500
+  /// Entries a copy's own walk may look at before its age counts as unknown.
+  private static let entryBudget = 100_000
   private static let timeBudget: TimeInterval = 60
   /// Relative to the home folder. Nothing here is ever listed or removed.
   private static let excluded = [
@@ -48,7 +50,10 @@ public enum AutopilotDisk {
   private struct Checkout {
     var path: String
     var linked: Bool
+    /// The newest date its inventory record holds: last file change or last commit.
     var activity: Date?
+    /// Whether that record's latest inspection walked every file in it.
+    var walked: Bool
   }
 
   /// Rebuildable folders of at least 100 MB: inside live checkouts (with `mains`, also the main
@@ -108,13 +113,14 @@ public enum AutopilotDisk {
       guard !folders.isEmpty,
         let blocked = trackedFolders(folders.map { $0.path }, in: checkout.path)
       else { continue }
+      // Another repository inside a folder is somebody's project, not build output.
+      let junk = folders.filter { !blocked.contains($0.path) && !exists($0.path + "/.git") }
+      guard !junk.isEmpty else { continue }
       let place = leaf(checkout.path)
-      let activity = checkout.linked ? checkout.activity : nil
-      let oldCopy = activity.map { now.timeIntervalSince($0) > staleAfter } ?? false
-      for folder in folders where !blocked.contains(folder.path) {
+      let worked = lastWorked(
+        checkout, skipping: Set(junk.map { $0.path }), now: now, until: deadline)
+      for folder in junk {
         guard Date() < deadline else { break }
-        // Another repository inside the folder is somebody's project, not build output.
-        if exists(folder.path + "/.git") { continue }
         guard let bytes = sizer(folder.path), bytes >= minimumBytes,
           let touched = modified(folder.path)
         else { continue }
@@ -122,12 +128,12 @@ public enum AutopilotDisk {
         let inside = parent(String(folder.path.dropFirst(checkout.path.count + 1)))
         var name = folder.name + " in " + place
         if !inside.isEmpty { name += "/" + inside }
-        let newest = activity.map { max($0, touched) } ?? touched
+        let newest = worked.date.map { max($0, touched) } ?? touched
         let item = AutopilotItem(
           id: "disk:" + AutopilotItem.hash(folder.path), kind: .disk, name: name,
           detail: sentence(fact, subject: place), path: folder.path, bytes: bytes,
           facts: [
-            "folder": fact, "home": oldCopy ? "stale-worktree" : "repo",
+            "folder": fact, "home": worked.old ? "stale-worktree" : "repo",
             "stale": AutopilotPolicy.stale(since: newest, now: now), "size": scale(bytes),
           ], observedAt: now)
         found[item.id] = item
@@ -336,21 +342,24 @@ public enum AutopilotDisk {
     _ worktrees: [WorktreeRecord], home: String, mains: Bool, protected: ProtectedLocations
   ) -> [Checkout] {
     var byPath: [String: Checkout] = [:]
-    func consider(_ path: String, linked: Bool, activity: Date?) {
+    func consider(_ path: String, linked: Bool, activity: Date?, walked: Bool) {
       // A checkout in a place macOS protects is not even resolved without Full Disk Access.
       guard let real = protected.resolve(path), real.hasPrefix(home + "/") else { return }
+      var checkout = Checkout(path: real, linked: linked, activity: activity, walked: walked)
       if let known = byPath[real] {
-        byPath[real] = Checkout(
-          path: real, linked: known.linked && linked, activity: known.activity ?? activity)
-      } else {
-        byPath[real] = Checkout(path: real, linked: linked, activity: activity)
+        if known.activity != nil { checkout = known }
+        checkout.linked = known.linked && linked
       }
+      byPath[real] = checkout
     }
     for record in worktrees where !record.missing && !record.retired && !record.bare {
       let activity = [record.lastFileChange, record.lastCommitAt].compactMap { $0 }.max()
-      consider(record.path, linked: !record.main, activity: activity)
+      // Any gap means the latest inspection may have stopped before its file walk finished, so a
+      // file date the record holds could be from an earlier one.
+      let walked = record.lastFileChange != nil && record.gaps.isEmpty
+      consider(record.path, linked: !record.main, activity: activity, walked: walked)
       if mains, record.repository.hasSuffix("/.git") {
-        consider(String(record.repository.dropLast(5)), linked: false, activity: nil)
+        consider(String(record.repository.dropLast(5)), linked: false, activity: nil, walked: false)
       }
     }
     // The scan is time-bounded, so the stalest checkouts (likeliest junk) go first.
@@ -359,6 +368,24 @@ public enum AutopilotDisk {
       let b = $1.activity ?? .distantFuture
       return a != b ? a < b : $0.path < $1.path
     }
+  }
+
+  /// When a linked copy was last worked in, and whether that was over two weeks ago. An old commit
+  /// can hide newer edits, so the copy is old only when its files say so too: its inventory
+  /// record's complete walk or, when that walk couldn't finish, a walk here past its junk. A copy
+  /// that walk can't finish either has an unknown age, which is never old.
+  private static func lastWorked(
+    _ checkout: Checkout, skipping junk: Set<String>, now: Date, until deadline: Date
+  ) -> (date: Date?, old: Bool) {
+    guard checkout.linked, let known = checkout.activity else { return (nil, false) }
+    let stale = now.timeIntervalSince(known) > staleAfter
+    // No walk makes a recent copy older.
+    if !stale || checkout.walked { return (known, stale) }
+    guard let files = newestChange(under: checkout.path, skipping: junk, until: deadline) else {
+      return (known, false)
+    }
+    let latest = max(known, files)
+    return (latest, now.timeIntervalSince(latest) > staleAfter)
   }
 
   /// Rebuildable folders up to three levels below a checkout root. Never enters `.git`, other
@@ -387,6 +414,36 @@ public enum AutopilotDisk {
     return found
   }
 
+  /// The newest change to anything in a copy, folders included, except Git's data and what is
+  /// inside the given junk folders (their own times count). Never follows links or leaves the
+  /// volume. Nil when it can't see everything within the entry budget and the deadline.
+  private static func newestChange(
+    under root: String, skipping junk: Set<String>, until deadline: Date
+  ) -> Date? {
+    var info = stat()
+    guard lstat(root, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
+    let volume = info.st_dev
+    var newest = changed(info)
+    var pending = [root]
+    var seen = 0
+    while let directory = pending.popLast() {
+      guard Date() < deadline,
+        let names = try? FileManager.default.contentsOfDirectory(atPath: directory)
+      else { return nil }
+      for name in names where name != ".git" {
+        let path = directory + "/" + name
+        seen += 1
+        guard seen <= entryBudget, lstat(path, &info) == 0 else { return nil }
+        newest = max(newest, changed(info))
+        guard info.st_mode & S_IFMT == S_IFDIR, !junk.contains(path) else { continue }
+        // Another volume could hold newer work this walk can't see.
+        guard info.st_dev == volume else { return nil }
+        pending.append(path)
+      }
+    }
+    return newest
+  }
+
   /// Candidate folders in which Git tracks anything (a committed build/ is not junk), asked
   /// in one call. Nil when Git cannot say, so nothing in that checkout is offered.
   private static func trackedFolders(_ folders: [String], in root: String) -> Set<String>? {
@@ -412,6 +469,10 @@ public enum AutopilotDisk {
   private static func modified(_ path: String) -> Date? {
     var info = stat()
     guard lstat(path, &info) == 0 else { return nil }
+    return changed(info)
+  }
+
+  private static func changed(_ info: stat) -> Date {
     let seconds =
       TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9
     return Date(timeIntervalSince1970: seconds)

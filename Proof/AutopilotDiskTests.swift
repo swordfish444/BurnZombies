@@ -14,6 +14,7 @@ func autopilotDiskProof() async throws {
   try adkThreadsProof(base: base + "/threads", now: now)
   try adkSizeProof(base: base + "/sizes")
   try adkJunkProof(base: base + "/junk", now: now)
+  try adkCopyAgeProof(base: base + "/age", now: now)
   try await adkJunkCacheProof(base: base + "/cache", now: now)
 }
 
@@ -49,6 +50,23 @@ private func adkRepository(_ path: String) throws {
   try adkGit(path, ["init", "--initial-branch=main"])
   try adkGit(path, ["config", "user.name", "Synthetic proof"])
   try adkGit(path, ["config", "user.email", "proof@example.invalid"])
+}
+
+/// Commits what is staged as if it were `date`. The bounded Git runner can't set commit dates.
+private func adkCommit(_ path: String, at date: Date) throws {
+  let git = Process()
+  git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+  git.arguments = ["-C", path, "commit", "-q", "-m", "fixture"]
+  let stamp = "@\(Int(date.timeIntervalSince1970)) +0000"
+  git.environment = [
+    "PATH": "/usr/bin:/bin", "HOME": path, "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp,
+  ]
+  git.standardOutput = FileHandle.nullDevice
+  git.standardError = FileHandle.nullDevice
+  try git.run()
+  git.waitUntilExit()
+  guard git.terminationStatus == 0 else { throw StoreError.message("Fixture commit failed.") }
 }
 
 /// A process id above every running one, so `kill(pid, 0)` reports ESRCH.
@@ -613,6 +631,91 @@ private func adkJunkProof(base: String, now: Date) throws {
   check(
     adkNear(lastChange, staleDate),
     "clearing junk counted as using the copy: \(String(describing: lastChange))")
+}
+
+/// An old commit alone never makes a copy old. The inventory can't walk a copy that holds another
+/// repository (a submodule, SwiftPM's checkouts), so it dates that copy by its last commit only and
+/// the copy itself has no age. Its junk counts as inside an old copy only when a walk of the copy's
+/// own files, past its junk folders and Git's data, finds nothing changed in two weeks.
+private func adkCopyAgeProof(base: String, now: Date) throws {
+  let fm = FileManager.default
+  let day: TimeInterval = 86_400
+  let old = now.addingTimeInterval(-40 * day)
+  let yesterday = now.addingTimeInterval(-1.5 * day)
+  let home = base + "/home"
+  let repo = home + "/git/shop"
+  let copy = home + "/git/shop-wip"
+  try adkRepository(repo)
+  try adkWrite("src\n", to: repo + "/src.txt")
+  try adkWrite("node_modules/\n.build/\n", to: repo + "/.gitignore")
+  try adkGit(repo, ["add", "."])
+  try adkCommit(repo, at: old)
+  try adkGit(repo, ["worktree", "add", "--detach", copy])
+  for relative in [
+    "node_modules/pkg/index.js", ".build/checkouts/dep/Package.swift", "vendor/lib/lib.c",
+  ] {
+    try adkWrite("x\n", to: copy + "/" + relative)
+  }
+  // A SwiftPM checkout inside the junk, a vendored repository outside it, and an empty folder.
+  for relative in [".build/checkouts/dep/.git", "vendor/lib/.git", "private"] {
+    try fm.createDirectory(atPath: copy + "/" + relative, withIntermediateDirectories: true)
+  }
+  func age(_ relative: String, _ date: Date) throws {
+    let path = relative.isEmpty ? copy : copy + "/" + relative
+    try fm.setAttributes([.modificationDate: date], ofItemAtPath: path)
+  }
+  // Everything in the copy last changed weeks ago, except Git's own data.
+  let entries = fm.enumerator(atPath: copy)?.allObjects as? [String] ?? []
+  for relative in entries + [""] where (relative as NSString).lastPathComponent != ".git" {
+    try age(relative, old)
+  }
+
+  let record = WorktreeInspection.inspect(
+    WorktreeRecord(id: "wip", path: copy, repository: repo + "/.git"), visibility: { _ in 0 },
+    protected: .limited(homes: [home]))
+  check(adkNear(record.lastCommitAt, old), "the copy's last commit is weeks old")
+  equal(record.lastFileChange, nil, "the inventory's walk stops at another repository")
+  check(
+    record.gaps.contains("Nested repository is protected."),
+    "the copy's file walk could not finish: \(record.gaps)")
+  func junk(_ r: WorktreeRecord) -> AutopilotItem? {
+    AutopilotDisk.items(
+      worktrees: [r], home: home, caches: false, mains: false, now: now,
+      sizer: { _ in 3_000_000_000 }
+    ).first { $0.path == copy + "/node_modules" }
+  }
+
+  let untouched = junk(record)
+  equal(untouched?.facts["home"], "stale-worktree", "junk in a copy untouched for weeks")
+  equal(untouched?.facts["stale"], "month", "weeks since anything in the copy changed")
+
+  // Work from yesterday that isn't committed yet.
+  try adkWrite("edited\n", to: copy + "/src.txt", modified: yesterday)
+  try age("", old)
+  let edited = junk(record)
+  equal(edited?.facts["home"], "repo", "a commit from weeks ago hid yesterday's edits")
+  equal(edited?.facts["stale"], "day", "yesterday's edits count toward the stale bucket")
+  try age("src.txt", old)
+
+  // Inside the junk only the folder's own time counts, so a big node_modules never stops the walk.
+  try age("node_modules/pkg/index.js", now)
+  equal(junk(record)?.facts["home"], "stale-worktree", "a file deep inside the junk doesn't count")
+  try age("node_modules", yesterday)
+  equal(junk(record)?.facts["home"], "repo", "packages added to the junk yesterday count")
+  try age("node_modules", old)
+
+  // A file date from an earlier walk goes stale once the walks stop finishing.
+  var walkedBefore = record
+  walkedBefore.lastFileChange = old
+  try age("src.txt", yesterday)
+  equal(junk(walkedBefore)?.facts["home"], "repo", "an earlier walk's date hid yesterday's edits")
+  try age("src.txt", old)
+  equal(junk(walkedBefore)?.facts["home"], "stale-worktree", "with nothing newer, the copy is old")
+
+  // A folder the walk can't read could hold newer work.
+  equal(chmod(copy + "/private", 0), 0)
+  defer { _ = chmod(copy + "/private", 0o755) }
+  equal(junk(record)?.facts["home"], "repo", "a copy BurnZombies can't read in full has no age")
 }
 
 /// Autopilot's live junk list walks every copy at most every six hours, plus each copy the
