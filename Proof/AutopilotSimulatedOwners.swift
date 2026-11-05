@@ -218,9 +218,7 @@ struct OwnerRun {
 
 /// A question's subject as BZ keeps score on it: all copies, one program family or one folder kind.
 private func subject(of question: AutopilotQuestion) -> String {
-  let fact: String? = ["process": "family", "disk": "folder"][question.kind.rawValue]
-  let value: String = fact.flatMap { question.match[$0]?.first } ?? ""
-  return question.kind.rawValue + ":" + value
+  AutopilotPolicy.subject(question.kind, question.match)
 }
 
 /// The subject a tell was about: the subject of the question BZ answered itself.
@@ -235,9 +233,7 @@ private func subject(of tell: AutopilotTell, _ memory: AutopilotMemory) -> Strin
 private func members(of question: AutopilotQuestion, in snapshot: AutopilotSnapshot)
   -> [AutopilotItem]
 {
-  let covers = AutopilotRule(
-    kind: question.kind, match: AutopilotPolicy.widen(question.match, verdict: .burn),
-    verdict: .burn, source: .operator, title: "")
+  let covers: AutopilotRule = AutopilotPolicy.coverage(question.kind, question.match)
   let unsure: [AutopilotItem] = snapshot.entries.filter { $0.status == .unsure }.map(\.item)
   return unsure.filter { AutopilotPolicy.matches(covers, $0) }
 }
@@ -327,9 +323,7 @@ func simulateOwner(
       equal(about.count, question.count, "\(persona.name): the owner sees what BZ counted")
       let earlier: [AutopilotQuestion] = try store.memory().questions
       let again: Bool = earlier.contains { past in
-        guard past.answer == .yes || past.answer == .no, past.answeredBy != "bz" else {
-          return false
-        }
+        guard AutopilotPolicy.ownerAnswered(past) else { return false }
         return past.kind == question.kind && past.match == question.match
       }
       result.asked.append(subject(of: question) + (again ? " again" : ""))
@@ -388,8 +382,7 @@ func ownerHistory(at date: Date) -> AutopilotMemory {
 /// takes the last 5 scored guesses right.
 private func subjectLines(_ memory: AutopilotMemory) -> [String] {
   var answers: [String: Int] = [:]
-  for question in memory.questions where question.answer == .yes || question.answer == .no {
-    guard question.answeredBy != "bz" else { continue }
+  for question in memory.questions where AutopilotPolicy.ownerAnswered(question) {
     answers[subject(of: question), default: 0] += 1
   }
   var lines: [String] = []

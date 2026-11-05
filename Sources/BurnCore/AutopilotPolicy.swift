@@ -124,7 +124,7 @@ public enum AutopilotPolicy {
     }
   }
 
-  static func subject(_ kind: AutopilotKind, _ match: [String: [String]]) -> String {
+  public static func subject(_ kind: AutopilotKind, _ match: [String: [String]]) -> String {
     kind.rawValue + ":" + (subjectFacts[kind].flatMap { match[$0]?.first } ?? "")
   }
 
@@ -241,8 +241,9 @@ public enum AutopilotPolicy {
     return id + "#\(n)"
   }
 
-  /// What a yes to a pattern burns: the pattern and everything safer.
-  static func coverage(_ kind: AutopilotKind, _ match: [String: [String]]) -> AutopilotRule {
+  /// What a yes to a pattern burns: the pattern and everything safer. A question is about the
+  /// unsure things this covers.
+  public static func coverage(_ kind: AutopilotKind, _ match: [String: [String]]) -> AutopilotRule {
     AutopilotRule(
       kind: kind, match: widen(match, verdict: .burn), verdict: .burn, source: .operator, title: "")
   }

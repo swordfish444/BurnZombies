@@ -50,7 +50,7 @@ extension AutopilotPolicy {
   }
 
   /// A Yes or No the owner gave, not one BZ gave on its own.
-  static func ownerAnswered(_ question: AutopilotQuestion) -> Bool {
+  public static func ownerAnswered(_ question: AutopilotQuestion) -> Bool {
     guard question.answer == .yes || question.answer == .no else { return false }
     return question.answeredBy != "bz"
   }
