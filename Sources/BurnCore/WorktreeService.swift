@@ -31,6 +31,8 @@ public actor WorktreeService {
   var scannedUnrestricted: Bool?
   var refreshingFindings = false
   var refreshCohort = 0
+  /// By copy, how many rechecks in a row left only the consumer check incomplete.
+  var consumerRetries: [String: Int] = [:]
   var scanGaps: [String] = []
   var closing = false
   var workJobs: [UUID: @Sendable () -> Void] = [:]

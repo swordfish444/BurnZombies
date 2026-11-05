@@ -45,6 +45,17 @@ static int gone(int pid) {
     bz_process observed;
     return bz_read(pid, &observed) == 1 && observed.status == 5;
 }
+// A program that is exiting can no longer be read while the kernel still lists it as running,
+// and it is gone a moment later. After a whole-process read fails, give it up to 20 ms, within
+// the walk's deadline, before calling the snapshot incomplete; only a program that is gone by
+// then is left out.
+static int leaving(int pid, uint64_t deadline) {
+    for (int waited = 0; !gone(pid); waited++) {
+        if (waited == 20 || bz_continuous_ns() >= deadline) return 0;
+        usleep(1000);
+    }
+    return 1;
+}
 static int within(const char *root, const char *path) {
     // These paths come from the kernel's vnode vn_getpath, not a caller's
     // spelling of a symlink. The root is resolved once before this traversal.
@@ -70,7 +81,7 @@ static int mapped_paths(int pid, void (*visit)(void *, const char *), void *cont
         struct proc_regionwithpathinfo region = {0};
         errno = 0;
         int size = proc_pidinfo(pid, PROC_PIDREGIONPATHINFO, address, &region, sizeof(region));
-        if (size <= 0) return (errno == EINVAL && found) || gone(pid) ? 0 : -1;
+        if (size <= 0) return (errno == EINVAL && found) || leaving(pid, deadline) ? 0 : -1;
         if (size != sizeof(region) || !region.prp_prinfo.pri_size ||
             region.prp_prinfo.pri_address > UINT64_MAX - region.prp_prinfo.pri_size) return -1;
         uint64_t next = region.prp_prinfo.pri_address + region.prp_prinfo.pri_size;
@@ -98,7 +109,7 @@ static int collect_pid(int pid, void (*visit)(void *, const char *), void *conte
 #define GAP(reason) do { unknown = 1; mark_gap(gap, capacity, pid, reason); } while (0)
     struct proc_bsdinfo b = {0};
     if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &b, sizeof(b)) != sizeof(b)) {
-        if (!gone(pid)) GAP("identity visibility denied");
+        if (!leaving(pid, deadline)) GAP("identity visibility denied");
         return unknown ? -1 : 0;
     }
     if (b.pbi_uid != getuid()) { GAP("process ownership changed"); return -1; }
@@ -112,11 +123,11 @@ static int collect_pid(int pid, void (*visit)(void *, const char *), void *conte
     struct proc_vnodepathinfo cwd = {0};
     if (proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &cwd, sizeof(cwd)) == sizeof(cwd)) {
         visit(context, cwd.pvi_cdir.vip_path); visit(context, cwd.pvi_rdir.vip_path);
-    } else if (!gone(pid)) GAP("cwd visibility denied");
+    } else if (!leaving(pid, deadline)) GAP("cwd visibility denied");
     errno = 0;
     int required = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, NULL, 0);
     if (required < 0 || (required == 0 && errno != 0)) {
-        if (!gone(pid)) GAP("descriptor-size query denied");
+        if (!leaving(pid, deadline)) GAP("descriptor-size query denied");
         return unknown ? -1 : 0;
     }
     const int maximum = 4194304;
@@ -129,7 +140,7 @@ static int collect_pid(int pid, void (*visit)(void *, const char *), void *conte
         errno = 0;
         n = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, fds, bytes);
         if (n < 0 || (n == 0 && errno != 0)) {
-            if (!gone(pid)) GAP("descriptor inventory denied");
+            if (!leaving(pid, deadline)) GAP("descriptor inventory denied");
             free(fds); return unknown ? -1 : 0;
         }
         if (n < bytes) break;
@@ -157,13 +168,13 @@ static int collect_pid(int pid, void (*visit)(void *, const char *), void *conte
         uint64_t now = bz_continuous_ns();
         int milliseconds = now < deadline ? (int)((deadline - now) / 1000000ULL) : 0;
         if (milliseconds > 2000) milliseconds = 2000;
-        if (bz_worktree_resolve_fds(pid, opaque, opaque_count, milliseconds, visit, context) != 0 && !gone(pid))
+        if (bz_worktree_resolve_fds(pid, opaque, opaque_count, milliseconds, visit, context) != 0 && !leaving(pid, deadline))
             GAP("open-file paths unavailable through native API and verified Apple metadata tool");
     }
     struct proc_bsdinfo after = {0};
     if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &after, sizeof(after)) == sizeof(after)) {
         if (after.pbi_uid != b.pbi_uid || after.pbi_start_tvsec != b.pbi_start_tvsec || after.pbi_start_tvusec != b.pbi_start_tvusec) GAP("identity changed during path inspection");
-    } else if (!gone(pid)) GAP("final identity visibility unavailable");
+    } else if (!leaving(pid, deadline)) GAP("final identity visibility unavailable");
 #undef GAP
     return unknown ? -1 : 0;
 }

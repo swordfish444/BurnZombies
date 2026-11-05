@@ -86,6 +86,8 @@ public struct WorktreeFile: Codable, Equatable, Sendable {
 }
 
 public enum WorktreeInspection {
+  /// The gap a copy gets when the consumer check can't see every program.
+  static let consumerGap = "Complete same-user cwd/file-handle visibility is unavailable."
   public static func identity(_ path: String) throws -> WorktreeIdentity {
     guard path == WorkspaceSafety.canonical(path) else {
       throw StoreError.message("Worktree path resolves elsewhere.")
@@ -373,7 +375,7 @@ public enum WorktreeInspection {
       case 1: r.consumer = "in use"
       default:
         r.consumer = "unknown"
-        r.gaps.append("Complete same-user cwd/file-handle visibility is unavailable.")
+        r.gaps.append(consumerGap)
       }
     } catch {
       r.gaps.append(error.localizedDescription)

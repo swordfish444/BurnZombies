@@ -104,3 +104,69 @@ func ownerManagedRefreshProof() async throws {
   equal(row.changes, 1, "the refresh between scans skipped the Codex copy")
   print("PASS owner-managed copies are measured by full scans and refreshed between them")
 }
+
+/// A consumer check that can't see every program for a while, like one that catches a program
+/// mid-exit on a busy Mac.
+private final class BusyMac: @unchecked Sendable {
+  private let lock = NSLock()
+  private var calls = 0
+  private var failUntil: Int
+  init(failing: Int) { failUntil = failing }
+  var count: Int { lock.withLock { calls } }
+  func fail(next: Int) { lock.withLock { failUntil = calls + next } }
+  func state(_ path: String) -> Int32 {
+    lock.withLock {
+      calls += 1
+      return calls <= failUntil ? -1 : 0
+    }
+  }
+}
+
+/// A new install's first consumer check can fail on a busy Mac. The copy is checked again right
+/// away instead of 15 minutes later; a check that keeps failing backs off after five tries.
+func consumerRetryProof() async throws {
+  let before = failures
+  let base = URL(fileURLWithPath: "/private/tmp/bz-consumer-retry-" + UUID().uuidString)
+  let fm = FileManager.default
+  defer { try? fm.removeItem(at: base) }
+  let home = base.appendingPathComponent("home")
+  let repository = home.appendingPathComponent("git/project")
+  let copy = home.appendingPathComponent("git/project-old")
+  try fm.createDirectory(at: repository, withIntermediateDirectories: true)
+  _ = try WorktreeGit.run(repository.path, ["init", "--initial-branch=main"])
+  try Data("fixture\n".utf8).write(to: repository.appendingPathComponent("source"))
+  _ = try WorktreeGit.run(repository.path, ["add", "."])
+  _ = try WorktreeGit.run(
+    repository.path,
+    [
+      "-c", "user.name=Proof", "-c", "user.email=proof@example.invalid", "commit", "-m",
+      "fixture",
+    ])
+  _ = try WorktreeGit.run(repository.path, ["worktree", "add", "--detach", copy.path])
+  let root = base.appendingPathComponent("state")
+  let busy = BusyMac(failing: 1)
+  let service = try WorktreeService(
+    root: root, visibility: { busy.state($0) }, access: fixtureAccess, discoveryHome: home)
+  _ = try await service.tick()
+  var row = try await service.snapshot().records.first { $0.path == copy.path }!
+  equal(busy.count, 2, "the copy waited after the first scan's consumer check failed")
+  check(
+    row.consumer == "none observed" && row.gaps.isEmpty,
+    "a failed first consumer check left the copy's users unknown")
+  busy.fail(next: 1000)
+  row.observedAt = Date().addingTimeInterval(-121)
+  try WorktreeStore(root: root).put(row, kind: "record", id: row.id)
+  var checks: [Int] = []
+  for _ in 0..<7 {
+    let before = busy.count
+    _ = try await service.tick()
+    checks.append(busy.count - before)
+  }
+  equal(checks, [1, 1, 1, 1, 1, 0, 0], "a consumer check that keeps failing did not back off")
+  row = try await service.snapshot().records.first { $0.path == copy.path }!
+  check(row.consumer == "unknown", "a copy nobody could check was called unused")
+  if failures == before {
+    print(
+      "PASS a failed consumer check is retried at the next tick, and backs off after five failures")
+  }
+}
