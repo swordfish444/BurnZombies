@@ -9,8 +9,10 @@ extension AutopilotSources {
     monitor: Monitor, root: URL = Store.defaultRoot, home: String = NSHomeDirectory(),
     junk: AutopilotJunkCache = AutopilotJunkCache()
   ) -> AutopilotSources {
-    let sizes = AutopilotSizes()
-    let ages = AutopilotAges(walks: junk.walks)
+    // Kept with Autopilot's state, so a restart doesn't size and date every copy again.
+    let store = try? AutopilotStore(root: root)
+    let sizes = AutopilotSizes(store: store)
+    let ages = AutopilotAges(store: store, walks: junk.walks)
     let skipped = AutopilotSkipped()
     // Without verified Full Disk Access, Autopilot leaves the places macOS protects alone.
     @Sendable func scope() -> ProtectedLocations { .current(root: root, homes: [home]) }

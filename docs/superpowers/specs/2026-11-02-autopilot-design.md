@@ -173,7 +173,7 @@ Vocabulary: **zombies** (leftover programs), **old copies** (worktrees), **junk 
 
 ## Storage
 
-JSON documents under `~/Library/Application Support/BurnZombies/autopilot/` through the existing bounded `Store` (0600 files, atomic writes, size limits): `catalog.json` (rewritten each tick), `memory.json` (rules, questions, AI decisions), `receipts.json` (last 500; refusals are dropped first), `sweep.json` (schedule and backoff).
+JSON documents under `~/Library/Application Support/BurnZombies/autopilot/` through the existing bounded `Store` (0600 files, atomic writes, size limits): `catalog.json` (rewritten each tick), `memory.json` (rules, questions, AI decisions), `receipts.json` (last 500; refusals are dropped first), `sweep.json` (schedule and backoff), `sizes.json` and `ages.json` (old copies the worktree inventory couldn't measure: each size for a day, each age for an hour or until the copy's HEAD or changes move, kept across restarts so an install doesn't hide them while they are measured again).
 
 ## Testing
 

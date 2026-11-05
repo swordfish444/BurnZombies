@@ -1013,6 +1013,79 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
   check(shared.fill([records[1]], now: later)[0].lastFileChange != nil, "so is a burned-past one")
 }
 
+// MARK: Restarts
+
+/// Sizes and ages were kept only in memory, so after every restart, an install included, a copy
+/// the inventory never measured counted as 0 bytes and left the catalog until it was sized again,
+/// and its age, lessons and questions waited behind that. A restarted Autopilot reads them back.
+private func apRestartProof(_ world: APWorld) async throws {
+  let fm = FileManager.default
+  // The inventory's walk stops at a hard-linked file, so it neither sizes nor dates the copy.
+  let copy = try world.addWorktree("restarted", branch: "feature-restarted")
+  try apWrite(world.path("restarted-store.txt"), "shared\n")
+  try fm.linkItem(atPath: world.path("restarted-store.txt"), toPath: copy + "/linked.txt")
+  try Data(count: 120 << 20).write(to: URL(fileURLWithPath: copy + "/big.bin"))
+  let record = try apRecord(copy, in: world.main)
+  equal(record.allocated, 0, "the inventory never measured it")
+  isNil(record.lastFileChange)
+
+  let state = URL(fileURLWithPath: world.path("restart-state"), isDirectory: true)
+  let home = world.path("restart-home")
+  try fm.createDirectory(atPath: home, withIntermediateDirectories: true)
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: state, accessCheck: fixtureAccess)
+  let before = AutopilotSources.live(monitor: monitor, root: state, home: home)
+  let first = before.worktrees([record], [], [:]).0
+  let bytes = first.first?.bytes ?? 0
+  check(first.count == 1 && bytes >= 120 << 20, "the copy is sized: \(first.map(\.bytes))")
+  equal(first.first?.facts["stale"], "today", "and dated")
+
+  // Measuring it again would now find it small, and looking again would find no date.
+  try fm.removeItem(atPath: copy + "/big.bin")
+  let closed = copy + "/closed"
+  try fm.createDirectory(atPath: closed, withIntermediateDirectories: true)
+  try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: closed)
+  defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: closed) }
+  let after = AutopilotSources.live(monitor: monitor, root: state, home: home)
+  let listed = after.worktrees([record], [], [:]).0
+  equal(listed.map(\.bytes), [bytes], "a restarted Autopilot lists the copy at its measured size")
+  equal(listed.first?.facts["stale"], "today", "and knows its age without looking again")
+  await monitor.shutdownWorktrees()
+
+  // A look keeps the rest of its hour across a restart, one that found no date too; a copy whose
+  // HEAD or changes moved is looked at again, and a look past its hour isn't kept.
+  let root = URL(fileURLWithPath: world.path("ages-state"), isDirectory: true)
+  let now = Date()
+  let found = now.addingTimeInterval(-3.5 * 86_400)
+  var looked: [String] = []
+  func restarted() throws -> AutopilotAges {
+    AutopilotAges(store: try AutopilotStore(root: root)) { path, _, _ in
+      looked.append(path)
+      return path.hasSuffix("blind") ? nil : found
+    }
+  }
+  func unwalked(_ name: String) -> WorktreeRecord {
+    var record = WorktreeRecord(
+      id: "id-" + name, path: world.path(name), repository: world.main + "/.git")
+    record.head = "head-" + name
+    record.status = "status-" + name
+    return record
+  }
+  var records = [unwalked("dated"), unwalked("blind")]
+  _ = try restarted().fill(records + [unwalked("gone")], now: now.addingTimeInterval(-3000))
+  equal(looked.count, 3, "each copy is looked at")
+  let back = try restarted().fill(records, now: now)
+  equal(back.map(\.lastFileChange), [found, nil], "a restart keeps each look for its hour")
+  equal(looked.count, 3, "no copy is looked at again, not even one with no date")
+  records[0].head = "moved"
+  records[1].status = "changed"
+  _ = try restarted().fill(records, now: now)
+  equal(looked.count, 5, "a copy whose HEAD or changes moved is looked at again")
+  _ = try restarted().fill(records, now: now.addingTimeInterval(3601))
+  equal(looked.count, 7, "an hour after its look a copy is looked at again")
+  equal(try AutopilotStore(root: root).ages().keys.sorted(), ["id-blind", "id-dated"])
+}
+
 func autopilotWorktreeProof() async throws {
   apDirectProof()
   let fm = FileManager.default
@@ -1042,6 +1115,7 @@ func autopilotWorktreeProof() async throws {
   try apBrowserProfileRetire(world)
   try apUnwalkedAgeProof(world)
   try apSubmoduleProof(world)
+  try await apRestartProof(world)
 
   let leftovers = (try? fm.contentsOfDirectory(atPath: world.state.path)) ?? []
   check(leftovers.isEmpty, "scratch space was left behind: \(leftovers)")
