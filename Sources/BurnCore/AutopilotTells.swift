@@ -90,24 +90,15 @@ extension AutopilotPolicy {
   public static let maximumClosedTells = 100
 
   /// The lesson BZ's own Yes teaches: what an owner's Yes would, kept to the risks the owner has
-  /// said yes to on the subject (`approved`). Each risk fact allows its safe values and the risky
-  /// values the owner approved, and `unknown` only when approved. A later thing with a risk the
-  /// owner never saw isn't burned under it, but asked about. It is this act's alone (R23): its id
-  /// carries the tell's, so every burn it authorizes is the act's.
+  /// said yes to on the subject (`approved`), through the same `narrowed` as an owner's Yes. Each
+  /// risk fact allows its safe values and the risky values the owner approved, and `unknown` only
+  /// when approved. A later thing with a risk the owner never saw isn't burned under it, but asked
+  /// about. It is this act's alone (R23): its id carries the tell's, so every burn it authorizes is
+  /// the act's.
   static func actLesson(
     for question: AutopilotQuestion, approved: Set<String>, created: Date, tellID: String
   ) -> AutopilotRule {
-    var rule = lesson(for: question, verdict: .burn, created: created)
-    for (fact, values) in riskFacts[question.kind] ?? [] {
-      let allowed: [String] = values.filter { value in
-        !risky(fact, value) || approved.contains(fact + "=" + value)
-      }
-      if let mine = rule.match[fact] {
-        rule.match[fact] = allowed.filter(mine.contains)
-      } else {
-        rule.match[fact] = allowed
-      }
-    }
+    var rule = lesson(for: question, verdict: .burn, created: created, approved: approved)
     let key: String = AutopilotRule.key(kind: rule.kind, match: rule.match)
     rule.id = key + ":burn:" + tellID
     rule.tellID = tellID

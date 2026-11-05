@@ -110,16 +110,45 @@ extension AutopilotPolicy {
   /// The lesson an answer to `question` teaches: its general pattern, widened toward `verdict`,
   /// titled without the project or its maker. The one way a lesson is made, whether from an
   /// answer, BZ's own act, an undo, a migration or the replay.
+  ///
+  /// A Yes covers only the risks it was given (R31): the ones its card showed (`risks`), or for
+  /// BZ's own act the ones the owner approved on the subject (`approved`). A question from before
+  /// cards named their risks (`risks` nil) teaches what it always did. A No is never narrowed.
   public static func lesson(
-    for question: AutopilotQuestion, verdict: AutopilotVerdict, created: Date
+    for question: AutopilotQuestion, verdict: AutopilotVerdict, created: Date,
+    approved: Set<String>? = nil
   ) -> AutopilotRule {
     var general = question
     general.match = generalize(question.kind, question.match)
-    let match = lessonMatch(question.kind, question.match, verdict: verdict)
+    var match = lessonMatch(question.kind, question.match, verdict: verdict)
+    let shown: Set<String>? = question.risks.map { Set($0) }
+    if verdict == .burn, let allowed = approved ?? shown {
+      match = narrowed(match, kind: question.kind, to: allowed)
+    }
     let answer: AutopilotAnswer = verdict == .burn ? .yes : .no
     return AutopilotRule(
       kind: question.kind, match: match, verdict: verdict, source: .operator,
       title: ruleTitle(general, answer: answer), created: created, questionID: question.id)
+  }
+
+  /// A burn lesson kept within `allowed` risks, for an owner's Yes and BZ's own act alike: each
+  /// risk fact of the kind (`riskFacts`) allows its safe values and only the risky values in
+  /// `allowed`, and `unknown` only when it is there. A value the lesson already left out stays out.
+  static func narrowed(
+    _ match: [String: [String]], kind: AutopilotKind, to allowed: Set<String>
+  ) -> [String: [String]] {
+    var result = match
+    for (fact, values) in riskFacts[kind] ?? [] {
+      let kept: [String] = values.filter { value in
+        !risky(fact, value) || allowed.contains(fact + "=" + value)
+      }
+      if let mine = result[fact] {
+        result[fact] = kept.filter(mine.contains)
+      } else {
+        result[fact] = kept
+      }
+    }
+    return result
   }
 
   /// Questions by id; the first of a repeated id wins.

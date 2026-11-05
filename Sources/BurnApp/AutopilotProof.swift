@@ -961,12 +961,19 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     throw StoreError.message("Answering yes did not create a rule")
   }
   try check(learned.verdict == .burn && learned.source == .`operator`, "A yes must teach a burn rule")
-  // The answer teaches why, not which project: the engine's own lesson, and it is in a group that
-  // reads as a sentence.
+  // The answer teaches why, not which project: the engine's own lesson, kept to the risks its card
+  // showed (R31), and it is in a group that reads as a sentence.
+  let engineLesson: AutopilotRule = AutopilotPolicy.lesson(
+    for: asked, verdict: .burn, created: Date())
+  let widest: [String: [String]] = AutopilotPolicy.lessonMatch(
+    asked.kind, asked.match, verdict: .burn)
   try check(
-    learned.questionID == asked.id
-      && learned.match == AutopilotPolicy.lessonMatch(asked.kind, asked.match, verdict: .burn),
+    learned.questionID == asked.id && learned.match == engineLesson.match,
     "A yes must teach the general lesson the engine teaches")
+  try check(
+    asked.risks != nil && learned.match != widest
+      && AutopilotPolicy.subsumes(widest, learned.match),
+    "A yes must keep to the risks its card showed")
   guard let heldBy = AutopilotText.lesson(taughtBy: asked.id, in: yes.autopilot) else {
     throw StoreError.message("The lesson a yes taught is in no lesson group")
   }

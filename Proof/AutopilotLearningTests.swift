@@ -200,6 +200,107 @@ func lessonsProof() async throws {
   equal(decided.authority, "rule:" + lessonID)
 
   try await lessonEngineProof()
+  try await answerRisksProof()
+}
+
+/// R31: an owner's Yes covers only the risks shown on that card, kept within them the way BZ's own
+/// act is. A Yes to clean copies doesn't teach "even with unsaved work"; a Yes to a card that showed
+/// small unsaved changes covers small ones and no more. A question from before cards named their
+/// risks teaches what it always did.
+private func answerRisksProof() async throws {
+  let now = Date()
+  /// A copy untouched for a week. Clean unless told otherwise: its work is on GitHub and nothing is
+  /// unsaved.
+  func aged(_ name: String, changes: String = "none") -> AutopilotItem {
+    AutopilotItem(
+      id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
+      facts: [
+        "repo": "web-app", "place": "patrol6", "saved": "pushed", "changes": changes,
+        "stale": "week", "inUse": "no", "thread": "none",
+      ], lastUsed: now.addingTimeInterval(-10 * 86_400))
+  }
+  /// The owner's Yes to the first card about copies, once its burns are done.
+  func yes(_ name: String, _ world: TellWorld) async throws
+    -> (Autopilot, AutopilotStore, URL, AutopilotQuestion)
+  {
+    let (engine, store, root) = try tellEngine(name, world, AutopilotMemory())
+    guard let card = await engine.tick(now: now).questions.first(where: { $0.kind == .worktree })
+    else {
+      failTest("\(name): a card about the copies")
+      throw StoreError.message("no card")
+    }
+    let count = world.copies.count
+    _ = try await engine.apply(.answer(questionID: card.id, answer: .yes), now: now)
+    await eventually { world.burns.all.count == count }
+    equal(world.burns.all.count, count, "\(name): the Yes burns the copies on the card")
+    return (engine, store, root, card)
+  }
+
+  // A clean card. Its Yes teaches nothing about unsaved work.
+  let cleanWorld = TellWorld(copies: [aged("fix-login"), aged("dark-mode")])
+  let (clean, cleanStore, cleanRoot, cleanCard) = try await yes("yes-clean", cleanWorld)
+  defer { try? FileManager.default.removeItem(at: cleanRoot) }
+  equal(cleanCard.risks, [], "the card showed no risk")
+  guard let cleanLesson = try cleanStore.memory().rules.first(where: { $0.questionID == cleanCard.id })
+  else { return failTest("the clean Yes teaches a lesson") }
+  equal(cleanLesson.match["changes"], ["none"], "nothing unsaved")
+  equal(cleanLesson.match["saved"], ["pushed", "merged"], "work on GitHub")
+  equal(cleanLesson.match["inUse"], ["no"])
+  equal(cleanLesson.match["stale"], ["week", "month", "older"], "a week or more, as before")
+  let cleanSentence = AutopilotPolicy.lessonGroups(try cleanStore.memory()).first?.sentence
+  equal(
+    cleanSentence,
+    "Copies nobody touched for a week are done once their work is on GitHub and nothing is unsaved.",
+    "the Got it! sentence says what the card showed")
+  cleanWorld.add(aged("big-rewrite", changes: "large"))
+  let afterClean = await clean.tick(now: now.addingTimeInterval(60))
+  checkFalse(
+    cleanWorld.burns.all.contains("worktree:big-rewrite"),
+    "a later same-age copy with large unsaved changes isn't burned")
+  equal(
+    afterClean.entries.first { $0.item.id == "worktree:big-rewrite" }?.status, .unsure,
+    "it stays unsure")
+
+  // A card that showed small unsaved changes. Its Yes covers small ones, and not large ones.
+  let smallWorld = TellWorld(copies: [aged("tidy-footer"), aged("wip-search", changes: "small")])
+  let (small, smallStore, smallRoot, smallCard) = try await yes("yes-small", smallWorld)
+  defer { try? FileManager.default.removeItem(at: smallRoot) }
+  equal(smallCard.risks, ["changes=small"], "the card showed small unsaved changes")
+  let smallLesson = try smallStore.memory().rules.first { $0.questionID == smallCard.id }
+  equal(smallLesson?.match["changes"], ["small", "none"], "small unsaved changes and none")
+  smallWorld.add(aged("half-done", changes: "small"))
+  smallWorld.add(aged("rewrite", changes: "large"))
+  _ = await small.tick(now: now.addingTimeInterval(60))
+  check(smallWorld.burns.all.contains("worktree:half-done"), "a later copy with small changes burns")
+  checkFalse(
+    smallWorld.burns.all.contains("worktree:rewrite"), "a later copy with large changes doesn't")
+
+  // A question from before cards named their risks teaches what it always did.
+  var legacy = AutopilotQuestion(
+    kind: .worktree, match: ["stale": ["week"]],
+    question: "Can I burn old project copies untouched for a week?", why: "", examples: [],
+    count: 2, bytes: 1_200_000_000, asked: now)
+  legacy.cautions = nil
+  isNil(legacy.risks)
+  let legacyLesson = AutopilotPolicy.lesson(for: legacy, verdict: .burn, created: now)
+  equal(
+    legacyLesson.match, AutopilotPolicy.lessonMatch(.worktree, ["stale": ["week"]], verdict: .burn),
+    "the general lesson, unnarrowed")
+  equal(legacyLesson.match, ["stale": ["week", "month", "older"]])
+  let legacyWorld = TellWorld(copies: [aged("old-a"), aged("old-b")])
+  let (legacyEngine, legacyStore, legacyRoot) = try tellEngine(
+    "yes-legacy", legacyWorld, AutopilotMemory())
+  defer { try? FileManager.default.removeItem(at: legacyRoot) }
+  try legacyStore.updateMemory { $0.questions = [legacy] }
+  _ = try await legacyEngine.apply(.answer(questionID: legacy.id, answer: .yes), now: now)
+  let taught = try legacyStore.memory().rules.first { $0.questionID == legacy.id }
+  equal(taught?.match, legacyLesson.match, "the engine teaches it the same")
+  legacyWorld.add(aged("old-rewrite", changes: "large"))
+  _ = await legacyEngine.tick(now: now.addingTimeInterval(60))
+  await eventually { legacyWorld.burns.all.contains("worktree:old-rewrite") }
+  check(
+    legacyWorld.burns.all.contains("worktree:old-rewrite"),
+    "and it still burns what it always did")
 }
 
 /// The engine teaches lessons from answers, and Forget forgets every answer behind one.
