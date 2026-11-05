@@ -361,8 +361,9 @@ public enum AutopilotEval {
       }
     }
     let verdict: AutopilotVerdict = owner == .yes ? .burn : .keep
-    let lesson = AutopilotPolicy.lesson(for: question, verdict: verdict, created: date)
-    AutopilotPolicy.learn(lesson, into: &memory.rules)
+    let taught: [AutopilotRule] = AutopilotPolicy.lessons(
+      for: question, verdict: verdict, created: date, earlier: memory.questions)
+    for lesson in taught { AutopilotPolicy.learn(lesson, into: &memory.rules) }
     memory.questions.append(question)
     let matched: Bool? = lean.map { $0 == owner }
     return Step(

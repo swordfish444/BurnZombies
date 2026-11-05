@@ -12,7 +12,15 @@ extension AutopilotPolicy {
     groups += copyGroups(burns.filter { $0.kind == .worktree }, memory)
     groups += programGroups(burns.filter { $0.kind == .process }, memory)
     groups += folderGroups(burns.filter { $0.kind == .disk }, memory)
-    for rule in lessons where rule.verdict != .burn { groups.append(keepGroup(rule, memory)) }
+    // A No can teach a keep per risk it was about (R37); those read and are forgotten as one.
+    var keeps: [[AutopilotRule]] = []
+    for rule in lessons where rule.verdict != .burn {
+      let sibling: Int? = rule.questionID.flatMap { id in
+        keeps.firstIndex { $0.first?.questionID == id }
+      }
+      if let sibling { keeps[sibling].append(rule) } else { keeps.append([rule]) }
+    }
+    for members in keeps { groups.append(keepGroup(members, memory)) }
     return groups
   }
 
@@ -243,9 +251,18 @@ extension AutopilotPolicy {
   }
 
   /// A keep reads on its own: programs by how long they may sit idle, anything else by its facts.
-  static func keepGroup(_ rule: AutopilotRule, _ memory: AutopilotMemory) -> AutopilotLessonGroup {
-    let sentence = rule.kind == .process ? programKeep(rule) : keepSentence(rule)
-    return group("rule:" + rule.id, rule.kind, rule.verdict, sentence, [rule], memory)
+  /// One keep, or the keeps one No taught, as one sentence: what each keeps is listed together.
+  static func keepGroup(_ rules: [AutopilotRule], _ memory: AutopilotMemory)
+    -> AutopilotLessonGroup
+  {
+    var shown: AutopilotRule = rules[0]
+    for other in rules.dropFirst() {
+      for (fact, values) in other.match where shown.match[fact] == nil {
+        shown.match[fact] = values
+      }
+    }
+    let sentence = shown.kind == .process ? programKeep(shown) : keepSentence(shown)
+    return group("rule:" + rules[0].id, shown.kind, shown.verdict, sentence, rules, memory)
   }
 
   /// "Java helpers serving a port stay while idle less than an hour."

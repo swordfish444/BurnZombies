@@ -294,7 +294,10 @@ extension AutopilotPolicy {
     }
     if needed { throw StoreError.message(undoingNow) }
     memory.questions.removeAll { taught.contains($0.id) }
-    memory.rules.removeAll { ruleIDs.contains($0.id) }
+    // A keep the same No taught for another risk (R37) goes with its answer.
+    memory.rules.removeAll { rule in
+      ruleIDs.contains(rule.id) || rule.questionID.map(taught.contains) == true
+    }
     carryTallies(&memory)
     let asked = Set(memory.questions.map(\.id))
     for i in memory.tells.indices where memory.tells[i].isOpen {

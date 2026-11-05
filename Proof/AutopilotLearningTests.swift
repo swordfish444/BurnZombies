@@ -257,6 +257,7 @@ func lessonsProof() async throws {
   try await lessonEngineProof()
   try await answerRisksProof()
   try await reaskProof()
+  try await keepNewRisksProof()
 }
 
 /// R31: an owner's Yes covers only the risks shown on that card, kept within them the way BZ's own
@@ -518,6 +519,132 @@ private func reaskProof() async throws {
     [AutopilotRule.key(kind: .worktree, match: week) + ":changes=unknown,saved=unknown"],
     "asked again about the copies BZ couldn't check")
   equal(unknowns.first?.cautions, ["2 couldn't be checked"], "and the card says so")
+}
+
+/// R37: a No to a card asked again for new risks keeps only the things carrying them. A wide keep
+/// would also cover the things the owner already said yes to at that age, and keeps beat burns.
+private func keepNewRisksProof() async throws {
+  let now = Date()
+  /// A Java helper idle for an hour; a server when `listening`.
+  func helper(_ name: String, listening: Bool, bytes: UInt64) -> AutopilotItem {
+    AutopilotItem(
+      id: "process:" + name, kind: .process, name: name, bytes: bytes,
+      facts: [
+        "family": "java", "orphaned": "maybe", "thread": "none", "idle": "1h",
+        "listening": listening ? "yes" : "no", "agent": "codex",
+      ], processKey: name)
+  }
+  let pattern: [String: [String]] = ["family": ["java"], "idle": ["1h"]]
+  let key: String = AutopilotRule.key(kind: .process, match: pattern)
+  let world = TellWorld(
+    programs: [
+      helper("gradle-a", listening: false, bytes: 600_000_000),
+      helper("gradle-b", listening: false, bytes: 600_000_000),
+    ])
+  let (engine, store, root) = try tellEngine("keep-new-risks", world, AutopilotMemory())
+  defer { try? FileManager.default.removeItem(at: root) }
+
+  // Yes to clean Java helpers idle an hour.
+  guard let clean = await engine.tick(now: now).questions.first(where: { $0.kind == .process })
+  else { return failTest("a question about the clean Java helpers") }
+  equal(clean.match, pattern)
+  equal(clean.risks, [], "nothing risky about them")
+  _ = try await engine.apply(.answer(questionID: clean.id, answer: .yes), now: now)
+  await eventually { world.burns.all.count == 2 }
+  equal(world.burns.all.count, 2, "the yes burns them")
+
+  // Three servers at the same age are asked about again, and the owner says No.
+  let servers: [AutopilotItem] = ["jetty-a", "jetty-b", "jetty-c"].map {
+    helper($0, listening: true, bytes: 500_000_000)
+  }
+  for server in servers { world.add(server) }
+  let asked = await engine.tick(now: now.addingTimeInterval(60))
+  guard let again = asked.questions.first(where: { $0.kind == .process }) else {
+    return failTest("the servers are asked about again")
+  }
+  equal(again.id, key + ":listening=yes")
+  check(
+    AutopilotPolicy.card(again).cautions.contains("3 are still running a server"),
+    "the card says they serve a port")
+  let answered = try await engine.apply(.answer(questionID: again.id, answer: .no), now: now)
+  for server in servers {
+    equal(
+      answered.entries.first { $0.item.id == server.id }?.status, .keep,
+      "\(server.name) serves a port and is kept")
+  }
+  let keeps = try store.memory().rules.filter { $0.questionID == again.id }
+  equal(keeps.count, 1, "one keep for the one risk the card showed for the first time")
+  equal(keeps.first?.verdict, .keep)
+  equal(keeps.first?.match["listening"], ["yes"], "only things serving a port")
+  let sentence: String? = AutopilotPolicy.lessonGroups(try store.memory()).first {
+    $0.verdict == .keep
+  }?.sentence
+  equal(sentence, "Java helpers serving a port stay while idle less than 6 hours.")
+
+  // Clean helpers at that age still burn under the earlier Yes; no server burns.
+  world.add(helper("gradle-c", listening: false, bytes: 600_000_000))
+  world.add(helper("gradle-d", listening: false, bytes: 600_000_000))
+  _ = await engine.tick(now: now.addingTimeInterval(120))
+  check(
+    world.burns.all.contains("process:gradle-c") && world.burns.all.contains("process:gradle-d"),
+    "clean helpers at that age still burn under the earlier Yes: \(world.burns.all)")
+  checkFalse(world.burns.all.contains { $0.hasPrefix("process:jetty") }, "no server burns")
+
+  // Two risks shown for the first time: the No keeps copies carrying either one, each by a keep of
+  // its own, and they read and are forgotten as one lesson. A clean copy at that age still burns.
+  func aged(_ name: String, saved: String, changes: String) -> AutopilotItem {
+    AutopilotItem(
+      id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
+      facts: [
+        "repo": "web-app", "place": "patrol6", "saved": saved, "changes": changes,
+        "stale": "week", "inUse": "no", "thread": "none",
+      ], lastUsed: now.addingTimeInterval(-10 * 86_400))
+  }
+  let copies = TellWorld(
+    copies: [
+      aged("fix-login", saved: "pushed", changes: "none"),
+      aged("dark-mode", saved: "merged", changes: "none"),
+    ])
+  let (copyEngine, copyStore, copyRoot) = try tellEngine("keep-two-risks", copies, AutopilotMemory())
+  defer { try? FileManager.default.removeItem(at: copyRoot) }
+  guard let first = await copyEngine.tick(now: now).questions.first(where: { $0.kind == .worktree })
+  else { return failTest("a question about the clean copies") }
+  _ = try await copyEngine.apply(.answer(questionID: first.id, answer: .yes), now: now)
+  await eventually { copies.burns.all.count == 2 }
+  copies.add(aged("local-draft", saved: "local", changes: "none"))
+  copies.add(aged("big-rewrite", saved: "pushed", changes: "large"))
+  let risky = await copyEngine.tick(now: now.addingTimeInterval(60))
+  guard let twice = risky.questions.first(where: { $0.kind == .worktree }) else {
+    return failTest("the risky copies are asked about again")
+  }
+  equal(twice.risks, ["changes=large", "saved=local"])
+  let refused = try await copyEngine.apply(.answer(questionID: twice.id, answer: .no), now: now)
+  for id in ["worktree:local-draft", "worktree:big-rewrite"] {
+    equal(refused.entries.first { $0.item.id == id }?.status, .keep, "\(id) is kept")
+  }
+  let copyMemory = try copyStore.memory()
+  let copyKeeps = copyMemory.rules.filter { $0.questionID == twice.id }
+  equal(
+    Set(copyKeeps.map { $0.match.filter { $0.key != "stale" } }),
+    [["saved": ["local"]], ["changes": ["large"]]], "a keep per new risk")
+  let keepGroups = AutopilotPolicy.lessonGroups(copyMemory).filter { $0.verdict == .keep }
+  equal(keepGroups.count, 1, "read as one lesson")
+  equal(
+    keepGroups.first?.sentence,
+    "Copies used in the last month stay: Work only on this Mac, Has unsaved changes.")
+  equal(Set(keepGroups.first?.ruleIDs ?? []), Set(copyKeeps.map(\.id)))
+  copies.add(aged("tidy-footer", saved: "pushed", changes: "none"))
+  _ = await copyEngine.tick(now: now.addingTimeInterval(120))
+  check(copies.burns.all.contains("worktree:tidy-footer"), "a clean copy at that age still burns")
+  checkFalse(
+    copies.burns.all.contains("worktree:local-draft")
+      || copies.burns.all.contains("worktree:big-rewrite"), "the kept copies stay")
+  // Forgetting either keep forgets the answer and both keeps.
+  guard let one = copyKeeps.first else { return failTest("a keep to forget") }
+  _ = try await copyEngine.apply(.forgetRule(ruleID: one.id), now: now)
+  let forgotten = try copyStore.memory()
+  checkFalse(forgotten.rules.contains { $0.questionID == twice.id }, "both keeps are forgotten")
+  checkFalse(forgotten.questions.contains { $0.id == twice.id }, "with the answer")
 }
 
 /// The engine teaches lessons from answers, and Forget forgets every answer behind one.

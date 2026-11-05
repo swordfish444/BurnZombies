@@ -554,8 +554,9 @@ public actor Autopilot {
           let verdict: AutopilotVerdict = answer == .yes ? .burn : .keep
           // The answer teaches why, not which project: a general lesson, titled the same way.
           memory.rules.removeAll { $0.questionID == q.id }
-          AutopilotPolicy.learn(
-            AutopilotPolicy.lesson(for: q, verdict: verdict, created: now), into: &memory.rules)
+          let taught: [AutopilotRule] = AutopilotPolicy.lessons(
+            for: q, verdict: verdict, created: now, earlier: memory.questions)
+          for lesson in taught { AutopilotPolicy.learn(lesson, into: &memory.rules) }
           // A lesson the new one took in brings its tally along.
           AutopilotPolicy.carryTallies(&memory)
         }

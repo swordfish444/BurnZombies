@@ -131,6 +131,49 @@ extension AutopilotPolicy {
       title: ruleTitle(general, answer: answer), created: created, questionID: question.id)
   }
 
+  /// What an answer teaches: `lesson(for:)`, except for a No to a question asked again for risks
+  /// earlier cards about its pattern didn't show (R36). That No keeps only the things carrying
+  /// them (R37): one keep per newly shown risk fact, kept to that fact's new risky values on the
+  /// card. A keep over the whole pattern would also cover what the owner already said could go, and
+  /// keeps beat burns. `earlier` holds the questions answered before this one.
+  public static func lessons(
+    for question: AutopilotQuestion, verdict: AutopilotVerdict, created: Date,
+    earlier: [AutopilotQuestion]
+  ) -> [AutopilotRule] {
+    let wide = lesson(for: question, verdict: verdict, created: created)
+    guard verdict == .keep, let shown = question.risks,
+      let before = shownBefore(question, in: earlier)
+    else { return [wide] }
+    let fresh: Set<String> = Set(shown).subtracting(before)
+    var keeps: [AutopilotRule] = []
+    for (fact, values) in riskFacts[question.kind] ?? [] {
+      let kept: [String] = values.filter { fresh.contains(fact + "=" + $0) }
+      guard !kept.isEmpty else { continue }
+      var match: [String: [String]] = wide.match
+      match[fact] = kept
+      keeps.append(
+        AutopilotRule(
+          kind: question.kind, match: match, verdict: .keep, source: .operator, title: wide.title,
+          created: created, questionID: question.id))
+    }
+    return keeps.isEmpty ? [wide] : keeps
+  }
+
+  /// The risks earlier cards about the same pattern showed, answered by the owner or by BZ itself;
+  /// nil when none was answered.
+  static func shownBefore(_ question: AutopilotQuestion, in earlier: [AutopilotQuestion])
+    -> Set<String>?
+  {
+    var shown: Set<String>?
+    for past in earlier where past.id != question.id && past.kind == question.kind {
+      guard past.match == question.match, past.answer == .yes || past.answer == .no else {
+        continue
+      }
+      shown = (shown ?? []).union(risks(of: past))
+    }
+    return shown
+  }
+
   /// A burn lesson kept within `allowed` risks, for an owner's Yes and BZ's own act alike: each
   /// risk fact of the kind (`riskFacts`) allows its safe values and only the risky values in
   /// `allowed`, and `unknown` only when it is there. A value the lesson already left out stays out.
