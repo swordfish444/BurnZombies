@@ -349,20 +349,27 @@ public enum AutopilotWorktrees {
       throw Refusal(reason)
     }
 
-    // Big unsaved files would be copied into the repository's own storage; ask instead.
-    var unsaved: UInt64 = 0
+    // Big unsaved files would be copied into the repository's own storage, so they keep the copy.
+    // Browser profiles don't count: they aren't kept.
     let untracked = try WorktreeGit.run(
-      path, ["ls-files", "-z", "--others", "--exclude-standard"], seconds: 60)
-    for name in untracked.split(separator: 0) {
+      path, ["ls-files", "-z", "--others", "--exclude-standard"], seconds: 60
+    ).split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+    let profiles = try browserProfiles(path, untracked: untracked)
+    var unsaved: UInt64 = 0
+    var dropped: UInt64 = 0
+    for name in untracked {
       var info = stat()
-      if lstat(path + "/" + String(decoding: name, as: UTF8.self), &info) == 0,
-        info.st_mode & S_IFMT == S_IFREG
-      {
-        unsaved += UInt64(max(0, info.st_size))
+      guard lstat(path + "/" + name, &info) == 0, info.st_mode & S_IFMT == S_IFREG else {
+        continue
       }
+      let bytes = UInt64(max(0, info.st_size))
+      if profiles.contains(where: { name.hasPrefix($0 + "/") }) {
+        dropped += bytes
+        continue
+      }
+      unsaved += bytes
       if unsaved > maximumUnsavedBytes {
-        throw Refusal(
-          "It has big files that aren't saved anywhere else, so I'll ask you before touching it.")
+        throw Refusal("It has big files that aren't saved anywhere else, so I left it alone.")
       }
     }
 
@@ -377,7 +384,21 @@ public enum AutopilotWorktrees {
     if fm.fileExists(atPath: gitDir + "/index") {
       try fm.copyItem(atPath: gitDir + "/index", toPath: index)
     }
-    _ = try WorktreeGit.run(path, ["add", "-A"], seconds: 150, environment: indexEnvironment)
+    // Everything but the browser profiles. They are left out as Git adds, since a blob Git
+    // writes stays in the repository's storage even after it leaves the index.
+    var stage = ["add", "-A"]
+    if !profiles.isEmpty {
+      let list = work.appendingPathComponent("everything-but-profiles")
+      var bytes = Data(".".utf8)
+      bytes.append(0)
+      for profile in profiles {
+        bytes.append(Data((":(exclude,literal)" + profile).utf8))
+        bytes.append(0)
+      }
+      try bytes.write(to: list)
+      stage += ["--pathspec-from-file=" + list.path, "--pathspec-file-nul"]
+    }
+    _ = try WorktreeGit.run(path, stage, seconds: 150, environment: indexEnvironment)
     let added = try gitlinks(path, environment: indexEnvironment)
     guard Set(added).isSubset(of: Set(links)) else {
       throw Refusal(
@@ -417,7 +438,7 @@ public enum AutopilotWorktrees {
     }
 
     // Nothing may have moved while the backup was being written.
-    _ = try WorktreeGit.run(path, ["add", "-A"], seconds: 150, environment: indexEnvironment)
+    _ = try WorktreeGit.run(path, stage, seconds: 150, environment: indexEnvironment)
     let again = try line(path, ["write-tree"], environment: indexEnvironment)
     let headAgain = try line(path, ["rev-parse", "--verify", "HEAD^{commit}"])
     guard again == tree, headAgain == head else {
@@ -444,12 +465,38 @@ public enum AutopilotWorktrees {
         detail: "I made a backup but could not finish removing the copy.",
         restore: folderGone ? recovery : nil)
     }
+    var detail = "Removed. Your unsaved changes are backed up, so you can restore it."
+    if !snapshot {
+      let saved = dropped > 0 ? "Everything else" : "Everything"
+      detail = "Removed. " + saved + " in it was already saved, so you can restore it."
+    }
+    if dropped > 0 {
+      detail += " Its browser profiles (\(AutopilotPolicy.format(dropped))) weren't kept."
+    }
     return AutopilotReceipt(
       itemID: item.id, kind: .worktree, name: item.name, authority: authority, outcome: "burned",
-      detail: snapshot
-        ? "Removed. Your unsaved changes are backed up, so you can restore it."
-        : "Removed. Everything in it was already saved, so you can restore it.",
-      bytes: item.bytes, restore: recovery)
+      detail: detail, bytes: item.bytes, restore: recovery)
+  }
+
+  /// Browser profiles test runs leave in a copy, by path inside it: a Chrome-style profile folder,
+  /// with `Local State` beside `Default/Preferences`. Test state, not work, so they are neither
+  /// backed up nor counted as unsaved. A folder holding a file Git tracks is somebody's fixture.
+  private static func browserProfiles(_ path: String, untracked: [String]) throws -> [String] {
+    var found: [String] = []
+    for name in untracked where name.hasSuffix("/Local State") {
+      let folder = String(name.dropLast("/Local State".count))
+      var info = stat()
+      guard lstat(path + "/" + folder + "/Default/Preferences", &info) == 0,
+        info.st_mode & S_IFMT == S_IFREG
+      else { continue }
+      found.append(folder)
+    }
+    // One inside another goes with it.
+    found = found.filter { inner in !found.contains { inner.hasPrefix($0 + "/") } }
+    guard !found.isEmpty else { return [] }
+    let tracked = try git(path, ["--literal-pathspecs", "ls-files", "-z", "--"] + found)
+      .split(separator: "\0").map(String.init)
+    return found.filter { folder in !tracked.contains { $0.hasPrefix(folder + "/") } }
   }
 
   /// Why a copy was left when the check for programs using it couldn't finish.

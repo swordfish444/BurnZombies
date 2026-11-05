@@ -721,6 +721,68 @@ private func apDirtyRetire(_ world: APWorld, _ item: AutopilotItem) throws {
   equal(attached, "refs/heads/feature-dirty", "the branch is checked out again")
 }
 
+/// Test runs leave browser profiles in copies (Chrome keeps one in a folder with `Local State`
+/// beside `Default/Preferences`): test state, not work. A copy whose big unsaved files are such a
+/// profile is burned without it, and its other unsaved work is backed up. Any other big unsaved
+/// files still keep the copy, as does a profile folder that holds a file Git tracks.
+private func apBrowserProfileRetire(_ world: APWorld) throws {
+  // Sparse: counts its full size, takes no disk.
+  func big(_ path: String) throws {
+    try apWrite(path, "")
+    let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
+    try handle.truncate(atOffset: 600 << 20)
+    try handle.close()
+  }
+  func profile(_ folder: String) throws {
+    try apWrite(folder + "/Local State", "{}\n")
+    try apWrite(folder + "/Default/Preferences", "{}\n")
+    try big(folder + "/Default/Cache/data_1")
+  }
+  var cache: [String: AutopilotDelivery] = [:]
+  func burn(_ path: String) throws -> AutopilotReceipt {
+    AutopilotWorktrees.retire(
+      try apItem(path, world, cache: &cache), authority: "operator", root: world.state,
+      inUse: { _ in 0 })
+  }
+
+  let copy = try world.addWorktree("profiled", branch: "feature-profiled")
+  try profile(copy + "/.qa artifacts/browser profile [1]")
+  try apWrite(copy + "/notes.txt", "keep me\n")
+  let receipt = try burn(copy)
+  equal(receipt.outcome, "burned", "a browser profile doesn't keep a copy: " + receipt.detail)
+  checkFalse(apExists(copy), "the copy is gone")
+  let dropped = AutopilotPolicy.format((600 << 20) + 6)
+  check(
+    receipt.detail.hasSuffix("Its browser profiles (\(dropped)) weren't kept."),
+    "the receipt says what wasn't kept: " + receipt.detail)
+  if let restore = receipt.restore {
+    let listing = try apGit(world.main, ["ls-tree", "-r", "--name-only", restore.ref])
+    let names = listing.split(separator: "\n").map(String.init)
+    check(names.contains("notes.txt"), "the other unsaved file is backed up")
+    checkFalse(names.contains(where: { $0.hasPrefix(".qa artifacts") }), "the profile isn't")
+    try AutopilotWorktrees.restore(receipt)
+    equal(apRead(copy + "/notes.txt"), "keep me\n", "the unsaved file is back")
+    checkFalse(apExists(copy + "/.qa artifacts"), "the profile isn't")
+  } else {
+    failTest("the burn left no way to restore it")
+  }
+
+  // Only browser profiles are let go.
+  let other = try world.addWorktree("bigfiles", branch: "feature-bigfiles")
+  try big(other + "/recordings/session.mov")
+  let kept = try burn(other)
+  equal(kept.outcome, "refused", "other big unsaved files keep the copy")
+  equal(kept.detail, "It has big files that aren't saved anywhere else, so I left it alone.")
+  check(apExists(other + "/recordings/session.mov"), "and they're still there")
+  let fixture = try world.addWorktree("fixture", branch: "feature-fixture")
+  try apWrite(fixture + "/fixtures/profile/Default/Preferences", "{}\n")
+  try apGit(fixture, ["add", "fixtures"])
+  try apGit(fixture, ["commit", "-m", "a profile the tests use"])
+  try apWrite(fixture + "/fixtures/profile/Local State", "{}\n")
+  try big(fixture + "/fixtures/profile/Default/Cache/data_1")
+  equal(try burn(fixture).outcome, "refused", "a profile Git tracks part of is somebody's work")
+}
+
 private func apSubmoduleProof(_ world: APWorld) throws {
   let libOrigin = world.path("lib.git")
   let libSeed = world.path("lib-seed")
@@ -977,6 +1039,7 @@ func autopilotWorktreeProof() async throws {
   try apCleanRetire(world, items["merged"]!)
   try apUncheckedRetire(world, items["pushed"]!)
   try apDirtyRetire(world, items["dirty"]!)
+  try apBrowserProfileRetire(world)
   try apUnwalkedAgeProof(world)
   try apSubmoduleProof(world)
 

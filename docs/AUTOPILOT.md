@@ -138,7 +138,7 @@ Without Claude Code or Codex, or after installing with `--observe-only`, BurnZom
 
 ## Undo
 
-- **Old copies:** **Restore** in **Findings** for 30 days. The restore point lives in the repository as `refs/burnzombies/retired/…` and holds every commit and local change. Ignored files over 5 MB, and anything inside rebuildable folders, aren't saved.
+- **Old copies:** **Restore** in **Findings** for 30 days. The restore point lives in the repository as `refs/burnzombies/retired/…` and holds every commit and local change. Ignored files over 5 MB, anything inside rebuildable folders, and browser profiles that test runs leave in a copy (a Chrome-style profile folder) aren't saved. A copy with more than 512 MB of other unsaved files is left alone.
 - **Junk folders:** your tools rebuild them.
 - **Programs:** a graceful stop, which can't be undone.
 - **What BZ did on its own:** **Undo** on its card in **Teach BZ** brings back the copies it burned and turns its lesson into a keep, so it asks next time. If a copy can't come back, the card says how many and why until you press *OK*. Programs and folders can't come back; their button reads *I'd have said no* and still teaches the keep ([Act, then tell](#act-then-tell)).
