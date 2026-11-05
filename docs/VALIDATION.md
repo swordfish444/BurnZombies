@@ -153,7 +153,7 @@ The production refresh uses the supervised native worker, retains the full disco
 
 New idle worktrees remain available for manual review without notification. A worktree prompt additionally requires the configured stale age (default fourteen days), an exact completion confirmation, or released current owners. Age remains an attention signal, never cleanup permission.
 
-`scripts/test-install-control.py` runs stock `/bin/bash` against an inert signed test app: Codex and Claude setup with and without observe-only, upgrade, setup and launch failure, prior-bundle restoration, and launch dispatch. `scripts/test-install.py` separately verifies the genuine release archive and private setup. Neither test claims a live installed UI journey.
+`scripts/test-install-control.py` runs stock `/bin/bash` against an inert signed test app: Codex and Claude setup with and without observe-only and look-only, look-only without AI setup, upgrade, setup and launch failure, prior-bundle restoration, and launch dispatch. `scripts/test-install.py` separately verifies the genuine release archive and private setup. Neither test claims a live installed UI journey.
 
 The installed large-inbox acceptance exposed Findings growing beyond the screen. The native window now owns its viewport instead of adopting the list’s intrinsic height. The 1,000-row offscreen proof first reproduced a 3,739-point-tall window, then verifies the production window remains bounded with visible search and notification controls. It never shows a window, takes focus or acts on a resource. Installed interaction is a separate acceptance check.
 

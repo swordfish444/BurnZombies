@@ -70,7 +70,11 @@ enum AutopilotText {
         : "I haven't found anything yet."
     }
     var clauses = [String]()
-    if burn > 0 { clauses.append("I'll burn \(number(burn)) on my own") }
+    if burn > 0 {
+      clauses.append(
+        snapshot.sweep.lookOnly == true
+          ? "I'd burn \(number(burn)) once you start burning" : "I'll burn \(number(burn)) on my own")
+    }
     if keeping > 0 { clauses.append("I'm keeping \(number(keeping))") }
     clauses.append(help > 0 ? "I need your help with \(number(help))" : "nothing needs your help")
     return "I found \(things(found)). " + sentence(clauses) + "."
@@ -99,12 +103,14 @@ enum AutopilotText {
     if minutes < 90 { return "next sweep in \(minutes) min" }
     return "next sweep in \(Int((Double(minutes) / 60).rounded())) hr"
   }
-  /// The menu line: "Autopilot on · next sweep in 12 min", "Autopilot off", or the paused form.
+  /// The menu line: "Autopilot on · next sweep in 12 min", "Look-only · next sweep in 12 min",
+  /// "Autopilot off", or the paused form.
   static func sweepLine(_ sweep: AutopilotSweepState, now: Date) -> String {
     guard sweep.enabled else { return "Autopilot off" }
-    guard let next = nextSweep(sweep, now: now) else { return "Autopilot on" }
+    let mode = sweep.lookOnly == true ? "Look-only" : "Autopilot on"
+    guard let next = nextSweep(sweep, now: now) else { return mode }
     if next.hasPrefix("retrying") { return "Autopilot paused — " + next }
-    return "Autopilot on · " + next
+    return mode + " · " + next
   }
   static func lastSweep(_ sweep: AutopilotSweepState, now: Date) -> String {
     guard let last = sweep.lastTick else { return "No sweep yet" }
@@ -235,6 +241,9 @@ enum AutopilotText {
   /// covers, this says what BZ does and how to change it.
   static let handling =
     "I'll handle these on my own from now on. To change it, use Forget in \(learnedHeading)."
+  /// The same line for a Yes in look-only, where nothing burns until the owner starts burning.
+  static let handlingLookOnly =
+    "I'll burn these once you start burning. To change it, use Forget in \(learnedHeading)."
   /// The last line of the "Got it!" card: what comes next. A tell comes before any question.
   static func whatsNext(tells: Int, questions: Int) -> String {
     if tells > 0 { return "Next up…" }

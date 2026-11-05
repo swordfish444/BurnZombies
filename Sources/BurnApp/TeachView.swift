@@ -15,6 +15,8 @@ struct TeachView: View {
     var symbol: String
     /// For a Yes or No: the question it answered, so the note can say what it taught.
     var taught: Taught?
+    /// A Yes in look-only: what it taught burns once the owner starts burning.
+    var waits = false
 
     struct Taught: Equatable {
       var questionID: String
@@ -353,7 +355,8 @@ struct TeachView: View {
           .accessibilityIdentifier("teach-lesson")
       }
       if note.taught != nil {
-        Text(AutopilotText.handling).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
+        Text(note.waits ? AutopilotText.handlingLookOnly : AutopilotText.handling)
+          .font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
           .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: 460)
       }
@@ -377,7 +380,8 @@ struct TeachView: View {
   }
 
   private func answer(_ question: AutopilotQuestion, _ answer: AutopilotAnswer) {
-    confirmation = Self.confirmation(for: question, answer)
+    confirmation = Self.confirmation(
+      for: question, answer, lookOnly: model.autopilot.sweep.lookOnly == true)
     answeredHere += 1
     answeredIDs.insert(question.id)
     pinnedQuestionID = nil
@@ -385,13 +389,14 @@ struct TeachView: View {
   }
 
   /// The note after an answer: "Got it!" for a Yes or No, which also says what it taught, or the
-  /// words for a skip, which teaches nothing.
-  static func confirmation(for question: AutopilotQuestion, _ answer: AutopilotAnswer)
-    -> Confirmation
-  {
+  /// words for a skip, which teaches nothing. In look-only a Yes says its burns wait.
+  static func confirmation(
+    for question: AutopilotQuestion, _ answer: AutopilotAnswer, lookOnly: Bool = false
+  ) -> Confirmation {
     let taught = Confirmation.Taught(questionID: question.id)
     switch answer {
-    case .yes: return Confirmation(text: "Got it!", symbol: "flame.fill", taught: taught)
+    case .yes:
+      return Confirmation(text: "Got it!", symbol: "flame.fill", taught: taught, waits: lookOnly)
     case .no: return Confirmation(text: "Got it!", symbol: "hand.raised.fill", taught: taught)
     case .skip:
       return Confirmation(text: "No problem. I'll ask again tomorrow.", symbol: "clock.fill")

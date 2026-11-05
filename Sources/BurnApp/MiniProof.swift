@@ -190,7 +190,85 @@ import Vision
     guard host.frame.size == MiniImpactView.size else { throw StoreError.message("Popover size changed") }
     print("PASS offscreen compact \(name): 360 × 550, readable labels and footer")
   }
-  if catalog == nil { try miniPeriodsProof(directory: directory) }
+  if catalog == nil {
+    try miniPeriodsProof(directory: directory)
+    try miniLookOnlyProof(directory: directory)
+  }
+}
+
+/// A look-only first run: the panel says nothing burns, shows what BZ would burn, and one tap on
+/// Start burning turns burning on. The card takes the access banner's place until then.
+@MainActor func miniLookOnlyProof(directory: URL) throws {
+  let model = AppModel(demo: true)
+  model.state.catalog = Catalog()
+  model.state.fullDiskAccess = .init(state: .required,
+    detail: "Enable Full Disk Access in System Settings, then check again.")
+  model.autopilot.sweep.lookOnly = true
+  let view = MiniImpactView(model: model)
+  let host = NSHostingView(rootView: view)
+  host.frame = NSRect(origin: .zero, size: MiniImpactView.size)
+  let surface = NSWindow(contentRect: host.frame, styleMask: .borderless,
+    backing: .buffered, defer: false)
+  surface.contentView = host
+  func settle() {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    host.layoutSubtreeIfNeeded()
+    host.displayIfNeeded()
+  }
+  func render(_ name: String) throws -> String {
+    settle()
+    guard !surface.isVisible, !surface.isKeyWindow else {
+      throw StoreError.message("Proof surface must stay offscreen")
+    }
+    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+      pixelsWide: Int(host.bounds.width * 2), pixelsHigh: Int(host.bounds.height * 2),
+      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+      throw StoreError.message("Compact render unavailable")
+    }
+    bitmap.size = host.bounds.size
+    host.cacheDisplay(in: host.bounds, to: bitmap)
+    guard let cgImage = bitmap.cgImage,
+      let png = bitmap.representation(using: .png, properties: [:])
+    else { throw StoreError.message("Compact PNG unavailable") }
+    try png.write(to: directory.appendingPathComponent(name + ".png"))
+    let recognition = VNRecognizeTextRequest()
+    recognition.recognitionLevel = .accurate
+    recognition.recognitionLanguages = ["en-US"]
+    try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([recognition])
+    let text = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+      .joined(separator: "\n")
+    try text.write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
+    return text
+  }
+  let wouldBurn = ImpactNumbers.bytes(view.wouldBurn)
+  let looking = try render("look-only")
+  guard view.wouldBurn > 0, ["Look-only", "nothing burns", "LOOK-ONLY", "Start burning", wouldBurn,
+    "See what in Findings"].allSatisfy(looking.contains),
+    !looking.contains("Autopilot on"), !looking.contains("Allow Full Disk Access")
+  else { throw StoreError.message("Look-only isn't obvious on the panel: \(looking)") }
+  // The tap: Start burning sits at the right of the card, in the access banner's slot.
+  let point = NSPoint(x: 261, y: host.isFlipped ? 372 : MiniImpactView.size.height - 372)
+  settle()
+  guard let target = host.hitTest(point) else { throw StoreError.message("No Start burning hit target") }
+  for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+    guard let event = NSEvent.mouseEvent(with: type, location: host.convert(point, to: nil),
+      modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+      windowNumber: surface.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else {
+      throw StoreError.message("Start burning click unavailable")
+    }
+    if type == .leftMouseDown { target.mouseDown(with: event) } else { target.mouseUp(with: event) }
+  }
+  settle()
+  guard model.autopilot.sweep.lookOnly == nil else {
+    throw StoreError.message("One tap on Start burning did not turn burning on")
+  }
+  let burning = try render("look-only-started")
+  guard burning.contains("Autopilot on"), burning.contains("Allow Full Disk Access"),
+    !burning.contains("LOOK-ONLY"), !burning.contains("Start burning")
+  else { throw StoreError.message("Start burning left the panel in look-only: \(burning)") }
+  guard host.frame.size == MiniImpactView.size else { throw StoreError.message("Popover size changed") }
+  print("PASS offscreen compact look-only: says nothing burns, shows \(wouldBurn) it would burn, one tap starts burning")
 }
 
 /// The popup's tabs switch its four totals, Autopilot's cleanups included, and nothing else: the

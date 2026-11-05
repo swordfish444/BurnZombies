@@ -141,9 +141,15 @@ do {
       )
     }
   case "autopilot":
-    // `burnzombies autopilot [snapshot|catalog|inspect ID|burn ID...|sweep|eval [--json]]`, or one
-    // AutopilotRequest JSON object on stdin with `burnzombies autopilot -`. Every one is answered
-    // by the running app; none starts a tick.
+    // `burnzombies autopilot [snapshot|catalog|inspect ID|burn ID...|sweep|eval [--json]|look-only]`,
+    // or one AutopilotRequest JSON object on stdin with `burnzombies autopilot -`. Every one but
+    // look-only is answered by the running app; none starts a tick.
+    if args.count == 2, args[1] == "look-only" {
+      // Works with the app stopped too, so the installer can use it without AI setup.
+      try Autopilot.setLookOnly(true)
+      print(MachineSetup.lookOnlyLine)
+      break
+    }
     var request = AutopilotRequest(tool: args.count > 1 ? args[1] : "snapshot")
     if request.tool == "-" {
       guard let data = try FileHandle.standardInput.read(upToCount: 1 << 20) else {
@@ -241,8 +247,9 @@ do {
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
       install-skill [--home PATH] [--skill-file PATH]   Optional legacy lifecycle instructions (adds working-chat overhead).
-      setup [--harness auto|codex|claude|none] [--model ID|default] [--thinking LEVEL|default] [--observe-only|--with-ai]
+      setup [--harness auto|codex|claude|none] [--model ID|default] [--thinking LEVEL|default] [--observe-only|--with-ai] [--look-only]
         Enable computer-wide background reviews. No chat hooks or live config edits.
+        --look-only holds every burn until you choose Start burning in the menu.
       install [--harness auto|all|codex|claude|cursor|copilot|gemini] [--mcp-only]
         Connect installed harnesses. MCP-only mode preserves hooks and permissions.
       hook --client NAME --event EVENT

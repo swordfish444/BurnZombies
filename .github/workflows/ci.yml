@@ -1,19 +1,15 @@
 name: macOS proof
+# The full suite, about 20 minutes on a hosted runner. It runs only when started by hand
+# (Actions → macOS proof → Run workflow). Pull requests get the fast checks in checks.yml; the
+# everyday check is scripts/test.sh. Releases are built on the maintainer's Mac, never here.
 on:
-  push:
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   prove:
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
@@ -36,8 +32,8 @@ jobs:
         run: .build/debug/BurnZombiesApp --observer-schedule-proof
       - name: Transport with one cooperative worker
         run: LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 .build/debug/BurnProof --transport
-      - name: Build universal candidate bundle
-        run: scripts/build-app.sh --universal
+      - name: App bundle from the debug build, for the installer proof
+        run: scripts/build-app.sh --debug
       - name: MCP client protocol proof
         run: python3 scripts/test-mcp.py
       - name: Autopilot MCP tools over stdio against a private app endpoint
@@ -54,13 +50,14 @@ jobs:
         run: .build/debug/BurnZombiesApp --settings-proof "$RUNNER_TEMP/bz-settings.png"
       - name: Permission banner clicks without opening System Settings
         run: .build/debug/BurnZombiesApp --access-banner-proof "$RUNNER_TEMP/bz-access-banner"
-      - name: Autopilot policy, processes, old copies, junk folders and sweep
+      - name: Autopilot policy, processes, old copies, junk folders, sweep and look-only
         run: |
           .build/debug/BurnProof --autopilot-policy
           .build/debug/BurnProof --autopilot-process
           .build/debug/BurnProof --autopilot-worktrees
           .build/debug/BurnProof --autopilot-disk
           .build/debug/BurnProof --autopilot-sweep
+          .build/debug/BurnProof --autopilot-look-only
       - name: Teach BZ, Findings and Autopilot settings without opening a window
         run: .build/debug/BurnZombiesApp --autopilot-proof "$RUNNER_TEMP/bz-autopilot"
       - name: Native impact filters without opening a window
@@ -76,21 +73,3 @@ jobs:
           python3 scripts/test-install-control.py
           COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/BurnZombies-test.tar.gz" -C dist BurnZombies.app
           python3 scripts/test-install.py "$RUNNER_TEMP/BurnZombies-test.tar.gz"
-
-      - name: Package exact tested candidate
-        run: |
-          for binary in BurnZombiesApp burnzombies burnzombies-mcp; do
-            for architecture in arm64 x86_64; do
-              lipo "dist/BurnZombies.app/Contents/MacOS/$binary" -verify_arch "$architecture"
-            done
-          done
-          COPYFILE_DISABLE=1 tar -czf dist/BurnZombies-macOS-universal.tar.gz -C dist BurnZombies.app
-          cd dist
-          shasum -a 256 BurnZombies-macOS-universal.tar.gz > SHA256SUMS
-      - uses: actions/upload-artifact@v4
-        with:
-          name: BurnZombies-${{ github.sha }}
-          path: |
-            dist/BurnZombies-macOS-universal.tar.gz
-            dist/SHA256SUMS
-          if-no-files-found: error

@@ -34,6 +34,7 @@ with tempfile.TemporaryDirectory(prefix="bz-install-control-") as temporary:
 with open(os.environ['BZ_CONTROL_LOG'],'a') as log:
     log.write(json.dumps(sys.argv[1:])+'\\n')
 if sys.argv[1]=='setup' and os.environ.get('BZ_CONTROL_FAIL')=='setup': sys.exit(66)
+if sys.argv[1]=='autopilot' and os.environ.get('BZ_CONTROL_FAIL')=='autopilot': sys.exit(69)
 if sys.argv[1]=='start-observer' and os.environ.get('BZ_CONTROL_FAIL')=='start':
     from pathlib import Path
     if not (Path(os.environ['BURNZOMBIES_INSTALL_DIR'])/'BurnZombies.app/previous-marker').exists(): sys.exit(67)
@@ -74,15 +75,18 @@ if os.environ.get('BZ_CONTROL_FAIL')=='move':
 os.execv('/bin/mv',['/bin/mv']+sys.argv[1:])
 ''')
     mover.chmod(0o755)
-    for client, observe, upgrade, failure in [
-        ("codex", False, False, None), ("codex", True, False, None),
-        ("claude", False, False, None), ("claude", True, False, None),
-        ("auto", False, True, None), ("codex", False, True, "setup"),
-        ("codex", True, True, "start"),
-        ("codex", False, False, "setup"),
-        ("auto", False, True, "move"),
+    observe, look = ["--observe-only"], ["--look-only"]
+    for client, flags, upgrade, failure in [
+        ("codex", [], False, None), ("codex", observe, False, None),
+        ("claude", [], False, None), ("claude", observe, False, None),
+        ("auto", [], True, None), ("codex", [], True, "setup"),
+        ("codex", observe, True, "start"),
+        ("codex", [], False, "setup"),
+        ("auto", [], True, "move"),
+        ("codex", look, False, None), ("claude", observe + look, True, None),
+        ("none", look, False, None), ("none", look, True, "autopilot"),
     ]:
-        case = root / f"case-{client}-{observe}-{upgrade}-{failure}"
+        case = root / f"case-{client}-{'-'.join(flags)}-{upgrade}-{failure}"
         case.mkdir()
         destination = case / "Applications"
         installed = destination / app.name
@@ -99,8 +103,7 @@ os.execv('/bin/mv',['/bin/mv']+sys.argv[1:])
         env = dict(os.environ, PATH=str(stubs) + os.pathsep + os.environ["PATH"],
                    BURNZOMBIES_INSTALL_DIR=str(destination), BZ_CONTROL_REMOTE=str(remote),
                    BZ_CONTROL_LOG=str(log), BZ_CONTROL_FAIL=failure or "", TMPDIR=str(private_tmp))
-        result = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--mcp", client]
-                                + (["--observe-only"] if observe else []),
+        result = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--mcp", client] + flags,
                                 env=env, capture_output=True, text=True, timeout=30)
         assert (result.returncode == 0) == (failure is None), result.stdout + result.stderr
         calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -110,7 +113,19 @@ os.execv('/bin/mv',['/bin/mv']+sys.argv[1:])
             assert list(private_tmp.glob('burnzombies-install.*/previous.app/partial-backup'))
             assert 'preserved both locations without merging' in result.stderr
             continue
-        assert ["setup", "--harness", client] + (["--observe-only"] if observe else []) in calls
+        if client == "none":
+            # No AI setup, so look-only goes straight to Autopilot.
+            assert not any(call[0] == "setup" for call in calls), calls
+            assert (["autopilot", "look-only"] in calls) == ("--look-only" in flags), calls
+        else:
+            assert ["setup", "--harness", client] + flags in calls, calls
+        if "--look-only" in flags:
+            # Burns are held first, before the new app is copied into place and before setup.
+            assert calls[1 if upgrade else 0] == ["autopilot", "look-only"], calls
+        if failure is None:
+            # A look-only install never says it burns in minute one.
+            burns = "burns what's clearly safe" in result.stdout
+            assert burns != ("--look-only" in flags), result.stdout
         if failure is None or upgrade:
             assert calls[-1] == ["start-observer"], calls
         assert (installed / "previous-marker").exists() == bool(failure and upgrade), calls
@@ -120,4 +135,4 @@ os.execv('/bin/mv',['/bin/mv']+sys.argv[1:])
             assert "Previous app restored" in result.stderr
         if failure and not upgrade:
             assert not installed.exists()
-    print("PASS stock macOS bash: Codex/Claude fresh installs with/without observe-only, upgrade, setup/start failure rollback and observer launch dispatch")
+    print("PASS stock macOS bash: Codex/Claude fresh installs with/without observe-only and look-only, look-only without AI setup, upgrade, setup/look-only/start failure rollback and observer launch dispatch")

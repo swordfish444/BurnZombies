@@ -68,6 +68,15 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     assert json.loads((root / "observer-state/machine-review.json").read_text()) == configured
     install("codex", observe=True)
     assert json.loads((root / "observer-state/machine-review.json").read_text())['enabled'] is False
+    # Look-only holds every burn from the first minute, with or without AI setup, in a few lines.
+    for client in ["none", "codex"]:
+        state = root / f"look-only-{client}"
+        looking = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--mcp", client, "--no-open", "--look-only"],
+                                 env=dict(env, BURNZOMBIES_HOME=str(state)), capture_output=True, text=True, timeout=60)
+        assert looking.returncode == 0, looking.stdout + looking.stderr
+        assert "Look-only is on" in looking.stdout and len(looking.stdout.splitlines()) <= 7, looking.stdout
+        assert json.loads((state / "autopilot/sweep.json").read_text())["lookOnly"] is True
+        assert (state / "machine-review.json").exists() == (client == "codex")
     # Without Claude Code or Codex the default install still succeeds, with AI judging off.
     bare = dict(env, BURNZOMBIES_HOME=str(root / "bare-state"), BURNZOMBIES_INSTALL_DIR=str(root / "Bare Applications"))
     (stubs / "codex").unlink()
@@ -86,4 +95,4 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     checksum()
     assert "archive paths" in install("none", success=False).stderr
     assert not (root / "escaped").exists()
-    print("PASS installer: private default reviewer setup, spaces, repeat install, signatures, corrupt download and path traversal refusal")
+    print("PASS installer: private default reviewer setup, look-only, spaces, repeat install, signatures, corrupt download and path traversal refusal")

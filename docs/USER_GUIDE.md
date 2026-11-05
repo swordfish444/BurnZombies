@@ -4,7 +4,7 @@
 
 ## Autopilot and Teach BZ
 
-BZ looks right away, every minute for its first half hour, then every 15 minutes. It burns programs, old project copies and junk folders it is sure about; its safe starter rules work from the first minute. When it isn't sure, the menu shows **BZ has N quick questions**, and **Teach BZ** shows one card at a time with **Yes, burn them** / **No, keep them**. Yes burns all the matches now and later; No keeps them. Every answer becomes a rule. **Findings** lists everything in plain words with **Burn now**, **Keep forever** and **Restore**. **Settings → Autopilot** turns Autopilot off, sets how often BZ looks, shows **What BZ has learned** and the starter rules, and has **Start training over**. [How Autopilot decides](AUTOPILOT.md).
+BZ looks right away, every minute for its first half hour, then every 15 minutes. It burns programs, old project copies and junk folders it is sure about; its safe starter rules work from the first minute. Installed with `--look-only`, it finds and asks the same way but burns nothing until you choose **Start burning** in the menu. When it isn't sure, the menu shows **BZ has N quick questions**, and **Teach BZ** shows one card at a time with **Yes, burn them** / **No, keep them**. Yes burns all the matches now and later; No keeps them. Every answer becomes a rule. **Findings** lists everything in plain words with **Burn now**, **Keep forever** and **Restore**. **Settings → Autopilot** turns Autopilot off, holds every burn with **Look only**, sets how often BZ looks, shows **What BZ has learned** and the starter rules, and has **Start training over**. [How Autopilot decides](AUTOPILOT.md).
 
 ## Your whole Mac
 

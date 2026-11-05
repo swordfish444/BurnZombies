@@ -46,6 +46,17 @@ struct AutopilotSettingsView: View {
       }
       Text("BZ burns leftovers on its own and only asks you when it isn't sure.")
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      Toggle(
+        isOn: Binding(
+          get: { model.autopilot.sweep.lookOnly == true }, set: { model.setLookOnly($0) })
+      ) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Look only").font(.callout)
+          Text("Find, size and ask, but burn nothing. Turn it off to start burning.")
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+      }.toggleStyle(.switch).tint(BurnTheme.orange).clickPointer()
+        .accessibilityIdentifier("autopilot-look-only")
       Picker(
         "Sweep every",
         selection: Binding(

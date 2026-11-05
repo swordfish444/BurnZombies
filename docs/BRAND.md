@@ -16,19 +16,28 @@ Anton is bundled from the [Google Fonts Anton directory](https://github.com/goog
 
 ## Public previews
 
-The README uses `docs/media/menu-bar-empty.png`, `docs/media/menu-bar.png` and `docs/media/impact.png`, rendered directly from the current native SwiftUI views. The compact images show first-use and populated states at the same scale. These are interface examples, not performance benchmarks or trial results. No desktop content, private process details or live cleanup history is included.
+The README opens with `docs/media/readme-hero.png`, rendered from `docs/media/readme-hero.html`. Its panel, `docs/media/panel-real.png`, is the author's own compact panel on the All time tab after two days of Autopilot (2026-11-02 to 11-04), rendered offscreen from a copy of that Mac's catalog and Autopilot tally. It shows totals only: no names, paths or process details. Phones get `docs/media/readme-hero-phone.png` (from `readme-hero-phone.html`, rendered the same way at 390 × 470) with the same two-day totals in larger type. The question card uses the app's isolated example data, and the README says so.
 
-Refresh them without opening a window or starting an observer:
+Refresh the example question card without opening a window or starting an observer:
 
 ```sh
 swift build --product BurnZombiesApp
-.build/debug/BurnZombiesApp --mini-proof /tmp/bz-readme-mini
-.build/debug/BurnZombiesApp --impact-proof /tmp/bz-readme-impact
-cp /tmp/bz-readme-mini/empty.png docs/media/menu-bar-empty.png
-cp /tmp/bz-readme-mini/unmeasured.png docs/media/menu-bar.png
-cp /tmp/bz-readme-impact/reclaimed.png docs/media/impact.png
+.build/debug/BurnZombiesApp --autopilot-proof /tmp/bz-readme-autopilot
+sips -c 1030 1200 --cropOffset 0 40 /tmp/bz-readme-autopilot/teach-caches.png --out /tmp/bz-question.png
+sips -s format jpeg -s formatOptions 90 /tmp/bz-question.png --out docs/media/readme-question.jpg
 ```
 
-The render checks exercise the shipped views in memory with isolated example data and use OCR to check the compact labels and period counters. They prohibit app activation and do not create an observer, signal processes, or save production state.
+Then render the hero at 2x, transparent outside its rounded card (the phone hero likewise), and the 1280 × 640 link-preview card (upload it in the repository's **Settings → Social preview**):
 
-The older JPGs and GIFs remain historical media, not the current README gallery. `preview.gif` is a timed sequence of earlier Impact and Burn Log captures; `burn.gif` shows the demo-only success animation. `live-cleanup.gif` and `live-cleanup.mp4` are earlier controlled cleanup walkthroughs, separate from the real-workload trial.
+```sh
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --hide-scrollbars \
+  --window-size=900,440 --force-device-scale-factor=2 --default-background-color=00000000 \
+  --virtual-time-budget=3000 --screenshot=docs/media/readme-hero.png "file://$PWD/docs/media/readme-hero.html"
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --hide-scrollbars \
+  --window-size=1280,640 --virtual-time-budget=3000 --screenshot=/tmp/social-card.png "file://$PWD/docs/media/social-card.html"
+sips -s format jpeg -s formatOptions 88 /tmp/social-card.png --out docs/media/social-card.jpg
+```
+
+The render checks exercise the shipped views in memory and use OCR to check what they show. They prohibit app activation and do not create an observer, signal processes, or save production state.
+
+`menu-bar-empty.png`, `menu-bar.png`, `impact.png` and `hunt-zombies.png` were the README gallery until November 2026; `--mini-proof` (`empty.png`, `unmeasured.png`) and `--impact-proof` (`reclaimed.png`) still render their current versions. The older JPGs and GIFs remain historical media. `preview.gif` is a timed sequence of earlier Impact and Burn Log captures; `burn.gif` shows the demo-only success animation. `live-cleanup.gif` and `live-cleanup.mp4` are earlier controlled cleanup walkthroughs, separate from the real-workload trial.

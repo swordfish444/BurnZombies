@@ -1,28 +1,33 @@
 <!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<title>BurnZombies — Dead weight. Gone.</title>
+<title>BurnZombies — Run your agents forever</title>
 <style>
 @font-face{font-family:Anton;src:url('../../Sources/BurnApp/Resources/Anton-Regular.ttf')}
 *{box-sizing:border-box}html,body{margin:0;width:1280px;height:640px;overflow:hidden}
 body{background:#141513;color:#faf6df;font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif}
-main{width:1280px;height:640px;position:relative;padding:48px 64px;background:radial-gradient(ellipse at 83% 46%,#42241988 0%,#1e1f1b44 30%,transparent 57%),linear-gradient(135deg,#262723,#141513 70%);border:1px solid #46453d}
-header{display:flex;align-items:center;gap:13px;font-family:Anton;font-size:27px;letter-spacing:.3px}
-header img{width:36px;height:44px;object-fit:contain}
-.platform{position:absolute;top:59px;right:64px;color:#bcbdb4;font-size:15px;letter-spacing:1px}
-h1{font:102px/.99 Anton;margin:49px 0 24px;letter-spacing:-1px;position:relative;z-index:1}
+main{width:1280px;height:640px;position:relative;
+  background:radial-gradient(ellipse at 77% 46%,#5a2a1890 0%,#2a1d1640 30%,transparent 57%),linear-gradient(135deg,#272823,#141513 70%)}
+.eyebrow{position:absolute;left:72px;top:62px;font-size:17px;font-weight:600;letter-spacing:2px;color:#bcbdb4}
+.eyebrow b{color:#ff5a26;font-weight:700}
+h1{position:absolute;left:68px;top:98px;margin:0;font:128px/.92 Anton;letter-spacing:-.4px}
 h1 span{color:#ff5a26}
-p{font-size:25px;line-height:1.4;color:#d0d0c7;margin:0;max-width:685px}
-.mascot{position:absolute;right:70px;top:153px;width:320px;height:344px;object-fit:contain;filter:drop-shadow(0 14px 40px #ff551319)}
-footer{position:absolute;left:64px;right:64px;bottom:43px;border-top:1px solid #49473c;padding-top:23px;display:flex;align-items:center;justify-content:space-between;color:#aaa99f;font-size:16px}
-footer strong{font-weight:500;color:#f5edda}footer span{font-family:monospace;letter-spacing:1px}
+p{position:absolute;left:72px;top:476px;margin:0;font-size:31px;color:#e9e5d4}
+p b{color:#faf6df}
+.panel{position:absolute;right:66px;top:76px;width:452px;height:396px;border-radius:20px;overflow:hidden;
+  box-shadow:0 30px 70px #000b,0 0 0 1px #504e45;-webkit-mask-image:linear-gradient(#000 90%,transparent)}
+.panel img{display:block;width:452px}
+.caption{position:absolute;right:66px;top:486px;width:452px;text-align:center;font-size:17px;line-height:1.4;color:#a3a298}
+.caption b{color:#d9d6c8;font-weight:600}
+footer{position:absolute;left:72px;right:66px;bottom:34px;border-top:1px solid #49473c;padding-top:18px;display:flex;justify-content:space-between;color:#aaa99f;font-size:17px}
+footer strong{font-weight:500;color:#f5edda}footer span{font-family:Menlo,monospace;letter-spacing:1px}
 </style>
 <main>
-<header><img src="../../Sources/BurnApp/Resources/EmberSkull.png" alt=""> BURNZOMBIES</header>
-<div class="platform">macOS · MCP · OPEN SOURCE</div>
-<h1>DEAD WEIGHT.<br><span>GONE.</span></h1>
-<p>Clear abandoned agent helpers.<br>Give your next run room to move.</p>
-<img class="mascot" src="../../Sources/BurnApp/Resources/EmberSkull.png" alt="BurnZombies flaming skull mascot">
-<footer><strong>github.com/swordfish444/BurnZombies</strong><span>You build. We burn.</span></footer>
+<div class="eyebrow"><b>MAC MENU BAR</b> · FOR CLAUDE CODE, CODEX &amp; CURSOR</div>
+<h1>RUN YOUR<br>AGENTS<br><span>FOREVER.</span></h1>
+<p>Let <b>BurnZombies</b> handle the exhaust.</p>
+<div class="panel"><img src="panel-real.png" alt=""></div>
+<div class="caption"><b>The author's real menu-bar panel</b><br>after two days of Autopilot</div>
+<footer><strong>github.com/swordfish444/BurnZombies</strong><span>YOU BUILD. WE BURN.</span></footer>
 </main>
 </html>

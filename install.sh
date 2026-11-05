@@ -5,13 +5,15 @@ set -euo pipefail
 version="0.13.0"
 client="auto"
 launch=true
+look_only=false
 setup_options=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mcp) client="${2:?Choose auto, all, codex, claude, cursor, copilot, gemini or none}"; shift 2 ;;
     --no-open) launch=false; shift ;;
     --observe-only) setup_options+=(--observe-only); shift ;;
-    --help) echo 'Install BurnZombies: install.sh [--mcp auto|codex|claude|none] [--observe-only] [--no-open]'; exit 0 ;;
+    --look-only) look_only=true; setup_options+=(--look-only); shift ;;
+    --help) echo 'Install BurnZombies: install.sh [--mcp auto|codex|claude|none] [--observe-only] [--look-only] [--no-open]'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -85,6 +87,11 @@ if [[ -e "$app" || -L "$app" ]]; then
     exit 1
   fi
 fi
+# Hold every burn before the new app is in place: an agent's BurnZombies tools can start it
+# before setup below has finished.
+if $look_only && ! "$work/BurnZombies.app/Contents/MacOS/burnzombies" autopilot look-only >/dev/null; then
+  echo 'Look-only setup failed. Nothing installed.' >&2; exit 1
+fi
 replacing=true
 if ! ditto "$work/BurnZombies.app" "$app"; then
   echo 'Install failed; rolling back.' >&2; exit 1
@@ -97,11 +104,18 @@ if [[ "$client" != none ]]; then
     echo 'Harness configuration failed; rolling back. Configurations were preserved.' >&2
     exit 1
   fi
+elif $look_only && ! "$app/Contents/MacOS/burnzombies" autopilot look-only; then
+  echo 'Look-only setup failed; rolling back.' >&2
+  exit 1
 fi
 if $launch; then
   "$app/Contents/MacOS/burnzombies" start-observer
   echo "BurnZombies $version is running in your menu bar: look for the skull."
-  echo "Within a minute it shows what it found, burns what's clearly safe and asks you about the rest."
+  if $look_only; then
+    echo "Within a minute it shows what it found and asks you about the rest."
+  else
+    echo "Within a minute it shows what it found, burns what's clearly safe and asks you about the rest."
+  fi
 else
   echo "BurnZombies $version is installed at $app. Open it to start."
 fi

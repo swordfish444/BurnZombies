@@ -245,10 +245,13 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   off.enabled = false
   var paused = snapshot.sweep
   paused.retryAfter = Date().addingTimeInterval(1800)
+  var looking = snapshot.sweep
+  looking.lookOnly = true
   try check(
     AutopilotText.sweepLine(off, now: Date()) == "Autopilot off"
-      && AutopilotText.sweepLine(paused, now: Date()).hasPrefix("Autopilot paused — retrying at "),
-    "The menu line should cover off and paused")
+      && AutopilotText.sweepLine(paused, now: Date()).hasPrefix("Autopilot paused — retrying at ")
+      && AutopilotText.sweepLine(looking, now: Date()).hasPrefix("Look-only · next sweep in"),
+    "The menu line should cover off, paused and look-only")
   print(
     "PASS autopilot UI demo data: \(snapshot.entries.count) entries across every status and kind, 3 questions, \(snapshot.lessons.count) lessons from \(learnedRules.count) learned rules, 3 starter rules, \(snapshot.progress.lines.count) progress lines and 1 tell"
   )
@@ -865,11 +868,14 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       .environment(\.colorScheme, .dark)
   }
   let settings = try render(
-    settingsView(model), size: NSSize(width: 440, height: 1190), name: "settings",
+    settingsView(model), size: NSSize(width: 440, height: 1250), name: "settings",
     directory: directory)
   try require(
     settings,
-    ["What BZ has learned", "How I'm doing", "Act on its own when sure", "Start training over"],
+    [
+      "What BZ has learned", "How I'm doing", "Act on its own when sure", "Look only",
+      "Start training over",
+    ],
     in: "settings")
   // Every lesson reads as its own sentence with what it rests on, and every count is a plain line.
   for group in snapshot.lessons {
@@ -1187,6 +1193,19 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       && abs(sweep.autopilot.sweep.lastTick?.timeIntervalSinceNow ?? -1000) < 5
       && AutopilotText.sweepLine(sweep.autopilot.sweep, now: Date()).contains("30 min"),
     "Sweep interval or Sweep now did not apply")
+  // Look-only: the menu line and the Findings sentence say nothing burns yet; switching it off
+  // in Settings, or Start burning on the panel, brings Autopilot back.
+  sweep.setLookOnly(true)
+  try check(
+    AutopilotText.sweepLine(sweep.autopilot.sweep, now: Date()).hasPrefix("Look-only")
+      && AutopilotText.summary(sweep.autopilot).contains("once you start burning")
+      && !AutopilotText.summary(sweep.autopilot).contains("on my own"),
+    "Look-only did not show in the menu line and Findings")
+  sweep.setLookOnly(false)
+  try check(
+    sweep.autopilot.sweep.lookOnly == nil
+      && AutopilotText.sweepLine(sweep.autopilot.sweep, now: Date()).hasPrefix("Autopilot on"),
+    "Start burning did not turn look-only off")
 
   // With an engine attached, every command goes through it and its snapshot wins.
   var sent = [AutopilotCommand]()
@@ -1213,6 +1232,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   wired.forgetRule(rule)
   wired.setStarter("starter-finished-copies", enabled: false)
   wired.setAutopilot(enabled: false)
+  wired.setLookOnly(false)
   wired.setSweepInterval(minutes: 60)
   wired.resetTraining()
   wired.sweepNow()
@@ -1224,8 +1244,9 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     .answer(questionID: q.id, answer: .no), .burnNow(itemID: e.id), .keep(itemID: e.id),
     .restore(receiptID: rcpt.id), .forgetRule(ruleID: rule.id),
     .setStarter(ruleID: "starter-finished-copies", enabled: false), .setEnabled(false),
-    .setInterval(minutes: 60), .resetTraining, .sweepNow, .tellGood(id: firstTell.id),
-    .tellUndo(id: secondTell.id), .setActsOnItsOwn(false), .forgetLesson(ruleIDs: group.ruleIDs),
+    .setLookOnly(false), .setInterval(minutes: 60), .resetTraining, .sweepNow,
+    .tellGood(id: firstTell.id), .tellUndo(id: secondTell.id), .setActsOnItsOwn(false),
+    .forgetLesson(ruleIDs: group.ruleIDs),
   ]
   let deadline = Date().addingTimeInterval(3)
   while (sent.count < expected.count || wired.autopilot != marker) && Date() < deadline {
@@ -1275,7 +1296,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     throw StoreError.message("Demo has no tell for the failing engine proof")
   }
   print(
-    "PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, forget a whole lesson, Good call, Undo, act on its own, starter switch, reset, interval, sweep now, and engine hand-off"
+    "PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, forget a whole lesson, Good call, Undo, act on its own, starter switch, reset, interval, sweep now, look-only and engine hand-off"
   )
 }
 #endif

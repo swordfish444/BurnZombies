@@ -5,9 +5,11 @@ import Foundation
 
 /// A newcomer's first half hour on a fake home of realistic leftovers: the app's real cycle of
 /// discovery, inspection and Autopilot, minute by minute on a simulated clock. Programs are
-/// limited to the helpers this proof starts; nothing outside `root` is read or changed.
-/// Usage: BurnProof --newcomer ROOT
-func newcomerProof(root: URL) async throws {
+/// limited to the helpers this proof starts; nothing outside `root` is read or changed. With
+/// `lookOnly`, the install runs `burnzombies setup --look-only` first, as `install.sh --look-only`
+/// does: BZ finds and asks just the same but burns nothing until burning is turned on.
+/// Usage: BurnProof --newcomer ROOT [--look-only]
+func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
   let fm = FileManager.default
   let home = root.appendingPathComponent("home")
   let state = root.appendingPathComponent("state")
@@ -112,6 +114,16 @@ func newcomerProof(root: URL) async throws {
     kill(helper, SIGKILL)
   }
 
+  if lookOnly {
+    let setup = Process()
+    setup.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+      .deletingLastPathComponent().appendingPathComponent("burnzombies")
+    setup.arguments = ["setup", "--harness", "none", "--look-only", "--root", state.path]
+    setup.standardOutput = FileHandle.nullDevice
+    try setup.run()
+    setup.waitUntilExit()
+    guard setup.terminationStatus == 0 else { throw StoreError.message("Look-only setup failed.") }
+  }
   var sources = AutopilotSources.live(monitor: monitor, root: state, home: home.path)
   let live = sources.processes
   sources.processes = { threads in await live(threads).filter { $0.pid == helper } }
@@ -126,8 +138,11 @@ func newcomerProof(root: URL) async throws {
 
   // The app's cycle: sample, inventory, Autopilot; every minute on a simulated clock.
   let start = Date()
+  var firstFound: Int?
   var firstQuestion: Int?
   var firstBurn: Int?
+  var receipts = 0
+  var last = AutopilotSnapshot()
   var firstNumber: Int?
   var junkCleared: Int?
   let paused = git.appendingPathComponent("acme-paused")
@@ -154,7 +169,10 @@ func newcomerProof(root: URL) async throws {
       }
       previous = line
     }
+    if firstFound == nil, !snapshot.entries.isEmpty { firstFound = minute }
     if firstQuestion == nil, !snapshot.questions.isEmpty { firstQuestion = minute }
+    receipts = max(receipts, snapshot.receipts.count)
+    last = snapshot
     if firstBurn == nil, !burned.isEmpty { firstBurn = minute }
     let shown = numbers.disk > 0 || numbers.memory > 0 || numbers.count > 0 || numbers.worktrees > 0
     if firstNumber == nil, shown {
@@ -164,6 +182,14 @@ func newcomerProof(root: URL) async throws {
       junkCleared = minute
     }
   }
+  if lookOnly {
+    try await lookOnlyAfterward(
+      firstFound: firstFound, firstQuestion: firstQuestion, firstBurn: firstBurn,
+      firstNumber: firstNumber, junkCleared: junkCleared, receipts: receipts, last: last,
+      engine: engine, store: store, git: git, helper: helper,
+      at: start.addingTimeInterval(32 * 60), started: start)
+    return
+  }
   print(
     "NEWCOMER first question: \(firstQuestion.map { "t+\($0)m" } ?? "none") · first burn: \(firstBurn.map { "t+\($0)m" } ?? "none") · first non-zero panel number: \(firstNumber.map { "t+\($0)m" } ?? "none") · junk in a paused copy: \(junkCleared.map { "t+\($0)m" } ?? "kept") · sandbox ran \(Int(Date().timeIntervalSince(start))) s")
   // Time to value: within two minutes a newcomer has a question, a burn and a number on the
@@ -172,6 +198,68 @@ func newcomerProof(root: URL) async throws {
   check((firstBurn ?? .max) <= 2, "first burn within 2 minutes")
   check((firstNumber ?? .max) <= 2, "first number on the panel within 2 minutes")
   check((junkCleared ?? .max) <= 3, "junk inside a copy paused for weeks cleared within 3 minutes")
+  check(fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path), "the paused copy's work stays")
+  check(
+    fm.fileExists(atPath: git.appendingPathComponent("acme-wip/acme-wip.txt").path),
+    "work only on this Mac stays")
+}
+/// The look-only half of the newcomer proof: the first half hour found and asked but burned and
+/// wrote nothing; then Start burning (the panel's tap or Settings) burns what waited right away.
+private func lookOnlyAfterward(
+  firstFound: Int?, firstQuestion: Int?, firstBurn: Int?, firstNumber: Int?, junkCleared: Int?,
+  receipts: Int, last: AutopilotSnapshot, engine: Autopilot, store: AutopilotStore, git: URL,
+  helper: Int32, at now: Date, started: Date
+) async throws {
+  let fm = FileManager.default
+  let paused = git.appendingPathComponent("acme-paused")
+  let copies = ["acme-old-1", "acme-old-2", "acme-old-3", "acme-recent-1", "acme-recent-2", "acme-wip", "acme-paused"]
+  let wouldBurn = last.bytes[AutopilotStatus.burn.rawValue] ?? 0
+  print(
+    "LOOK-ONLY first find: \(firstFound.map { "t+\($0)m" } ?? "none") · first question: \(firstQuestion.map { "t+\($0)m" } ?? "none") · burns in 31 minutes: \(firstBurn == nil ? 0 : 1) · receipts: \(receipts) · would burn \(last.count(.burn)) things, \(AutopilotPolicy.format(wouldBurn))")
+  check((firstFound ?? .max) <= 2, "look-only: finds things within 2 minutes")
+  check((firstQuestion ?? .max) <= 2, "look-only: first question within 2 minutes")
+  check(firstBurn == nil, "look-only: nothing burned in the first half hour")
+  equal(receipts, 0, "look-only: no receipts")
+  equal(try store.receipts().count, 0, "look-only: nothing written to the receipts")
+  check(firstNumber == nil, "look-only: the panel's totals stay at zero")
+  check(junkCleared == nil, "look-only: junk inside the paused copy stays")
+  check(
+    copies.allSatisfy { fm.fileExists(atPath: git.appendingPathComponent($0).path) },
+    "look-only: every copy stays")
+  check(kill(helper, 0) == 0, "look-only: the helper keeps running")
+  check(last.count(.burn) > 0, "look-only: BZ shows what it would burn")
+  equal(last.sweep.lookOnly, true, "look-only: the snapshot says so")
+
+  // Start burning: what waited burns right away, without waiting for the next look.
+  let switched = Date()
+  _ = try await engine.apply(.setLookOnly(false), now: now)
+  let names: Set<String> = ["acme-old-1", "acme-old-2", "acme-old-3"]
+  let merged = names.map { git.appendingPathComponent($0).path }
+  // Junk folders are measured by a background walk that can reach a copy found late only ten
+  // minutes on, so the paused copy's junk counts only once BZ listed it to burn.
+  let junk = paused.appendingPathComponent("node_modules").path
+  let junkListed = last.entries.contains { $0.item.path == junk && $0.status == .burn }
+  // A copy's receipt is written just after its folder goes, so wait for the receipts too.
+  var burned = [AutopilotReceipt]()
+  let deadline = Date().addingTimeInterval(180)
+  while Date() < deadline {
+    burned = try store.receipts().filter { $0.outcome == "burned" || $0.outcome == "verifying" }
+    let copies = Set(burned.filter { $0.kind == .worktree }.map(\.name))
+    let junkGone = !junkListed || !fm.fileExists(atPath: junk)
+    if names.isSubset(of: copies) && junkGone && !merged.contains(where: fm.fileExists(atPath:)) {
+      break
+    }
+    try await Task.sleep(nanoseconds: 250_000_000)
+  }
+  print(
+    "LOOK-ONLY after Start burning: \(burned.count) burned in \(Int(Date().timeIntervalSince(switched))) s\(junkListed ? "" : " (paused copy's junk not measured yet)") · sandbox ran \(Int(Date().timeIntervalSince(started))) s")
+  check(
+    names.isSubset(of: Set(burned.filter { $0.kind == .worktree }.map(\.name))),
+    "after Start burning: each merged copy burns, with its receipt")
+  if junkListed {
+    check(!fm.fileExists(atPath: junk), "after Start burning: junk inside the paused copy goes")
+  }
+  check(!merged.contains(where: fm.fileExists(atPath:)), "after Start burning: the merged copies go")
   check(fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path), "the paused copy's work stays")
   check(
     fm.fileExists(atPath: git.appendingPathComponent("acme-wip/acme-wip.txt").path),

@@ -2,7 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 universal=false
+debug=false
 if [[ "${1:-}" == "--universal" ]]; then universal=true; fi
+# Debug binaries in a real bundle, for installer checks only; never for a release.
+if [[ "${1:-}" == "--debug" ]]; then debug=true; fi
 if $universal; then
   for arch in arm64 x86_64; do
     # SwiftBuild can reuse Products/Release for different triples. Separate roots
@@ -11,6 +14,9 @@ if $universal; then
   done
   built="$(swift build -c release --scratch-path .build/universal-arm64 --triple arm64-apple-macosx14.0 --show-bin-path)"
   intel="$(swift build -c release --scratch-path .build/universal-x86_64 --triple x86_64-apple-macosx14.0 --show-bin-path)"
+elif $debug; then
+  swift build
+  built="$(swift build --show-bin-path)"
 else
   swift build -c release
   built="$(swift build -c release --show-bin-path)"
@@ -45,7 +51,7 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>BurnZombiesApp</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.13.0</string>
-<key>CFBundleVersion</key><string>41</string>
+<key>CFBundleVersion</key><string>44</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

@@ -1,109 +1,158 @@
-<p align="center"><img src="Sources/BurnApp/Resources/EmberSkull.png" width="80" alt="BurnZombies"></p>
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px)" srcset="docs/media/readme-hero-phone.png">
+    <img src="docs/media/readme-hero.png" width="900" alt="A Mac menu-bar app for Claude Code, Codex and Cursor. Run your agents forever. Let BurnZombies handle the exhaust: zombie processes, stale worktrees, node_modules and build junk. Beside it, the author's real menu-bar panel after two days of Autopilot: 685.6 GB of disk reclaimed and 453 worktrees cleaned.">
+  </picture>
+</p>
 
-# BurnZombies
+<h3 align="center">BurnZombies (BZ) cleans up after your AI coding agents, on its own.</h3>
 
-**Keep your agents running. Lose the leftovers — on autopilot.**
+<p align="center">
+  It stops the processes they orphan and deletes the worktrees and rebuildable junk they leave behind, saving each worktree's commits and changes first. On the author's Mac, which had about 1,000 agent worktrees, its first two days freed <b>685.6 GB</b> and cleared <b>453</b> stale worktrees, most of them under rules learned from 19 one-tap answers.
+</p>
 
-Long agent sessions leave a mess: orphaned Node workers, robot browsers, build watchers, project copies nobody opens again and gigabytes of rebuildable junk. BurnZombies watches your whole Mac, burns what is safe, and when it isn't sure it asks you one tiny yes/no question. Every answer becomes a rule. After about a dozen answers it runs itself.
-
-| It burns | How |
-| --- | --- |
-| 🧟 **Zombies** — programs whose app or chat is gone | A graceful stop. Programs a live chat is using are never touched. |
-| 📁 **Old copies** — git worktrees you stopped using | Every commit and change is saved in a restore point first. One click restores it. |
-| 🗑️ **Junk folders** — `node_modules`, build output, DerivedData | Deleted; your tools rebuild them when needed. |
-
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-242420?logo=apple&logoColor=white)](#install)
-[![MCP ready](https://img.shields.io/badge/MCP-ready-ff541f)](docs/MCP.md)
-[![MIT](https://img.shields.io/badge/license-MIT-242420)](LICENSE)
-
-## Install
+<p align="center">On your Mac, paste this into Terminal:</p>
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-macOS 14+, Apple Silicon or Intel. It puts BurnZombies.app in `~/Applications` and starts it in the menu bar: look for the skull. No account, no API key, no sudo.
+<p align="center"><sub>macOS 14+ · no account, API key or sudo · free and open source (MIT) · signed, not yet notarized by Apple · <a href="install.sh">read the script first</a><br>Want to look first? Use <code>| bash -s -- --look-only</code> instead of <code>| bash</code>: BZ finds and asks but burns nothing until you choose <b>Start burning</b>.<br>If Claude Code or Codex is signed in, BZ also runs AI sweeps on your login, about $0.30–$1.20 each at API prices. To skip them, add <code>--observe-only</code> the same way.</sub></p>
 
-**Claude Code or Codex is optional.** With one installed and signed in, BZ uses it to judge new things through your existing login; without one, BZ still cleans with its own rules and your answers ([add AI later](docs/INSTALL.md#with-or-without-claude-code-or-codex)).
+## How it works
 
-Options: `curl … | bash -s -- --observe-only` installs with AI judging off; `--no-open` installs without starting the app.
+1. **Install it.** One command. A flaming skull joins your menu bar and shows what it found within a minute.
+2. **Run your agents.** Claude Code, Codex, Cursor: as many sessions, worktrees, dev servers and builds as you like. Nothing about how you work changes.
+3. **BZ burns the exhaust.** From the first minute, and every 15 minutes after, it stops orphaned processes and deletes stale worktrees and rebuildable junk, backing up each worktree first. When it isn't sure, it asks you once, and your answer becomes a rule.
 
-**Installing with an agent?** Give Claude Code or Codex this prompt:
-
-> Install and set up BurnZombies using https://raw.githubusercontent.com/swordfish444/BurnZombies/main/llms.txt. Preserve my existing agent settings and verify setup without running cleanup.
+<p align="center">
+  <img src="docs/media/readme-question.jpg" width="480" alt="A Teach BZ question card, with example data: Burn 5 tool caches? Frees 20.3 GB. Unused for a month. Inside your projects. Your tools rebuild them when needed. Yes, burn them or No, keep them.">
+  <br><sub>When BZ isn't sure, it asks. One tap, and it remembers. (Example data.)</sub>
+</p>
 
 ## What happens next
 
-- **The first minute.** BZ takes its first look right away and keeps looking every minute for its first half hour. Within about a minute the panel shows how much it found, like **Found 4.2 GB of leftovers**, and **BZ has 3 quick questions** when there's something to decide.
-- **It burns the safe stuff on its own** from the first minute, with starter rules you can switch off in **Settings → Autopilot**:
-  - programs whose app or chat is gone, idle for 6+ hours, with no open port. A program that has barely used the CPU since it started counts as idle from its start, so old leftovers go right away;
-  - old project copies already merged, unchanged and untouched for a month. They are always backed up first;
-  - rebuildable folders (`node_modules`, build output) inside copies untouched for two weeks.
-- **It asks about the rest.** One tap: **Yes** burns all the matches, now and later; **No** keeps them. BZ never asks about or touches macOS, your apps, anything a running chat is working in, or your main project folders.
-- **AI sweeps** (with Claude Code or Codex). The first starts about 10 minutes after install, once the first look is complete. After that, one runs when there is something new to judge, at most every 30 minutes, and rechecks every 4 hours. A sweep takes a few minutes, 15 at most. The AI may also burn clearly safe things on its own: an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor.
-- **Undo.** Restore an old copy from **Findings** for 30 days. Junk folders get rebuilt by your tools. Programs get a graceful stop, which can't be undone.
+- **Minute one:** BZ shows what it found, burns what's clearly safe and asks about the rest. With `--look-only` it shows and asks but burns nothing until you choose **Start burning**.
+- **Around minute 10:** if Claude Code or Codex is signed in, the first AI sweep judges what the rules don't cover.
+- **From then on:** BZ looks every 15 minutes, quietly. AI sweeps run only when there's something new to judge, at most every 30 minutes.
+- **After a restart:** BZ starts again when you log in, so it keeps going without you. **Start at login** in Settings turns that off.
 
-**Cost:** Claude Code uses Sonnet by default; Codex uses its own default. On API pricing a sweep costs roughly $0.30–$1.20; on a Claude or ChatGPT subscription it uses plan usage instead. Change the model in **Settings → Review intelligence**, turn the AI off with `burnzombies setup --observe-only` (back on with `--with-ai`), and see what sweeps cost in **Settings → Usage & estimated cost**.
+## What it burns
 
-**Uninstall:** stop BZ, then delete the app and its data folder. [Three steps →](docs/INSTALL.md#uninstall)
+To BZ, burning means stopping a program or deleting a folder.
 
-### Optional: Full Disk Access
+- 🧟 **Zombie processes**: Node workers, headless browsers and build watchers left running after their app or chat is gone.<br>
+  **Safety net:** a polite `SIGTERM`, sent only after an exact identity check.
+- 📁 **Stale worktrees** nothing is using.<br>
+  **Safety net:** first, a Git ref inside the repo saves every commit, uncommitted change and untracked file, plus small ignored files. If BZ can't verify that backup, the worktree stays. Branches are kept. Restore in one click from **Findings** for 30 days; the ref stays in the repo after that.
+- 🗑️ **Rebuildable junk**: `node_modules`, build output, DerivedData.<br>
+  **Safety net:** your tools rebuild it when needed.
 
-BZ works without it everywhere except the places macOS protects (Desktop, Documents, Downloads, iCloud Drive, Mail, Messages, Photos, other apps' data and external drives), and it tells you what it skipped. To cover those too, click **Allow Full Disk Access** in the menu-bar banner, enable **BurnZombies** in System Settings, then come back; BZ checks access by itself. AI sweeps run either way. Dismiss the banner with **×** whenever you like; setup stays under the **Settings cog → Full Disk Access**. [Access setup →](docs/INSTALL.md#optional-full-disk-access)
+## Safe by default
+
+- **Hands off what's in use:** never macOS, your apps, your AI tools, your main project folders, or anything a program or an open chat is using.
+- **Your agents' worktrees wait for your yes,** and **No** or **Keep forever** always wins.
+- **Every worktree is backed up** to a Git ref first; restore it in one click or by hand.
 
 <details>
-<summary>See the permission setup</summary>
+<summary><b>Exactly what it burns on its own</b></summary>
 
-<p align="center"><img src="docs/media/full-disk-access-banner.png" width="360" alt="Compact BurnZombies menu with a Full Disk Access link and a separate dismiss button."></p>
-<p align="center"><img src="docs/media/full-disk-access-complete.png" width="440" alt="Full Disk Access completed in Settings: muted section, green checkmark and Manage access link."></p>
+- **Starter rules** (switch each off in **Settings → Autopilot**): orphaned programs that have barely used the CPU for 6+ hours and have no open port, merged worktrees with no local changes untouched for a month, and junk inside worktrees untouched for two weeks.
+- **The AI,** if on, may burn a low-risk item only when it rates itself at least 85% sure: an orphaned program with no open port, a known junk folder, or a worktree nothing uses. Every burn it asks for passes BZ's own checks.
+- **Never on its own:** worktrees made by Claude Code, Codex or the Conductor app. Other worktrees, such as ones Cursor or your scripts make, follow the two rules above.
+- **Your yes answers:** a question says what it covers, like "Burn 5 tool caches?", and **Yes** also covers new matches later. Forget any rule in **Settings → Autopilot → What BZ has learned**.
+- **Limits:** at most 20 worktrees, 20 junk folders and 50 programs per look. BZ knows an idle Claude Code or Codex chat is still open from the session records those tools keep.
+
+The [tests](Proof) check these rules on every code change. [How cleanup stays safe →](docs/SAFETY.md)
 
 </details>
 
-## Teach BZ in a dozen taps
-
-When BZ isn't sure, the menu shows **BZ has 3 quick questions**. Each one is a single card — **Burn 92 old project copies?** **Frees 14.4 GB**, with a few short facts like "Saved on GitHub" and "Unused for a week" (risky ones in amber) — and **Yes, burn them** / **No, keep them**. BZ only asks about things that free at least 1 GB. **Findings** shows everything in plain words: what it is, why BZ thinks so, and what happens if it burns it, with technical details tucked away. **Settings → Autopilot → What BZ has learned** lists every rule with a Forget button.
-
-## Dead weight. Gone.
-
-Everything that matters in one small panel: **zombies burned, memory released, disk reclaimed, worktrees cleaned and agent boost.** Every verified burn shows what you got back: memory released and programs cleared, or a measured speed boost when available. **Still warming up.** only appears before your first burn.
-
-<p align="center">
-  <img src="docs/media/menu-bar-empty.png" width="360" alt="BurnZombies before the first cleanup: compact menu, zero counters, Still warming up, and Ready for your first burn.">
-  <img src="docs/media/menu-bar.png" width="360" alt="BurnZombies compact menu after cleanups: four counters in a compact two-by-two grid, smaller units, reclaimed memory and helpers cleared, memory pressure and links to Impact and Burn Log.">
-</p>
-
-**Small by default. More when you need it.** Switch the panel between Today, 7 days and All time, or open Impact for the bigger view. Burn Log keeps a record of every burn one click away.
-
-### Hunt Zombies
-
-Want to clear the buildup now? Click **Hunt Zombies** in the menu bar to start an AI sweep right away. **Hunting Zombies →** opens the live hunt: a side-scrolling patrol, suspicious figures under the scanner, and a flamethrower send-off when a burn is verified. The activity log below the scene lists what BZ found, burned and freed. Automatic sweeps never open a window or interrupt your screen.
-
-<p align="center">
-  <img src="docs/media/hunt-zombies.png" width="948" alt="Hunt Zombies with a side-scrolling night patrol, a figure under the scanner, cleanup counters and the activity feed.">
-</p>
+## FAQ
 
 <details>
-<summary><strong>See the full Impact view</strong></summary>
+<summary><b>What does the AI cost, and can I turn it off?</b></summary>
 
-<p align="center">
-  <img src="docs/media/impact.png" width="1008" alt="BurnZombies Impact view with TAME THE HORDE, the ember mascot, memory, disk and worktree counters, a compact agent boost card and period filters.">
-</p>
+Without Claude Code or Codex signed in there's no AI at all; with one, AI sweeps are on by default and run on your login: roughly $0.30–$1.20 a sweep at API prices, or plan usage on a subscription. They run only when there's something new to judge, at most every 30 minutes, so a quieter Mac runs fewer. On the author's Mac, working through about 1,000 worktrees in its first days, they came to about $13–23 a day at API prices. There's no spending cap yet; **Settings → Usage & estimated cost** shows what they used. Turn them off with `~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup --observe-only` (`--with-ai` turns them back on); the starter rules and your answers keep cleaning. [Model and cost →](docs/INSTALL.md#model-and-cost)
 
 </details>
 
-- **Your whole Mac.** Every program your macOS user runs, across projects and sessions, not just the current chat's.
-- **Works with no chat open.** BZ runs from the menu bar on its own. Your chats get no hooks, reminders or extra tools.
-- **Keep the good stuff alive.** Exact identity checks, graceful stops and verified receipts. Anything uncertain keeps running.
-- **The AI judges; BZ checks.** Claude Code or Codex can read project files to understand what something is. BZ re-checks every burn against its safety rails. No fixed “old program = zombie” rule. [How Autopilot decides →](docs/AUTOPILOT.md)
-- **Old copies, in view.** Click **Worktrees cleaned** to see every copy BZ found, with its owner and unsaved work. [Worktree cleanup →](docs/WORKTREE-CLEANUP.md)
-- **Find the big pockets.** **Settings → Disk cleanup** maps storage across your Mac, including folders outside your projects. Scanning uses no AI. [Disk discovery & cleanup →](docs/DISK-CLEANUP.md) · [Mole integration →](docs/MOLE-INTEGRATION.md)
-- **See the payoff.** Zombies burned, memory released, disk reclaimed and worktrees cleaned in a quiet menu bar app.
-- **Spends AI only on new things.** Looking around uses no AI. If a sweep fails, BZ waits longer each time (15 → 30 → 60 → 120 minutes) instead of hammering your plan, and your rules keep working meanwhile.
+<details>
+<summary><b>What does the AI see?</b></summary>
 
-**Next:** more real-session validation, notarized Mac releases, and Windows. [Roadmap →](docs/ROADMAP.md)
+The plain facts BZ gathered about each item, like where it is, its size and what started it, plus any project files it reads in the folders it's judging, such as `package.json`, READMEs and configs. It's told never to read secrets such as `.env` files, keys or credentials. Its shell and web tools are switched off: it reads, then asks BZ to burn, and every burn it asks for passes BZ's own checks. All of it goes through your own Claude Code or Codex login, like any other request you make with it.
 
-[Install & uninstall](docs/INSTALL.md) · [User guide](docs/USER_GUIDE.md) · [Autopilot](docs/AUTOPILOT.md) · [MCP](docs/MCP.md) · [How cleanup works](docs/SAFETY.md) · [Build & contribute](CONTRIBUTING.md) · [Security](SECURITY.md)
+</details>
 
-If BurnZombies clears room for your next run, **give it a star**. [Tell us what your agents leave behind](https://github.com/swordfish444/BurnZombies/issues/new?template=feedback.yml).
+<details>
+<summary><b>Can I see what it would burn before it burns anything?</b></summary>
 
-**You build. We burn.**
+Yes: install with `--look-only` (`curl … | bash -s -- --look-only`). BZ finds, sizes and asks exactly as usual, and **Findings** lists everything it found, why, and what burning it would do. Nothing burns on its own: not the starter rules, not your yes answers, not the AI. The menu says **Look-only · nothing burns** and how much it would burn. When you're ready, choose **Start burning** there, or switch off **Look only** in **Settings → Autopilot**, and BZ starts burning what waited right away. A **Burn now** you click on one item still burns that item.
+
+Already installed? Switch on **Look only** in **Settings → Autopilot**. `--observe-only` is not a dry run: it only turns the AI off, and the rules keep burning.
+
+</details>
+
+<details>
+<summary><b>Can I undo a burn?</b></summary>
+
+Worktrees, yes: **Restore** in **Findings** for 30 days. The restore point is a Git ref in the repo that holds every commit and local change, small ignored files such as `.env` included; ignored files over 5 MB and anything inside rebuildable folders aren't kept. The ref stays local unless you push `refs/burnzombies/*` yourself, for example with `git push --mirror`. It stays after 30 days, so you can also restore by hand, without the app:
+
+```sh
+git for-each-ref refs/burnzombies/retired          # list restore points
+git worktree add --detach ../my-copy refs/burnzombies/retired/<id>
+git -C ../my-copy reset HEAD^   # only if the top commit is a "BurnZombies safety copy"
+```
+
+Junk folders get rebuilt by your tools. Programs get a graceful stop, which can't be undone.
+
+</details>
+
+<details>
+<summary><b>I run long background jobs on purpose. Are they safe?</b></summary>
+
+Click **Keep forever** on one in **Findings**, and BZ and the AI leave it alone. On its own, BZ only stops a program whose app or chat is gone and that has no open port.
+
+</details>
+
+<details>
+<summary><b>Does it need Full Disk Access?</b></summary>
+
+No. Without it, BZ skips the places macOS protects (Desktop, Documents, Downloads, iCloud Drive and other apps' data) and tells you what it skipped. With it, the same rules cover those folders too. To grant it, click **Allow Full Disk Access** in the menu. [Access setup →](docs/INSTALL.md#optional-full-disk-access)
+
+</details>
+
+<details>
+<summary><b>What does the install script do?</b></summary>
+
+It downloads the release it pins, checks it against that release's SHA-256 checksums, checks the archive's paths and the app's code signature, and puts BurnZombies.app in `~/Applications`. No sudo. Releases are signed with BurnZombies' own certificate but aren't notarized by Apple yet. Prefer a fixed version? Swap `main` in the URL for a release tag, such as `v0.13.0`. [Read install.sh](install.sh) · [Installer options →](docs/INSTALL.md#installer-options)
+
+</details>
+
+<details>
+<summary><b>What does it install, and does it phone home?</b></summary>
+
+One app in `~/Applications`, with its `burnzombies` command inside it, a data folder in `~/Library/Application Support/BurnZombies`, and a login item so BZ comes back after a restart (switch off **Start at login** in Settings to remove it; updates keep your choice). Setup writes only BZ's own settings, not your agents'. There's no auto-update (run the install line again to update) and no telemetry: BZ itself makes no network requests. The only traffic is your AI sweeps through your own Claude Code or Codex login and, on request, a GitHub CLI lookup of a worktree's pull request.
+
+</details>
+
+<details>
+<summary><b>Can Claude Code or Codex install it for me?</b></summary>
+
+Yes. Give it this prompt:
+
+> Install and set up BurnZombies using https://raw.githubusercontent.com/swordfish444/BurnZombies/main/llms.txt. Preserve my existing agent settings and verify setup without running cleanup.
+
+</details>
+
+<details>
+<summary><b>How do I uninstall?</b></summary>
+
+Switch off **Start at login** and stop BZ, then delete the app and its data folder. Restore points stay in your repos until you delete them. [Three steps →](docs/INSTALL.md#uninstall)
+
+</details>
+
+## Learn more
+
+[User guide](docs/USER_GUIDE.md) · [How Autopilot decides](docs/AUTOPILOT.md) · [Safety](docs/SAFETY.md) · [Install options](docs/INSTALL.md) · [MCP server](docs/MCP.md) · [Feedback](https://github.com/swordfish444/BurnZombies/issues/new?template=feedback.yml)
+
+<p align="center"><b>You build. We burn.</b></p>

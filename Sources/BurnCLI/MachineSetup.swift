@@ -2,12 +2,28 @@ import BurnCore
 import Foundation
 
 enum MachineSetup {
+  static let lookOnlyLine =
+    "Look-only is on: BurnZombies finds and asks but burns nothing until you choose Start burning in its menu."
+
   static func run(_ args: [String]) throws {
-    func value(_ flag: String) throws -> String? {
-      guard let i = args.firstIndex(of: flag) else { return nil }
-      guard i + 1 < args.count else { throw StoreError.message("Missing \(flag) value.") }
-      return args[i + 1]
-    }
+    let root = try value("--root", in: args).map { URL(fileURLWithPath: $0) } ?? Store.defaultRoot
+    try setUpAI(args, root: root)
+    // Look-only belongs to Autopilot, not the AI: it holds every burn with or without AI judging,
+    // and only once the AI step went through, so a failed setup changes nothing.
+    guard args.contains("--look-only") else { return }
+    try Autopilot.setLookOnly(true, root: root)
+    print(lookOnlyLine)
+  }
+
+  static func value(_ flag: String, in args: [String]) throws -> String? {
+    guard let i = args.firstIndex(of: flag) else { return nil }
+    guard i + 1 < args.count else { throw StoreError.message("Missing \(flag) value.") }
+    return args[i + 1]
+  }
+
+  /// Chooses the AI that judges what BZ isn't sure about, or turns AI judging off.
+  static func setUpAI(_ args: [String], root: URL) throws {
+    func value(_ flag: String) throws -> String? { try MachineSetup.value(flag, in: args) }
     let selected = try value("--harness") ?? "auto"
     guard
       ["auto", "all", "none"].contains(selected)
@@ -15,8 +31,10 @@ enum MachineSetup {
     else {
       throw StoreError.message("Choose auto, codex, claude, cursor, copilot or gemini.")
     }
-    let root = try value("--root").map { URL(fileURLWithPath: $0) } ?? Store.defaultRoot
-    let cleansAnyway = "BurnZombies still burns what's clearly safe and asks you about the rest."
+    let cleansAnyway =
+      args.contains("--look-only")
+      ? "BurnZombies still finds what its rules cover and asks you about the rest."
+      : "BurnZombies still burns what's clearly safe and asks you about the rest."
     if selected == "none" {
       if var config = try MachineReviewConfiguration.load(root: root) {
         config.enabled = false

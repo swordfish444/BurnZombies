@@ -727,6 +727,60 @@ func autopilotSweepProof() async throws {
   _ = await waiting.burn(["worktree:stuck"])
   equal(stuckAttempts.all.count, 4, "and an unchanged one once the wait is over")
 
+  // One burn per item at a time. Two retires of the same copy write the same restore ref, so the
+  // second could replace the backup the first had just verified. The native pass skipped an item
+  // that was burning; the AI's burns and the owner's Burn now went straight in.
+  let busyCopy = AutopilotItem(
+    id: "worktree:busy", kind: .worktree, name: "busy", bytes: 1 << 30,
+    facts: [
+      "place": "sibling", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+      "thread": "none",
+    ])
+  let busyRetires = Calls()
+  let busyRelease = Calls()
+  let busyRoot = directory.appendingPathComponent("in-flight")
+  let busyStore = try AutopilotStore(root: busyRoot)
+  let inFlight = try Autopilot(
+    root: busyRoot,
+    sources: AutopilotSources(
+      worktrees: { _, _, d in ([busyCopy], d) },
+      retireWorktree: { item, authority in
+        busyRetires.add(item.id)
+        // The first retire stays in Git until the proof lets it go.
+        let first = busyRetires.all.count == 1
+        let deadline = Date().addingTimeInterval(10)
+        while first, busyRelease.all.isEmpty, Date() < deadline {
+          Thread.sleep(forTimeInterval: 0.01)
+        }
+        return AutopilotReceipt(
+          itemID: item.id, kind: .worktree, name: item.name, authority: authority,
+          outcome: "burned", detail: "", bytes: item.bytes)
+      }))
+  _ = await inFlight.tick(now: now, burn: false)
+  let nativePass = Task { await inFlight.tick(now: now.addingTimeInterval(60)) }
+  let started = Date().addingTimeInterval(10)
+  while busyRetires.all.isEmpty, Date() < started {
+    try await Task.sleep(nanoseconds: 10_000_000)
+  }
+  equal(busyRetires.all.count, 1, "the native pass is retiring the copy")
+  let duringAI = await inFlight.burn([busyCopy.id])
+  equal(duringAI.first?.outcome, "refused")
+  equal(duringAI.first?.detail, "I'm already burning it.", "the AI hears it is already burning")
+  do {
+    _ = try await inFlight.apply(.burnNow(itemID: busyCopy.id))
+    failTest("Burn now started a second retire of a copy already burning")
+  } catch {
+    equal(error.localizedDescription, "I'm already burning it.", "and so does the owner")
+  }
+  equal(busyRetires.all.count, 1, "no second retire while the first runs")
+  busyRelease.add("done")
+  _ = await nativePass.value
+  equal(busyRetires.all.count, 1, "the copy is retired once")
+  equal(try busyStore.receipts().map(\.outcome), ["burned"], "with one receipt")
+  equal(
+    try busyStore.sweep().log.filter { $0.message.contains("busy") }.count, 1,
+    "and one line in the owner's activity log")
+
   try await aiBriefProof()
 }
 
