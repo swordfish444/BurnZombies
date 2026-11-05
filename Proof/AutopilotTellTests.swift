@@ -12,6 +12,7 @@ func tellProof() async throws {
   try await expiryProof()
   try await forgetTellProof()
   try await askActProof()
+  try await lookOnlyActProof()
   try await undoSafetyProof()
 }
 
@@ -586,4 +587,70 @@ private func askActProof() async throws {
   equal(narrow?.count, 3, "about the web-app copies")
   equal(narrow?.guess?.sure, false, "its lesson would reach the docs copy")
   equal(farWorld.burns.all, [])
+}
+
+// MARK: Look-only
+
+/// Look-only burns nothing on its own until the owner starts burning, so BZ doesn't act either: a
+/// question it is sure of is asked, at a look, after an answer and when the AI asks it. A tell would
+/// say BZ burned what is still there.
+private func lookOnlyActProof() async throws {
+  let now = Date()
+  // At a look.
+  let lookWorld = TellWorld(copies: threeCopies(now))
+  let (look, lookStore, lookRoot) = try tellEngine("look-only", lookWorld, trustedCopies(now: now))
+  defer { try? FileManager.default.removeItem(at: lookRoot) }
+  _ = try await look.apply(.setLookOnly(true), now: now)
+  let looked = await look.tick(now: now)
+  check(looked.tells.isEmpty, "look-only: no tell at a look")
+  equal(
+    looked.questions.first { $0.kind == .worktree }?.guess?.sure, true,
+    "look-only: BZ is sure of the copies and asks")
+  equal(try lookStore.memory().tells.count, 0)
+  equal(lookWorld.burns.all, [], "look-only: nothing burned at a look")
+
+  // After an answer. Three kinds of program, each serving a port and bigger than the copies, take
+  // the three slots; answering one frees a slot for the copies.
+  func server(_ family: String) -> AutopilotItem {
+    AutopilotItem(
+      id: "process:" + family, kind: .process, name: family, bytes: 1_500_000_000,
+      facts: [
+        "family": family, "orphaned": "maybe", "thread": "none", "idle": "1d",
+        "listening": "yes", "agent": "none",
+      ], processKey: family)
+  }
+  let servers = ["python", "ruby", "java"].map(server)
+  let world = TellWorld(copies: threeCopies(now), programs: servers)
+  let (engine, store, root) = try tellEngine("look-only-answer", world, trustedCopies(now: now))
+  defer { try? FileManager.default.removeItem(at: root) }
+  _ = try await engine.apply(.setLookOnly(true), now: now)
+  let first = await engine.tick(now: now)
+  equal(Set(first.questions.map(\.kind)), [.process], "the programs take the three slots")
+  guard let python = first.questions.first(where: { $0.match["family"] == ["python"] }) else {
+    return failTest("look-only: a question about the python program")
+  }
+  let answered = try await engine.apply(.answer(questionID: python.id, answer: .no), now: now)
+  check(answered.tells.isEmpty, "look-only: no tell after an answer")
+  guard let copies = answered.questions.first(where: { $0.kind == .worktree }) else {
+    return failTest("look-only: the copies are asked after an answer")
+  }
+  equal(copies.guess?.sure, true, "look-only: sure, and asked")
+
+  // When the AI asks, sure and expecting a yes.
+  var input = AutopilotQuestionInput(
+    kind: .worktree, match: ["saved": ["local"], "stale": ["week"]],
+    question: "Can I burn the copies nobody touched this week?")
+  input.guess = "yes"
+  var request = AutopilotRequest(tool: "ask")
+  request.question = input
+  request.replace = copies.id
+  let (ok, reply) = await engine.handle(request)
+  check(ok, reply)
+  checkFalse(reply.contains("I burned them"), "look-only: the AI hears nothing burned: \(reply)")
+  let memory = try store.memory()
+  equal(memory.tells.count, 0, "look-only: no tell at all")
+  let asked = memory.questions.first { $0.isOpen && $0.source == "ai" }
+  equal(asked?.guess?.sure, true, "the AI's question is asked, BZ sure")
+  try await Task.sleep(nanoseconds: 300_000_000)
+  equal(world.burns.all, [], "look-only: nothing burned")
 }

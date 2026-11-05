@@ -155,7 +155,7 @@ public actor Autopilot {
       observedAt: now, items: items, threads: threads, coverageNotes: sources.coverageNotes())
     try? store.save(catalog: catalog!)
     await refreshReceipts()
-    let canBurn = burn && enabled()
+    let canBurn = burn && burnsOnItsOwn()
     var used: [AutopilotKind: Int] = [:]
     if canBurn { used = await burnAuthorized(now: now) }
     // What BZ answers itself burns right away, through the same pass as an answer's matches and
@@ -169,6 +169,11 @@ public actor Autopilot {
 
   /// Whether Autopilot is switched on. Off, it catalogs and asks but burns nothing on its own.
   func enabled() -> Bool { (try? store.sweep().enabled) ?? true }
+
+  /// Whether BZ burns on its own right now: Autopilot is on and not look-only. Only then does it
+  /// act on a question it is sure of; otherwise it asks, so no tell says it burned what is still
+  /// there.
+  func burnsOnItsOwn() -> Bool { enabled() && !holdsBurns() }
 
   /// People remember chats by name: mention the last chat that worked in an old copy.
   static func mentionChat(_ item: AutopilotItem, threads: [AgentThread], now: Date)
@@ -555,7 +560,7 @@ public actor Autopilot {
           AutopilotPolicy.carryTallies(&memory)
         }
       }
-      let acted = refreshQuestions(now: now, acting: enabled())
+      let acted = refreshQuestions(now: now, acting: burnsOnItsOwn())
       // Show the answer right away; matching items, and anything BZ just answered itself, burn in
       // the background.
       Task { await self.burnAuthorized(now: now, settling: acted) }
@@ -828,7 +833,7 @@ public actor Autopilot {
       )
     }
     let now = Date()
-    let acting = enabled()
+    let acting = burnsOnItsOwn()
     var acted: String?
     let stored = try store.updateMemory { memory -> AutopilotQuestion in
       if let replacing {
