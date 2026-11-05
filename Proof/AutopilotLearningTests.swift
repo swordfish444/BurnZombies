@@ -432,6 +432,14 @@ private func reaskProof() async throws {
   newer.questions = [shown]
   let asked = AutopilotPolicy.proposeQuestions(servers, memory: newer, now: now)
   equal(asked.map(\.id), [key + ":idle=10m,listening=yes"], "a newer answer covers what it showed")
+  // A card whose risks changed while it was open keeps the id it was made with. A question asked
+  // again never takes the id of one the owner answered: the answer would land on the old one.
+  var shrunk = shown
+  shrunk.id = key + ":idle=10m,listening=yes"
+  var renamed = AutopilotMemory()
+  renamed.questions = [shrunk]
+  let numbered = AutopilotPolicy.proposeQuestions(servers, memory: renamed, now: now)
+  equal(numbered.map(\.id), [key + ":idle=10m,listening=yes#2"], "a fresh id")
   // The 1 GB minimum still holds: one server alone isn't worth a question.
   let alone = AutopilotPolicy.proposeQuestions([servers[0]], memory: newer, now: now)
   equal(alone.count, 0, "half a GB isn't worth asking about")
