@@ -51,11 +51,13 @@ public enum AutopilotDisk {
     var activity: Date?
   }
 
-  /// Rebuildable folders of at least 100 MB: inside live checkouts (and the main checkout each
-  /// one belongs to) and in the global developer caches. Nothing outside `home`, no link, no
-  /// private area, nothing Git tracks. Work stops at a time budget; the rest comes next time.
+  /// Rebuildable folders of at least 100 MB: inside live checkouts (with `mains`, also the main
+  /// checkout each one belongs to) and, with `caches`, in the global developer caches. Nothing
+  /// outside `home`, no link, no private area, nothing Git tracks. Work stops at a time budget;
+  /// the rest comes next time.
   public static func items(
-    worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), now: Date = Date(),
+    worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), caches: Bool = true,
+    mains: Bool = true, now: Date = Date(),
     sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) },
     protected: ProtectedLocations? = nil
   ) -> [AutopilotItem] {
@@ -65,7 +67,7 @@ public enum AutopilotDisk {
     let deadline = Date().addingTimeInterval(timeBudget)
     var found: [String: AutopilotItem] = [:]
 
-    for cache in globalCaches {
+    for cache in globalCaches where caches {
       let location = base + "/" + cache.path
       guard Date() < deadline, refusal(location, home: base, protected: protected) == nil else {
         continue
@@ -94,7 +96,7 @@ public enum AutopilotDisk {
       }
     }
 
-    for checkout in checkouts(worktrees, home: base, protected: protected) {
+    for checkout in checkouts(worktrees, home: base, mains: mains, protected: protected) {
       guard Date() < deadline else { break }
       // Git is asked about the checkout, so its Git data must be within reach too.
       guard refusal(checkout.path, home: base, protected: protected) == nil,
@@ -328,10 +330,10 @@ public enum AutopilotDisk {
     return nil
   }
 
-  /// Live checkouts to search: each live record, plus the main checkout it belongs to.
-  /// A checkout that is also a main checkout is never counted as a linked copy.
+  /// Live checkouts to search: each live record, plus (with `mains`) the main checkout it belongs
+  /// to. A checkout that is also a main checkout is never counted as a linked copy.
   private static func checkouts(
-    _ worktrees: [WorktreeRecord], home: String, protected: ProtectedLocations
+    _ worktrees: [WorktreeRecord], home: String, mains: Bool, protected: ProtectedLocations
   ) -> [Checkout] {
     var byPath: [String: Checkout] = [:]
     func consider(_ path: String, linked: Bool, activity: Date?) {
@@ -347,7 +349,7 @@ public enum AutopilotDisk {
     for record in worktrees where !record.missing && !record.retired && !record.bare {
       let activity = [record.lastFileChange, record.lastCommitAt].compactMap { $0 }.max()
       consider(record.path, linked: !record.main, activity: activity)
-      if record.repository.hasSuffix("/.git") {
+      if mains, record.repository.hasSuffix("/.git") {
         consider(String(record.repository.dropLast(5)), linked: false, activity: nil)
       }
     }
