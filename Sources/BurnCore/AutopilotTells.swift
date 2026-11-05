@@ -136,9 +136,11 @@ extension AutopilotPolicy {
   }
 
   /// Says on each open tell what its lesson burned, from its receipts (burned, still stopping, or
-  /// burned and since restored), so "Burned N" stays true as the act's burns land: count, bytes and
-  /// rows, named as the catalog shows them. A tell with no burn yet keeps what BZ meant to burn,
-  /// unless it is in `settled`, whose act's own burn pass just finished.
+  /// burned and since restored), so "Burned N" stays true as the act's burns land: count and bytes.
+  /// The rows are captured at the act (R32): the act's own burn pass (`settled`) names what it
+  /// burned as the catalog shows it then, with each thing's task, project and last use. A later
+  /// refresh keeps them, since the catalog drops burned things at the next look. A tell with no
+  /// burn yet keeps what BZ meant to burn, unless its act's own burn pass just finished.
   static func refreshTells(
     _ memory: inout AutopilotMemory, receipts: [AutopilotReceipt], items: [AutopilotItem],
     settled: Set<String>
@@ -158,11 +160,14 @@ extension AutopilotPolicy {
         item.bytes = receipt.bytes
         made[receipt.itemID] = item
       }
-      guard !made.isEmpty || settled.contains(memory.tells[i].id) else { continue }
+      let settling: Bool = settled.contains(memory.tells[i].id)
+      guard !made.isEmpty || settling else { continue }
       let things: [AutopilotItem] = Array(made.values)
       memory.tells[i].count = things.count
       memory.tells[i].bytes = things.reduce(0) { $0 + $1.bytes }
-      memory.tells[i].rows = rows(of: things)
+      // Rows only ever come from what the catalog shows, never from a receipt's bare name.
+      let named: Bool = made.keys.allSatisfy { byID[$0] != nil }
+      if settling && named { memory.tells[i].rows = rows(of: things) }
     }
   }
 

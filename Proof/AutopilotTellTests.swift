@@ -6,6 +6,7 @@ import Foundation
 func tellProof() async throws {
   try await scoreProof()
   try await actProof()
+  try await tellRowsProof()
   try await goodCallProof()
   try await undoProof()
   try await programUndoProof()
@@ -320,6 +321,32 @@ private func actProof() async throws {
   check(idle.tells.isEmpty, "no tell while Autopilot is off")
   equal(pausedWorld.burns.all, [], "nothing burned while Autopilot is off")
   equal(idle.questions.first { $0.kind == .worktree }?.guess?.sure, true, "the question is asked")
+}
+
+// MARK: Rows
+
+/// R32: a tell keeps the rows captured at the act, with each copy's task, project and when it was
+/// last used. A later look, once the burned copies are gone from the catalog, updates only how many
+/// and how much.
+private func tellRowsProof() async throws {
+  let now = Date()
+  let world = TellWorld(copies: threeCopies(now))
+  let (engine, store, root) = try tellEngine("rows", world, trustedCopies(now: now))
+  defer { try? FileManager.default.removeItem(at: root) }
+  guard let acted = await engine.tick(now: now).tells.first else {
+    return failTest("a tell whose rows to keep")
+  }
+  equal(acted.rows.map(\.title), ["dark mode", "fix login", "tidy footer"], "the copies' tasks")
+  equal(acted.rows.map(\.subtitle), ["web-app", "web-app", "web-app"], "their project")
+  check(acted.rows.allSatisfy { $0.lastUsed != nil }, "and when each was last used")
+  let later = await engine.tick(now: now.addingTimeInterval(15 * 60))
+  let catalogued = try store.catalog()?.items.filter { $0.kind == .worktree } ?? []
+  check(catalogued.isEmpty, "the burned copies are gone from the catalog: \(catalogued.map(\.id))")
+  guard let kept = later.tells.first else { return failTest("the tell is still open") }
+  equal(kept.rows, acted.rows, "the rows from the act stay")
+  equal(kept.count, 3)
+  equal(kept.bytes, 1_200_000_000)
+  equal(try store.memory().tells.first?.rows, acted.rows, "as stored")
 }
 
 // MARK: Good call
