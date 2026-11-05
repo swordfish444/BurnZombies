@@ -531,7 +531,8 @@ public actor Autopilot {
     switch command {
     case .answer(let id, let answer):
       try store.updateMemory { memory in
-        guard let i = memory.questions.firstIndex(where: { $0.id == id }) else {
+        // The open question with that id, which is the card the owner answered.
+        guard let i = AutopilotPolicy.answering(id, in: memory.questions) else {
           throw StoreError.message("That question is no longer open.")
         }
         // A Yes or No stands. The same answer again (a double click) changes nothing, and any
@@ -553,8 +554,11 @@ public actor Autopilot {
             AutopilotPolicy.score(q, guess: guess.answer, answer: answer, into: &memory, date: now)
           }
           let verdict: AutopilotVerdict = answer == .yes ? .burn : .keep
-          // The answer teaches why, not which project: a general lesson, titled the same way.
-          memory.rules.removeAll { $0.questionID == q.id }
+          // The answer teaches why, not which project: a general lesson, titled the same way. Memory
+          // from before re-asked cards had ids of their own can hold a lesson under this id from an
+          // older question: a Yes there gives way to this answer, and a No stays, so nothing the
+          // owner said no to burns.
+          memory.rules.removeAll { $0.questionID == q.id && $0.verdict == .burn }
           let taught: [AutopilotRule] = AutopilotPolicy.lessons(
             for: q, verdict: verdict, created: now, earlier: memory.questions)
           for lesson in taught { AutopilotPolicy.learn(lesson, into: &memory.rules) }

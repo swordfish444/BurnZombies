@@ -238,10 +238,20 @@ extension AutopilotPolicy {
     return result
   }
 
-  /// Questions by id; the first of a repeated id wins.
+  /// Questions by id. Memory from before re-asked cards had ids of their own can repeat one: the
+  /// first question answered Yes or No wins, since a lesson is made from it, and failing that the
+  /// first.
   static func questionsByID(_ questions: [AutopilotQuestion]) -> [String: AutopilotQuestion] {
     var byID = [String: AutopilotQuestion]()
-    for question in questions where byID[question.id] == nil { byID[question.id] = question }
+    for question in questions {
+      guard let held = byID[question.id] else {
+        byID[question.id] = question
+        continue
+      }
+      let heldAnswered: Bool = held.answer == .yes || held.answer == .no
+      let answered: Bool = question.answer == .yes || question.answer == .no
+      if answered && !heldAnswered { byID[question.id] = question }
+    }
     return byID
   }
 

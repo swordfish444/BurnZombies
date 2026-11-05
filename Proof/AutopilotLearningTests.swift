@@ -10,6 +10,7 @@ func autopilotLearningProof() async throws {
   try await groupsProof()
   try await cardProof()
   try await tellProof()
+  try await skipProof()
   try await evalRequestProof()
   try await simulatedOwnersProof()
 }
@@ -35,6 +36,14 @@ func simulatedOwnersProof() async throws {
     let asked: Int = liberal.rounds.first { $0.round == round }?.questions ?? -1
     equal(asked, 0, "liberal: no question in round \(round)")
   }
+
+  // An owner who skips the first question of three rounds. Each skipped pattern is asked again once
+  // its day is over, under an id of its own, and the answer closes that card.
+  let hesitant = try await simulateOwner(.hesitant)
+  report(hesitant)
+  learns(hesitant)
+  equal(hesitant.skips, 3, "hesitant: three skips")
+  check(hesitant.answeredAfterSkip > 0, "hesitant: a skipped pattern is asked again and answered")
 
   // R35b: a liberal owner with history. Earlier yes answers on copies cover every risk this owner
   // takes, and BZ's replay guessed the last 5 right, so BZ acts on copies and tells the owner, who

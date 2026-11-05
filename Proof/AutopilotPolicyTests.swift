@@ -351,10 +351,13 @@ func autopilotPolicyProof() throws {
   checkFalse(
     AutopilotPolicy.proposeQuestions(unsure, memory: memory).map(\.id).contains(questions[1].id),
     "skipped pattern hidden until its snooze ends")
-  check(
-    AutopilotPolicy.proposeQuestions(
-      unsure, memory: memory, now: Date().addingTimeInterval(2 * 86400)
-    ).map(\.id).contains(questions[1].id), "snooze expiry allows re-asking")
+  // Asked again once the snooze ends, under an id of its own: an answer must land on the new card,
+  // never on the skipped one.
+  let reasked: [String] = AutopilotPolicy.proposeQuestions(
+    unsure, memory: memory, now: Date().addingTimeInterval(2 * 86400)
+  ).map(\.id)
+  check(reasked.contains(questions[1].id + "#2"), "snooze expiry allows re-asking: \(reasked)")
+  checkFalse(reasked.contains(questions[1].id), "never under the skipped question's id")
 
   // Training progress and coverage.
   memory = AutopilotMemory()

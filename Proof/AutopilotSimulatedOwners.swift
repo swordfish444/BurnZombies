@@ -118,23 +118,36 @@ func ownerItems(round: Int, now: Date) -> [AutopilotItem] {
   return items
 }
 
-/// An owner who answers by a fixed policy: what they would burn.
+/// An owner who answers by a fixed policy: what they would burn, and the rounds in which they aren't
+/// sure about the first question they see and skip it.
 struct OwnerPersona: Sendable {
   let name: String
   let burns: @Sendable (AutopilotItem) -> Bool
+  let skipsIn: Set<Int>
+
+  init(name: String, skipsIn: Set<Int> = [], burns: @escaping @Sendable (AutopilotItem) -> Bool) {
+    self.name = name
+    self.skipsIn = skipsIn
+    self.burns = burns
+  }
 
   /// Burns copies that are on GitHub or untouched since yesterday or longer, programs idle for
   /// 10 minutes or more, and folders untouched since yesterday or longer.
   static let liberal = OwnerPersona(name: "liberal", burns: liberalBurns)
   /// Like liberal, but keeps any copy with unsaved work.
-  static let cautious = OwnerPersona(name: "cautious") { item in
-    guard liberalBurns(item) else { return false }
-    return item.kind != .worktree || item.facts["changes"] == "none"
-  }
+  static let cautious = OwnerPersona(name: "cautious", burns: cautiousBurns)
+  /// Like cautious, but not sure about the first question of rounds 1, 2 and 5, and skips it: three
+  /// skips, as the real owner skipped 3 of their 30 answers.
+  static let hesitant = OwnerPersona(name: "hesitant", skipsIn: [1, 2, 5], burns: cautiousBurns)
   /// Like liberal, but keeps programs serving a port.
   static let serverKeeper = OwnerPersona(name: "server keeper") { item in
     guard liberalBurns(item) else { return false }
     return item.kind != .process || item.facts["listening"] != "yes"
+  }
+
+  @Sendable static func cautiousBurns(_ item: AutopilotItem) -> Bool {
+    guard liberalBurns(item) else { return false }
+    return item.kind != .worktree || item.facts["changes"] == "none"
   }
 
   @Sendable static func liberalBurns(_ item: AutopilotItem) -> Bool {
@@ -181,6 +194,9 @@ struct OwnerRun {
   /// The subject of the tell the owner undid, and the round.
   var undone: (subject: String, round: Int)?
   var goodCalls = 0
+  /// Questions the owner skipped, and skipped patterns asked again later and answered.
+  var skips = 0
+  var answeredAfterSkip = 0
   /// Per subject: the owner's answers, BZ's scored guesses, and the longest run of right ones.
   var subjects: [String] = []
 
@@ -213,6 +229,7 @@ struct OwnerRun {
     text += " · good calls \(goodCalls) · burned on its own calls \(acted.count)"
     text += " · wrong burns \(wrong.count)"
     if let undone { text += " · undid \(undone.subject) in round \(undone.round)" }
+    if skips > 0 { text += " · skipped \(skips), answered \(answeredAfterSkip) of them later" }
     return text
   }
 
@@ -322,6 +339,7 @@ func simulateOwner(
     }
     try await judge()
     snapshot = await engine.snapshot(now: now)
+    var unsureToday: Bool = persona.skipsIn.contains(round)
     while result.questions < 50, let question = snapshot.questions.first {
       let about: [AutopilotItem] = members(of: question, in: snapshot)
       equal(about.count, question.count, "\(persona.name): the owner sees what BZ counted")
@@ -330,11 +348,29 @@ func simulateOwner(
         guard AutopilotPolicy.ownerAnswered(past) else { return false }
         return past.kind == question.kind && past.match == question.match
       }
-      result.asked.append(subject(of: question) + (again ? " again" : ""))
+      let afterSkip: Bool = earlier.contains { past in
+        past.answer == .skip && past.kind == question.kind && past.match == question.match
+      }
       let yes: Bool = !about.isEmpty && about.allSatisfy(persona.burns)
-      let answer: AutopilotAnswer = yes ? .yes : .no
+      var answer: AutopilotAnswer = yes ? .yes : .no
+      var note: String = again ? " again" : ""
+      if unsureToday {
+        unsureToday = false
+        answer = .skip
+        run.skips += 1
+        note += " skipped"
+      } else if afterSkip {
+        run.answeredAfterSkip += 1
+        note += " after a skip"
+      }
+      result.asked.append(subject(of: question) + note)
       snapshot = try await engine.apply(.answer(questionID: question.id, answer: answer), now: now)
       result.questions += 1
+      // Every answer closes the card it was given on, a skip too.
+      if snapshot.questions.contains(where: { $0.id == question.id }) {
+        failTest("\(persona.name): round \(round): \(answer.rawValue) didn't close \(question.id)")
+        break
+      }
     }
     await settle(engine, now: now)
     try await judge()

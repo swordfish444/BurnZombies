@@ -193,7 +193,7 @@ public enum AutopilotPolicy {
         if answered(kind, match, risks: carried, memory: memory) { continue }
         if covering.reduce(0, { $0 + $1.bytes }) >= worthAsking {
           var asked = question(kind, match: match, covering: covering, now: now)
-          asked.id = unanswered(asked.id, memory)
+          asked.id = unusedID(asked.id, memory)
           candidates.append(asked)
         }
         break
@@ -231,14 +231,28 @@ public enum AutopilotPolicy {
     return key + ":" + risks.sorted().joined(separator: ",")
   }
 
-  /// `id`, or `id` numbered when the owner already answered a question with it. An open card's
-  /// risks can change after its id is made, and an answer must never land on the old question.
-  static func unanswered(_ id: String, _ memory: AutopilotMemory) -> String {
-    let taken = Set(memory.questions.filter { $0.answer == .yes || $0.answer == .no }.map(\.id))
+  /// `id`, or `id` numbered when memory already holds a question with it: answered, skipped or open.
+  /// A pattern asked again, after a skip or for a card whose risks changed after its id was made, is
+  /// a question of its own, so an answer lands on the card the owner sees and never on an older one.
+  static func unusedID(_ id: String, _ memory: AutopilotMemory) -> String {
+    let taken = Set(memory.questions.map(\.id))
     guard taken.contains(id) else { return id }
     var n = 2
     while taken.contains(id + "#\(n)") { n += 1 }
     return id + "#\(n)"
+  }
+
+  /// The question an answer to `id` lands on: the open one, which is the card the owner sees. Memory
+  /// from before re-asked cards had ids of their own can hold a skipped question under the same id,
+  /// earlier in the list. With none open, the latest one answered Yes or No, so a second click
+  /// changes nothing; then the latest skipped one, which can still be answered.
+  public static func answering(_ id: String, in questions: [AutopilotQuestion]) -> Int? {
+    let same: [Int] = questions.indices.filter { questions[$0].id == id }
+    if let open = same.first(where: { questions[$0].isOpen }) { return open }
+    let decided: Int? = same.last(where: { i in
+      questions[i].answer == .yes || questions[i].answer == .no
+    })
+    return decided ?? same.last
   }
 
   /// What a yes to a pattern burns: the pattern and everything safer. A question is about the
