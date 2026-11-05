@@ -153,6 +153,7 @@ Memory keeps a tally per lesson: count, bytes and undone.
 
 **Risks:** the risky facts present among a question's members, stored on the question as `fact=value` strings:
 - `saved=local`, `changes=small|large`, `listening=yes`;
+- `bigCode=yes`, `bigMedia=yes`, `bigData=yes`, `bigArchives=yes` and `bigOther=yes`: a copy's unsaved files too big for a restore point, by kind. These are named risks: only a lesson that names them covers them ([Big unsaved files](2026-11-05-big-unsaved-files-design.md));
 - any fact that is `unknown`;
 - `stale=today`, `idle=active|10m`.
 

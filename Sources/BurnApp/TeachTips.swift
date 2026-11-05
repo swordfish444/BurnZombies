@@ -40,12 +40,14 @@ import SwiftUI
     }
   }
 
-  /// A question about `kind` is on screen: its tips from now on, the first after a moment.
-  func start(kind: AutopilotKind, filters: Bool) {
+  /// A question about `kind` is on screen: its tips from now on, the first after a moment. A card
+  /// about copies with big unsaved files (`bigFiles`) gets tips that never say it can be undone.
+  func start(kind: AutopilotKind, filters: Bool, bigFiles: Bool = false) {
     let shown = defaults?.dictionary(forKey: Self.shownKey) as? [String: Int] ?? [:]
     let done = Set(defaults?.stringArray(forKey: Self.doneKey) ?? [])
-    deck = AutopilotTipDeck(
-      tips: AutopilotPolicy.tips(for: kind, filters: filters), shown: shown, done: done)
+    let tips: [AutopilotTip] = AutopilotPolicy.tips(
+      for: kind, filters: filters, bigFiles: bigFiles)
+    deck = AutopilotTipDeck(tips: tips, shown: shown, done: done)
     loop?.cancel()
     guard !fixed else { return }
     visible = false

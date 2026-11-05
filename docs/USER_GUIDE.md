@@ -29,7 +29,7 @@ Scheduled sweeps never open a window or take focus, and closing the hunt window 
 
 ## Undo
 
-- **Old copies:** **Restore** in **Findings** for 30 days. Before burning a copy, BZ saves every commit and local change as a restore point inside its repository (`refs/burnzombies/retired/…`). Ignored files over 5 MB, anything in rebuildable folders like `node_modules`, and browser profiles that test runs leave behind aren't saved.
+- **Old copies:** **Restore** in **Findings** for 30 days. Before burning a copy, BZ saves every commit and local change as a restore point inside its repository (`refs/burnzombies/retired/…`). Ignored files over 5 MB, anything in rebuildable folders like `node_modules`, and browser profiles that test runs leave behind aren't saved. A copy with more than 512 MB of other unsaved files waits for your answer to a card that names those big files. A Yes deletes them for good, and Restore brings the copy back without them.
 - **Junk folders:** your tools rebuild them when needed.
 - **Programs:** a graceful stop (SIGTERM), which can't be undone. If something needs the program again, it starts a fresh one.
 

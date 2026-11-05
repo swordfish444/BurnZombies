@@ -891,7 +891,7 @@ private func apBigFilesRetire(_ world: APWorld) throws {
   try big(mixed + "/qa/recordings/take.mp4", megabytes: 600)
   let newKind = try burn(mixed, known: ["bigCode"], "rule:lesson")
   equal(newKind.outcome, "refused", "big videos the lesson never covered keep the copy")
-  equal(newKind.bigFiles?.map(\.risk), ["bigMedia", "bigCode"], "both kinds are named")
+  equal(newKind.bigFiles?.map(\.risk), ["bigCode", "bigMedia"], "both kinds are named, biggest first")
   check(apExists(mixed + "/tmp/checkouts/c1/game.ts"), "and nothing is gone")
 }
 

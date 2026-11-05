@@ -187,6 +187,32 @@ func bigFilesPolicyProof() throws {
     kind: .worktree, match: week, question: "q", why: "", examples: [], count: 1,
     bytes: 1_000_000_000), .skip, now: now)).cost, nil, "a card without big files has no cost line")
 
+  // The tips above such a card never say it can be undone.
+  let tips: [AutopilotTip] = AutopilotPolicy.tips(for: .worktree, filters: true, bigFiles: true)
+  equal(tips.first?.id, "big-files", "the first tip says big files can't be backed up")
+  checkFalse(
+    tips.contains { $0.text.contains("undo it") || $0.id == "unsaved" },
+    "and none says they can be undone or backed up")
+  equal(AutopilotPolicy.tips(for: .worktree, filters: true).first?.id, "backup", "as other cards' do")
+
+  // View details names them too, with a filter of their own.
+  let shownEntry = AutopilotEntry(
+    item: carried, status: .unsure, authority: nil, label: carried.name, why: "",
+    consequence: AutopilotPolicy.consequence(carried))
+  let listed = AutopilotPolicy.details(
+    question, entries: [shownEntry], now: now, calendar: .current)
+  let tag: AutopilotDetail.Tag? = listed.first?.tags.first { $0.filter == "big" }
+  equal(tag?.text, "914 MB not backed up")
+  equal(tag?.risky, true)
+  let notKept: [String] = (listed.first?.facts ?? []).filter { $0.label == "Not backed up" }.map(\.value)
+  equal(notKept, ["tmp/checkouts · 914 MB of TypeScript files · " + changed])
+  check(
+    AutopilotPolicy.detailFilters(listed).contains { $0.id == "big" && $0.label == "Big files" },
+    "a filter finds them")
+  check(
+    listed.first?.consequence.contains("big unsaved files are deleted for good") == true,
+    "and burning one says what it costs")
+
   // A card about several copies puts the ones with big files first and says what they cost together.
   var bigger = gameCopy("bigger", now: now)
   bigger.bytes = 3_000_000_000
