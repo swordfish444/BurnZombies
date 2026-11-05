@@ -533,7 +533,7 @@ public actor Autopilot {
     -> AutopilotSnapshot
   {
     switch command {
-    case .answer(let id, let answer):
+    case .answer(let id, let answer, let shown):
       try store.updateMemory { memory in
         // The open question with that id, which is the card the owner answered.
         guard let i = AutopilotPolicy.answering(id, in: memory.questions) else {
@@ -552,6 +552,10 @@ public actor Autopilot {
         if answer == .skip {
           memory.questions[i].snoozedUntil = now.addingTimeInterval(86400)
         } else {
+          // The risks the owner's card showed, when the app says: a look may have refreshed the
+          // question since it was drawn, and an answer covers only what the owner saw. The lesson,
+          // and what BZ counts as approved, follow them.
+          if let shown { memory.questions[i].risks = Array(Set(shown)).sorted() }
           let q = memory.questions[i]
           // The guess BZ made before asking is checked against the answer, once (spec 3.2).
           if let guess = q.guess {
@@ -967,6 +971,10 @@ public struct AutopilotSummary: Codable, Sendable {
   public var coverage: Double
   public var questions: [String]
   public var rules: [String]
+  /// The owner's lessons as Settings shows them: each sentence, with what it rests on and did.
+  public var lessons: [String]
+  /// How I'm doing, line for line as Settings says it.
+  public var progress: [String]
   public var enabled: Bool
   public var lookOnly: Bool
   public var intervalMinutes: Int
@@ -985,6 +993,8 @@ public struct AutopilotSummary: Codable, Sendable {
     coverage = s.coverage
     questions = s.questions.map { "\($0.question) (\($0.why))" }
     rules = s.rules.filter(\.enabled).map { "\($0.source.rawValue): \($0.title)" }
+    lessons = s.lessons.map { "\($0.sentence) (\($0.evidence))" }
+    progress = s.progress.lines
     enabled = s.sweep.enabled
     lookOnly = s.sweep.lookOnly == true
     intervalMinutes = s.sweep.intervalMinutes

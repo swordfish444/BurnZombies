@@ -154,8 +154,8 @@ public enum AutopilotPolicy {
   /// One yes/no question per subject with enough unsure things to be worth asking, biggest
   /// first. A question covers the most recent use not decided yet and everything older, so one
   /// answer can settle a whole subject; after a no the next question is about older things
-  /// only. Never re-asks an open pattern, nor one the owner already answered for the risks its
-  /// things carry (`answered`); a skipped subject waits for its snooze.
+  /// only. Never re-asks an open pattern, nor one whose answers already cover its things
+  /// (`answered`); a skipped subject waits for its snooze.
   public static func proposeQuestions(
     _ unsure: [AutopilotItem], memory: AutopilotMemory, limit: Int = maximumOpenQuestions,
     now: Date = Date()
@@ -189,8 +189,7 @@ public enum AutopilotPolicy {
         var match = base
         match[recency] = [recent]
         let covering = items.filter { matches(coverage(kind, match), $0) }
-        let carried: [String] = risks(kind, covering)
-        if answered(kind, match, risks: carried, memory: memory) { continue }
+        if answered(kind, match, covering: covering, memory: memory) { continue }
         if covering.reduce(0, { $0 + $1.bytes }) >= worthAsking {
           var asked = question(kind, match: match, covering: covering, now: now)
           asked.id = unusedID(asked.id, memory)
@@ -204,21 +203,28 @@ public enum AutopilotPolicy {
         .prefix(slots))
   }
 
-  /// Whether the owner already answered a question about `match` for things carrying `risks`. An
-  /// answer from before cards named their risks answered the pattern whatever its things carry, as
-  /// it always did. A newer one answered only the risks its card showed, so things under the
-  /// pattern with a risk it didn't show get a question of their own. BZ's own answers leave the
-  /// pattern to the owner.
+  /// Whether the owner's answers about `match` already cover `covering`, the unsure things under it.
+  /// An answer from before cards named their risks answered the pattern whatever its things carry,
+  /// as it always did. Newer ones cover only what the lessons they taught match: a Yes stays within
+  /// the risks its card showed, and a No to a card asked again keeps only some of its risks. So a
+  /// thing with a risk no card showed, a mix of risks the owner said yes to on separate cards, or
+  /// anything else those lessons leave unsure gets a question of its own. BZ's own answers leave
+  /// the pattern to the owner.
   static func answered(
-    _ kind: AutopilotKind, _ match: [String: [String]], risks carried: [String],
+    _ kind: AutopilotKind, _ match: [String: [String]], covering: [AutopilotItem],
     memory: AutopilotMemory
   ) -> Bool {
-    let need = Set(carried)
-    return memory.questions.contains { past in
-      guard past.kind == kind, past.match == match, ownerAnswered(past) else { return false }
-      guard let shown = past.risks else { return true }
-      return need.isSubset(of: Set(shown))
+    let past: [AutopilotQuestion] = memory.questions.filter { question in
+      question.kind == kind && question.match == match && ownerAnswered(question)
     }
+    if past.contains(where: { $0.risks == nil }) { return true }
+    guard !past.isEmpty else { return false }
+    let ids = Set(past.map(\.id))
+    // A lesson an answer was taken into carries the answer's id in `from`.
+    let taught: [AutopilotRule] = memory.rules.filter { rule in
+      questionIDs(rule).contains(where: ids.contains)
+    }
+    return covering.allSatisfy { item in taught.contains { matches($0, item) } }
   }
 
   /// A native question's id: its pattern's key, then the risks its card shows when it shows any, so
@@ -232,8 +238,9 @@ public enum AutopilotPolicy {
   }
 
   /// `id`, or `id` numbered when memory already holds a question with it: answered, skipped or open.
-  /// A pattern asked again, after a skip or for a card whose risks changed after its id was made, is
-  /// a question of its own, so an answer lands on the card the owner sees and never on an older one.
+  /// A pattern asked again, after a skip, for things its answers' lessons leave unsure, or for a
+  /// card whose risks changed after its id was made, is a question of its own, so an answer lands on
+  /// the card the owner sees and never on an older one.
   static func unusedID(_ id: String, _ memory: AutopilotMemory) -> String {
     let taken = Set(memory.questions.map(\.id))
     guard taken.contains(id) else { return id }

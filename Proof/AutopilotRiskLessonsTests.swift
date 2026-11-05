@@ -10,6 +10,7 @@ func riskLessonsProof() async throws {
   try await keepNewRisksProof()
   try await keepEveryMemberProof()
   try await keepUncheckedProof()
+  try await shownRisksProof()
 }
 
 /// A No to a card asked again for copies BZ couldn't check keeps each of them, and what it taught

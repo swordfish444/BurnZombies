@@ -82,6 +82,8 @@ Native questions are already only subject plus recency. Generalizing mostly wide
 
 A Yes is narrowed to its card's risks when the question recorded them (`risks`, Part 3).
 
+- The card's risks are the ones the owner saw. Teach BZ sends them with the answer, and the answer keeps them as its question's `risks`. A look that refreshed the question while its card was on screen can't widen what the Yes covers, or what BZ counts as approved. An answer sent without them, as the command line can, uses the question's stored risks, as before.
+
 - Each risk fact of the kind (`saved`, `changes` and `inUse` for copies, `listening` for programs) allows its safe values and only the risky values the card showed. It allows `unknown` only when the card showed it.
 - A Yes to clean copies doesn't cover unsaved work. A later copy with unsaved work is asked about on a card of its own (Part 3).
 - A question that recorded no risks teaches what it always did. That covers questions asked before cards named their risks, so migration and the replay of older answers are unchanged.
@@ -158,9 +160,9 @@ Legacy questions derive them from the match and the caution text.
 
 A native question's id names the risks its card shows.
 
-- A pattern the owner answered for one set of risks is asked again when unsure things under it carry a risk that card didn't show. The new card counts that risk among its cautions.
+- A pattern the owner answered is asked again while unsure things under it match none of the lessons its answers taught. That covers things with a risk no card showed, a mix of risks the owner said yes to on separate cards, and things a No's narrowed keeps leave out. The new card counts their risks among its cautions.
 - An answer from before cards named their risks keeps its pattern answered.
-- A question asked again, after a skip or for new risks, never takes an id that memory already holds. An answer lands on the open question with its id, so it always reaches the card the owner sees.
+- A question asked again, after a skip or for things its answers' lessons leave unsure, never takes an id that memory already holds. An answer lands on the open question with its id, so it always reaches the card the owner sees.
 
 ### 3.1 Guess
 
@@ -241,6 +243,8 @@ Plain counts only:
   - Questions are those shown that week; tells don't count.
   - "On my own" is every burn whose authority isn't the owner's Burn now: lessons, starter rules, the AI and tells.
 - "You undid 0 of the 498 copies I burned." Only copies can be undone, so this counts copies, from the impact tally that keeps them for good.
+
+`burnzombies autopilot`, the command line's summary, shows the same: `lessons` (each sentence, with its evidence in parentheses) and `progress` (these lines).
 
 ### 4.3 Proof tests (in `scripts/test.sh --integration`)
 
