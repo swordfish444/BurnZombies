@@ -91,50 +91,8 @@ public enum WorkspaceSafety {
   @discardableResult public static func git(_ directory: String, _ arguments: [String]) throws
     -> String
   {
-    let p = Process()
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "bz-git-" + UUID().uuidString)
-    let fd = open(url.path, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW, 0o600)
-    guard fd >= 0 else { throw fail("Cannot create private Git output.") }
-    let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-    defer {
-      try? file.close()
-      try? FileManager.default.removeItem(at: url)
-    }
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    p.arguments =
-      [
-        "--no-pager", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c",
-        "core.untrackedCache=false", "-C", directory,
-      ] + arguments
-    p.environment = [
-      "PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory(), "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
-      "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
-    ]
-    p.standardInput = FileHandle.nullDevice
-    p.standardOutput = file
-    p.standardError = file
-    try p.run()
-    let deadline = Date().addingTimeInterval(10)
-    while p.isRunning {
-      var s = stat()
-      _ = fstat(fd, &s)
-      if Date() >= deadline || s.st_size > 1_048_576 {
-        p.terminate()
-        Thread.sleep(forTimeInterval: 0.05)
-        if p.isRunning { kill(p.processIdentifier, SIGKILL) }
-        p.waitUntilExit()
-        throw fail("Git inspection exceeded its bounded budget. Workspace preserved where present.")
-      }
-      Thread.sleep(forTimeInterval: 0.005)
-    }
-    p.waitUntilExit()
-    try file.seek(toOffset: 0)
-    let data = try file.read(upToCount: 1_048_577) ?? Data()
+    let data = try WorktreeGit.run(directory, arguments, seconds: 10)
     guard data.count <= 1_048_576 else { throw fail("Git output exceeded its inspection limit.") }
-    guard p.terminationStatus == 0 else {
-      throw fail("Git refused the workspace operation (exit \(p.terminationStatus)).")
-    }
     return String(decoding: data, as: UTF8.self)
   }
   static func line(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }

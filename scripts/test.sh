@@ -10,7 +10,7 @@ elif [[ "$1" == --full ]]; then
   set -- --integration "$@"
 fi
 scripts/check.sh
-swift build
+swift build --disable-automatic-resolution
 git rev-parse HEAD
 test_dirty_entries="$(git status --porcelain=v1 | wc -l | tr -d ' ')"
 printf 'Working-tree changes: %s\n' "$test_dirty_entries"

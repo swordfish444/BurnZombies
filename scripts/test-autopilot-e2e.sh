@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 harness="${1:-claude}"
 executable="$(command -v "$harness")"
 executable="$(cd "$(dirname "$executable")" && pwd -P)/$(basename "$executable")"
-swift build
+swift build --disable-automatic-resolution
 root="$(mktemp -d "${TMPDIR:-/tmp}/bz-autopilot-e2e.XXXXXX")"
 trap 'rm -rf "$root"' EXIT
 .build/debug/BurnProof --autopilot-e2e "$root" "$harness" "$executable"

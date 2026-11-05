@@ -5,7 +5,7 @@
 Autopilot replaces "the owner must have released this helper" with a learned policy, while keeping every mechanical rail. In order: hard rails mark an item **protected** (never burned, never asked); the operator's keeps, a "No" answer or a confident AI keep always win; the operator's "Yes" rules burn; three switchable starter rules burn the obvious; the AI may burn on its own only at ≥ 0.85 confidence for low-risk items (orphaned programs with no listening port, copies not owned by Codex/Claude/Conductor that nothing uses, known junk folders). Everything else becomes a yes/no training question. See [Autopilot](AUTOPILOT.md).
 
 - **Programs.** Only orphan roots under launchd (observed reparenting or a dead job leader; LaunchAgents excluded) are candidates; live descendants are burned with them, deepest first. macOS, app bundles outside automation caches (Playwright/Puppeteer browsers, `node_modules`, temporary folders), harnesses, BurnZombies itself and anything a live chat is working in are protected. SIGTERM only, exact identity (boot, PID, start time, path) re-checked immediately before each signal, exit verified by the monitor. An open socket is a fact the policy sees, not a refusal.
-- **Old copies.** Before `git worktree remove --force`, every commit and local change (tracked, untracked and small ignored files outside rebuildable folders) is written to `refs/burnzombies/retired/<id>` in the repository and verified. Browser profiles that test runs leave behind (a Chrome-style profile folder with no file Git tracks) are left out and not counted; a copy with more than 512 MB of other unsaved files is refused. Main checkouts, locked copies, in-progress merges/rebases, copies a process uses and dirty or unpushed submodules are refused. The saved/changes facts are recomputed at removal; a change refuses, and a fact the catalog had not checked yet may only turn out safe (saved on a remote, no local changes) or the copy is judged again. Restore recreates the copy at its path and returns local changes as uncommitted.
+- **Old copies.** Before `git worktree remove --force`, existing committed HEAD is preserved in `refs/burnzombies/retired/<id>`. Local and ignored changes outside proven generated caches are preserved in private encrypted recovery and restored for verification. Browser profiles that test runs leave behind (a Chrome-style profile folder with no file Git tracks) are left out and not counted; a copy with more than 512 MB of other unsaved files is refused. Main checkouts, locked copies, in-progress merges/rebases, copies a process uses and dirty or unpushed submodules are refused. The saved/changes facts are recomputed at removal; a change refuses, and a fact the catalog had not checked yet may only turn out safe (saved on a remote, no local changes) or the copy is judged again. Restore recreates the copy at its path and returns local changes as uncommitted.
 - **Junk folders.** Only known rebuildable kinds, untracked by git, outside private areas (iCloud Drive, Mail, Messages, Photos, `.ssh`, `.gnupg`, Keychains) and unused by any process. Anything else needs an operator rule and goes to the Trash.
 - **Bounds.** At most 50 programs, 20 copies and 20 junk folders burned per sweep; refusals do not count. A refusal stands for the facts and authority it saw for six hours. Refusals and other receipts are each kept up to 500, so a stream of refusals never pushes out restore information and a long burn history never erases a refusal. AI sweeps run headless with six MCP tools and read-only file tools, no shell; every burn is re-authorized natively. They run outside any agent's session: the installer starts BZ with the environment it gets at login, and sweeps and reviews start without a session's IDs, sockets or tokens, even when an agent installed BZ. Failures back off 15 → 120 minutes and never pause the loop.
 
@@ -68,3 +68,33 @@ New installs receive no implicit cleanup grant. Upgrade migration writes an inde
 Workflow rules require explicit scope, cap and expiry. Shadow rules never authorize actions. The first actual action must verify before another proceeds. Replacing a rule does not reset its workflow's daily cap or bypass uncertainty. Forgetting revokes automation and deletes personalization decisions while keeping operation and recovery obligations. The selected model can receive scoped decision history only when enabled; no model fine-tuning or numerical safety probability is claimed.
 
 Exact fixture provenance propagates through native receipts and the intent ledger. Fixtures retain recoverability but are excluded from real impact and normal notifications. Custom state roots and suggestive names alone never mark production work as a test. Compact resolved presentation history after 90 days and delivery diagnostics after 30 days; unresolved authority, Keep, active policy evidence and native recovery bindings remain.
+
+
+## Private inspection and recovery (0.14.1)
+
+Autopilot keeps its catalog, learned rules, bounds and automatic cleanup. Model-facing process
+inspection returns allowlisted task-identification facts instead of arbitrary arguments. Project
+manifests and READMEs are available through the same native inspection tool, bound to an exact
+catalog item with no traversal, links, private filenames or arbitrary harness file access.
+
+Unreadable or missing saved permissions/receipts block every Autopilot executor, including an
+explicit Burn now, until repaired. Observation continues. An independent initialization marker
+prevents a missing state folder from silently granting fresh permission. Existing lessons and
+Keep decisions migrate without being replaced.
+
+Git invocations resolve and neutralize executable content filters before status, staging or
+checkout; hooks and filesystem monitors stay disabled. Local changes are preserved as raw bytes,
+so recovery does not depend on running a repository's clean/smudge programs. Only already committed
+HEAD enters new safety refs. Existing ref-only recovery receipts remain supported.
+
+Local and ignored files use private, compressed, authenticated encrypted recovery outside Git.
+There is no 5 MiB per-ignored-file or 100 MiB ignored-total truncation. Unsupported files, changed
+content, incomplete visibility or failed recovery verification stop removal before dispatch.
+Insufficient capacity for unique contents refuses before removal, without truncation. Unchanged committed files remain in existing Git objects instead of consuming duplicate archive space. Snapshots are restored and their content verified before removal. Recovery files remain until an
+explicitly authorized purge; a private restore journal is retained with each archive.
+
+Proven generated caches remain directly reclaimable. A generic build/dist name alone does not
+prove regeneration: uncertain contents are preserved in encrypted recovery while the eligible
+folder is removed. Preserved archive allocation is subtracted from disk recovery credit. Undo
+restores those bytes without overwriting a new occupant. Preserving unique bytes consumes space;
+this is not reported as disk space reclaimed.

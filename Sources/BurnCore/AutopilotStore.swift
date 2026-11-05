@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Private JSON documents under `<root>/autopilot/`, written atomically with bounded reads.
@@ -13,11 +14,52 @@ public final class AutopilotStore: @unchecked Sendable {
   public init(root: URL = Store.defaultRoot) throws {
     directory = root.appendingPathComponent("autopilot", isDirectory: true)
     store = try Store(root: directory)
+    let eraStore = try Store(root: root)
+    let marker = root.appendingPathComponent("autopilot-authority-era-v1")
+    var identity = stat()
+    if lstat(marker.path, &identity) != 0 {
+      guard errno == ENOENT else {
+        throw StoreError.message("Autopilot authority visibility is unavailable.")
+      }
+      // Only a completely new store gets defaults. An upgrade with any previous state must
+      // preserve missing permissions/receipts as an error rather than recreate a grant.
+      let names = [
+        "memory.json", "sweep.json", "receipts.json", "memory.v1.json", "catalog.json",
+        "impact.json",
+      ]
+      let prior = names.contains { name in
+        var value = stat()
+        return lstat(directory.appendingPathComponent(name).path, &value) == 0 || errno != ENOENT
+      }
+      if !prior {
+        try store.write(
+          JSONEncoder().encode(AutopilotMemory()),
+          to: directory.appendingPathComponent("memory.json"), limit: 8 << 20)
+        try store.write(
+          JSONEncoder().encode(AutopilotSweepState()),
+          to: directory.appendingPathComponent("sweep.json"), limit: 1 << 20)
+        try store.write(
+          JSONEncoder().encode([AutopilotReceipt]()),
+          to: directory.appendingPathComponent("receipts.json"), limit: 8 << 20)
+      }
+      try eraStore.write(Data("1".utf8), to: marker, limit: 16)
+    } else {
+      _ = try eraStore.read(marker, limit: 16)
+    }
+
   }
 
   private func load<T: Decodable>(_ name: String, limit: Int, empty: T) throws -> T {
     let url = directory.appendingPathComponent(name)
-    guard FileManager.default.fileExists(atPath: url.path) else { return empty }
+    var info = stat()
+    if lstat(url.path, &info) != 0 {
+      guard errno == ENOENT else { throw StoreError.message("State visibility is unavailable.") }
+      guard !["memory.json", "sweep.json", "receipts.json"].contains(name) else {
+        throw StoreError.message(
+          "Required Autopilot permissions or receipts are missing; cleanup is paused.")
+      }
+      return empty
+    }
     let decoder = JSONDecoder()
     return try decoder.decode(T.self, from: store.read(url, limit: limit))
   }

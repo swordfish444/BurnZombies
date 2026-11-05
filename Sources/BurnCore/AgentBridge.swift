@@ -179,7 +179,10 @@ public actor AgentService {
     if request.operation == "autopilot" {
       guard let autopilot, let body = request.payload,
         let input = try? JSONDecoder().decode(AutopilotRequest.self, from: Data(body.utf8))
-      else { return AgentReply(ok: false, message: "Autopilot is unavailable or the request is malformed.") }
+      else {
+        return AgentReply(
+          ok: false, message: "Autopilot is unavailable or the request is malformed.")
+      }
       let (ok, json) = await autopilot.handle(input)
       var reply = AgentReply(ok: ok, message: ok ? "ok" : json)
       reply.payload = json
@@ -904,7 +907,10 @@ public enum AgentConnection {
     var buffer = [CChar](repeating: 0, count: 262_144)
     // Preserve the existing bounded wire deadline for storage callers. Cached
     // inspection returns promptly; optional analysis runs outside the request.
-    let worktree = ["worktrees", "worktrees_read", "workspace_clean"].contains(request.operation)
+    let workspaceCreate = request.operation == "workspace" && request.action == "create"
+    let worktree =
+      ["worktrees", "worktrees_read", "workspace_clean"].contains(request.operation)
+      || workspaceCreate
     // Legacy preview performs two complete native consumer passes. Its read-only
     // budget must not inherit the fast status deadline or outlast preservation.
     let workspacePreview = request.operation == "workspace_preview"

@@ -41,7 +41,8 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
   func fill(_ folder: URL, megabytes: Int) throws {
     try fm.createDirectory(at: folder, withIntermediateDirectories: true)
     for part in 0..<(megabytes / 100) {
-      try sh("cp -c \(chunk.path) part\(part) 2>/dev/null || cp \(chunk.path) part\(part)", in: folder)
+      try sh(
+        "cp -c \(chunk.path) part\(part) 2>/dev/null || cp \(chunk.path) part\(part)", in: folder)
     }
   }
   /// Everything in a copy, its folders included, last changed `age` ago.
@@ -75,9 +76,12 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
       "echo \(copy.name) > \(copy.name).txt && git add . && git commit -q -m \(copy.name)",
       in: folder, age: copy.age)
     if copy.merged {
-      try sh("git merge -q --no-edit \(copy.name) && git push -q origin main", in: main, age: copy.age)
+      try sh(
+        "git merge -q --no-edit \(copy.name) && git push -q origin main", in: main, age: copy.age)
     }
     try fill(folder.appendingPathComponent("node_modules/pkg"), megabytes: copy.megabytes)
+    try Data("{}".utf8).write(to: folder.appendingPathComponent("node_modules/.package-lock.json"))
+    try Data("{}".utf8).write(to: folder.appendingPathComponent("node_modules/pkg/package.json"))
     try age(folder, copy.age)
   }
   // A big Xcode build cache from today.
@@ -102,9 +106,10 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
   usleep(800_000)
   _ = await monitor.refresh()
   starter.waitUntilExit()
-  let helper = Int32(
-    (try String(contentsOf: main.appendingPathComponent("helper.pid"), encoding: .utf8))
-      .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+  let helper =
+    Int32(
+      (try String(contentsOf: main.appendingPathComponent("helper.pid"), encoding: .utf8))
+        .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
   defer {
     let children = Process()
     children.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
@@ -124,7 +129,9 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
     setup.waitUntilExit()
     guard setup.terminationStatus == 0 else { throw StoreError.message("Look-only setup failed.") }
   }
-  var sources = AutopilotSources.live(monitor: monitor, root: state, home: home.path)
+  var sources = AutopilotSources.live(
+    monitor: monitor, root: state, home: home.path,
+    recoveryKey: SymmetricKey(data: Data(repeating: 0x71, count: 32)))
   let live = sources.processes
   sources.processes = { threads in await live(threads).filter { $0.pid == helper } }
   let liveBurn = sources.burnProcess
@@ -167,7 +174,9 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
     if line != previous {
       print("t+\(minute)m  \(line)")
       for question in snapshot.questions {
-        print("        question: \(AutopilotPolicy.card(question).headline) \(AutopilotPolicy.card(question).frees)")
+        print(
+          "        question: \(AutopilotPolicy.card(question).headline) \(AutopilotPolicy.card(question).frees)"
+        )
       }
       previous = line
     }
@@ -185,7 +194,9 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
     if firstNumber == nil, shown {
       firstNumber = minute
     }
-    if junkCleared == nil, !fm.fileExists(atPath: paused.appendingPathComponent("node_modules").path) {
+    if junkCleared == nil,
+      !fm.fileExists(atPath: paused.appendingPathComponent("node_modules").path)
+    {
       junkCleared = minute
     }
     // A real minute leaves background work, like measuring junk folders, plenty of time; a
@@ -201,7 +212,8 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
     return
   }
   print(
-    "NEWCOMER first question: \(firstQuestion.map { "t+\($0)m" } ?? "none") · first burn: \(firstBurn.map { "t+\($0)m" } ?? "none") · copies merged over a month ago burned: \(finishedBurned.map { "t+\($0)m" } ?? "never") · first non-zero panel number: \(firstNumber.map { "t+\($0)m" } ?? "none") · junk in a paused copy: \(junkCleared.map { "t+\($0)m" } ?? "kept") · sandbox ran \(Int(Date().timeIntervalSince(start))) s")
+    "NEWCOMER first question: \(firstQuestion.map { "t+\($0)m" } ?? "none") · first burn: \(firstBurn.map { "t+\($0)m" } ?? "none") · copies merged over a month ago burned: \(finishedBurned.map { "t+\($0)m" } ?? "never") · first non-zero panel number: \(firstNumber.map { "t+\($0)m" } ?? "none") · junk in a paused copy: \(junkCleared.map { "t+\($0)m" } ?? "kept") · sandbox ran \(Int(Date().timeIntervalSince(start))) s"
+  )
   // Time to value: within two minutes a newcomer has a question, a burn and a number on the
   // panel; within three the copies merged over a month ago are burned and junk inside a copy paused
   // for weeks goes, while the copy's work stays.
@@ -210,7 +222,9 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
   check((firstNumber ?? .max) <= 2, "first number on the panel within 2 minutes")
   check((finishedBurned ?? .max) <= 3, "copies merged over a month ago burned within 3 minutes")
   check((junkCleared ?? .max) <= 3, "junk inside a copy paused for weeks cleared within 3 minutes")
-  check(fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path), "the paused copy's work stays")
+  check(
+    fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path),
+    "the paused copy's work stays")
   check(
     fm.fileExists(atPath: git.appendingPathComponent("acme-wip/acme-wip.txt").path),
     "work only on this Mac stays")
@@ -224,10 +238,14 @@ private func lookOnlyAfterward(
 ) async throws {
   let fm = FileManager.default
   let paused = git.appendingPathComponent("acme-paused")
-  let copies = ["acme-old-1", "acme-old-2", "acme-old-3", "acme-recent-1", "acme-recent-2", "acme-wip", "acme-paused"]
+  let copies = [
+    "acme-old-1", "acme-old-2", "acme-old-3", "acme-recent-1", "acme-recent-2", "acme-wip",
+    "acme-paused",
+  ]
   let wouldBurn = last.bytes[AutopilotStatus.burn.rawValue] ?? 0
   print(
-    "LOOK-ONLY first find: \(firstFound.map { "t+\($0)m" } ?? "none") · first question: \(firstQuestion.map { "t+\($0)m" } ?? "none") · burns in 31 minutes: \(firstBurn == nil ? 0 : 1) · receipts: \(receipts) · would burn \(last.count(.burn)) things, \(AutopilotPolicy.format(wouldBurn))")
+    "LOOK-ONLY first find: \(firstFound.map { "t+\($0)m" } ?? "none") · first question: \(firstQuestion.map { "t+\($0)m" } ?? "none") · burns in 31 minutes: \(firstBurn == nil ? 0 : 1) · receipts: \(receipts) · would burn \(last.count(.burn)) things, \(AutopilotPolicy.format(wouldBurn))"
+  )
   check((firstFound ?? .max) <= 2, "look-only: finds things within 2 minutes")
   check((firstQuestion ?? .max) <= 2, "look-only: first question within 2 minutes")
   check(firstBurn == nil, "look-only: nothing burned in the first half hour")
@@ -270,13 +288,17 @@ private func lookOnlyAfterward(
     try await Task.sleep(nanoseconds: 250_000_000)
   }
   print(
-    "LOOK-ONLY after Start burning: \(burned.count) burned in \(Int(Date().timeIntervalSince(switched))) s · sandbox ran \(Int(Date().timeIntervalSince(started))) s")
+    "LOOK-ONLY after Start burning: \(burned.count) burned in \(Int(Date().timeIntervalSince(switched))) s · sandbox ran \(Int(Date().timeIntervalSince(started))) s"
+  )
   check(
     names.isSubset(of: Set(burned.filter { $0.kind == .worktree }.map(\.name))),
     "after Start burning: each merged copy burns, with its receipt")
   check(!fm.fileExists(atPath: junk), "after Start burning: junk inside the paused copy goes")
-  check(!merged.contains(where: fm.fileExists(atPath:)), "after Start burning: the merged copies go")
-  check(fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path), "the paused copy's work stays")
+  check(
+    !merged.contains(where: fm.fileExists(atPath:)), "after Start burning: the merged copies go")
+  check(
+    fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path),
+    "the paused copy's work stays")
   check(
     fm.fileExists(atPath: git.appendingPathComponent("acme-wip/acme-wip.txt").path),
     "work only on this Mac stays")
