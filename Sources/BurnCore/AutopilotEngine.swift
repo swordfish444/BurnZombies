@@ -249,7 +249,12 @@ public actor Autopilot {
   @discardableResult func burnAuthorized(
     now: Date, used start: [AutopilotKind: Int] = [:], settling: Set<String> = []
   ) async -> [AutopilotKind: Int] {
-    guard let items = catalog?.items, !holdsBurns() else { return start }
+    guard let items = catalog?.items, !holdsBurns() else {
+      // Look-only switched on after BZ acted: the act's tell says what burned, which is nothing yet,
+      // and never "Burned 3" for things still there.
+      refreshTells(settling: settling)
+      return start
+    }
     let early = memory()
     let receipts = (try? store.receipts()) ?? []
     let spent = spent(receipts)

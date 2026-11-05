@@ -14,6 +14,7 @@ func tellProof() async throws {
   try await forgetTellProof()
   try await askActProof()
   try await lookOnlyActProof()
+  try await lookOnlyAfterActProof()
   try await undoSafetyProof()
 }
 
@@ -706,4 +707,83 @@ private func lookOnlyActProof() async throws {
   equal(asked?.guess?.sure, true, "the AI's question is asked, BZ sure")
   try await Task.sleep(nanoseconds: 300_000_000)
   equal(world.burns.all, [], "look-only: nothing burned")
+}
+
+extension Autopilot {
+  /// `request`, then look-only switched on, in one turn of the engine: whatever the request starts in
+  /// the background, like the burns after BZ acts, runs only after both.
+  func handleThenLookOnly(_ request: AutopilotRequest, now: Date) async throws -> (Bool, String) {
+    let reply: (Bool, String) = await handle(request)
+    _ = try await apply(.setLookOnly(true), now: now)
+    return reply
+  }
+}
+
+/// Look-only switched on after BZ acted, before the act's burns start, after an answer and when the
+/// AI asks: nothing burns, and the tell says nothing burned rather than "Burned 3", keeping the rows
+/// of what BZ meant to burn. Once burning starts, the act's burns go and the tell counts them.
+private func lookOnlyAfterActProof() async throws {
+  let now = Date()
+  func server(_ family: String) -> AutopilotItem {
+    AutopilotItem(
+      id: "process:" + family, kind: .process, name: family, bytes: 1_500_000_000,
+      facts: [
+        "family": family, "orphaned": "maybe", "thread": "none", "idle": "1d",
+        "listening": "yes", "agent": "none",
+      ], processKey: family)
+  }
+  // Three servers, bigger than the copies, take the three slots; answering one frees a slot, and BZ
+  // acts on the copies.
+  let world = TellWorld(copies: threeCopies(now), programs: ["python", "ruby", "java"].map(server))
+  let (engine, store, root) = try tellEngine("look-only-after-act", world, trustedCopies(now: now))
+  defer { try? FileManager.default.removeItem(at: root) }
+  let first = await engine.tick(now: now)
+  guard let python = first.questions.first(where: { $0.match["family"] == ["python"] }) else {
+    return failTest("after act: a question about the python program")
+  }
+  var answer = AutopilotRequest(tool: "command")
+  answer.command = .answer(questionID: python.id, answer: .no)
+  let (answered, words) = try await engine.handleThenLookOnly(answer, now: now)
+  check(answered, words)
+  guard let tell = try store.memory().tells.first else {
+    return failTest("after act: BZ acts on the copies once a slot is free")
+  }
+  equal(tell.rows.count, 3, "after act: the tell names the three copies")
+  await eventually { (try? store.memory().tells.first?.count) == 0 }
+  equal(world.burns.all, [], "after act: look-only, so nothing burned")
+  let held = try store.memory().tells.first
+  equal(held?.count, 0, "after act: the tell says nothing burned")
+  equal(held?.bytes, 0)
+  equal(held?.rows, tell.rows, "after act: and keeps what BZ meant to burn")
+
+  _ = try await engine.apply(.setLookOnly(false), now: now)
+  await eventually { (try? store.memory().tells.first?.count) == 3 }
+  equal(Set(world.burns.all), Set(world.copies.map(\.id)), "burning on: the act's burns go")
+  let burned = try store.memory().tells.first
+  equal(burned?.count, 3, "burning on: the tell counts them")
+  equal(burned?.rows, tell.rows, "burning on: with the rows captured at the act")
+
+  // When the AI asks and BZ acts.
+  var cautious = trustedCopies(now: now)
+  cautious.actsOnItsOwn = false
+  let askWorld = TellWorld(copies: threeCopies(now))
+  let (asker, askStore, askRoot) = try tellEngine("look-only-after-ask", askWorld, cautious)
+  defer { try? FileManager.default.removeItem(at: askRoot) }
+  guard let native = await asker.tick(now: now).questions.first(where: { $0.kind == .worktree })
+  else { return failTest("after ask: BZ's own question for the AI to replace") }
+  _ = try await asker.apply(.setActsOnItsOwn(true), now: now)
+  var input = AutopilotQuestionInput(
+    kind: .worktree, match: ["saved": ["local"], "stale": ["week"]],
+    question: "Can I burn the copies nobody touched this week?")
+  input.guess = "yes"
+  var ask = AutopilotRequest(tool: "ask")
+  ask.question = input
+  ask.replace = native.id
+  let (asked, reply) = try await asker.handleThenLookOnly(ask, now: now)
+  check(asked, reply)
+  let actedOn: Int = try askStore.memory().tells.count
+  equal(actedOn, 1, "after ask: BZ acts on the AI's question")
+  await eventually { (try? askStore.memory().tells.first?.count) == 0 }
+  equal(askWorld.burns.all, [], "after ask: look-only, so nothing burned")
+  equal(try askStore.memory().tells.first?.count, 0, "after ask: the tell says nothing burned")
 }
