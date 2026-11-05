@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -7,7 +8,7 @@ extension AutopilotSources {
   /// measures slowly.
   public static func live(
     monitor: Monitor, root: URL = Store.defaultRoot, home: String = NSHomeDirectory(),
-    junk: AutopilotJunkCache = AutopilotJunkCache()
+    junk: AutopilotJunkCache = AutopilotJunkCache(), recoveryKey: SymmetricKey? = nil
   ) -> AutopilotSources {
     // Kept with Autopilot's state, so a restart doesn't size and date every copy again.
     let store = try? AutopilotStore(root: root)
@@ -58,21 +59,39 @@ extension AutopilotSources {
       },
       processOutcome: { await monitor.autopilotOutcome($0) },
       retireWorktree: { item, authority in
+        let protected = scope()
+        if let path = item.path,
+          let place = protected.resolution(path).place ?? protected.pointerPlace(path)
+        {
+          return .refused(item, authority: authority, AutopilotDisk.protectedRefusal(place))
+        }
         let receipt = junk.clearing(item.path) {
-          AutopilotWorktrees.retire(item, authority: authority, root: root, protected: scope())
+          AutopilotWorktrees.retire(
+            item, authority: authority, root: root, protected: scope(), recoveryKey: recoveryKey,
+            authorize: { Autopilot.executorAllowed(item, authority: authority, root: root) })
         }
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt
       },
-      restoreWorktree: { try AutopilotWorktrees.restore($0, protected: scope()) },
+      restoreWorktree: {
+        try AutopilotWorktrees.restore($0, protected: scope(), recoveryKey: recoveryKey)
+      },
       reclaimDisk: { item, authority in
+        let protected = scope()
+        if let path = item.path, let place = protected.resolution(path).place {
+          return .refused(item, authority: authority, AutopilotDisk.protectedRefusal(place))
+        }
         let receipt = junk.clearing(item.path) {
-          AutopilotDisk.reclaim(item, authority: authority, home: home, protected: scope())
+          AutopilotDisk.reclaim(
+            item, authority: authority, home: home, protected: scope(), root: root,
+            recoveryKey: recoveryKey,
+            authorize: { Autopilot.executorAllowed(item, authority: authority, root: root) })
         }
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt
       },
       inspect: { AutopilotInspector.inspect($0, protected: scope()) },
+      evidence: { AutopilotEvidence.read($0, relativePath: $1, protected: scope()) },
       coverageNotes: {
         guard !scope().unrestricted else { return [] }
         let places = skipped.get()
@@ -292,11 +311,15 @@ public enum AutopilotInspector {
     {
       return ["state": AutopilotDisk.protectedRefusal(place)]
     }
+    var result: [String: String]
     switch item.kind {
-    case .process: return process(item)
-    case .worktree: return worktree(item)
-    case .disk: return folder(item)
+    case .process: result = process(item)
+    case .worktree: result = worktree(item)
+    case .disk: result = folder(item)
     }
+    let evidence = AutopilotEvidence.overview(item, protected: protected)
+    if !evidence.isEmpty { result["projectEvidence"] = evidence }
+    return result
   }
 
   static func process(_ item: AutopilotItem) -> [String: String] {
@@ -314,7 +337,9 @@ public enum AutopilotInspector {
     ]
     let children = native.scan().observations.filter { $0.parent == pid }.prefix(12)
     result["children"] =
-      children.isEmpty ? "none" : children.map { "\($0.name) (\($0.identity.pid))" }.joined(
+      children.isEmpty
+      ? "none"
+      : children.map { "\($0.name) (\($0.identity.pid))" }.joined(
         separator: ", ")
     return result
   }
@@ -353,7 +378,8 @@ public enum AutopilotInspector {
       "build.gradle", "build.gradle.kts", "Cargo.toml", "pyproject.toml", "requirements.txt",
       "Podfile", "Gemfile",
     ].filter { FileManager.default.fileExists(atPath: parent.appendingPathComponent($0).path) }
-    let modified = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate])
+    let modified =
+      (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate])
       as? Date
     return [
       "entries": String(entries.count),

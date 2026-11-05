@@ -1,4 +1,6 @@
 import BurnCore
+import CBurn
+import CryptoKit
 import Foundation
 
 // Every case runs real Git against sacrificial repositories in a temporary folder. The
@@ -347,6 +349,8 @@ private func apBuild(_ world: APWorld) throws {
   let origin = world.path("origin.git")
   try apGit(world.base, ["init", "--bare", "--initial-branch=main", origin])
   try apGit(world.base, ["init", "--initial-branch=main", world.main])
+  try apWrite(
+    world.main + "/package.json", "{\"name\":\"proof\",\"scripts\":{\"build\":\"tsc\"}}\n")
   try apWrite(world.main + "/.gitignore", "node_modules/\n.env\nbig.bin\n")
   try apWrite(world.main + "/README.md", "project\n")
   try apWrite(world.main + "/tracked.txt", "original\n")
@@ -380,6 +384,8 @@ private func apBuild(_ world: APWorld) throws {
   try apWrite(dirty + "/tracked.txt", "edited\n")
   try FileManager.default.removeItem(atPath: dirty + "/README.md")
   try apWrite(dirty + "/untracked.txt", "new\n")
+  try apWrite(dirty + "/node_modules/.package-lock.json", "{}\n")
+  try apWrite(dirty + "/node_modules/pkg/package.json", "{}\n")
   try apWrite(dirty + "/.env", "SECRET=1\n")
   try apWrite(dirty + "/node_modules/pkg/index.js", "module.exports = 1\n")
   try Data(repeating: 0x41, count: 6 << 20).write(to: URL(fileURLWithPath: dirty + "/big.bin"))
@@ -507,7 +513,7 @@ private func apExpectRefusal(
   _ world: APWorld, _ item: AutopilotItem, _ label: String,
   inUse: (String) -> Int32 = { _ in 0 }
 ) throws -> AutopilotReceipt {
-  let receipt = AutopilotWorktrees.retire(
+  let receipt = apRetire(
     item, authority: "operator", root: world.state, inUse: inUse)
   equal(
     receipt.outcome, "refused",
@@ -571,7 +577,7 @@ private func apRefusalProof(_ world: APWorld, _ items: [String: AutopilotItem]) 
   equal(early.detail, "I hadn't finished checking this copy, so I'll judge it again.")
   var uncheckedEdits = items["dirty"]!
   uncheckedEdits.facts["changes"] = "unknown"
-  let edits = AutopilotWorktrees.retire(
+  let edits = apRetire(
     uncheckedEdits, authority: "operator", root: world.state, inUse: { _ in 0 })
   equal(edits.outcome, "refused", "edits the catalog had not checked")
   equal(edits.detail, "I hadn't finished checking this copy, so I'll judge it again.")
@@ -581,7 +587,7 @@ private func apRefusalProof(_ world: APWorld, _ items: [String: AutopilotItem]) 
   let ghost = AutopilotItem(
     id: "worktree:ghost", kind: .worktree, name: "ghost", path: world.path("ghost"),
     facts: ["saved": "merged", "changes": "none"])
-  let gone = AutopilotWorktrees.retire(
+  let gone = apRetire(
     ghost, authority: "operator", root: world.state, inUse: { _ in 0 })
   equal(gone.outcome, "refused", "missing folder")
 
@@ -592,7 +598,7 @@ private func apRefusalProof(_ world: APWorld, _ items: [String: AutopilotItem]) 
     (-1, "I could not check whether something is using it, so I left it alone."),
   ] {
     var checks = 0
-    let late = AutopilotWorktrees.retire(
+    let late = apRetire(
       busy, authority: "operator", root: world.state,
       inUse: { _ in
         checks += 1
@@ -613,7 +619,7 @@ private func apUncheckedRetire(_ world: APWorld, _ item: AutopilotItem) throws {
   var unchecked = item
   unchecked.facts["saved"] = "unknown"
   unchecked.facts["changes"] = "unknown"
-  let receipt = AutopilotWorktrees.retire(
+  let receipt = apRetire(
     unchecked, authority: "ai:0.90", root: world.state, inUse: { _ in 0 })
   equal(receipt.outcome, "burned", "pushed and clean once checked: " + receipt.detail)
   checkFalse(apExists(item.path!), "the unchecked copy is gone")
@@ -624,7 +630,7 @@ private func apCleanRetire(_ world: APWorld, _ item: AutopilotItem) throws {
   let path = item.path!
   let head = try apLine(path, ["rev-parse", "HEAD"])
   var asked: [String] = []
-  let receipt = AutopilotWorktrees.retire(
+  let receipt = apRetire(
     item, authority: "starter:starter-finished-copies", root: world.state,
     inUse: {
       asked.append($0)
@@ -633,7 +639,7 @@ private func apCleanRetire(_ world: APWorld, _ item: AutopilotItem) throws {
   equal(receipt.outcome, "burned", "clean merged copy: " + receipt.detail)
   equal(receipt.authority, "starter:starter-finished-copies")
   equal(receipt.itemID, item.id)
-  equal(receipt.bytes, item.bytes, "bytes freed are the copy's size")
+  check(receipt.bytes <= item.bytes, "retained recovery is not credited as disk reclaimed")
   check(asked.contains(path), "the in-use check looked at the copy")
   checkFalse(apExists(path), "the folder is gone")
   let registered = try apGit(world.main, ["worktree", "list", "--porcelain"])
@@ -656,12 +662,12 @@ private func apCleanRetire(_ world: APWorld, _ item: AutopilotItem) throws {
   equal(branchTip, head, "the branch is untouched")
 
   // Retiring again, or restoring over something else, is refused.
-  let again = AutopilotWorktrees.retire(
+  let again = apRetire(
     item, authority: "operator", root: world.state, inUse: { _ in 0 })
   equal(again.outcome, "refused", "retiring twice")
   try apWrite(path + "/squatter.txt", "mine\n")
   do {
-    try AutopilotWorktrees.restore(receipt)
+    try apRestore(receipt)
     failTest("restore went ahead although the folder was taken")
   } catch {}
   equal(apRead(path + "/squatter.txt"), "mine\n", "the folder in the way was left alone")
@@ -669,7 +675,7 @@ private func apCleanRetire(_ world: APWorld, _ item: AutopilotItem) throws {
   checkFalse(listing.contains("worktree " + path + "\n"), "no registration was created")
   try FileManager.default.removeItem(atPath: path)
 
-  try AutopilotWorktrees.restore(receipt)
+  try apRestore(receipt)
   equal(apRead(path + "/merged.txt"), "done\n", "files are back")
   let attached = try apLine(path, ["symbolic-ref", "HEAD"])
   equal(attached, "refs/heads/feature-merged", "the branch is checked out again")
@@ -682,7 +688,7 @@ private func apCleanRetire(_ world: APWorld, _ item: AutopilotItem) throws {
 private func apDirtyRetire(_ world: APWorld, _ item: AutopilotItem) throws {
   let path = item.path!
   let head = try apLine(path, ["rev-parse", "HEAD"])
-  let receipt = AutopilotWorktrees.retire(
+  let receipt = apRetire(
     item, authority: "operator", root: world.state, inUse: { _ in 0 })
   equal(receipt.outcome, "burned", "dirty copy: " + receipt.detail)
   checkFalse(apExists(path), "the folder is gone")
@@ -692,25 +698,28 @@ private func apDirtyRetire(_ world: APWorld, _ item: AutopilotItem) throws {
   }
   equal(restore.snapshot, true, "local changes need a snapshot")
   equal(restore.head, head)
-  let parent = try apLine(world.main, ["rev-parse", restore.ref + "^"])
-  equal(parent, head, "the snapshot sits on top of HEAD")
+  let preserved = try apLine(world.main, ["rev-parse", restore.ref])
+  equal(preserved, head, "only the existing commit enters the safety ref")
+  check(restore.recovery != nil, "raw local bytes have encrypted recovery")
   let listing = try apGit(world.main, ["ls-tree", "-r", "--name-only", restore.ref])
   let names = Set(listing.split(separator: "\n").map(String.init))
   check(names.contains("tracked.txt"), "the edited file is in the snapshot")
-  check(names.contains("untracked.txt"), "the new file is in the snapshot")
-  check(names.contains(".env"), "the small ignored file is in the snapshot")
-  checkFalse(names.contains("README.md"), "the deleted file stays deleted in the snapshot")
+  checkFalse(names.contains("untracked.txt"), "untracked bytes never enter Git")
+  checkFalse(names.contains(".env"), "ignored credentials never enter Git")
+  check(names.contains("README.md"), "the safety ref preserves the existing commit unchanged")
   checkFalse(
     names.contains(where: { $0.hasPrefix("node_modules") }), "node_modules is not saved")
   checkFalse(names.contains("big.bin"), "a large ignored file is not saved")
 
-  try AutopilotWorktrees.restore(receipt)
+  try apRestore(receipt)
   equal(apRead(path + "/tracked.txt"), "edited\n", "the edit is back")
   equal(apRead(path + "/untracked.txt"), "new\n", "the new file is back")
   equal(apRead(path + "/.env"), "SECRET=1\n", "the ignored .env is back")
   checkFalse(apExists(path + "/README.md"), "the deletion is back")
   checkFalse(apExists(path + "/node_modules"), "node_modules was not restored")
-  checkFalse(apExists(path + "/big.bin"), "the large ignored file was not restored")
+  equal(
+    (try? Data(contentsOf: URL(fileURLWithPath: path + "/big.bin")))?.count, 6 << 20,
+    "large ignored bytes are preserved")
   let status = try apGit(path, ["status", "--porcelain", "--untracked-files=all"])
   equal(
     Set(status.split(separator: "\n").map(String.init)),
@@ -740,7 +749,7 @@ private func apBrowserProfileRetire(_ world: APWorld) throws {
   }
   var cache: [String: AutopilotDelivery] = [:]
   func burn(_ path: String) throws -> AutopilotReceipt {
-    AutopilotWorktrees.retire(
+    apRetire(
       try apItem(path, world, cache: &cache), authority: "operator", root: world.state,
       inUse: { _ in 0 })
   }
@@ -758,9 +767,10 @@ private func apBrowserProfileRetire(_ world: APWorld) throws {
   if let restore = receipt.restore {
     let listing = try apGit(world.main, ["ls-tree", "-r", "--name-only", restore.ref])
     let names = listing.split(separator: "\n").map(String.init)
-    check(names.contains("notes.txt"), "the other unsaved file is backed up")
+    checkFalse(names.contains("notes.txt"), "the other unsaved file stays out of Git")
+    check(restore.recovery != nil, "the other unsaved file has private recovery")
     checkFalse(names.contains(where: { $0.hasPrefix(".qa artifacts") }), "the profile isn't")
-    try AutopilotWorktrees.restore(receipt)
+    try apRestore(receipt)
     equal(apRead(copy + "/notes.txt"), "keep me\n", "the unsaved file is back")
     checkFalse(apExists(copy + "/.qa artifacts"), "the profile isn't")
   } else {
@@ -817,11 +827,11 @@ private func apSubmoduleProof(_ world: APWorld) throws {
   try apGit(sub, ["reset", "--hard", "HEAD~1"])
   let clean = try apItem(copy, world, cache: &cache)
   equal(clean.facts["changes"], "none", "the submodule is back to the recorded commit")
-  let receipt = AutopilotWorktrees.retire(
+  let receipt = apRetire(
     clean, authority: "operator", root: world.state, inUse: { _ in 0 })
   equal(receipt.outcome, "burned", "clean submodule: " + receipt.detail)
   checkFalse(apExists(copy), "the copy with a submodule is gone")
-  try AutopilotWorktrees.restore(receipt)
+  try apRestore(receipt)
   check(apExists(copy + "/.gitmodules"), "the copy with a submodule is back")
   let head = try apLine(copy, ["rev-parse", "HEAD"])
   equal(head, receipt.restore?.head, "restored at the saved commit")
@@ -1002,7 +1012,7 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
   let cut = AutopilotAges(walks: junk.walks) { path, _, stop in
     guard !interrupted else { return later }
     interrupted = true
-    Thread.detachNewThread { junk.clearing(path) { burned.signal() } }
+    Thread.detachNewThread { _ = junk.clearing(path) { burned.signal() } }
     let limit = Date().addingTimeInterval(5)
     while !stop() && Date() < limit { usleep(1000) }
     return later
@@ -1118,5 +1128,21 @@ func autopilotWorktreeProof() async throws {
   try await apRestartProof(world)
 
   let leftovers = (try? fm.contentsOfDirectory(atPath: world.state.path)) ?? []
-  check(leftovers.isEmpty, "scratch space was left behind: \(leftovers)")
+  check(
+    Set(leftovers).isSubset(of: ["leases", "private-recovery"]),
+    "temporary scratch was left behind: \(leftovers)")
+  check(leftovers.contains("private-recovery"), "verified private recovery outlives retirement")
+}
+
+private let apRecoveryKey = SymmetricKey(data: Data(repeating: 0x73, count: 32))
+private func apRetire(
+  _ item: AutopilotItem, authority: String, root: URL,
+  inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil
+) -> AutopilotReceipt {
+  AutopilotWorktrees.retire(
+    item, authority: authority, root: root, inUse: inUse,
+    protected: protected, recoveryKey: apRecoveryKey)
+}
+private func apRestore(_ receipt: AutopilotReceipt) throws {
+  try AutopilotWorktrees.restore(receipt, recoveryKey: apRecoveryKey)
 }

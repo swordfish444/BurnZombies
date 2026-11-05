@@ -1,4 +1,5 @@
 import BurnCore
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -257,7 +258,8 @@ private func adkThreadsProof(base: String, now: Date) throws {
   equal(both.thread, "live", "live beats ended")
   check(adkNear(both.lastActive, now.addingTimeInterval(-10)), "newest activity of matches")
   equal(AgentThreads.state(for: work + "/proj/sub", threads: mixed).thread, "ended", "only ended")
-  equal(AgentThreads.state(for: work + "/pro", threads: mixed).thread, "none", "prefix is not a match")
+  equal(
+    AgentThreads.state(for: work + "/pro", threads: mixed).thread, "none", "prefix is not a match")
   equal(AgentThreads.state(for: work + "/alpha", threads: threads).thread, "live", "indexed live")
   equal(AgentThreads.state(for: work + "/beta", threads: threads).thread, "ended", "indexed ended")
   equal(AgentThreads.state(for: work + "/nobody", threads: threads).thread, "none", "no thread")
@@ -271,8 +273,10 @@ private func adkSizeProof(base: String) throws {
   try adkWrite(String(repeating: "8", count: 5_242_880), to: external + "/big.bin")
   try fm.createSymbolicLink(atPath: folder + "/link", withDestinationPath: external)
   let size = AutopilotDisk.allocatedSize(folder)
-  check((size ?? 0) >= 1_048_576, "allocated size should cover the file: \(String(describing: size))")
-  check((size ?? .max) < 3_000_000, "allocated size followed a symlink: \(String(describing: size))")
+  check(
+    (size ?? 0) >= 1_048_576, "allocated size should cover the file: \(String(describing: size))")
+  check(
+    (size ?? .max) < 3_000_000, "allocated size followed a symlink: \(String(describing: size))")
   equal(AutopilotDisk.allocatedSize(folder, deadline: -1), nil, "an expired deadline gives no size")
   equal(AutopilotDisk.allocatedSize(base + "/missing"), nil, "a missing folder has no size")
   equal(AutopilotDisk.allocatedSize(folder + "/link"), nil, "a symlink is never measured")
@@ -281,7 +285,8 @@ private func adkSizeProof(base: String) throws {
   // time still shows it is big, instead of looking empty.
   equal(AutopilotDisk.countedSize(folder, deadline: 30), size, "a finished count is the size")
   let early = AutopilotDisk.countedSize(folder, deadline: -1)
-  check(early != nil && early! <= size!, "an early stop is a lower bound: \(String(describing: early))")
+  check(
+    early != nil && early! <= size!, "an early stop is a lower bound: \(String(describing: early))")
   equal(AutopilotDisk.countedSize(folder + "/data.bin", deadline: 30), nil, "a file is no folder")
 
   // Old copies the inventory never measured get sized a bounded amount per tick and are
@@ -576,7 +581,10 @@ private func adkJunkProof(base: String, now: Date) throws {
       facts: ["folder": folder, "home": "repo", "stale": "older", "size": "medium"])
   }
   func burn(_ item: AutopilotItem, _ authority: String, _ busy: Int32) -> AutopilotReceipt {
-    AutopilotDisk.reclaim(item, authority: authority, home: home, inUse: { _ in busy })
+    AutopilotDisk.reclaim(
+      item, authority: authority, home: home, inUse: { _ in busy },
+      root: URL(fileURLWithPath: home).appendingPathComponent("proof-state"),
+      recoveryKey: SymmetricKey(data: Data(repeating: 0x74, count: 32)))
   }
   func refused(_ item: AutopilotItem, _ authority: String, _ busy: Int32, _ message: String) {
     let receipt = burn(item, authority, busy)
@@ -613,8 +621,10 @@ private func adkJunkProof(base: String, now: Date) throws {
   check(fm.fileExists(atPath: home + "/scratch/data.txt"), "unknown folder was touched")
 
   try adkWrite(filler, to: home + "/projects-notes/readme.txt")
-  refused(forged(home + "/projects-notes", "node_modules"), starter, 0, "a folder with a false label")
-  refused(forged(old + "/a/b/c/node_modules", "node_modules"), starter, 0, "deeper than three levels")
+  refused(
+    forged(home + "/projects-notes", "node_modules"), starter, 0, "a folder with a false label")
+  refused(
+    forged(old + "/a/b/c/node_modules", "node_modules"), starter, 0, "deeper than three levels")
   refused(forged(home, "node_modules"), starter, 0, "the home folder itself")
   refused(forged(old + "/nope/node_modules", "node_modules"), starter, 0, "a folder that is gone")
   refused(forged(ssh + "/node_modules", "node_modules"), starter, 0, "inside .ssh")
@@ -634,7 +644,8 @@ private func adkJunkProof(base: String, now: Date) throws {
   check((distBytes ?? 0) > 0, "fixture folder has a size")
   let burned = burn(dist, starter, 0)
   equal(burned.outcome, "burned", "rebuildable folder: \(burned.detail)")
-  equal(burned.bytes, distBytes ?? 0, "receipt reports the measured size")
+  check(burned.bytes <= (distBytes ?? 0), "recovery storage is never credited as disk reclaimed")
+  check(burned.restore?.recovery != nil, "a generic dist folder has encrypted recovery")
   equal(burned.itemID, dist.id, "receipt item")
   equal(burned.authority, starter, "receipt authority")
   equal(burned.kind, .disk, "receipt kind")
@@ -662,7 +673,8 @@ private func adkJunkProof(base: String, now: Date) throws {
   }
   for relative in (fm.enumerator(atPath: quiet)?.allObjects as? [String] ?? []) + [""] {
     try fm.setAttributes(
-      [.modificationDate: staleDate], ofItemAtPath: relative.isEmpty ? quiet : quiet + "/" + relative)
+      [.modificationDate: staleDate],
+      ofItemAtPath: relative.isEmpty ? quiet : quiet + "/" + relative)
   }
   func newest(_ path: String) throws -> Date? {
     try WorktreeInspection.files(path, permitLinks: true).0.map {
@@ -982,6 +994,8 @@ private func adkOwnWalkProof(base: String, now: Date) async throws {
     let path = home + "/git/" + name
     try adkGit(repo, ["worktree", "add", "--detach", path])
     try fm.createDirectory(atPath: path + "/node_modules/pkg", withIntermediateDirectories: true)
+    try adkWrite("{}", to: path + "/node_modules/.package-lock.json")
+    try adkWrite("{}", to: path + "/node_modules/pkg/package.json")
     if clonefile(chunk, path + "/node_modules/pkg/part", 0) != 0 {
       try fm.copyItem(atPath: chunk, toPath: path + "/node_modules/pkg/part")
     }
@@ -1015,7 +1029,9 @@ private func adkOwnWalkProof(base: String, now: Date) async throws {
   let state = URL(fileURLWithPath: base + "/state")
   let monitor = try Monitor(
     legacyAuthority: true, discoveryHome: nil, root: state, accessCheck: fixtureAccess)
-  let sources = AutopilotSources.live(monitor: monitor, root: state, home: home, junk: junk)
+  let sources = AutopilotSources.live(
+    monitor: monitor, root: state, home: home, junk: junk,
+    recoveryKey: SymmetricKey(data: Data(repeating: 0x74, count: 32)))
   func reach(_ folder: String) async -> Bool {
     let deadline = Date().addingTimeInterval(20)
     while !reached.all.contains(folder), Date() < deadline {

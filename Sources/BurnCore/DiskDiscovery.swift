@@ -602,7 +602,7 @@ public final class DiskDiscovery: @unchecked Sendable {
     } else { result.moleState = "unavailable" }
     return result
   }
-  private static func manifest(_ path: String) -> String? {
+  static func manifest(_ path: String) -> String? {
     guard path == WorkspaceSafety.canonical(path) else { return nil }
     var before = stat()
     guard lstat(path, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
@@ -684,7 +684,7 @@ public final class DiskDiscovery: @unchecked Sendable {
       let text = $0.lowercased()
       return ![
         "password", "secret", "token", "api_key", "apikey", "credential", "authorization",
-        "private key",
+        "private key", "sk-", "ghp_", "github_pat_", "akia", "-----begin",
       ].contains(where: text.contains)
         && text.range(of: "://[^/ ]+@", options: .regularExpression) == nil
     }

@@ -74,11 +74,19 @@ public struct Native {
     if mask & 4 != 0 { return "cursor" }
     return "none"
   }
-  /// The live command line for inspection. Never persisted.
+  /// Only allowlisted task-identification facts cross the model boundary, never raw argv.
   public func commandLine(_ pid: Int32, limit: Int = 600) -> String? {
-    var buffer = [CChar](repeating: 0, count: limit + 1)
-    guard bz_command_line(pid, &buffer, Int32(buffer.count)) == 1 else { return nil }
-    return String(cString: buffer)
+    guard case .found(let process) = probe(pid) else { return nil }
+    var buffer = [CChar](repeating: 0, count: 262144)
+    defer {
+      _ = buffer.withUnsafeMutableBytes { $0.initializeMemory(as: UInt8.self, repeating: 0) }
+    }
+    let count = bz_command_arguments(pid, &buffer, Int32(buffer.count))
+    guard count > 0 else { return nil }
+    let arguments = buffer.prefix(Int(count)).map { UInt8(bitPattern: $0) }
+      .split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+    return String(
+      ProcessCommandSummary.describe(arguments, executable: process.executable).prefix(limit))
   }
   public func currentDirectory(_ pid: Int32) -> String? {
     var buffer = [CChar](repeating: 0, count: 4096)

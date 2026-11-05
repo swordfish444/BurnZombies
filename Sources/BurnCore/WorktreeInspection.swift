@@ -7,10 +7,53 @@ public enum WorktreeGit {
   private static let stateLock = NSLock()
   private static var unsafeTeardown = false
   /// Git variables a caller may add. None of them widens what the bounded runner may touch.
-  private static let permittedEnvironment: Set<String> = ["GIT_INDEX_FILE", "GIT_LITERAL_PATHSPECS"]
+  private static let permittedEnvironment: Set<String> = [
+    "GIT_INDEX_FILE", "GIT_LITERAL_PATHSPECS",
+  ]
   public static func run(
     _ path: String, _ args: [String], seconds: Double = 15,
     environment extra: [String: String] = [:]
+  ) throws -> Data {
+    // Reading configuration does not run filters. Include/worktree configuration is resolved by
+    // Git itself, then every executable content filter is overridden for this invocation only.
+    var overrides: [String] = []
+    var context: [String] = []
+    var cursor = 0
+    while cursor < args.count {
+      let flag = args[cursor]
+      if ["-c", "-C", "--git-dir", "--work-tree"].contains(flag), cursor + 1 < args.count {
+        context += [flag, args[cursor + 1]]
+        cursor += 2
+      } else if flag.hasPrefix("--git-dir=") || flag.hasPrefix("--work-tree=") {
+        context.append(flag)
+        cursor += 1
+      } else {
+        break
+      }
+    }
+    if args.first != "init" {
+      let data = try capture(
+        path,
+        context + [
+          "config", "--null", "--name-only", "--get-regexp",
+          "^filter\\..*\\.(clean|smudge|process|required)$",
+        ],
+        seconds: seconds, emptyConfiguration: true)
+      for bytes in data.split(separator: 0) {
+        guard let key = String(data: Data(bytes), encoding: .utf8),
+          !key.contains("\n"), !key.contains("\r"), key.lowercased().hasPrefix("filter.")
+        else { throw StoreError.message("Unsafe Git filter configuration; preserved.") }
+        overrides += ["-c", key + (key.lowercased().hasSuffix(".required") ? "=false" : "=")]
+      }
+    }
+    return try capture(
+      path, context + overrides + Array(args.dropFirst(cursor)), seconds: seconds,
+      environment: extra)
+  }
+
+  private static func capture(
+    _ path: String, _ args: [String], seconds: Double = 15,
+    environment extra: [String: String] = [:], emptyConfiguration: Bool = false
   ) throws -> Data {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "bz-worktree-git-" + UUID().uuidString)
@@ -49,7 +92,7 @@ public enum WorktreeGit {
       &words, &env, fd, Int32(seconds * 1000), { _, _ in Task.isCancelled ? 0 : 1 }, &context,
       &unreaped)
     if status == 72 { stateLock.withLock { unsafeTeardown = true } }
-    guard status == 0 else {
+    guard status == 0 || (emptyConfiguration && status == 1) else {
       throw StoreError.message(
         "Git refused or exceeded the bounded \(args.first ?? "operation") request (status \(status)); preserve the worktree and inspect its operation history."
       )
@@ -57,6 +100,47 @@ public enum WorktreeGit {
     try output.seek(toOffset: 0)
     return try output.read(upToCount: 8_388_609) ?? Data()
   }
+  public static func checkout(
+    _ repository: String, revision: String, to destination: String, paths: [String]? = nil
+  ) throws {
+    let gitDirectory = WorkspaceSafety.canonical(
+      try line(repository, ["rev-parse", "--absolute-git-dir"]))
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "bz-index-" + UUID().uuidString)
+    try FileManager.default.createDirectory(
+      at: scratch, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    let environment = ["GIT_INDEX_FILE": scratch.appendingPathComponent("index").path]
+    let config = [
+      "--git-dir=" + gitDirectory, "-c", "core.bare=false", "-c", "core.worktree=" + destination,
+      "-c", "core.splitIndex=false", "-c", "core.sparseCheckout=false", "-c", "index.sparse=false",
+    ]
+    _ = try run(
+      destination, config + ["read-tree", revision], seconds: 180, environment: environment)
+    if let paths {
+      var batch: [String] = []
+      var bytes = 0
+      func flush() throws {
+        guard !batch.isEmpty else { return }
+        _ = try run(
+          destination, config + ["checkout-index", "--prefix=" + destination + "/", "--"] + batch,
+          seconds: 180, environment: environment)
+        batch = []
+        bytes = 0
+      }
+      for path in paths {
+        if bytes + path.utf8.count + 1 > 65_536 { try flush() }
+        batch.append(path)
+        bytes += path.utf8.count + 1
+      }
+      try flush()
+    } else {
+      _ = try run(
+        destination, config + ["checkout-index", "--all", "--prefix=" + destination + "/"],
+        seconds: 180, environment: environment)
+    }
+  }
+
   public static func text(_ path: String, _ args: [String], seconds: Double = 15) throws -> String {
     let data = try run(path, args, seconds: seconds)
     guard let text = String(data: data, encoding: .utf8) else {
@@ -107,7 +191,8 @@ public enum WorktreeInspection {
       commonInode: cs.st_ino, administrationInode: ads.st_ino)
   }
   public static func files(
-    _ root: String, seconds: Double = 15, limit: Int = 100_000, permitLinks: Bool = false
+    _ root: String, seconds: Double = 15, limit: Int = 100_000, permitLinks: Bool = false,
+    excluding: Set<String> = [], ignoringGitPointers: Set<String> = []
   ) throws -> ([WorktreeFile], UInt64) {
     let rootInfo = try WorkspaceSafety.statAt(root)
     guard rootInfo.st_mode & S_IFMT == S_IFDIR else {
@@ -136,6 +221,21 @@ public enum WorktreeInspection {
       guard !Task.isCancelled, result.count < limit, ProcessInfo.processInfo.systemUptime < deadline
       else { throw StoreError.message("Checkout inspection limit reached; coverage incomplete.") }
       let relative = url.path == root ? "" : String(url.path.dropFirst(root.count + 1))
+      if excluding.contains(relative) {
+        var omitted = stat()
+        guard lstat(url.path, &omitted) == 0, omitted.st_mode & S_IFMT == S_IFDIR else {
+          throw StoreError.message("Generated folder changed during recovery.")
+        }
+        walk.skipDescendants()
+        continue
+      }
+      if ignoringGitPointers.contains(relative) {
+        var pointer = stat()
+        guard lstat(url.path, &pointer) == 0, pointer.st_mode & S_IFMT == S_IFREG,
+          pointer.st_uid == getuid()
+        else { throw StoreError.message("Submodule pointer changed; preserved.") }
+        continue
+      }
       if relative == ".git" {
         // Only a folder is skipped. A linked copy's .git is a file, and on macOS 27 a skip asked
         // for at a file lands on the next folder in the listing, which the walk then never reads.
@@ -233,6 +333,15 @@ public enum WorktreeInspection {
           nanos: Int64(s.st_mtimespec.tv_nsec), target: target, attributes: attributes))
     }
     guard !failed else { throw StoreError.message("Incomplete file visibility.") }
+    for directory in result.filter({ $0.kind == "directory" && !$0.path.isEmpty }).sorted(by: {
+      $0.path.count > $1.path.count
+    }) {
+      if excluding.contains(where: { $0.hasPrefix(directory.path + "/") }),
+        !result.contains(where: { $0.path.hasPrefix(directory.path + "/") })
+      {
+        result.removeAll { $0.path == directory.path }
+      }
+    }
     return (result.sorted { $0.path < $1.path }, allocated)
   }
   public static func inspect(

@@ -61,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
             # can take longer. Wait beyond their bounded product deadlines while
             # retaining the ordinary frame bound for cheap status calls.
             response = send("tools/call", {"name": name, "arguments": args},
-                        timeout=60 if name in {"burnzombies_workspace_preview", "burnzombies_workspace_clean"} else 10)
+                        timeout=60 if name in {"burnzombies_workspace", "burnzombies_workspace_preview", "burnzombies_workspace_clean"} else 10)
             if response.get('result', {}).get('isError'):
                 print('MCP refusal', name, json.dumps(response['result'])[:1600], flush=True)
             return response
@@ -141,10 +141,17 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         response = json.loads(workspace_preview["content"][0]["text"])
         if response["ok"]:
             cleaned = call("burnzombies_workspace_clean", {"preview_token": response["previewToken"]})["result"]
-            assert not cleaned.get("isError"), cleaned
             result = json.loads(cleaned["content"][0]["text"])
-            assert result["worktreesCleaned"] == 1 and not Path(workspace["path"]).exists()
-            print("PASS production MCP worktree removal verified on this host")
+            if cleaned.get("isError"):
+                # Native coverage can change between preview and the final consumer pass.
+                # An explicit visibility refusal must preserve both files and accounting.
+                assert "visibility" in result["message"], result
+                assert Path(workspace["path"]).is_dir(), result
+                assert result["worktreesCleaned"] == 0 and result["diskReclaimedBytes"] == 0, result
+                print("PASS production MCP worktree preserves checkout when final consumer visibility is incomplete")
+            else:
+                assert result["worktreesCleaned"] == 1 and not Path(workspace["path"]).exists()
+                print("PASS production MCP worktree removal verified on this host")
         else:
             assert "visibility" in response["message"], response
             assert Path(workspace["path"]).is_dir()

@@ -83,12 +83,18 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   try png.write(to: directory.appendingPathComponent(name + ".png"))
   // Read the saved picture itself: the exact pixels a person looks at. Reading the in-memory
   // bitmap instead missed whole lines under heavy machine load.
-  let request = VNRecognizeTextRequest()
-  request.recognitionLevel = .accurate
-  request.recognitionLanguages = ["en-US"]
-  try VNImageRequestHandler(data: png, options: [:]).perform([request])
-  let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-    .joined(separator: "\n")
+  var readings: [String] = []
+  // Language correction can drop valid control labels; the literal pass can confuse I/l.
+  // Keep both readings of the same pixels while retaining every visibility assertion.
+  for corrected in [true, false] {
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.recognitionLanguages = ["en-US"]
+    request.usesLanguageCorrection = corrected
+    try VNImageRequestHandler(data: png, options: [:]).perform([request])
+    readings += (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+  }
+  let text = readings.joined(separator: "\n")
   try text.write(
     to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
   return Reading(text)
