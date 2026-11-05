@@ -246,7 +246,7 @@ public enum AutopilotPolicy {
   /// from before re-asked cards had ids of their own can hold a skipped question under the same id,
   /// earlier in the list. With none open, the latest one answered Yes or No, so a second click
   /// changes nothing; then the latest skipped one, which can still be answered.
-  public static func answering(_ id: String, in questions: [AutopilotQuestion]) -> Int? {
+  static func answering(_ id: String, in questions: [AutopilotQuestion]) -> Int? {
     let same: [Int] = questions.indices.filter { questions[$0].id == id }
     if let open = same.first(where: { questions[$0].isOpen }) { return open }
     let decided: Int? = same.last(where: { i in
@@ -654,7 +654,7 @@ extension AutopilotPolicy {
   /// A lesson's title in its question's words, for the facts it kept: "Keep: Old project copies ·
   /// Unused for a week". A keep narrowed to the risks its card showed also names every value of each
   /// narrowed fact: "… · Work only on this Mac".
-  public static func lessonTitle(_ rule: AutopilotRule, question: AutopilotQuestion) -> String {
+  static func lessonTitle(_ rule: AutopilotRule, question: AutopilotQuestion) -> String {
     var named: AutopilotQuestion = question
     // A lesson names only the facts it kept, so its title leaves out what it generalized.
     named.match = question.match.filter { rule.match[$0.key] != nil }

@@ -300,7 +300,8 @@ extension AutopilotPolicy {
     let parts: [String] = [memory.tells[t].note, note].compactMap { $0 }
     memory.tells[t].note = parts.isEmpty ? nil : parts.joined(separator: " ")
     memory.tells[t].state = "undone"
-    if !parts.isEmpty { memory.tells[t].seen = false }
+    // A tell that burned nothing is never shown, so it waits for no OK.
+    if !parts.isEmpty && memory.tells[t].count > 0 { memory.tells[t].seen = false }
     trimTells(&memory)
   }
 
