@@ -180,8 +180,9 @@ public final class PassiveCollector {
       var ambiguous = Set<String>()
       while let url = files.nextObject() as? URL, visited < 50_000 {
         visited += 1
+        // Links are never followed. On macOS 27 a skip asked for at one would land on the next
+        // folder in the listing and hide the sessions in it.
         if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true {
-          files.skipDescendants()
           continue
         }
         guard url.pathExtension == "jsonl" else { continue }

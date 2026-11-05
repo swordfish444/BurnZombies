@@ -15,6 +15,7 @@ func autopilotDiskProof() async throws {
   try adkSizeProof(base: base + "/sizes")
   try adkJunkProof(base: base + "/junk", now: now)
   try adkCopyAgeProof(base: base + "/age", now: now)
+  try adkWalkProof(base: base + "/walk", now: now)
   try await adkJunkCacheProof(base: base + "/cache", now: now)
   try await adkOwnWalkProof(base: base + "/walks", now: now)
 }
@@ -763,6 +764,107 @@ private func adkCopyAgeProof(base: String, now: Date) throws {
   equal(chmod(copy + "/private", 0), 0)
   defer { _ = chmod(copy + "/private", 0o755) }
   equal(junk(record)?.facts["home"], "repo", "a copy BurnZombies can't read in full has no age")
+}
+
+/// The inventory's walk reads every folder of a copy. On macOS 27 a skip asked for at a file or a
+/// link lands on the next folder in the same listing, and a linked copy's `.git` is a file: that
+/// folder's dates and sizes went missing, and so did anything in it the walk must refuse.
+private func adkWalkProof(base: String, now: Date) throws {
+  let fm = FileManager.default
+  let old = now.addingTimeInterval(-40 * 86_400)
+  let yesterday = now.addingTimeInterval(-1.5 * 86_400)
+  let repo = base + "/shop"
+  try adkRepository(repo)
+  try adkWrite("src\n", to: repo + "/src.txt")
+  try adkGit(repo, ["add", "."])
+  try adkCommit(repo, at: old)
+  // A folder's entries in the order a walk meets them.
+  func listing(_ folder: String) -> [String] {
+    guard
+      let walk = fm.enumerator(at: URL(fileURLWithPath: folder), includingPropertiesForKeys: nil)
+    else { return [] }
+    var names: [String] = []
+    while let url = walk.nextObject() as? URL {
+      if walk.level == 1 { names.append(url.lastPathComponent) }
+    }
+    return names
+  }
+  // Adds folders to `parent` until one is listed after an entry `marker` picks, where a skip asked
+  // for at that entry lands. The volume lists entries by a hash of their names.
+  func folder(after marker: (String) -> Bool, in parent: String, holding file: String) throws
+    -> String?
+  {
+    for n in 0..<128 {
+      try adkWrite("x\n", to: parent + "/folder\(n)/" + file)
+      let names = listing(parent)
+      guard let start = names.firstIndex(where: marker) else { continue }
+      if let found = names[start...].first(where: { $0.hasPrefix("folder") }) { return found }
+    }
+    return nil
+  }
+  func entries(_ copy: String) -> Set<String> {
+    Set((fm.enumerator(atPath: copy)?.allObjects as? [String] ?? []).filter { $0 != ".git" })
+  }
+  func walked(_ copy: String) throws -> Set<String> {
+    Set(try WorktreeInspection.files(copy, permitLinks: true).0.map(\.path)).subtracting([""])
+  }
+  // Every entry's own date, links included: the walk counts a link's own date.
+  func age(_ copy: String, _ date: Date) {
+    let seconds = Int(date.timeIntervalSince1970)
+    for relative in entries(copy).union([""]) {
+      var times = [timeval(tv_sec: seconds, tv_usec: 0), timeval(tv_sec: seconds, tv_usec: 0)]
+      _ = lutimes(relative.isEmpty ? copy : copy + "/" + relative, &times)
+    }
+  }
+  func inspect(_ copy: String) -> WorktreeRecord {
+    WorktreeInspection.inspect(
+      WorktreeRecord(id: copy, path: copy, repository: repo + "/.git"), visibility: { _ in 0 },
+      protected: .limited(homes: [base]))
+  }
+
+  // The folder listed after a linked copy's `.git` file holds the copy's newest, biggest work.
+  let gitCopy = base + "/shop-git"
+  try adkGit(repo, ["worktree", "add", "--detach", gitCopy])
+  guard let afterGit = try folder(after: { $0 == ".git" }, in: gitCopy, holding: "work.txt") else {
+    failTest("no folder is listed after .git: \(listing(gitCopy))")
+    return
+  }
+  let big = gitCopy + "/" + afterGit + "/big.bin"
+  try Data(repeating: 0x5a, count: 1 << 20).write(to: URL(fileURLWithPath: big))
+  age(gitCopy, old)
+  try fm.setAttributes([.modificationDate: yesterday], ofItemAtPath: big)
+  equal(try walked(gitCopy).symmetricDifference(entries(gitCopy)), [], "the walk missed entries")
+  let dated = inspect(gitCopy)
+  equal(dated.gaps, [], "the copy's walk finished")
+  check(
+    adkNear(dated.lastFileChange, yesterday),
+    "yesterday's work in \(afterGit) dates the copy: \(String(describing: dated.lastFileChange))")
+  check(dated.allocated >= 1 << 20, "\(afterGit) counts toward the size: \(dated.allocated)")
+  try fm.createDirectory(
+    atPath: gitCopy + "/" + afterGit + "/inner/.git", withIntermediateDirectories: true)
+  check(
+    inspect(gitCopy).gaps.contains("Nested repository is protected."),
+    "a project inside \(afterGit) stops the walk")
+
+  // Links are never followed. The folder listed after one holds a file hard-linked from a store.
+  let linkCopy = base + "/shop-links"
+  try adkGit(repo, ["worktree", "add", "--detach", linkCopy])
+  let deps = linkCopy + "/deps"
+  try fm.createDirectory(atPath: deps, withIntermediateDirectories: true)
+  for n in 0..<8 {
+    try fm.createSymbolicLink(atPath: deps + "/link\(n)", withDestinationPath: "folder0")
+  }
+  guard let afterLink = try folder(after: { $0.hasPrefix("link") }, in: deps, holding: "index.js")
+  else {
+    failTest("no folder is listed after a link: \(listing(deps))")
+    return
+  }
+  equal(try walked(linkCopy).symmetricDifference(entries(linkCopy)), [], "the walk missed entries")
+  try adkWrite("shared\n", to: base + "/store/shared.js")
+  equal(link(base + "/store/shared.js", deps + "/" + afterLink + "/shared.js"), 0)
+  check(
+    inspect(linkCopy).gaps.contains("Hardlinked files require owner handling."),
+    "a hard link inside \(afterLink) stops the walk")
 }
 
 /// Autopilot's live junk list walks every copy at most every six hours, plus each copy the

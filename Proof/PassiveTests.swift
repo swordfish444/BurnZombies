@@ -10,6 +10,14 @@ func passiveProof() async throws {
   let state = root.appendingPathComponent("state")
   let directory = home.appendingPathComponent(".codex/sessions/2026/10/27")
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  // Links beside the session's folder are never followed. On macOS 27 a skip asked for at a link
+  // lands on the next folder in the listing, which hid every session in it.
+  let month = directory.deletingLastPathComponent()
+  for n in 0..<32 {
+    try FileManager.default.createSymbolicLink(
+      at: month.appendingPathComponent("link\(n)"), withDestinationURL: home)
+    if try FileManager.default.contentsOfDirectory(atPath: month.path).first != "27" { break }
+  }
   let sessionID = UUID().uuidString.lowercased()
   let now = Date()
   let turn = UUID().uuidString
