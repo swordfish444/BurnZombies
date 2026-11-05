@@ -107,6 +107,13 @@ do {
     let app = executable.deletingLastPathComponent().deletingLastPathComponent()
       .deletingLastPathComponent()
     guard app.pathExtension == "app" else { fail("Start observer from the installed app bundle.") }
+    // LaunchServices lays this process's environment over launchd's, and
+    // OpenConfiguration.environment only adds to it. Started by an agent, this process carries
+    // the agent's session, so keep only BZ's own settings: the app then starts as it does at login.
+    let launch = AgentSessionEnvironment.login(ProcessInfo.processInfo.environment)
+    for name in ProcessInfo.processInfo.environment.keys where launch[name] == nil {
+      unsetenv(name)
+    }
     try await stopObserver(at: app)
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = false

@@ -193,7 +193,8 @@ public enum AutopilotHarness {
       process.arguments = ["review-worker", "--seconds", seconds, "--", c.executable] + args
     }
     process.currentDirectoryURL = directory
-    var env = ProcessInfo.processInfo.environment
+    // Never the session of whoever started BZ: an agent that installed it, say.
+    var env = AgentSessionEnvironment.harness(ProcessInfo.processInfo.environment)
     env["BURNZOMBIES_HOME"] = root.path
     env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
     env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
