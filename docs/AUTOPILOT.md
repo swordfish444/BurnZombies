@@ -24,7 +24,7 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor.
 6. Everything else is **unsure** and becomes a question.
 
-Copies made by Codex, Claude or Conductor are checked like any other copy, so your yes answers cover them too; the starter rules and the AI never burn them on their own. A copy whose files BurnZombies could not finish reading gets no age, so no rule about how long things sat unused matches it. Clearing a junk folder inside a copy doesn't count as using the copy.
+Copies made by Codex, Claude or Conductor are checked like any other copy, so your yes answers cover them too; the starter rules and the AI never burn them on their own. A copy whose files BurnZombies could not finish reading gets no age, so no rule about how long things sat unused matches it. Junk inside such a copy counts as inside an old copy only once a second look, which skips the junk and Git's own files, finds nothing in the copy changed for two weeks; an old last commit alone never makes a copy old. Clearing a junk folder inside a copy doesn't count as using the copy.
 
 ## Look-only
 
