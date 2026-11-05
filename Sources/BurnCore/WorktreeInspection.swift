@@ -137,7 +137,13 @@ public enum WorktreeInspection {
       else { throw StoreError.message("Checkout inspection limit reached; coverage incomplete.") }
       let relative = url.path == root ? "" : String(url.path.dropFirst(root.count + 1))
       if relative == ".git" {
-        walk.skipDescendants()
+        // Only a folder is skipped. A linked copy's .git is a file, and on macOS 27 a skip asked
+        // for at a file lands on the next folder in the listing, which the walk then never reads.
+        var pointer = stat()
+        guard lstat(url.path, &pointer) == 0 else {
+          throw StoreError.message("File identity, ownership or same-volume coverage unavailable.")
+        }
+        if pointer.st_mode & S_IFMT == S_IFDIR { walk.skipDescendants() }
         continue
       }
       guard url.lastPathComponent.lowercased() != ".git" else {
@@ -210,9 +216,9 @@ public enum WorktreeInspection {
       } else if type == S_IFDIR {
         kind = "directory"
       } else if type == S_IFLNK && permitLinks {
+        // The walk never follows a link, so there is nothing to skip here.
         kind = "link"
         target = try FileManager.default.destinationOfSymbolicLink(atPath: url.path)
-        walk.skipDescendants()
       } else {
         throw StoreError.message("Links or special files require supported recovery.")
       }
