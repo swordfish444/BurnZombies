@@ -638,6 +638,23 @@ private func lookOnlyActProof() async throws {
   equal(try lookStore.memory().tells.count, 0)
   equal(lookWorld.burns.all, [], "look-only: nothing burned at a look")
 
+  // Switched on while a look's first pass is still burning: that same look doesn't act.
+  let month = weekCopy("old-month", stale: "month", now: now)
+  let slow = TellWorld(copies: threeCopies(now) + [month], delay: 0.5)
+  let (slowEngine, slowStore, slowRoot) = try tellEngine(
+    "look-only-mid-pass", slow, trustedCopies(now: now))
+  defer { try? FileManager.default.removeItem(at: slowRoot) }
+  let looking = Task { await slowEngine.tick(now: now) }
+  await eventually { slow.burns.all.contains(month.id) }
+  _ = try await slowEngine.apply(.setLookOnly(true), now: now)
+  let finished = await looking.value
+  equal(slow.burns.all, [month.id], "the owner's lesson burned the month-old copy before")
+  check(finished.tells.isEmpty, "look-only switched on mid-pass: no tell")
+  equal(try slowStore.memory().tells.count, 0)
+  equal(
+    finished.questions.first { $0.kind == .worktree }?.guess?.sure, true,
+    "BZ is sure, and asks")
+
   // After an answer. Three kinds of program, each serving a port and bigger than the copies, take
   // the three slots; answering one frees a slot for the copies.
   func server(_ family: String) -> AutopilotItem {

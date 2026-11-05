@@ -159,8 +159,9 @@ public actor Autopilot {
     var used: [AutopilotKind: Int] = [:]
     if canBurn { used = await burnAuthorized(now: now) }
     // What BZ answers itself burns right away, through the same pass as an answer's matches and
-    // within the bound this look's other burns already count toward.
-    let acted = refreshQuestions(now: now, acting: canBurn)
+    // within the bound this look's other burns already count toward. Asked again after that pass:
+    // look-only or Autopilot off switched on while it ran stops this look acting too.
+    let acted = refreshQuestions(now: now, acting: canBurn && burnsOnItsOwn())
     if !acted.isEmpty { await burnAuthorized(now: now, used: used, settling: acted) }
     return snapshot(now: now)
   }
