@@ -284,7 +284,8 @@ private func actProof() async throws {
   guard let risky = later.questions.first(where: { $0.kind == .worktree }) else {
     return failTest("a question about the copy with large unsaved changes")
   }
-  equal(risky.id, pattern, "asked under the pattern BZ answered for the others")
+  equal(risky.match, ["stale": ["week"]], "asked under the pattern BZ answered for the others")
+  equal(risky.id, pattern + ":changes=large,saved=local", "its id names the risks its card shows")
   equal(risky.count, 1)
   equal(risky.risks, ["changes=large", "saved=local"])
   equal(risky.guess?.sure, false, "never sure of a risk the owner hasn't said yes to")

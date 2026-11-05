@@ -234,6 +234,7 @@ func lessonsProof() async throws {
 
   try await lessonEngineProof()
   try await answerRisksProof()
+  try await reaskProof()
 }
 
 /// R31: an owner's Yes covers only the risks shown on that card, kept within them the way BZ's own
@@ -334,6 +335,159 @@ private func answerRisksProof() async throws {
   check(
     legacyWorld.burns.all.contains("worktree:old-rewrite"),
     "and it still burns what it always did")
+}
+
+/// R36: a native question's identity includes the risks its card shows, so a pattern the owner
+/// answered for one set of risks is asked again when things under it carry a risk that card didn't
+/// show, and the new card names it. An answer from before cards named their risks keeps its
+/// pattern answered, as before. The 1 GB minimum still holds, and the guess leans yes but isn't
+/// sure of a risk the owner never said yes to.
+private func reaskProof() async throws {
+  let now = Date()
+  /// A Java program idle for `idle`; a server when `listening`.
+  func java(_ name: String, idle: String, listening: Bool, bytes: UInt64) -> AutopilotItem {
+    AutopilotItem(
+      id: "process:" + name, kind: .process, name: name, bytes: bytes,
+      facts: [
+        "family": "java", "orphaned": "maybe", "thread": "none", "idle": idle,
+        "listening": listening ? "yes" : "no", "agent": "codex",
+      ], processKey: name)
+  }
+  let pattern: [String: [String]] = ["family": ["java"], "idle": ["10m"]]
+  let key: String = AutopilotRule.key(kind: .process, match: pattern)
+  let servers: [AutopilotItem] = [
+    java("gradle-daemon", idle: "10m", listening: true, bytes: 500_000_000),
+    java("kotlin-daemon", idle: "10m", listening: true, bytes: 500_000_000),
+    java("jetty-dev", idle: "1h", listening: true, bytes: 500_000_000),
+  ]
+
+  // The owner says yes to Java programs that serve nothing, while BZ already trusts itself on
+  // them: the card's id names the one risk it showed.
+  let world = TellWorld(
+    programs: [
+      java("maven-build", idle: "10m", listening: false, bytes: 600_000_000),
+      java("test-runner", idle: "1h", listening: false, bytes: 600_000_000),
+    ])
+  var trusted = AutopilotMemory()
+  trusted.scores = (0..<AutopilotPolicy.trustStreak).map { i in
+    AutopilotScore(
+      questionID: "java-\(i)", subject: "process:java", guess: .yes, answer: .yes, right: true,
+      date: now.addingTimeInterval(Double(i - 10)), replayed: true)
+  }
+  let (engine, store, root) = try tellEngine("reask", world, trusted)
+  defer { try? FileManager.default.removeItem(at: root) }
+  guard let first = await engine.tick(now: now).questions.first(where: { $0.kind == .process })
+  else { return failTest("a question about the Java programs") }
+  equal(first.match, pattern)
+  equal(first.risks, ["idle=10m"])
+  equal(first.id, key + ":idle=10m", "the id names the risks its card shows")
+  _ = try await engine.apply(.answer(questionID: first.id, answer: .yes), now: now)
+  await eventually { world.burns.all.count == 2 }
+  equal(world.burns.all.count, 2, "the yes burns both")
+
+  // Three Java servers show up, idle 10 minutes to an hour. The yes kept to programs that serve
+  // nothing, so they are unsure, and asked about under the same pattern.
+  for server in servers { world.add(server) }
+  let later = await engine.tick(now: now.addingTimeInterval(60))
+  check(later.tells.isEmpty, "BZ is trusted on Java programs, but a server is new: it asks")
+  guard let again = later.questions.first(where: { $0.kind == .process }) else {
+    return failTest("the Java servers are asked about")
+  }
+  equal(again.match, pattern, "the same pattern")
+  equal(again.count, 3)
+  equal(again.risks, ["idle=10m", "listening=yes"])
+  equal(again.id, key + ":idle=10m,listening=yes", "a question of its own")
+  let card = AutopilotPolicy.card(again)
+  check(
+    card.cautions.contains("3 are still running a server"),
+    "the card names the new risk: \(card.cautions)")
+  equal(again.guess?.answer, .yes, "BZ leans yes")
+  equal(again.guess?.sure, false, "but isn't sure of a server the owner never said yes to")
+  _ = try await engine.apply(.answer(questionID: again.id, answer: .yes), now: now)
+  await eventually { world.burns.all.count == 5 }
+  equal(Set(world.burns.all), Set(world.programs.map(\.id)), "the yes burns the servers too")
+  let lessons = try store.memory().rules.filter { $0.kind == .process }
+  equal(lessons.count, 1, "the wider lesson takes the first one in")
+  equal(
+    Set(lessons.first.map(AutopilotPolicy.questionIDs) ?? []), [first.id, again.id],
+    "with both answers behind it")
+  equal(lessons.first?.match["listening"], ["yes", "no"], "servers and programs serving nothing")
+
+  // Straight from the policy: an answer from before cards named their risks keeps its pattern
+  // answered, as before, so nothing is asked again.
+  var legacy = AutopilotQuestion(
+    kind: .process, match: pattern, question: "Can I burn leftover Java and Gradle helpers?",
+    why: "", examples: [], count: 2, bytes: 1_200_000_000, asked: now)
+  legacy.answer = .yes
+  legacy.answered = now
+  isNil(legacy.risks)
+  equal(legacy.id, key, "a legacy id has no risk suffix")
+  var before = AutopilotMemory()
+  before.questions = [legacy]
+  let none = AutopilotPolicy.proposeQuestions(servers, memory: before, now: now)
+  checkFalse(none.contains { $0.kind == .process }, "a legacy answer keeps its pattern answered")
+  var shown = legacy
+  shown.risks = ["idle=10m"]
+  var newer = AutopilotMemory()
+  newer.questions = [shown]
+  let asked = AutopilotPolicy.proposeQuestions(servers, memory: newer, now: now)
+  equal(asked.map(\.id), [key + ":idle=10m,listening=yes"], "a newer answer covers what it showed")
+  // The 1 GB minimum still holds: one server alone isn't worth a question.
+  let alone = AutopilotPolicy.proposeQuestions([servers[0]], memory: newer, now: now)
+  equal(alone.count, 0, "half a GB isn't worth asking about")
+  // Sure only of risks the owner said yes to before: a yes on servers idle an hour approved them.
+  if var question = asked.first {
+    var approved = newer
+    var hour = AutopilotQuestion(
+      kind: .process, match: ["family": ["java"], "idle": ["1h"]], question: "", why: "",
+      examples: [], count: 1, bytes: 1_000_000_000, asked: now)
+    hour.answer = .yes
+    hour.answered = now
+    hour.risks = ["listening=yes"]
+    approved.questions.append(hour)
+    approved.scores = trusted.scores
+    question.guess = AutopilotPolicy.guess(question, memory: approved)
+    equal(question.guess?.sure, true, "with servers approved before and trust earned, BZ is sure")
+  } else {
+    failTest("a question to guess")
+  }
+
+  // A clean card's yes: copies with large unsaved changes at the same age are asked about next,
+  // and their card says so.
+  func aged(_ name: String, changes: String) -> AutopilotItem {
+    AutopilotItem(
+      id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
+      facts: [
+        "repo": "web-app", "place": "patrol6", "saved": "pushed", "changes": changes,
+        "stale": "week", "inUse": "no", "thread": "none",
+      ], lastUsed: now.addingTimeInterval(-10 * 86_400))
+  }
+  let week: [String: [String]] = ["stale": ["week"]]
+  var clean = AutopilotQuestion(
+    kind: .worktree, match: week, question: "", why: "", examples: [], count: 2,
+    bytes: 1_200_000_000, asked: now)
+  clean.answer = .yes
+  clean.answered = now
+  clean.risks = []
+  var cleanYes = AutopilotMemory()
+  cleanYes.questions = [clean]
+  let rewrites = [aged("rewrite-a", changes: "large"), aged("rewrite-b", changes: "large")]
+  let copies = AutopilotPolicy.proposeQuestions(rewrites, memory: cleanYes, now: now)
+  equal(
+    copies.map(\.id), [AutopilotRule.key(kind: .worktree, match: week) + ":changes=large"],
+    "asked again about the copies with unsaved changes")
+  equal(copies.first?.cautions, ["2 have unsaved changes"], "and the card says so")
+  // Copies BZ couldn't check are a risk the clean card didn't show either, and their card says so.
+  var unchecked = aged("unchecked-a", changes: "none")
+  unchecked.facts["saved"] = "unknown"
+  var unread = aged("unchecked-b", changes: "unknown")
+  unread.facts["saved"] = "unknown"
+  let unknowns = AutopilotPolicy.proposeQuestions([unchecked, unread], memory: cleanYes, now: now)
+  equal(
+    unknowns.map(\.id),
+    [AutopilotRule.key(kind: .worktree, match: week) + ":changes=unknown,saved=unknown"],
+    "asked again about the copies BZ couldn't check")
+  equal(unknowns.first?.cautions, ["2 couldn't be checked"], "and the card says so")
 }
 
 /// The engine teaches lessons from answers, and Forget forgets every answer behind one.

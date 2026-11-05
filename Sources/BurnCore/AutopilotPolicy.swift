@@ -154,15 +154,12 @@ public enum AutopilotPolicy {
   /// One yes/no question per subject with enough unsure things to be worth asking, biggest
   /// first. A question covers the most recent use not decided yet and everything older, so one
   /// answer can settle a whole subject; after a no the next question is about older things
-  /// only. Never re-asks an answered or open pattern; a skipped subject waits for its snooze.
+  /// only. Never re-asks an open pattern, nor one the owner already answered for the risks its
+  /// things carry (`answered`); a skipped subject waits for its snooze.
   public static func proposeQuestions(
     _ unsure: [AutopilotItem], memory: AutopilotMemory, limit: Int = maximumOpenQuestions,
     now: Date = Date()
   ) -> [AutopilotQuestion] {
-    let waiting = memory.questions.filter { waits($0, now: now) }
-    let excluded = Set(
-      memory.questions.filter { $0.answer == .yes || $0.answer == .no }.map(\.id)
-        + waiting.map(\.id))
     let slots = limit - memory.questions.filter(\.isOpen).count
     guard slots > 0 else { return [] }
     let busy = busySubjects(memory, now: now)
@@ -187,23 +184,61 @@ public enum AutopilotPolicy {
       if let key = subjectFacts[kind], let value = items[0].facts[key] { base[key] = [value] }
       let present = Set(items.compactMap { $0.facts[recency] })
       // The broadest question not asked yet: the most recent use present and everything older.
-      guard
-        let recent = (safety[recency] ?? []).first(where: { value in
-          present.contains(value)
-            && !excluded.contains(
-              AutopilotRule.key(kind: kind, match: base.merging([recency: [value]]) { a, _ in a }))
-        })
-      else { continue }
-      var match = base
-      match[recency] = [recent]
-      let covering = items.filter { matches(coverage(kind, match), $0) }
-      if covering.reduce(0, { $0 + $1.bytes }) >= worthAsking {
-        candidates.append(question(kind, match: match, covering: covering, now: now))
+      // An open or skipped question makes its subject busy, so only answers can rule one out.
+      for recent in safety[recency] ?? [] where present.contains(recent) {
+        var match = base
+        match[recency] = [recent]
+        let covering = items.filter { matches(coverage(kind, match), $0) }
+        let carried: [String] = risks(kind, covering)
+        if answered(kind, match, risks: carried, memory: memory) { continue }
+        if covering.reduce(0, { $0 + $1.bytes }) >= worthAsking {
+          var asked = question(kind, match: match, covering: covering, now: now)
+          asked.id = unanswered(asked.id, memory)
+          candidates.append(asked)
+        }
+        break
       }
     }
     return Array(
       candidates.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
         .prefix(slots))
+  }
+
+  /// Whether the owner already answered a question about `match` for things carrying `risks`
+  /// (R36). An answer from before cards named their risks answered the pattern whatever its things
+  /// carry, as it always did. A newer one answered only the risks its card showed, so things under
+  /// the pattern with a risk it didn't show get a question of their own. BZ's own answers leave the
+  /// pattern to the owner.
+  static func answered(
+    _ kind: AutopilotKind, _ match: [String: [String]], risks carried: [String],
+    memory: AutopilotMemory
+  ) -> Bool {
+    let need = Set(carried)
+    return memory.questions.contains { past in
+      guard past.kind == kind, past.match == match, ownerAnswered(past) else { return false }
+      guard let shown = past.risks else { return true }
+      return need.isSubset(of: Set(shown))
+    }
+  }
+
+  /// A native question's id (R36): its pattern's key, then the risks its card shows when it shows
+  /// any. Asking about the same pattern for new risks is a question of its own.
+  public static func nativeID(
+    _ kind: AutopilotKind, _ match: [String: [String]], risks: [String]
+  ) -> String {
+    let key: String = AutopilotRule.key(kind: kind, match: match)
+    guard !risks.isEmpty else { return key }
+    return key + ":" + risks.sorted().joined(separator: ",")
+  }
+
+  /// `id`, or `id` numbered when the owner already answered a question with it. An open card's
+  /// risks can change after its id is made, and an answer must never land on the old question.
+  static func unanswered(_ id: String, _ memory: AutopilotMemory) -> String {
+    let taken = Set(memory.questions.filter { $0.answer == .yes || $0.answer == .no }.map(\.id))
+    guard taken.contains(id) else { return id }
+    var n = 2
+    while taken.contains(id + "#\(n)") { n += 1 }
+    return id + "#\(n)"
   }
 
   /// What a yes to a pattern burns: the pattern and everything safer.
@@ -229,16 +264,23 @@ public enum AutopilotPolicy {
       count: covering.count, bytes: bytes, asked: now)
     question.cautions = mix(kind, covering)
     describe(&question, covering: covering)
+    question.id = nativeID(kind, match, risks: question.risks ?? [])
     return question
   }
 
-  /// What makes some of the matches riskier, counted: "2 have work only on this Mac".
+  /// What makes some of the matches riskier, counted: "2 have work only on this Mac". Things
+  /// whose saving, unsaved work, use or port BZ couldn't check are counted too, since a lesson
+  /// only covers them when a card said so.
   static func mix(_ kind: AutopilotKind, _ items: [AutopilotItem]) -> [String]? {
     func count(_ test: (AutopilotItem) -> Bool, _ one: String, _ many: String) -> String? {
       let n = items.filter(test).count
       return n == 0 ? nil : "\(n) " + (n == 1 ? one : many)
     }
-    let found: [String?]
+    let checked: [String] = (riskFacts[kind] ?? []).map(\.fact)
+    let unchecked: String? = count(
+      { item in checked.contains { item.facts[$0] == "unknown" } }, "couldn't be checked",
+      "couldn't be checked")
+    var found: [String?]
     switch kind {
     case .worktree:
       found = [
@@ -255,6 +297,7 @@ public enum AutopilotPolicy {
       ]
     case .disk: found = []
     }
+    found.append(unchecked)
     let cautions = found.compactMap { $0 }
     return cautions.isEmpty ? nil : cautions
   }

@@ -839,9 +839,11 @@ public actor Autopilot {
       if let replacing {
         memory.questions.removeAll { $0.id == replacing && $0.isOpen }
       }
-      // The AI rewording a pattern BZ already asked natively improves that question.
-      if let i = memory.questions.firstIndex(where: {
-        $0.id == question.id && $0.isOpen && $0.source == "native"
+      // The AI rewording a pattern BZ already asked natively improves that question. A native
+      // question's id also names its card's risks (R36), so it is found by its exact pattern.
+      if let i = memory.questions.firstIndex(where: { open in
+        guard open.isOpen, open.source == "native", open.kind == question.kind else { return false }
+        return open.match == question.match
       }) {
         memory.questions[i].question = question.question
         if !question.why.isEmpty { memory.questions[i].why = question.why }
