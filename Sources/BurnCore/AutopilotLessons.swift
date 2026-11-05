@@ -132,10 +132,14 @@ extension AutopilotPolicy {
   }
 
   /// What an answer teaches: `lesson(for:)`, except for a No to a question asked again for risks
-  /// earlier cards about its pattern didn't show (R36). That No keeps only the things carrying
-  /// them (R37): one keep per newly shown risk fact, kept to that fact's new risky values on the
-  /// card. A keep over the whole pattern would also cover what the owner already said could go, and
-  /// keeps beat burns. `earlier` holds the questions answered before this one.
+  /// earlier cards about its pattern didn't show (R36). A keep over the whole pattern would also
+  /// cover what the owner already said could go, and keeps beat burns, so that No keeps less, but
+  /// always every thing on its card at the card's age (R38):
+  /// 1. the things carrying a risk the card showed for the first time (R37), one keep per such risk
+  ///    fact, kept to its new risky values;
+  /// 2. failing that, the things carrying any risk the card showed, one keep per risk fact;
+  /// 3. failing that, everything at that age, as any No keeps.
+  /// `earlier` holds the questions answered before this one, by the owner or by BZ.
   public static func lessons(
     for question: AutopilotQuestion, verdict: AutopilotVerdict, created: Date,
     earlier: [AutopilotQuestion]
@@ -145,18 +149,58 @@ extension AutopilotPolicy {
       let before = shownBefore(question, in: earlier)
     else { return [wide] }
     let fresh: Set<String> = Set(shown).subtracting(before)
+    for risks in [fresh, Set(shown)] {
+      let keeps: [AutopilotRule] = narrowKeeps(wide, risks: risks, question: question)
+      if !keeps.isEmpty, keepsAll(keeps, of: question, wide: wide) { return keeps }
+    }
+    return [wide]
+  }
+
+  /// One keep per risk fact among `risks`: the wide keep, with that fact kept to those risky values.
+  /// A fact the question's own pattern already names stays as the wide keep has it.
+  static func narrowKeeps(_ wide: AutopilotRule, risks: Set<String>, question: AutopilotQuestion)
+    -> [AutopilotRule]
+  {
     var keeps: [AutopilotRule] = []
-    for (fact, values) in riskFacts[question.kind] ?? [] {
-      let kept: [String] = values.filter { fresh.contains(fact + "=" + $0) }
+    for (fact, values) in riskFacts[question.kind] ?? [] where wide.match[fact] == nil {
+      let kept: [String] = values.filter { risks.contains(fact + "=" + $0) }
       guard !kept.isEmpty else { continue }
       var match: [String: [String]] = wide.match
       match[fact] = kept
       keeps.append(
         AutopilotRule(
           kind: question.kind, match: match, verdict: .keep, source: .operator, title: wide.title,
-          created: created, questionID: question.id))
+          created: wide.created, questionID: question.id))
     }
-    return keeps.isEmpty ? [wide] : keeps
+    return keeps
+  }
+
+  /// Whether `keeps` keep every thing on the question's card that the wide keep would: every
+  /// profile at an age the wide keep covers carries the kept values of some keep's risk fact. A
+  /// card that recorded no profiles can't show it.
+  static func keepsAll(
+    _ keeps: [AutopilotRule], of question: AutopilotQuestion, wide: AutopilotRule
+  ) -> Bool {
+    guard let profiles = question.profiles, let recency = recencyFacts[question.kind] else {
+      return false
+    }
+    let ages: Set<String> = Set(wide.match[recency] ?? [])
+    let checked: [String] = (riskFacts[question.kind] ?? []).map(\.fact)
+    for profile in profiles {
+      let carried = Set(profile)
+      let age: String? = profile.first { $0.hasPrefix(recency + "=") }.map {
+        String($0.dropFirst(recency.count + 1))
+      }
+      guard let age, ages.contains(age) else { continue }
+      let kept: Bool = keeps.contains { keep in
+        checked.contains { fact in
+          guard wide.match[fact] == nil, let values = keep.match[fact] else { return false }
+          return values.contains { carried.contains(fact + "=" + $0) }
+        }
+      }
+      if !kept { return false }
+    }
+    return true
   }
 
   /// The risks earlier cards about the same pattern showed, answered by the owner or by BZ itself;

@@ -168,6 +168,10 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
   /// One sentence on what all of them share that is safe ("Their work is on GitHub."), worked out
   /// whenever the question is asked or refreshed.
   public var line: String?
+  /// What each of the things it is about carries: its risky facts and how long it sat unused, as
+  /// sorted "fact=value" lists, one per distinct mix. A No keeps every one of them at the card's
+  /// age (R38), and an Undo of BZ's own call does too.
+  public var profiles: [[String]]?
   public init(
     kind: AutopilotKind, match: [String: [String]], question: String, why: String,
     examples: [String], count: Int, bytes: UInt64, asked: Date = Date(), source: String = "native"

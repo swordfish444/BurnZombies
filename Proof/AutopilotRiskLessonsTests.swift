@@ -8,6 +8,7 @@ func riskLessonsProof() async throws {
   try await answerRisksProof()
   try await reaskProof()
   try await keepNewRisksProof()
+  try await keepEveryMemberProof()
 }
 
 /// R31: an owner's Yes covers only the risks shown on that card, kept within them the way BZ's own
@@ -396,3 +397,118 @@ private func keepNewRisksProof() async throws {
   checkFalse(forgotten.rules.contains { $0.questionID == twice.id }, "both keeps are forgotten")
   checkFalse(forgotten.questions.contains { $0.id == twice.id }, "with the answer")
 }
+
+/// R38: a No keeps every thing on its card at the card's age. When the keeps for its new risks
+/// would leave one out, the No keeps the things carrying any risk the card showed, and failing that
+/// everything at that age. An Undo of BZ's own call follows the same rule. Either way a clean copy
+/// at that age still burns under the owner's earlier Yes.
+private func keepEveryMemberProof() async throws {
+  let now = Date()
+  /// A copy untouched for a week.
+  func aged(_ name: String, saved: String, changes: String) -> AutopilotItem {
+    AutopilotItem(
+      id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
+      facts: [
+        "repo": "web-app", "place": "patrol6", "saved": saved, "changes": changes,
+        "stale": "week", "inUse": "no", "thread": "none",
+      ], lastUsed: now.addingTimeInterval(-10 * 86_400))
+  }
+  func status(_ snapshot: AutopilotSnapshot, _ name: String) -> AutopilotStatus? {
+    snapshot.entries.first { $0.item.id == "worktree:" + name }?.status
+  }
+  let world = TellWorld(
+    copies: [
+      aged("local-a", saved: "local", changes: "none"),
+      aged("local-b", saved: "local", changes: "none"),
+    ])
+  let (engine, _, root) = try tellEngine("keep-every-member", world, AutopilotMemory())
+  defer { try? FileManager.default.removeItem(at: root) }
+
+  // L1: yes to copies with work only on this Mac and nothing unsaved.
+  guard let q1 = await engine.tick(now: now).questions.first(where: { $0.kind == .worktree })
+  else { return failTest("a question about the copies with work only on this Mac") }
+  equal(q1.risks, ["saved=local"])
+  _ = try await engine.apply(.answer(questionID: q1.id, answer: .yes), now: now)
+  await eventually { world.burns.all.count == 2 }
+  // L2: copies with small unsaved changes are asked about again, and the owner says yes.
+  world.add(aged("small-a", saved: "pushed", changes: "small"))
+  world.add(aged("small-b", saved: "merged", changes: "small"))
+  guard
+    let q2 = await engine.tick(now: now.addingTimeInterval(60)).questions.first(where: {
+      $0.kind == .worktree
+    })
+  else { return failTest("the copies with small unsaved changes are asked about again") }
+  equal(q2.risks, ["changes=small"])
+  _ = try await engine.apply(.answer(questionID: q2.id, answer: .yes), now: now)
+  await eventually { world.burns.all.count == 4 }
+  equal(world.burns.all.count, 4)
+
+  // m1 carries both risks the owner said yes to, never together; m2 has large unsaved changes.
+  // Only large changes are new, so a keep for them alone would leave m1 unkept.
+  world.add(aged("m1", saved: "local", changes: "small"))
+  world.add(aged("m2", saved: "pushed", changes: "large"))
+  guard
+    let q3 = await engine.tick(now: now.addingTimeInterval(120)).questions.first(where: {
+      $0.kind == .worktree
+    })
+  else { return failTest("m1 and m2 are asked about") }
+  equal(q3.risks, ["changes=large", "changes=small", "saved=local"])
+  let refused = try await engine.apply(.answer(questionID: q3.id, answer: .no), now: now)
+  equal(status(refused, "m1"), .keep, "the No keeps m1")
+  equal(status(refused, "m2"), .keep, "and m2")
+  world.add(aged("clean", saved: "pushed", changes: "none"))
+  _ = await engine.tick(now: now.addingTimeInterval(180))
+  check(world.burns.all.contains("worktree:clean"), "a clean copy at that age still burns")
+  checkFalse(
+    world.burns.all.contains("worktree:m1") || world.burns.all.contains("worktree:m2"),
+    "the copies the owner said no to stay")
+
+  // An Undo of BZ's own call follows the same rule. The owner said yes to clean copies untouched
+  // for a week and to copies with work only on this Mac untouched for a month, and BZ trusts
+  // itself on copies: copies with work only on this Mac untouched for a week are asked about again,
+  // and BZ answers yes itself.
+  func owned(_ match: [String: [String]], risks: [String]) -> AutopilotQuestion {
+    var question = AutopilotQuestion(
+      kind: .worktree, match: match, question: "Can I burn these old copies?", why: "",
+      examples: [], count: 2, bytes: 1_200_000_000, asked: now.addingTimeInterval(-86_400))
+    question.answer = .yes
+    question.answered = now.addingTimeInterval(-86_400)
+    question.risks = risks
+    return question
+  }
+  var memory = AutopilotMemory()
+  memory.questions = [
+    owned(["stale": ["week"]], risks: []),
+    owned(["saved": ["local"], "stale": ["month"]], risks: ["saved=local"]),
+  ]
+  for question in memory.questions {
+    AutopilotPolicy.learn(
+      AutopilotPolicy.lesson(for: question, verdict: .burn, created: now), into: &memory.rules)
+  }
+  memory.scores = (0..<AutopilotPolicy.trustStreak).map { i in
+    AutopilotScore(
+      questionID: "replayed-\(i)", subject: "worktree:", guess: .yes, answer: .yes, right: true,
+      date: now.addingTimeInterval(Double(i - 10)), replayed: true)
+  }
+  let actWorld = TellWorld(
+    copies: [
+      aged("draft-a", saved: "local", changes: "none"),
+      aged("draft-b", saved: "local", changes: "none"),
+    ])
+  let (actEngine, actStore, actRoot) = try tellEngine("undo-every-member", actWorld, memory)
+  defer { try? FileManager.default.removeItem(at: actRoot) }
+  guard let tell = await actEngine.tick(now: now).tells.first else {
+    return failTest("BZ acts on the copies with work only on this Mac")
+  }
+  equal(actWorld.burns.all.count, 2)
+  _ = try await actEngine.apply(.tellUndo(id: tell.id), now: now)
+  let undone = try actStore.memory().rules.filter { $0.questionID == tell.questionID }
+  equal(undone.map(\.verdict), [.keep], "the Undo teaches one keep")
+  equal(undone.first?.match["saved"], ["local"], "for copies with work only on this Mac")
+  actWorld.add(aged("tidy", saved: "pushed", changes: "none"))
+  actWorld.add(aged("draft-c", saved: "local", changes: "none"))
+  let after = await actEngine.tick(now: now.addingTimeInterval(60))
+  check(actWorld.burns.all.contains("worktree:tidy"), "a clean copy at that age still burns")
+  equal(status(after, "draft-c"), .keep, "a copy with work only on this Mac at that age is kept")
+}
+

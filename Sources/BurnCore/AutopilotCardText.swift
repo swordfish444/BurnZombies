@@ -26,7 +26,27 @@ extension AutopilotPolicy {
     let used = items.compactMap(\.lastUsed)
     question.newest = used.count == items.count ? used.max() : nil
     question.risks = risks(question.kind, items)
+    question.profiles = profiles(question.kind, items)
     question.line = safeLine(question.kind, items)
+  }
+
+  /// Each thing's risky facts, of the kinds a lesson keeps within (`riskFacts`), and how long it sat
+  /// unused, as sorted "fact=value" lists: one per distinct mix, in a fixed order.
+  static func profiles(_ kind: AutopilotKind, _ items: [AutopilotItem]) -> [[String]] {
+    let checked: [String] = (riskFacts[kind] ?? []).map(\.fact)
+    var found = Set<[String]>()
+    for item in items where item.kind == kind {
+      var profile: [String] = []
+      for fact in checked {
+        guard let value = item.facts[fact], risky(fact, value) else { continue }
+        profile.append(fact + "=" + value)
+      }
+      if let recency = recencyFacts[kind], let value = item.facts[recency] {
+        profile.append(recency + "=" + value)
+      }
+      found.insert(profile.sorted())
+    }
+    return found.sorted { $0.joined(separator: ",") < $1.joined(separator: ",") }
   }
 
   /// The three biggest, biggest first, with ties kept in a fixed order.

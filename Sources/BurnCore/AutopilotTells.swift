@@ -257,8 +257,10 @@ extension AutopilotPolicy {
         memory.questions[q].answer = .no
         memory.questions[q].answered = now
         memory.questions[q].answeredBy = nil
-        let keep = lesson(for: memory.questions[q], verdict: .keep, created: now)
-        learn(keep, into: &memory.rules)
+        // The same keep an owner's No to that card teaches (R37, R38).
+        let keeps: [AutopilotRule] = lessons(
+          for: memory.questions[q], verdict: .keep, created: now, earlier: memory.questions)
+        for keep in keeps { learn(keep, into: &memory.rules) }
       }
       carryTallies(&memory)
     } else if memory.rules.contains(where: { $0.formerIDs?.contains(tell.ruleID) == true }) {
