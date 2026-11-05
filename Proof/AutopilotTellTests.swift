@@ -144,9 +144,9 @@ func trustedOn(_ subject: String, _ answers: [AutopilotQuestion], now: Date)
   return memory
 }
 
-/// R4: the owner said yes to copies untouched for a month with work only on this Mac, and to ones
-/// with unsaved changes. Their lessons leave copies untouched for a week unsure. The first lesson
-/// has burned 4 copies.
+/// The owner said yes to copies untouched for a month with work only on this Mac, and to ones with
+/// unsaved changes. Their lessons leave copies untouched for a week unsure, so BZ has something to
+/// be sure of and act on. The first lesson has burned 4 copies.
 func trustedCopies(now: Date) -> AutopilotMemory {
   let local = ownerYes(
     .worktree, ["saved": ["local"], "stale": ["month"]], risks: ["saved=local"],
@@ -261,7 +261,8 @@ private func actProof() async throws {
   approved["changes"] = ["small", "none"]
   approved["inUse"] = ["no"]
   equal(lesson.match, approved, "the lesson a Yes teaches, within the risks the owner approved")
-  // R23: it takes nothing in, and the owner's own lessons stay exactly as they were.
+  // It takes nothing in, so an Undo takes back only what BZ did, and the owner's own lessons stay
+  // exactly as they were.
   isNil(lesson.from)
   isNil(lesson.formerIDs)
   for rule in memory.rules {
@@ -334,7 +335,7 @@ private func actProof() async throws {
 
 // MARK: Rows
 
-/// R32: a tell keeps the rows captured at the act, with each copy's task, project and when it was
+/// A tell keeps the rows captured at the act, with each copy's task, project and when it was
 /// last used. A later look, once the burned copies are gone from the catalog, updates only how many
 /// and how much.
 private func tellRowsProof() async throws {
@@ -430,7 +431,8 @@ private func undoProof() async throws {
   equal(after.scores.last?.answer, .no)
   checkFalse(AutopilotPolicy.trusted("worktree:", scores: after.scores), "trust on copies ends")
   check(world.copies.allSatisfy { after.keptItems.contains($0.id) }, "restored copies are kept")
-  // R2: a question like the one BZ acted on is asked again, not acted on.
+  // Trust ended with the wrong guess: a question like the one BZ acted on is asked again, not
+  // acted on.
   var again = AutopilotQuestion(
     kind: .worktree, match: ["stale": ["week"]], question: "Can I burn 3 copies?", why: "",
     examples: [], count: 3, bytes: 1_200_000_000)

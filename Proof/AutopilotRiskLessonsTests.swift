@@ -1,7 +1,7 @@
 import BurnCore
 import Foundation
 
-/// What a card's risks teach (R31, R36, R37): a Yes covers only the risks its card showed; things
+/// What a card's risks teach: a Yes covers only the risks its card showed; things
 /// under the same pattern with a risk no card showed are asked about again, with the risk named;
 /// and a No to such a card keeps those things without cancelling the earlier Yes.
 func riskLessonsProof() async throws {
@@ -60,15 +60,15 @@ private func keepUncheckedProof() async throws {
     "unchecked: the Got it! sentence names what couldn't be checked")
   let titles: Set<String> = Set(refused.rules.filter { $0.questionID == again.id }.map(\.title))
   let start = "Keep: Old project copies · Unused for a week · "
-  equal(
-    titles,
-    [
-      start + "Where its work is saved couldn't be checked",
-      start + "Unsaved changes couldn't be checked", start + "Couldn't check if it's in use",
-    ], "unchecked: each keep's title names what it keeps")
+  let named: [String] = [
+    "Where its work is saved couldn't be checked", "Unsaved changes couldn't be checked",
+    "Couldn't check if it's in use",
+  ]
+  let expectedTitles: Set<String> = Set(named.map { start + $0 })
+  equal(titles, expectedTitles, "unchecked: each keep's title names what it keeps")
 }
 
-/// R31: an owner's Yes covers only the risks shown on that card, kept within them the way BZ's own
+/// An owner's Yes covers only the risks shown on that card, kept within them the way BZ's own
 /// act is. A Yes to clean copies doesn't teach "even with unsaved work"; a Yes to a card that showed
 /// small unsaved changes covers small ones and no more. A question from before cards named their
 /// risks teaches what it always did.
@@ -172,7 +172,7 @@ private func answerRisksProof() async throws {
     "and it still burns what it always did")
 }
 
-/// R36: a native question's identity includes the risks its card shows, so a pattern the owner
+/// A native question's identity includes the risks its card shows, so a pattern the owner
 /// answered for one set of risks is asked again when things under it carry a risk that card didn't
 /// show, and the new card names it. An answer from before cards named their risks keeps its
 /// pattern answered, as before. The 1 GB minimum still holds, and the guess leans yes but isn't
@@ -332,7 +332,7 @@ private func reaskProof() async throws {
   equal(unknowns.first?.cautions, ["2 couldn't be checked"], "and the card says so")
 }
 
-/// R37: a No to a card asked again for new risks keeps only the things carrying them. A wide keep
+/// A No to a card asked again for new risks keeps only the things carrying them. A wide keep
 /// would also cover the things the owner already said yes to at that age, and keeps beat burns.
 private func keepNewRisksProof() async throws {
   let now = Date()
@@ -471,7 +471,7 @@ private func keepNewRisksProof() async throws {
   checkFalse(forgotten.questions.contains { $0.id == twice.id }, "with the answer")
 }
 
-/// R38: a No keeps every thing on its card at the card's age. When the keeps for its new risks
+/// A No keeps every thing on its card at the card's age. When the keeps for its new risks
 /// would leave one out, the No keeps the things carrying any risk the card showed, and failing that
 /// everything at that age. An Undo of BZ's own call follows the same rule. Either way a clean copy
 /// at that age still burns under the owner's earlier Yes.

@@ -664,12 +664,13 @@ public actor Autopilot {
     }
   }
 
-  /// Undo (spec 3.4, ruling 1). First, before anything comes back, the tell is undoing and the
-  /// act's lesson is a keep, so no pass burns under it again; the owner's answer is No and BZ's
-  /// guess scores wrong. Then any burn under the lesson already under way finishes, and every burn
-  /// the lesson made comes back through the owner's own Restore where it can. The lesson and
-  /// trust flip even when something can't come back. An Undo cut short by a quit is picked up
-  /// again by the next one.
+  /// Undo (spec 3.4), in an order that lets nothing burn after the owner's No. First, before
+  /// anything comes back, the tell is undoing and the act's lesson is a keep, so no pass burns
+  /// under it again; the owner's answer is No and BZ's guess scores wrong. Then any burn under the
+  /// lesson already under way finishes, and every burn the lesson made comes back through the
+  /// owner's own Restore where it can. The lesson and trust flip even when something can't come
+  /// back, and what didn't is noted on the tell. An Undo cut short by a quit is picked up again by
+  /// the next one.
   func undo(tell id: String, now: Date) async throws {
     guard !undoing.contains(id) else { throw StoreError.message(AutopilotPolicy.undoingNow) }
     undoing.insert(id)
@@ -854,7 +855,8 @@ public actor Autopilot {
         memory.questions.removeAll { $0.id == replacing && $0.isOpen }
       }
       // The AI rewording a pattern BZ already asked natively improves that question. A native
-      // question's id also names its card's risks (R36), so it is found by its exact pattern.
+      // question's id also names its card's risks, so that the same pattern asked again for new
+      // risks is a question of its own; it is found by its exact pattern instead.
       if let i = memory.questions.firstIndex(where: { open in
         guard open.isOpen, open.source == "native", open.kind == question.kind else { return false }
         return open.match == question.match

@@ -169,8 +169,8 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
   /// whenever the question is asked or refreshed.
   public var line: String?
   /// What each of the things it is about carries: its risky facts and how long it sat unused, as
-  /// sorted "fact=value" lists, one per distinct mix. A No keeps every one of them at the card's
-  /// age (R38), and an Undo of BZ's own call does too.
+  /// sorted "fact=value" lists, one per distinct mix. A No, and an Undo of BZ's own call, check
+  /// that their keeps hold every one of them at the card's age, so nothing on the card burns after.
   public var profiles: [[String]]?
   public init(
     kind: AutopilotKind, match: [String: [String]], question: String, why: String,

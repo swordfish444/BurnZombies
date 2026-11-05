@@ -15,14 +15,15 @@ func autopilotLearningProof() async throws {
   try await simulatedOwnersProof()
 }
 
-/// Simulated owners (spec 4.3): three owners with fixed policies over 8 rounds of a Mac that gains
-/// new copies, programs and folders every round. From a cold start BZ never burns what an owner
-/// would keep, asks less, and handles more without asking, in the last four rounds than in the
-/// first four. The liberal owner's general lessons settle every subject, so it asks nothing in the
-/// last two rounds (R35a). Owners with history, as a Mac has them after migration, get BZ's own
-/// calls: the liberal one undoes one in round 6, and BZ tells nothing more on that subject in
-/// round 7 (R35b, R3); the cautious one never sees BZ burn a copy with unsaved work, acts
-/// included.
+/// Simulated owners (spec 4.3): owners with fixed policies over 8 rounds of a Mac that gains new
+/// copies, programs and folders every round. From a cold start BZ never burns what an owner would
+/// keep, asks less, and handles more without asking, in the last four rounds than in the first
+/// four, and every answer closes its card. The liberal owner's general lessons settle every subject
+/// before trust can be earned, so it asks nothing in the last two rounds. A hesitant owner skips
+/// three questions, and each is asked again. Owners with history, as a Mac has them after
+/// migration, get BZ's own calls: the liberal one undoes one in round 6, and BZ tells nothing more
+/// on that subject in round 7, since one wrong guess ends trust; the cautious one never sees BZ
+/// burn a copy with unsaved work, acts included.
 func simulatedOwnersProof() async throws {
   let liberal = try await simulateOwner(.liberal)
   let cautious = try await simulateOwner(.cautious)
@@ -31,7 +32,7 @@ func simulatedOwnersProof() async throws {
     report(run)
     learns(run)
   }
-  // R35a: lessons handle it. The liberal owner asks nothing in rounds 7 and 8.
+  // Lessons handle it before trust is earned: the liberal owner asks nothing in rounds 7 and 8.
   for round in [7, 8] {
     let asked: Int = liberal.rounds.first { $0.round == round }?.questions ?? -1
     equal(asked, 0, "liberal: no question in round \(round)")
@@ -45,9 +46,9 @@ func simulatedOwnersProof() async throws {
   equal(hesitant.skips, 3, "hesitant: three skips")
   check(hesitant.answeredAfterSkip > 0, "hesitant: a skipped pattern is asked again and answered")
 
-  // R35b: a liberal owner with history. Earlier yes answers on copies cover every risk this owner
-  // takes, and BZ's replay guessed the last 5 right, so BZ acts on copies and tells the owner, who
-  // leaves what BZ did for later and undoes it in round 6.
+  // A liberal owner with history, where trust is earned. Earlier yes answers on copies cover every
+  // risk this owner takes, and BZ's replay guessed the last 5 right, so BZ acts on copies and tells
+  // the owner, who leaves what BZ did for later and undoes it in round 6.
   let earlier: Date = Date().addingTimeInterval(-30 * 86_400)
   let seasoned = try await simulateOwner(
     .liberal, undoRound: 6, history: ownerHistory(at: earlier), judgesTells: false)

@@ -1,7 +1,7 @@
 import BurnCore
 import Foundation
 
-/// Undo stays exact and safe (fix round 1). It stops BZ's lesson before it restores anything, waits
+/// Undo stays exact and safe. It stops BZ's lesson before it restores anything, waits
 /// for burns already under way, and brings back exactly what BZ's act burned. It leaves the owner's
 /// lessons and burns alone, and a look never burns more than its bound across its passes.
 func undoSafetyProof() async throws {
@@ -48,7 +48,8 @@ private func failedRestoreProof() async throws {
   _ = try await engine.apply(.tellSeen(id: tell.id), now: now)
   equal(try store.memory().tells, read.tells, "failed restore: a second OK changes nothing")
   let openWorld = TellWorld(copies: threeCopies(now))
-  let (open, openStore, openRoot) = try tellEngine("undo-ok-open", openWorld, trustedCopies(now: now))
+  let (open, openStore, openRoot) = try tellEngine(
+    "undo-ok-open", openWorld, trustedCopies(now: now))
   defer { try? FileManager.default.removeItem(at: openRoot) }
   guard let waiting = await open.tick(now: now).tells.first else {
     return failTest("failed restore: an open tell")
@@ -108,7 +109,7 @@ private func undoRaceProof() async throws {
   equal(made.map(\.outcome), ["restored"], "every burn BZ's lesson made is restored")
 }
 
-/// R23: BZ's lesson takes nothing in, and nothing joins it. An owner's lesson inside its reach
+/// BZ's lesson takes nothing in, and nothing joins it. An owner's lesson inside its reach
 /// stands, and a later owner answer it reaches becomes a lesson of its own, so Undo takes back
 /// only what BZ did.
 private func standaloneProof() async throws {

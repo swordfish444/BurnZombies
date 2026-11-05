@@ -84,10 +84,10 @@ extension AutopilotPolicy {
     if excess > 0 { memory.scores.removeFirst(excess) }
   }
 
-  /// The risk facts an act's lesson is kept within (ruling 2), by kind, with every value each can
-  /// take, riskiest first: work only on this Mac, unsaved changes, a running server, and anything
-  /// BZ couldn't check (`unknown`). A copy in use is protected and never burned, so "yes" isn't
-  /// listed for `inUse`.
+  /// The risk facts a Yes and BZ's own act are kept within, so that BZ never burns on a risk the
+  /// owner hasn't said yes to, by kind, with every value each can take, riskiest first: work only
+  /// on this Mac, unsaved changes, a running server, and anything BZ couldn't check (`unknown`). A
+  /// copy in use is protected and never burned, so "yes" isn't listed for `inUse`.
   static let riskFacts: [AutopilotKind: [(fact: String, values: [String])]] = [
     .worktree: [
       (fact: "saved", values: ["unknown", "local", "pushed", "merged"]),
@@ -108,7 +108,7 @@ extension AutopilotPolicy {
   /// said yes to on the subject (`approved`), through the same `narrowed` as an owner's Yes. Each
   /// risk fact allows its safe values and the risky values the owner approved, and `unknown` only
   /// when approved. A later thing with a risk the owner never saw isn't burned under it, but asked
-  /// about. It is this act's alone (R23): its id carries the tell's, so every burn it authorizes is
+  /// about. It is this act's alone: its id carries the tell's, so every burn it authorizes is
   /// the act's.
   static func actLesson(
     for question: AutopilotQuestion, approved: Set<String>, created: Date, tellID: String
@@ -249,12 +249,12 @@ extension AutopilotPolicy {
     }
   }
 
-  /// An Undo's first step, before anything is restored (ruling 1a). The tell is undoing; the act's
-  /// lesson is gone, with the keep a No teaches in its place; the owner's answer is No; and BZ's
-  /// guess scores wrong. If an owner's newer answer took the act's lesson in, that answer stands:
-  /// no keep is learned, BZ's Yes stays held by it, and the note says so. Returns the tell to
-  /// finish, or nil when it is already undone. One left undoing by an Undo cut short is picked up
-  /// as it is.
+  /// An Undo's first step, before anything is restored, so that nothing burns under the act's
+  /// lesson once the owner has said no. The tell is undoing; the act's lesson is gone, with the keep
+  /// a No teaches in its place; the owner's answer is No; and BZ's guess scores wrong. If an owner's
+  /// newer answer took the act's lesson in, that answer stands: no keep is learned, BZ's Yes stays
+  /// held by it, and the note says so. Returns the tell to finish, or nil when it is already
+  /// undone. One left undoing by an Undo cut short is picked up as it is.
   static func beginUndo(_ id: String, memory: inout AutopilotMemory, now: Date) throws
     -> AutopilotTell?
   {
@@ -276,7 +276,7 @@ extension AutopilotPolicy {
         memory.questions[q].answer = .no
         memory.questions[q].answered = now
         memory.questions[q].answeredBy = nil
-        // The same keep an owner's No to that card teaches (R37, R38).
+        // The same keeps an owner's No to that card teaches, so the Undo keeps what a No would.
         let keeps: [AutopilotRule] = lessons(
           for: memory.questions[q], verdict: .keep, created: now, earlier: memory.questions)
         for keep in keeps { learn(keep, into: &memory.rules) }
@@ -328,7 +328,7 @@ extension AutopilotPolicy {
     }
     if needed { throw StoreError.message(undoingNow) }
     memory.questions.removeAll { taught.contains($0.id) }
-    // A keep the same No taught for another risk (R37) goes with its answer.
+    // A keep the same No taught for another risk goes with its answer, so none outlives it.
     memory.rules.removeAll { rule in
       ruleIDs.contains(rule.id) || rule.questionID.map(taught.contains) == true
     }

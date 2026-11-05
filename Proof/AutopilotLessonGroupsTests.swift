@@ -251,9 +251,8 @@ private func templateProof() {
     var match: [String: [String]] = facts
     match["stale"] = week
     _ = teach(&one, .worktree, match, .keep)
-    let expected: String =
-      words.isEmpty
-      ? "Copies used in the last month stay." : "Copies used in the last month stay: " + words + "."
+    var expected: String = "Copies used in the last month stay."
+    if !words.isEmpty { expected = "Copies used in the last month stay: " + words + "." }
     equal(AutopilotPolicy.lessonGroups(one).first?.sentence, expected, "a keep of \(facts)")
   }
   let programKeeps: [(listening: [String], sentence: String)] = [

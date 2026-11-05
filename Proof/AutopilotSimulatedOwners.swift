@@ -179,7 +179,7 @@ struct OwnerRound {
   /// Things still waiting for the owner at the end of the round.
   var unsure: Int = 0
   /// The subjects the owner was asked about, marked when a pattern they answered was asked again
-  /// for risks its card didn't show (R36).
+  /// for risks its card didn't show, when they skipped, and when a skipped one came back.
   var asked: [String] = []
 }
 

@@ -12,7 +12,8 @@ extension AutopilotPolicy {
     groups += copyGroups(burns.filter { $0.kind == .worktree }, memory)
     groups += programGroups(burns.filter { $0.kind == .process }, memory)
     groups += folderGroups(burns.filter { $0.kind == .disk }, memory)
-    // A No can teach a keep per risk it was about (R37); those read and are forgotten as one.
+    // A No to a card asked again for new risks teaches a keep per risk, so that it doesn't cancel
+    // an earlier Yes; those keeps read and are forgotten as one.
     var keeps: [[AutopilotRule]] = []
     for rule in lessons where rule.verdict != .burn {
       let sibling: Int? = rule.questionID.flatMap { id in

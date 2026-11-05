@@ -204,10 +204,10 @@ public enum AutopilotPolicy {
         .prefix(slots))
   }
 
-  /// Whether the owner already answered a question about `match` for things carrying `risks`
-  /// (R36). An answer from before cards named their risks answered the pattern whatever its things
-  /// carry, as it always did. A newer one answered only the risks its card showed, so things under
-  /// the pattern with a risk it didn't show get a question of their own. BZ's own answers leave the
+  /// Whether the owner already answered a question about `match` for things carrying `risks`. An
+  /// answer from before cards named their risks answered the pattern whatever its things carry, as
+  /// it always did. A newer one answered only the risks its card showed, so things under the
+  /// pattern with a risk it didn't show get a question of their own. BZ's own answers leave the
   /// pattern to the owner.
   static func answered(
     _ kind: AutopilotKind, _ match: [String: [String]], risks carried: [String],
@@ -221,8 +221,8 @@ public enum AutopilotPolicy {
     }
   }
 
-  /// A native question's id (R36): its pattern's key, then the risks its card shows when it shows
-  /// any. Asking about the same pattern for new risks is a question of its own.
+  /// A native question's id: its pattern's key, then the risks its card shows when it shows any, so
+  /// that asking about the same pattern for new risks is a question of its own.
   public static func nativeID(
     _ kind: AutopilotKind, _ match: [String: [String]], risks: [String]
   ) -> String {

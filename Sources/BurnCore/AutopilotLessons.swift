@@ -59,7 +59,7 @@ extension AutopilotPolicy {
   /// Merging carries every question id and former id along, so nothing a lesson was made from or
   /// did is lost. A rule that doesn't pin recency is only ever appended, and never changed.
   ///
-  /// A lesson BZ taught itself by acting (`tellID`) stands alone (R23): it takes nothing in and
+  /// A lesson BZ taught itself by acting (`tellID`) stands alone: it takes nothing in and
   /// joins nothing, and an owner's answer never joins it, so an Undo takes back exactly what BZ did
   /// and nothing the owner taught. An owner's wider answer may still take it in.
   @discardableResult public static func learn(
@@ -111,9 +111,10 @@ extension AutopilotPolicy {
   /// titled without the project or its maker. The one way a lesson is made, whether from an
   /// answer, BZ's own act, an undo, a migration or the replay.
   ///
-  /// A Yes covers only the risks it was given (R31): the ones its card showed (`risks`), or for
-  /// BZ's own act the ones the owner approved on the subject (`approved`). A question from before
-  /// cards named their risks (`risks` nil) teaches what it always did. A No is never narrowed.
+  /// A Yes covers only the risks it was given, since BZ never burns on a risk the owner hasn't said
+  /// yes to: the ones its card showed (`risks`), or for BZ's own act the ones the owner approved on
+  /// the subject (`approved`). A question from before cards named their risks (`risks` nil) teaches
+  /// what it always did. A No is never narrowed.
   public static func lesson(
     for question: AutopilotQuestion, verdict: AutopilotVerdict, created: Date,
     approved: Set<String>? = nil
@@ -132,10 +133,10 @@ extension AutopilotPolicy {
   }
 
   /// What an answer teaches: `lesson(for:)`, except for a No to a question asked again for risks
-  /// earlier cards about its pattern didn't show (R36). A keep over the whole pattern would also
-  /// cover what the owner already said could go, and keeps beat burns, so that No keeps less, but
-  /// always every thing on its card at the card's age (R38):
-  /// 1. the things carrying a risk the card showed for the first time (R37), one keep per such risk
+  /// earlier cards about its pattern didn't show. A keep over the whole pattern would also cover
+  /// what the owner already said could go, and keeps beat burns, so that No keeps less; but never
+  /// less than every thing on its card at the card's age, since BZ never acts against a No:
+  /// 1. the things carrying a risk the card showed for the first time, one keep per such risk
   ///    fact, kept to its new risky values;
   /// 2. failing that, the things carrying any risk the card showed, one keep per risk fact;
   /// 3. failing that, everything at that age, as any No keeps.

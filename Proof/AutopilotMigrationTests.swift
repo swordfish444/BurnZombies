@@ -128,8 +128,8 @@ private func firstTickProof() async throws {
   equal(try late.memory().tallies[lesson], once, "the stop it recorded counts once")
 }
 
-/// Ruling R8: a memory with every field set comes back equal, so a field the hand-written decoder
-/// forgets fails here.
+/// A memory with every field set comes back equal, so a field the hand-written decoder forgets
+/// fails here.
 private func roundTripProof() throws {
   var full = AutopilotMemory()
   full.version = 7

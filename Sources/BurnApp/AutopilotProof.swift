@@ -989,7 +989,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   }
   try check(learned.verdict == .burn && learned.source == .`operator`, "A yes must teach a burn rule")
   // The answer teaches why, not which project: the engine's own lesson, kept to the risks its card
-  // showed (R31), and it is in a group that reads as a sentence.
+  // showed, and it is in a group that reads as a sentence.
   let engineLesson: AutopilotRule = AutopilotPolicy.lesson(
     for: asked, verdict: .burn, created: Date())
   let widest: [String: [String]] = AutopilotPolicy.lessonMatch(
@@ -1215,9 +1215,11 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   newer.autopilot.rules[actIndex] = wider
   newer.tellUndo(absorbed)
   let left: AutopilotTell? = newer.autopilot.tellsWaiting.first { $0.id == absorbed.id }
+  let keptAnyway: Bool = newer.autopilot.rules.contains { rule in
+    rule.verdict == .keep && rule.questionID == absorbed.questionID
+  }
   try check(
-    left?.waitsForOK == true && left?.note == AutopilotPolicy.newerAnswerStands
-      && !newer.autopilot.rules.contains { $0.verdict == .keep && $0.questionID == absorbed.questionID },
+    left?.waitsForOK == true && left?.note == AutopilotPolicy.newerAnswerStands && !keptAnyway,
     "An Undo under a newer answer must learn no keep and say so until OK")
   if let left { newer.tellSeen(left) }
   try check(newer.autopilot.tellsWaiting.isEmpty, "OK must close it")
