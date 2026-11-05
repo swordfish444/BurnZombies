@@ -81,6 +81,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       ("--autopilot-sweep", "Autopilot sweep", autopilotSweepProof),
       ("--autopilot-learning", "Autopilot learning", autopilotLearningProof),
       ("--autopilot-look-only", "Autopilot look-only", lookOnlyProof),
+      ("--agent-session-environment", "Agent session environment", agentSessionEnvironmentProof),
     ] as [(String, String, () async throws -> Void)] where CommandLine.arguments.contains(flag) {
       do { try await proof() } catch { failTest("\(name): \(error)") }
       if failures == 0 { print("PASS \(name)") }
@@ -579,6 +580,10 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       (
         "start at login on a fresh install, kept off through updates, older installs unchanged",
         startAtLoginProof
+      ),
+      (
+        "sweeps and reviews start outside the installing agent's session",
+        agentSessionEnvironmentProof
       ),
       ("agent execution safety boundaries", d.testExecutionBoundaries),
       ("owner-scoped recurrence", d.testRecurrenceScope),
