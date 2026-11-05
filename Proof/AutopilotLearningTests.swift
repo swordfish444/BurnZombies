@@ -15,16 +15,18 @@ func autopilotLearningProof() async throws {
 }
 
 /// Simulated owners (spec 4.3): three owners with fixed policies over 8 rounds of a Mac that gains
-/// new copies, programs and folders every round. BZ never burns what an owner would keep, tells
-/// included; it asks less, and handles more without asking, in the last four rounds than in the
-/// first four; the liberal owner gets tells; and after the liberal owner undoes one in round 6, BZ
-/// tells nothing more on that subject in round 7 (R3).
+/// new copies, programs and folders every round. From a cold start BZ never burns what an owner
+/// would keep, asks less, and handles more without asking, in the last four rounds than in the
+/// first four. The liberal owner's general lessons settle every subject, so its questions fall to
+/// none (R35a). A liberal owner with history, as a Mac has it after migration, gets tells; after
+/// they undo one in round 6, BZ tells nothing more on that subject in round 7 (R35b, R3).
 func simulatedOwnersProof() async throws {
-  let liberal = try await simulateOwner(.liberal, undoRound: 6)
+  let liberal = try await simulateOwner(.liberal)
   let cautious = try await simulateOwner(.cautious)
   let keeper = try await simulateOwner(.serverKeeper)
   for run in [liberal, cautious, keeper] {
     print("  owner \(run.line)")
+    print("    asked: " + run.askedLine)
     print("    subjects: " + run.subjects.joined(separator: "; "))
     equal(run.wrong, [], "\(run.persona): BZ never burns what the owner would keep, tells included")
     let early: Int = run.questions(1...4)
@@ -35,15 +37,35 @@ func simulatedOwnersProof() async throws {
     let after: UInt64 = run.handled(5...8)
     check(after > before, "\(run.persona): more handled without asking in rounds 5-8 than 1-4")
   }
-  check(liberal.tells > 0, "liberal: BZ tells the owner what it did on its own by round 8")
-  guard let undone = liberal.undone else {
-    return failTest("liberal: a tell to undo in round 6")
+  // R35a: lessons handle it. The liberal owner's questions fall to none within rounds 5-8 and
+  // stay there.
+  let lastAsked: Int = liberal.rounds.filter { $0.questions > 0 }.map(\.round).max() ?? 0
+  check(
+    lastAsked < 8,
+    "liberal: questions fall to 0 within rounds 5-8 and stay there (last asked in round \(lastAsked))")
+
+  // R35b: a liberal owner with history. Earlier yes answers on copies cover every risk this owner
+  // takes, and BZ's replay guessed the last 5 right, so BZ acts on copies and tells the owner, who
+  // leaves what BZ did for later and undoes it in round 6.
+  let earlier: Date = Date().addingTimeInterval(-30 * 86_400)
+  let seasoned = try await simulateOwner(
+    .liberal, undoRound: 6, history: ownerHistory(at: earlier), judgesTells: false)
+  print("  owner \(seasoned.line) (with history)")
+  print("    asked: " + seasoned.askedLine)
+  print("    subjects: " + seasoned.subjects.joined(separator: "; "))
+  equal(
+    seasoned.wrong, [],
+    "liberal with history: BZ never burns what the owner would keep, acts included")
+  check(
+    seasoned.tells > 0, "liberal with history: BZ tells the owner what it did on its own by round 8")
+  guard let undone = seasoned.undone else {
+    return failTest("liberal with history: a tell to undo in round 6")
   }
-  equal(undone.round, 6, "liberal: the Undo is in round 6")
-  let seventh: [String] = liberal.rounds.first { $0.round == 7 }?.tellSubjects ?? []
+  equal(undone.round, 6, "liberal with history: the Undo is in round 6")
+  let seventh: [String] = seasoned.rounds.first { $0.round == 7 }?.tellSubjects ?? []
   checkFalse(
     seventh.contains(undone.subject),
-    "liberal: no tell on \(undone.subject) in round 7, after the Undo")
+    "liberal with history: no tell on \(undone.subject) in round 7, after the Undo")
 }
 
 private func copy(_ id: String, _ facts: [String: String], bytes: UInt64 = 1 << 30)

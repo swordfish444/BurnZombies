@@ -165,6 +165,9 @@ struct OwnerRound {
   var tellSubjects: [String] = []
   /// Things still waiting for the owner at the end of the round.
   var unsure: Int = 0
+  /// The subjects the owner was asked about, marked when a pattern they answered was asked again
+  /// for risks its card didn't show (R36).
+  var asked: [String] = []
 }
 
 /// A whole run for one persona.
@@ -186,6 +189,14 @@ struct OwnerRun {
     rounds.filter { range.contains($0.round) }.reduce(UInt64(0)) { $0 + $1.handledBytes }
   }
   var tells: Int { rounds.reduce(0) { $0 + $1.tells } }
+
+  /// "round 1: worktree:, process:node · round 6: process:java again": what each round asked.
+  var askedLine: String {
+    let parts: [String] = rounds.filter { !$0.asked.isEmpty }.map { round in
+      "round \(round.round): " + round.asked.joined(separator: ", ")
+    }
+    return parts.isEmpty ? "nothing" : parts.joined(separator: " · ")
+  }
 
   /// "liberal: questions 2 3 0 … · handled without asking 0.8 3.5 … GB · tells 0 0 … · unsure 6 6 …
   /// · good calls 0 · wrong burns 0", a number per round.
@@ -231,15 +242,20 @@ private func members(of question: AutopilotQuestion, in snapshot: AutopilotSnaps
   return unsure.filter { AutopilotPolicy.matches(covers, $0) }
 }
 
-/// Waits for burns an answer started in the background: until the receipts hold still.
-private func settle(_ store: AutopilotStore) async {
-  var last = -1
-  var steady = 0
-  for _ in 0..<300 where steady < 3 {
-    let count: Int = ((try? store.receipts()) ?? []).count
-    steady = count == last ? steady + 1 : 0
-    last = count
-    try? await Task.sleep(nanoseconds: 10_000_000)
+/// Waits for burns an answer started in the background: until everything BZ decided to burn has
+/// a receipt from this look. A look finishes its own burns before it returns. Waiting on what is
+/// left rather than on a quiet moment keeps the rounds the same on a busy machine.
+private func settle(_ engine: Autopilot, now: Date) async {
+  let deadline = Date().addingTimeInterval(30)
+  while Date() < deadline {
+    let snapshot: AutopilotSnapshot = await engine.snapshot(now: now)
+    let waiting: Bool = snapshot.entries.contains { entry in
+      guard entry.status == .burn else { return false }
+      guard let receipt = entry.receipt else { return true }
+      return receipt.date < entry.item.observedAt
+    }
+    if !waiting { return }
+    try? await Task.sleep(nanoseconds: 20_000_000)
   }
 }
 
@@ -249,15 +265,19 @@ private let burnt: Set<String> = ["burned", "verifying", "restored"]
 /// judges what BZ did on its own (a good call when they'd have burned every one, an Undo
 /// otherwise) and answers every open question, including ones that open as earlier answers land:
 /// yes only when they would burn every thing it is about. With `undoRound`, the owner undoes BZ's
-/// first open tell that round whatever they think of it.
-func simulateOwner(_ persona: OwnerPersona, rounds: Int = 8, undoRound: Int? = nil) async throws
-  -> OwnerRun
-{
+/// first open tell that round whatever they think of it. `history` is the memory BZ starts with;
+/// an owner who doesn't `judgesTells` leaves what BZ did on its own for later, apart from that
+/// Undo.
+func simulateOwner(
+  _ persona: OwnerPersona, rounds: Int = 8, undoRound: Int? = nil,
+  history: AutopilotMemory? = nil, judgesTells: Bool = true
+) async throws -> OwnerRun {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent(
     "bz-autopilot-owner-" + UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: root) }
   let mac = OwnerMac()
   let store = try AutopilotStore(root: root)
+  if let history { try store.save(memory: history) }
   let engine = try Autopilot(root: root, sources: mac.sources)
   var run = OwnerRun(persona: persona.name)
   // Rounds a day apart, ending about now: receipts carry the real time they were written.
@@ -290,6 +310,8 @@ func simulateOwner(_ persona: OwnerPersona, rounds: Int = 8, undoRound: Int? = n
         if round == undoRound && run.undone == nil {
           run.undone = (subject(of: tell, memory), round)
           _ = try await engine.apply(.tellUndo(id: tell.id), now: now)
+        } else if !judgesTells {
+          continue
         } else if things.allSatisfy(persona.burns) {
           run.goodCalls += 1
           _ = try await engine.apply(.tellGood(id: tell.id), now: now)
@@ -303,12 +325,20 @@ func simulateOwner(_ persona: OwnerPersona, rounds: Int = 8, undoRound: Int? = n
     while result.questions < 50, let question = snapshot.questions.first {
       let about: [AutopilotItem] = members(of: question, in: snapshot)
       equal(about.count, question.count, "\(persona.name): the owner sees what BZ counted")
+      let earlier: [AutopilotQuestion] = try store.memory().questions
+      let again: Bool = earlier.contains { past in
+        guard past.answer == .yes || past.answer == .no, past.answeredBy != "bz" else {
+          return false
+        }
+        return past.kind == question.kind && past.match == question.match
+      }
+      result.asked.append(subject(of: question) + (again ? " again" : ""))
       let yes: Bool = !about.isEmpty && about.allSatisfy(persona.burns)
       let answer: AutopilotAnswer = yes ? .yes : .no
       snapshot = try await engine.apply(.answer(questionID: question.id, answer: answer), now: now)
       result.questions += 1
     }
-    await settle(store)
+    await settle(engine, now: now)
     try await judge()
     result.unsure = await engine.snapshot(now: now).count(.unsure)
     run.rounds.append(result)
@@ -319,6 +349,39 @@ func simulateOwner(_ persona: OwnerPersona, rounds: Int = 8, undoRound: Int? = n
   }
   run.subjects = subjectLines(try store.memory())
   return run
+}
+
+/// Memory as a real Mac has it after migration: the owner said yes to old copies untouched for a
+/// month with work only on this Mac, with small unsaved changes and with large ones, every risk the
+/// liberal owner takes, and BZ's replay of their answers guessed the last 5 right on copies. Each
+/// answer taught its lesson.
+func ownerHistory(at date: Date) -> AutopilotMemory {
+  func yes(_ match: [String: [String]], risks: [String], minutes: Double) -> AutopilotQuestion {
+    var question = AutopilotQuestion(
+      kind: .worktree, match: match, question: "Can I burn these old copies?", why: "",
+      examples: [], count: 3, bytes: 3_000_000_000, asked: date.addingTimeInterval(minutes * 60))
+    question.answer = .yes
+    question.answered = date.addingTimeInterval(minutes * 60 + 30)
+    question.risks = risks
+    return question
+  }
+  var memory = AutopilotMemory()
+  memory.questions = [
+    yes(["saved": ["local"], "stale": ["month"]], risks: ["saved=local"], minutes: 0),
+    yes(["changes": ["small"], "stale": ["month"]], risks: ["changes=small"], minutes: 10),
+    yes(["changes": ["large"], "stale": ["month"]], risks: ["changes=large"], minutes: 20),
+  ]
+  for question in memory.questions {
+    let lesson = AutopilotPolicy.lesson(
+      for: question, verdict: .burn, created: question.answered ?? date)
+    AutopilotPolicy.learn(lesson, into: &memory.rules)
+  }
+  memory.scores = (0..<AutopilotPolicy.trustStreak).map { i in
+    AutopilotScore(
+      questionID: "replayed-\(i)", subject: "worktree:", guess: .yes, answer: .yes, right: true,
+      date: date.addingTimeInterval(Double(i) * 60), replayed: true)
+  }
+  return memory
 }
 
 /// "process:node 3 answered, 2 scored, best run 2": what trust on each subject could rest on. Trust
