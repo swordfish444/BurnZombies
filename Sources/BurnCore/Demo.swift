@@ -101,7 +101,7 @@ public enum Demo {
     func make(
       _ kind: AutopilotKind, _ key: String, _ name: String, detail: String, path: String? = nil,
       bytes: UInt64, facts: [String: String], pid: Int32? = nil, protectedReason: String? = nil,
-      used: Date? = nil, title: String? = nil
+      used: Date? = nil, title: String? = nil, branch: String? = nil
     ) -> AutopilotItem {
       let id: String
       switch kind {
@@ -112,7 +112,8 @@ public enum Demo {
       return AutopilotItem(
         id: id, kind: kind, name: name, detail: detail, path: path, bytes: bytes, facts: facts,
         protectedReason: protectedReason, observedAt: now, pid: pid,
-        processKey: kind == .process ? "demo-" + key : nil, lastUsed: used, title: title)
+        processKey: kind == .process ? "demo-" + key : nil, lastUsed: used, title: title,
+        branch: branch)
     }
     func entry(
       _ item: AutopilotItem, _ status: AutopilotStatus, _ authority: String?, label: String,
@@ -134,7 +135,8 @@ public enum Demo {
       ]
       return make(
         .worktree, name, name, detail: "A spare copy of \(repo) called \(key).",
-        path: "/example/work/" + name, bytes: bytes, facts: facts, used: used, title: task)
+        path: "/example/work/" + name, bytes: bytes, facts: facts, used: used, title: task,
+        branch: key)
     }
 
     // Leftover programs. Sizes are memory.

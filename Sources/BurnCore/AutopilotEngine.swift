@@ -398,14 +398,9 @@ public actor Autopilot {
         let question = memory.questions[i]
         let rule = AutopilotPolicy.coverage(question.kind, question.match)
         let matching = unsure.filter { AutopilotPolicy.matches(rule, $0) }
-        memory.questions[i].count = matching.count
-        memory.questions[i].bytes = matching.reduce(0) { $0 + $1.bytes }
-        memory.questions[i].examples = Array(
-          matching.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name))
-        memory.questions[i].cautions = AutopilotPolicy.mix(question.kind, matching)
-        // What the card names follows too: the rows, when they were last used, the risks and the
-        // safe line.
-        AutopilotPolicy.describe(&memory.questions[i], covering: matching)
+        // The numbers follow, and what the card names: the rows, when they were last used, the
+        // risks and the safe line.
+        AutopilotPolicy.refresh(&memory.questions[i], covering: matching)
       }
       // Once burns shrink a pattern below what a question is worth, it stops being asked.
       memory.questions.removeAll { $0.isOpen && $0.bytes < AutopilotPolicy.worthAsking }
@@ -603,6 +598,13 @@ public actor Autopilot {
       try store.updateMemory { memory in
         memory.keptItems.insert(id)
         if let path { memory.keptItems.insert("path:" + path) }
+      }
+    case .unkeep(let id):
+      // Both ways a keep can name it go, so nothing of the keep is left to hold it.
+      let path = catalog?.items.first(where: { $0.id == id })?.path
+      try store.updateMemory { memory in
+        memory.keptItems.remove(id)
+        if let path { memory.keptItems.remove("path:" + path) }
       }
     case .restore(let receiptID):
       try await restore(receiptID: receiptID)

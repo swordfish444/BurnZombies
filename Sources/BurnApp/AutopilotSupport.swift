@@ -399,6 +399,18 @@ enum AutopilotLocal {
     recount(&s)
   }
 
+  /// Unspare: the owner's keep is gone, so it's BZ's to decide again; until the engine says, it
+  /// waits as unsure.
+  static func unkeep(_ s: inout AutopilotSnapshot, entry e: AutopilotEntry) {
+    guard let i = s.entries.firstIndex(where: { $0.id == e.id }),
+      AutopilotPolicy.isSpared(s.entries[i])
+    else { return }
+    s.entries[i].status = .unsure
+    s.entries[i].authority = nil
+    s.entries[i].why = "You took back your keep, so I'll decide again."
+    recount(&s)
+  }
+
   static func restore(_ s: inout AutopilotSnapshot, receipt r: AutopilotReceipt, now: Date) {
     guard let i = s.entries.firstIndex(where: { $0.receipt?.id == r.id }) else { return }
     var receipt = r
