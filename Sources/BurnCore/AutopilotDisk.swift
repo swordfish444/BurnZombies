@@ -472,7 +472,7 @@ public enum AutopilotDisk {
     return changed(info)
   }
 
-  private static func changed(_ info: stat) -> Date {
+  static func changed(_ info: stat) -> Date {
     let seconds =
       TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9
     return Date(timeIntervalSince1970: seconds)

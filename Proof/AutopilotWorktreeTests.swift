@@ -745,6 +745,140 @@ private func apSubmoduleProof(_ world: APWorld) throws {
   equal(head, receipt.restore?.head, "restored at the saved commit")
 }
 
+// MARK: Copies the inventory couldn't walk
+
+/// The inventory's file walk stops at a hard-linked file (or a project inside a copy, or a special
+/// file), and such a copy had no age, so no lesson or question reached it. It gets one from what
+/// Git says changed, a few copies per look.
+private func apUnwalkedAgeProof(_ world: APWorld) throws {
+  let fm = FileManager.default
+  let day: TimeInterval = 86_400
+  // Everything here is made now; looking 40 days later makes it 40 days old.
+  let later = Date().addingTimeInterval(40 * day)
+  func touch(_ path: String, _ date: Date) throws {
+    try fm.setAttributes([.modificationDate: date], ofItemAtPath: path)
+  }
+  // A file hard-linked from a package store, as pnpm makes them.
+  func stuck(_ name: String) throws -> String {
+    let copy = try world.addWorktree(name, branch: "feature-" + name)
+    try apWrite(world.path(name + "-store.txt"), "shared\n")
+    try fm.linkItem(atPath: world.path(name + "-store.txt"), toPath: copy + "/linked.txt")
+    return copy
+  }
+  let untouched = try stuck("stuck-untouched")
+  // A new file three and a half days before the look.
+  let edited = try stuck("stuck-edited")
+  try apWrite(edited + "/notes.txt", "draft\n")
+  try touch(edited + "/notes.txt", later - 3.5 * day)
+  // Git rewrote the index ten days before.
+  let staged = try stuck("stuck-staged")
+  try touch(
+    try apLine(staged, ["rev-parse", "--path-format=absolute", "--git-path", "index"]),
+    later - 10 * day)
+  // A file deleted half a day before counts by the folder it was in.
+  let deleted = try stuck("stuck-deleted")
+  try apWrite(deleted + "/docs/guide.txt", "guide\n")
+  try apGit(deleted, ["add", "docs"])
+  try apGit(deleted, ["commit", "-m", "guide"])
+  try fm.removeItem(atPath: deleted + "/docs/guide.txt")
+  try touch(deleted + "/docs", later - day / 2)
+  // An ignored folder counts by its own time, like a junk folder.
+  let installed = try stuck("stuck-installed")
+  try apWrite(installed + "/node_modules/pkg/index.js", "module.exports = 1\n")
+  try touch(installed + "/node_modules", later - 2 * day)
+
+  let paths = [untouched, edited, staged, deleted, installed]
+  var records = try paths.map { try apRecord($0, in: world.main) }
+  for record in records {
+    isNil(record.lastFileChange)
+    check(
+      record.gaps.contains("Hardlinked files require owner handling."),
+      "the walk stops at the linked file: \(record.gaps)")
+    checkFalse(record.status.isEmpty, "Git status was read")
+  }
+  var cache: [String: AutopilotDelivery] = [:]
+  func items(_ records: [WorktreeRecord]) -> [AutopilotItem] {
+    AutopilotWorktrees.items(records, threads: [], delivery: &cache, now: later, budget: 10)
+  }
+  func stale(_ records: [WorktreeRecord]) -> [String] {
+    items(records).map { $0.facts["stale"] ?? "" }
+  }
+  let unknown = Array(repeating: "unknown", count: paths.count)
+  equal(stale(records), unknown, "no walk, no age")
+
+  var probed: [String] = []
+  let ages = AutopilotAges { path, seconds in
+    probed.append(path)
+    return AutopilotWorktrees.lastWorked(path: path, seconds: seconds)
+  }
+  equal(stale(ages.fill(records, budget: 0, now: later)), unknown, "no budget, no look")
+  equal(probed, [], "nothing is looked at without a budget")
+  equal(
+    stale(ages.fill(records, limit: 2, now: later)),
+    ["month", "day", "unknown", "unknown", "unknown"], "a few copies per look")
+  equal(
+    stale(ages.fill(records, limit: 2, now: later)), ["month", "day", "week", "today", "unknown"],
+    "the next look dates the next few")
+  equal(
+    stale(ages.fill(records, limit: 2, now: later)), ["month", "day", "week", "today", "day"],
+    "within three looks every copy has an age")
+  equal(probed, paths, "each copy is looked at once")
+  let card = items(ages.fill([records[1]], now: later))[0]
+  let lastUsed = card.lastUsed?.timeIntervalSince(later - 3.5 * day) ?? .infinity
+  check(
+    abs(lastUsed) < 1, "the card says when it was last used: \(String(describing: card.lastUsed))")
+  check(card.detail.contains("untouched for 3 days"), "and so does its sentence: " + card.detail)
+
+  // Now a lesson about how long copies sat unused reaches them.
+  var memory = AutopilotMemory()
+  memory.rules = [
+    AutopilotRule(
+      kind: .worktree, match: ["stale": ["day", "week", "month", "older"]], verdict: .burn,
+      source: .operator, title: "Copies untouched since yesterday")
+  ]
+  let undated = items([records[1]])[0]
+  equal(AutopilotPolicy.decide(undated, memory: memory).status, .unsure, "no age, no lesson")
+  equal(AutopilotPolicy.decide(card, memory: memory).status, .burn, "the lesson covers it")
+
+  // Only copies the inventory looked into and couldn't walk are dated.
+  let walked = try apRecord(
+    try world.addWorktree("walked", branch: "feature-walked"), in: world.main)
+  check(walked.lastFileChange != nil, "a copy the inventory walked has its own date")
+  var outside = records[0]
+  outside.id += "-outside"
+  outside.status = ""
+  let others = ages.fill([walked, outside], now: later)
+  equal(others[0].lastFileChange, walked.lastFileChange, "a walked copy keeps the walk's date")
+  isNil(others[1].lastFileChange)
+  equal(probed.count, paths.count, "neither is looked at")
+
+  // A date holds until the inventory sees the copy change, or for an hour.
+  try apWrite(untouched + "/fresh.txt", "new\n")
+  try touch(untouched + "/fresh.txt", later - 3600)
+  equal(stale(ages.fill(records, now: later))[0], "month", "unchanged as far as it knows")
+  records[0] = try apRecord(untouched, in: world.main)
+  equal(stale(ages.fill(records, now: later))[0], "today", "a copy seen changing is dated again")
+  equal(probed.count, paths.count + 1)
+  _ = ages.fill(records, now: later + 3601)
+  equal(probed.count, 2 * paths.count + 1, "an hour later each copy is looked at again")
+
+  // A look that can't finish says nothing: anything partial could only make a copy look older.
+  isNil(AutopilotWorktrees.lastWorked(path: edited, seconds: 0))
+  isNil(AutopilotWorktrees.lastWorked(path: world.path("gone"), seconds: 10))
+  let plain = world.path("not-a-copy")
+  try fm.createDirectory(atPath: plain, withIntermediateDirectories: true)
+  isNil(AutopilotWorktrees.lastWorked(path: plain, seconds: 10))
+  // A copy Git can't date stays unknown, and isn't looked at again on every tick.
+  var failed = 0
+  let blind = AutopilotAges { _, _ in
+    failed += 1
+    return nil
+  }
+  equal(stale(blind.fill(records, now: later)), unknown, "no date, no age")
+  _ = blind.fill(records, now: later)
+  equal(failed, paths.count, "a look that found nothing is remembered too")
+}
+
 func autopilotWorktreeProof() async throws {
   apDirectProof()
   let fm = FileManager.default
@@ -771,6 +905,7 @@ func autopilotWorktreeProof() async throws {
   try apCleanRetire(world, items["merged"]!)
   try apUncheckedRetire(world, items["pushed"]!)
   try apDirtyRetire(world, items["dirty"]!)
+  try apUnwalkedAgeProof(world)
   try apSubmoduleProof(world)
 
   let leftovers = (try? fm.contentsOfDirectory(atPath: world.state.path)) ?? []

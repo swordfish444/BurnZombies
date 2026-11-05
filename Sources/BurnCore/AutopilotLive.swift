@@ -9,6 +9,7 @@ extension AutopilotSources {
   ) -> AutopilotSources {
     let junk = AutopilotJunkCache()
     let sizes = AutopilotSizes()
+    let ages = AutopilotAges()
     let skipped = AutopilotSkipped()
     // Without verified Full Disk Access, Autopilot leaves the places macOS protects alone.
     @Sendable func scope() -> ProtectedLocations { .current(root: root, homes: [home]) }
@@ -41,7 +42,7 @@ extension AutopilotSources {
         // Git checks go only to copies big enough to be worth assessing.
         let worth = sizes.fill(records).filter { $0.allocated >= AutopilotPolicy.worthBytes }
         let items = AutopilotWorktrees.items(
-          worth, threads: threads, delivery: &delivery, budget: 150)
+          ages.fill(worth), threads: threads, delivery: &delivery, budget: 150)
         return (items, delivery)
       },
       disk: { records in junk.items(records, home: home, protected: scope()) },

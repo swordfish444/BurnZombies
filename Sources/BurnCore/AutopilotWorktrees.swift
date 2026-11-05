@@ -225,6 +225,69 @@ public enum AutopilotWorktrees {
     return AutopilotDelivery(head: head, saved: saved, checked: Date())
   }
 
+  // MARK: Age
+
+  /// When a copy the inventory couldn't walk was last worked in: the newest of its HEAD commit,
+  /// its index (Git rewrites it on add, commit, checkout and reset), its own folder and every path
+  /// `git status` lists. A deleted file counts by the nearest folder still there, and an ignored
+  /// folder by its own time, as a junk folder does. Nil when Git can't say or the look doesn't
+  /// finish within `seconds`: anything partial could only make a copy look older than it is.
+  public static func lastWorked(path: String, seconds: TimeInterval) -> Date? {
+    let end = ProcessInfo.processInfo.systemUptime + seconds
+    func left() -> Double? {
+      let remaining = end - ProcessInfo.processInfo.systemUptime
+      return remaining > 0.001 ? min(remaining, 180) : nil
+    }
+    func ask(_ args: [String]) -> String? {
+      guard let wait = left() else { return nil }
+      return try? line(path, args, seconds: wait)
+    }
+    var info = stat()
+    guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
+    var newest = AutopilotDisk.changed(info)
+    guard let committed = ask(["log", "-1", "--format=%ct"]), let stamp = TimeInterval(committed)
+    else { return nil }
+    newest = max(newest, Date(timeIntervalSince1970: stamp))
+    guard let index = ask(["rev-parse", "--path-format=absolute", "--git-path", "index"]) else {
+      return nil
+    }
+    if lstat(index, &info) == 0 { newest = max(newest, AutopilotDisk.changed(info)) }
+    let statusArguments = [
+      "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching",
+    ]
+    // Git's runner keeps at most 8 MB of output, plus a byte that shows a list was cut short.
+    guard let wait = left(),
+      let listing = try? WorktreeGit.run(path, statusArguments, seconds: wait),
+      listing.count <= 8 << 20
+    else { return nil }
+    let root = Array(path.utf8) + [UInt8(ascii: "/")]
+    var entries = listing.split(separator: 0)[...]
+    var counted = 0
+    while let entry = entries.popFirst() {
+      guard entry.count > 3 else { continue }
+      // A rename or copy names where it came from next; that path is gone or unchanged.
+      let code = entry.prefix(2)
+      if code.contains(UInt8(ascii: "R")) || code.contains(UInt8(ascii: "C")) {
+        _ = entries.popFirst()
+      }
+      counted += 1
+      if counted % 512 == 0 && left() == nil { return nil }
+      var relative = Array(entry.dropFirst(3))
+      if relative.last == UInt8(ascii: "/") { relative.removeLast() }
+      while true {
+        let full: [CChar] = (root + relative).map { CChar(bitPattern: $0) } + [0]
+        if lstat(full, &info) == 0 {
+          newest = max(newest, AutopilotDisk.changed(info))
+          break
+        }
+        guard errno == ENOENT || errno == ENOTDIR else { return nil }
+        guard let slash = relative.lastIndex(of: UInt8(ascii: "/")) else { break }
+        relative.removeSubrange(slash...)
+      }
+    }
+    return newest
+  }
+
   // MARK: Retire
 
   /// Removes an old copy only after everything in it is safe: committed work is recorded at
@@ -733,6 +796,61 @@ public final class AutopilotSizes: @unchecked Sendable {
       lock.withLock { known[record.id] = (bytes, now) }
       sized.allocated = bytes
       return sized
+    }
+  }
+}
+
+/// Dates old copies the worktree inventory looked into but couldn't walk (a hard-linked file, a
+/// project inside it or a special file stops the walk), a few per tick, from what Git says
+/// changed. Until dated a copy's age is unknown, so no lesson or question reaches it. A date holds
+/// for an hour, or until the inventory sees the copy's HEAD or changes move.
+public final class AutopilotAges: @unchecked Sendable {
+  private struct Look {
+    var date: Date?
+    var at: Date
+    var head: String?
+    var status: String
+  }
+  private let lock = NSLock()
+  private var known: [String: Look] = [:]
+  private let prober: (String, TimeInterval) -> Date?
+  public init(
+    prober: @escaping (String, TimeInterval) -> Date? = {
+      AutopilotWorktrees.lastWorked(path: $0, seconds: $1)
+    }
+  ) {
+    self.prober = prober
+  }
+
+  /// Looks at no more than `limit` copies, for no more than `budget` seconds in all. A look that
+  /// found no date is remembered too, so a copy Git can't date doesn't take every tick's turn.
+  public func fill(
+    _ records: [WorktreeRecord], limit: Int = 8, budget: TimeInterval = 10, now: Date = Date()
+  ) -> [WorktreeRecord] {
+    let end = ProcessInfo.processInfo.systemUptime + budget
+    var looked = 0
+    return records.map { record in
+      // Without a status the inventory never read Git there: it may not look into that folder.
+      guard record.lastFileChange == nil, !record.status.isEmpty, !record.main, !record.missing,
+        !record.retired, !record.bare, record.protectedPlace == nil
+      else {
+        return record
+      }
+      var dated = record
+      if let look = lock.withLock({ known[record.id] }), look.head == record.head,
+        look.status == record.status, now.timeIntervalSince(look.at) < 3600
+      {
+        dated.lastFileChange = look.date
+        return dated
+      }
+      let left = end - ProcessInfo.processInfo.systemUptime
+      guard looked < limit, left > 0 else { return record }
+      looked += 1
+      let date = prober(record.path, min(10, left))
+      let look = Look(date: date, at: now, head: record.head, status: record.status)
+      lock.withLock { known[record.id] = look }
+      dated.lastFileChange = date
+      return dated
     }
   }
 }

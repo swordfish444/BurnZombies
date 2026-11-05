@@ -189,8 +189,9 @@ func autopilotPreview(inventory: URL?) async throws {
   print(
     "Sized \(records.filter { $0.allocated == 0 }.count) unmeasured copies in \(Int(Date().timeIntervalSince(sizingStarted))) s; \(sized.filter { $0.allocated == 0 && !$0.missing }.count) still unmeasured"
   )
+  let worth = sized.filter { $0.allocated >= AutopilotPolicy.worthBytes }
   items += AutopilotWorktrees.items(
-    sized.filter { $0.allocated >= AutopilotPolicy.worthBytes }, threads: threads,
+    AutopilotAges().fill(worth, limit: worth.count, budget: 600), threads: threads,
     delivery: &delivery, budget: 2000
   )
   .filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
