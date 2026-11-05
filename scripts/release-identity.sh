@@ -1,25 +1,21 @@
 #!/bin/bash
-# Handles the release signing identity. Every release since v0.13.0 is signed with one self-signed
-# certificate, and macOS ties Full Disk Access to it, so releases keep using that same key: a new
-# identity (scripts/ensure-signing-identity.sh) would make every user allow BurnZombies again.
-# .github/workflows/release.yml signs releases, so no Mac needs the key to release.
+# Keeps the release signing identity in 1Password, so any Mac the maintainer approves can build a
+# release. Every release since v0.13.0 is signed with one self-signed certificate, and macOS ties
+# Full Disk Access to it, so releases keep using that same key: a new identity
+# (scripts/ensure-signing-identity.sh) would make every user allow BurnZombies again.
 #
-#   scripts/release-identity.sh github  On the Mac that has the identity: uploads it as the
-#                                       RELEASE_SIGNING_IDENTITY secret of the repository's
-#                                       "release" environment, which only v* tags can use.
-#   scripts/release-identity.sh save    Same Mac: keeps a backup in 1Password, since GitHub
-#                                       secrets cannot be read back.
-#   scripts/release-identity.sh load    Restores that backup into a Mac's login keychain, trusted
-#                                       for code signing only, and signs a test file with it.
-#   scripts/release-identity.sh ci      The release workflow only: puts the secret in a keychain
-#                                       of its own, where the key can sign but not be exported.
+#   scripts/release-identity.sh save   On the Mac that has the identity: copies it from the login
+#                                      keychain into 1Password, then reads it back. macOS asks
+#                                      once to allow the export.
+#   scripts/release-identity.sh load   On another Mac: installs it from 1Password into the login
+#                                      keychain, trusted for code signing only (macOS asks for
+#                                      the password), then signs a test file with it.
 #
-# github and save export the key from the login keychain, and macOS asks once to allow that. The
-# identity travels as PEM (certificate and private key) and is on disk only in a private
-# temporary folder while this script runs. github needs the GitHub CLI (gh), signed in as a
-# repository admin. save and load need the 1Password CLI (op), with 1Password > Settings >
-# Developer > Integrate with 1Password CLI turned on. BURNZOMBIES_OP_ACCOUNT picks the account
-# (default my.1password.com), and BURNZOMBIES_OP_VAULT the vault save uses (default: Personal or
+# Needs the 1Password CLI (op) with 1Password > Settings > Developer > Integrate with 1Password
+# CLI turned on; 1Password asks for Touch ID. The identity is one Document item holding the
+# certificate and private key as PEM; on disk it exists only in a private temporary folder while
+# this script runs. BURNZOMBIES_OP_ACCOUNT picks the 1Password account (default
+# my.1password.com) and BURNZOMBIES_OP_VAULT the vault that save uses (default: Personal or
 # Private).
 set -euo pipefail
 
@@ -28,9 +24,7 @@ pin="${BURNZOMBIES_RELEASE_CERT_SHA256:-dbe8297fd599efa4bb942d0ebb5487e3bc27c15d
 keychain="${BURNZOMBIES_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
 account="${BURNZOMBIES_OP_ACCOUNT:-my.1password.com}"
 vault="${BURNZOMBIES_OP_VAULT:-}"
-repo="${BURNZOMBIES_REPO:-swordfish444/BurnZombies}"
 title="BurnZombies release signing identity"
-secret=RELEASE_SIGNING_IDENTITY
 ssl=/usr/bin/openssl # macOS's LibreSSL reads and writes the PKCS#12 algorithms the keychain uses.
 sha1=""
 
@@ -38,8 +32,7 @@ die() {
   echo "$*" >&2
   exit 1
 }
-[[ $# -eq 1 && ("$1" == github || "$1" == save || "$1" == load || "$1" == ci) ]] ||
-  die "Usage: $0 github|save|load|ci"
+[[ $# -eq 1 && ("$1" == save || "$1" == load) ]] || die "Usage: $0 save|load"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -114,7 +107,7 @@ for identity in identities {
     }
     exit(0)
 }
-fail("No identity in \(arguments[1]) has the release certificate \(arguments[2]). Run this on the Mac that has it.")
+fail("No identity in \(arguments[1]) has the release certificate \(arguments[2]). Run save on the Mac that has it.")
 SWIFT
   local passphrase
   passphrase="$("$ssl" rand -hex 16)"
@@ -127,8 +120,7 @@ SWIFT
   cat "$work/cert.pem" "$work/key.pem" >"$work/identity.pem"
 }
 
-# Imports $work/cert.pem and key.pem into $keychain. Extra arguments go to security import
-# (-x: the key can sign but never be exported).
+# Imports $work/cert.pem and key.pem into $keychain.
 install_identity() {
   local passphrase
   passphrase="$("$ssl" rand -hex 16)"
@@ -136,7 +128,7 @@ install_identity() {
     -out "$work/identity.p12" -passout env:BZ_P12_PASSPHRASE -name "$name" >/dev/null 2>&1 ||
     die "Cannot package the identity for the keychain."
   security import "$work/identity.p12" -k "$keychain" -P "$passphrase" \
-    -T /usr/bin/codesign -T /usr/bin/security "$@" >/dev/null
+    -T /usr/bin/codesign -T /usr/bin/security >/dev/null
 }
 
 # Checks that macOS accepts the identity for code signing and that a test file signed with it
@@ -164,27 +156,6 @@ matches = [d["id"] for d in json.load(sys.stdin) if d.get("title") == sys.argv[1
 if len(matches) > 1:
     sys.exit("1Password has %d documents called %r. Keep one and try again." % (len(matches), sys.argv[1]))
 print(matches[0] if matches else "")' "$title" <<<"$listing"
-}
-
-github() {
-  command -v gh >/dev/null || die "Needs the GitHub CLI: brew install gh, then gh auth login."
-  gh auth status --hostname github.com >/dev/null 2>&1 || die "Sign in to GitHub first: gh auth login."
-  export_bundle
-  # The environment's secrets reach only workflow runs for v* tags: branches, pull requests and
-  # other workflows never see them.
-  gh api -X PUT "repos/$repo/environments/release" \
-    -F 'deployment_branch_policy[protected_branches]=false' \
-    -F 'deployment_branch_policy[custom_branch_policies]=true' >/dev/null
-  local policies
-  policies="$(gh api "repos/$repo/environments/release/deployment-branch-policies" \
-    --jq '.branch_policies[] | "\(.type) \(.name)"')"
-  if ! grep -qxF 'tag v*' <<<"$policies"; then
-    gh api -X POST "repos/$repo/environments/release/deployment-branch-policies" -f 'name=v*' -f type=tag >/dev/null
-  fi
-  gh secret set "$secret" --env release --repo "$repo" <"$work/identity.pem"
-  echo "Uploaded \"$name\" to $repo as the $secret secret of the release environment; only v* tags can use it." >&2
-  echo "To release, push a tag that matches install.sh, for example: git tag v0.14.0 && git push origin v0.14.0" >&2
-  echo "Keep a backup too, since GitHub cannot give it back: scripts/release-identity.sh save" >&2
 }
 
 save() {
@@ -232,29 +203,6 @@ load() {
   echo "Signing a test file. If macOS asks whether codesign may use the key, choose Always Allow." >&2
   prove_signing
   echo "Ready: this Mac signs with the release certificate. scripts/build-app.sh and scripts/package-release.sh use it from now on." >&2
-}
-
-ci() {
-  [[ "${GITHUB_ACTIONS:-}" == true && -n "${RUNNER_TEMP:-}" ]] || die "ci is only for the GitHub release workflow."
-  [[ -n "${RELEASE_SIGNING_IDENTITY:-}" ]] ||
-    die "The release environment has no $secret secret. Upload it with scripts/release-identity.sh github on the Mac that has the identity."
-  printf '%s\n' "$RELEASE_SIGNING_IDENTITY" >"$work/identity.pem"
-  check_bundle "$work/identity.pem" "$work"
-
-  local password IFS=$'\n'
-  password="$("$ssl" rand -hex 24)"
-  keychain="$RUNNER_TEMP/release-signing.keychain"
-  security create-keychain -p "$password" "$keychain"
-  if [[ -e "$keychain-db" ]]; then keychain="$keychain-db"; fi
-  security set-keychain-settings "$keychain" # no timeout: it stays unlocked for the whole build
-  security unlock-keychain -p "$password" "$keychain"
-  # build-app.sh and codesign find the identity by name through the search list.
-  security list-keychains -d user -s "$keychain" $(security list-keychains -d user | sed 's/^ *"//; s/" *$//')
-  install_identity -x
-  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
-  sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$work/cert.pem"
-  prove_signing
-  echo "The release identity is ready in $keychain. Its key can sign but not be exported." >&2
 }
 
 "$1"
