@@ -781,8 +781,9 @@ import UserNotifications
   // Each sends its AutopilotCommand through `autopilotRunner` and shows the snapshot it returns.
   // With no runner (demo and offscreen proofs) the same change is applied in memory so the
   // windows visibly react. A real model without a runner changes nothing and says so.
+  /// `q` is the question as its card was drawn, so the answer carries the risks the owner saw.
   func answer(_ q: AutopilotQuestion, _ a: AutopilotAnswer) {
-    sendAutopilot(.answer(questionID: q.id, answer: a)) {
+    sendAutopilot(.answer(questionID: q.id, answer: a, risks: q.risks)) {
       AutopilotLocal.answer(&$0, question: q, answer: a, now: Date())
     }
   }

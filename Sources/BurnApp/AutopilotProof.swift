@@ -1277,6 +1277,8 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     let rule = wired.autopilot.rules.first, let firstTell = wired.autopilot.tells.first,
     let group = wired.autopilot.lessons.first
   else { throw StoreError.message("Demo data lost an entry the engine proof needs") }
+  // An answer carries the risks its card showed, so the engine teaches what the owner saw.
+  try check(q.risks != nil, "The demo question's card names no risks for its answer to carry")
   var secondTell = firstTell
   secondTell.id = "demo-tell-2"
   wired.autopilot.tells.append(secondTell)
@@ -1303,8 +1305,8 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   wired.setActsOnItsOwn(false)
   wired.forgetLesson(group)
   let expected: [AutopilotCommand] = [
-    .answer(questionID: q.id, answer: .no), .burnNow(itemID: e.id), .keep(itemID: e.id),
-    .restore(receiptID: rcpt.id), .forgetRule(ruleID: rule.id),
+    .answer(questionID: q.id, answer: .no, risks: q.risks), .burnNow(itemID: e.id),
+    .keep(itemID: e.id), .restore(receiptID: rcpt.id), .forgetRule(ruleID: rule.id),
     .setStarter(ruleID: "starter-finished-copies", enabled: false), .setEnabled(false),
     .setLookOnly(false), .setInterval(minutes: 60), .resetTraining, .sweepNow,
     .tellGood(id: firstTell.id), .tellUndo(id: secondTell.id), .tellSeen(id: thirdTell.id),
