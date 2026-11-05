@@ -80,6 +80,18 @@ A Yes, a No, BZ's own act, or an Undo creates the rule `widen(generalize(match),
 
 Native questions are already only subject plus recency. Generalizing mostly widens the AI's narrower questions.
 
+A Yes is narrowed to its card's risks when the question recorded them (`risks`, Part 3).
+
+- Each risk fact of the kind (`saved`, `changes` and `inUse` for copies, `listening` for programs) allows its safe values and only the risky values the card showed. It allows `unknown` only when the card showed it.
+- A Yes to clean copies doesn't cover unsaved work. A later copy with unsaved work is asked about on a card of its own (Part 3).
+- A question that recorded no risks teaches what it always did. That covers questions asked before cards named their risks, so migration and the replay of older answers are unchanged.
+
+A No keeps everything as recent as its card's newest thing and newer; the older things on the card get the next question. A No is never narrowed to the card's risks, with one exception. When the card was asked again for risks that earlier cards about the same pattern didn't show, a wide keep would cancel the earlier Yes on the clean things, so the No keeps less. It still keeps every thing on its card at the card's age, by the first of these that does:
+
+1. one keep per risk fact the card showed for the first time, kept to those risky values;
+2. one keep per risk fact the card showed;
+3. the wide keep.
+
 ### 2.2 Merging
 
 An existing operator lesson of the same kind and verdict is absorbed when a new lesson subsumes it, meaning the new lesson matches every item the old one matches.
@@ -131,7 +143,7 @@ Memory keeps a tally per lesson: count, bytes and undone.
   - judge unsure items by why the owner burns or keeps things;
   - ask where no lesson reaches;
   - never contradict a lesson.
-- `autopilot_ask` takes an optional `guess` (`yes`/`no`), recorded as the AI's guess. Without it, BZ's own guess is used.
+- `autopilot_ask` takes an optional `guess` (`yes`/`no`), recorded as the AI's guess. Without it, BZ's own guess is used. When BZ answers the AI's question itself (3.4), the reply is JSON like every other: `{"acted": true, "message": "I was sure you'd say yes, so I burned them and will tell the owner."}`.
 
 ## Part 3: Guess, score, act then tell (owner chose "Act, then tell me")
 
@@ -143,6 +155,12 @@ Memory keeps a tally per lesson: count, bytes and undone.
 - `stale=today`, `idle=active|10m`.
 
 Legacy questions derive them from the match and the caution text.
+
+A native question's id names the risks its card shows.
+
+- A pattern the owner answered for one set of risks is asked again when unsure things under it carry a risk that card didn't show. The new card counts that risk among its cautions.
+- An answer from before cards named their risks keeps its pattern answered.
+- A question asked again, after a skip or for new risks, never takes an id that memory already holds. An answer lands on the open question with its id, so it always reaches the card the owner sees.
 
 ### 3.1 Guess
 
@@ -172,10 +190,10 @@ A subject is trusted when its last 5 scores are all right. One wrong score ends 
 
 This happens when a question would be opened (natively in `refreshQuestions`, or by the AI's `ask`), its guess is sure, and **Act on its own when sure** is on (the default). BZ doesn't open the question. Instead it:
 
-1. records the question as answered yes, with `answeredBy: bz`;
-2. creates the lesson exactly as for a Yes;
-3. burns the matches right away;
-4. adds a **tell**: `{id, questionID, ruleID, kind, count, bytes, rows, date, state}`.
+1. records the question as answered yes, with `answeredBy: bz`, under an id of its own, so things under its pattern with a risk the owner never approved stay unsure and are asked about;
+2. creates the act's lesson: what a Yes teaches, narrowed to the risks the owner said yes to on the subject. Each risk fact allows its safe values and the risky values approved there, and `unknown` only when approved. The lesson stands alone: it absorbs no lesson and joins none, so an Undo takes back exactly what BZ did. An owner's later, wider answer may still take it in;
+3. burns the matches right away, within the same per-look bound as every other burn;
+4. adds a **tell**: `{id, questionID, ruleID, kind, count, bytes, rows, date, state}`. Its count and bytes come from the act's receipts as its burns land; its rows are the ones captured at the act.
 
 The one-question-per-subject, 1 GB and quiet rules apply unchanged, because only a would-be question can become a tell.
 
@@ -184,15 +202,15 @@ Teach BZ shows open tells before questions:
 - **Card:** the headline "Burned 3 copies on my own.", rows as on a question card, and the line "You'd have said yes: you said yes to 6 like these."
 - **Good call:** closes the tell and scores right.
 - **Undo:**
-  1. Restores every restorable burn the tell's lesson made since the tell (copies). Restored items become kept, as today.
-  2. Turns the lesson into a keep, widened toward riskier like a No.
-  3. Records the owner's answer as No and scores wrong.
-  4. Closes the tell.
+  1. Turns the act's lesson into a keep first, so nothing more burns under it, following the No rules (2.1): keeps for the risks its card showed for the first time, else one per risk it showed, else the wide keep. If an owner's newer answer took the act's lesson in, that answer stands: no keep is learned, and the tell's note says so.
+  2. Records the owner's answer as No and scores wrong.
+  3. Waits for burns under the lesson already under way, then restores every burn the lesson made (copies). Restored items become kept, as today.
+  4. Closes the tell. When a copy couldn't come back (its restore failed, or it had no restore point), the note says how many and why. A tell left with a note, that one or the newer answer's, stays in Teach BZ until the owner presses **OK** (`tellSeen`).
 
-  Programs and folders can't be brought back. Their card says "Stopped programs can't be restarted by me; I'll ask next time." The lesson and trust still flip.
+  Programs and folders can't be brought back. Their card says so before the press ("Stopped programs can't be restarted by me; I'll ask next time."), so their Undo leaves no note. The lesson and trust still flip.
 - **Untouched tells** close after 7 days without a score.
 
-The setting lives in Settings → Autopilot. When it's off, sure questions are asked and scored like any other.
+The setting lives in Settings → Autopilot. When it's off, sure questions are asked and scored like any other. While Autopilot is off or look-only is on, BZ doesn't act. When look-only goes on after it acted but before the act's burns, nothing burns, and the tell says nothing burned until burning starts.
 
 ## Part 4: Proof it's improving
 
@@ -207,7 +225,7 @@ For each Yes/No (skips teach nothing) it reports:
 The summary counts answers, settled, acted, asked, guesses made, guesses right, wrong settles and wrong acts.
 
 On the owner's real history today:
-- 3 settled and 7 acted, all matching the owner (100 GB);
+- 3 settled and 7 acted, all matching the owner (126.6 GB);
 - 17 asked, with guesses 13 of 14 right. The miss was the busy-Java No, and BZ wasn't sure of that one.
 
 Where it shows up:
@@ -234,29 +252,34 @@ Plain counts only:
   - the act and undo paths;
   - eval output.
 - **Replay fixture:** an anonymized history shaped like the owner's, with generic project names. Its expected summary is a regression gate: settled + acted may not drop, and wrong acts stay 0.
-- **Simulated owners:** deterministic, with no model.
+- **Simulated owners:** deterministic, with no model, over 8 rounds a day apart.
   - A synthetic Mac of copies, programs and folders with varied facts gains new items each round.
-  - Personas answer by fixed policies:
+  - Personas answer every question by a fixed policy, yes only when they would burn everything it covers:
     - liberal: done once on GitHub or untouched a day;
     - cautious: keeps anything with unsaved work;
-    - server keeper: keeps programs serving a port.
-  - Over several rounds, assert:
+    - server keeper: keeps programs serving a port;
+    - hesitant: cautious, but skips the first question of rounds 1, 2 and 5 (the owner skipped 3 of their 30 answers).
+  - From a cold start, for every persona:
     - BZ never burns an item the persona would keep, tells included;
-    - questions per round fall;
-    - GB handled without asking rises;
-    - consistent subjects earn trust and get tells;
-    - one Undo returns the subject to asking.
-- **UI proof** (`--autopilot-proof`): renders the new card with rows, a tell card, and the lessons with How I'm doing.
+    - rounds 5–8 ask fewer questions than rounds 1–4, and handle more GB without asking;
+    - every answer closes its card, a skip too.
+  - General lessons settle the liberal owner's subjects before trust can be earned (it takes 5 right guesses in a row), so a cold start asks nothing in rounds 7 and 8 and gets no tells. The hesitant owner skips 3 questions, and a skipped pattern is asked again and answered.
+  - With history, as a Mac has it after migration (earlier yes answers on copies and 5 right replayed scores):
+    - liberal, whose earlier answers cover every risk they take: BZ acts and tells the owner; the owner undoes one tell in round 6, and round 7 has no tell on that subject;
+    - cautious, who said yes only to clean copies: BZ burns copies on its own calls, and none of them has unsaved work.
+  - Each history run also asks fewer questions, and handles more without asking, in rounds 5–8 than in rounds 1–4.
+- **UI proof** (`--autopilot-proof`): renders the new card with rows, a tell card, an undone tell with its note and OK, and the lessons with How I'm doing.
 
 ## Data changes
 
-- `AutopilotQuestion`: `rows`, `newest`, `risks`, `guess`, `answeredBy`.
-- `AutopilotRule`: `from` (question ids) and `formerIDs`.
+- `AutopilotQuestion`: `rows`, `newest`, `risks`, `guess`, `answeredBy`, `line`, and `profiles` (the risks and age of each kind of thing on the card, which the No rules check).
+- `AutopilotRule`: `from` (question ids), `formerIDs`, and `tellID` on an act's lesson.
+- `AutopilotTell`: `note` (what an Undo couldn't bring back, or that a newer answer stands) and `seen` (false until the owner presses OK on that note).
 - `AutopilotMemory`: `version = 2`, `scores`, `tells`, `tallies`, `actsOnItsOwn` (default true).
 - `AutopilotCard`: `rows`, `more`, `line`, and a headline with `when`.
-- `AutopilotCommand`: `tellGood(id)`, `tellUndo(id)`, `setActsOnItsOwn(Bool)`, `forgetLesson(ids)`.
+- `AutopilotCommand`: `tellGood(id)`, `tellUndo(id)`, `tellSeen(id)`, `setActsOnItsOwn(Bool)`, `forgetLesson(ids)`.
 - `AutopilotSnapshot`: `lessons` (the display groups), `tells`, and `progress` (the 4.2 counts and the 4.1 line).
-- MCP: `autopilot_catalog` returns `lessons`; `autopilot_ask` accepts `guess`.
+- MCP: `autopilot_catalog` returns `lessons`; `autopilot_ask` accepts `guess`, and replies `{acted, message}` when BZ answers it itself.
 - Every new field is optional when decoding, so old files still load.
 
 ## Left to the builder

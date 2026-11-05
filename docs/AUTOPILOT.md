@@ -72,9 +72,9 @@ The AI's questions follow the same rules: it may reword or replace the open ques
 
 ### Lessons
 
-Yes and No each become a lesson right away, and Yes starts burning what it covers (with look-only, once you start burning). Skip hides the question for a day and teaches nothing.
+Yes and No each become a lesson right away, and Yes starts burning what it covers (with look-only, once you start burning). Skip hides the question for a day and teaches nothing; after that it can be asked again, as a new card.
 
-A lesson is about why, not which project: it leaves out the project, where the copy lives and which tool made it, so one answer about one project's copies covers every project's. A Yes also covers things left unused even longer, and a No things used even more recently. A Yes covers only the risks its card showed: when every copy on the card had its work on GitHub and nothing unsaved, a later copy with unsaved work isn't burned under it. That copy gets a question of its own, which names the new risk. A No to that question keeps everything on its card, but not the clean copies your earlier Yes covers: those still go. A lesson that covers another takes it in, so a few lessons hold all your answers.
+A lesson is about why, not which project: it leaves out the project, where the copy lives and which tool made it, so one answer about one project's copies covers every project's. A Yes also covers things left unused even longer. A No keeps everything as recent as the newest thing on its card, and anything newer; the older things on the card get the next question. A Yes covers only the risks its card showed: when every copy on the card had its work on GitHub and nothing unsaved, a later copy with unsaved work isn't burned under it. That copy gets a question of its own, which names the new risk. A No to that question keeps the copies on that card, as recent as its newest and newer, but not the clean copies your earlier Yes covers: those still go. A lesson that covers another takes it in, so a few lessons hold all your answers.
 
 "Got it!" after an answer shows the lesson in one sentence. **Settings → Autopilot → What BZ has learned** lists them all:
 
@@ -108,11 +108,11 @@ It tells you on the first card in **Teach BZ**:
 > You'd have said yes: you said yes to 6 like these. — *Good call* · *Undo*
 
 - **Good call** closes it and counts as a right guess.
-- **Undo** first turns BZ's lesson into a keep, so nothing more burns under it, then brings back every copy it burned from its restore point. The keep is the one your No to that card would have taught. It counts as your No and as a wrong guess, which ends trust on that subject, so BZ asks before it acts there again.
+- **Undo** first turns BZ's lesson into a keep, so nothing more burns under it, then brings back every copy it burned from its restore point. The keep is the one your No to that card would have taught. It counts as your No and as a wrong guess, which ends trust on that subject, so BZ asks before it acts there again. If a copy can't come back, the card stays after the Undo, says how many and why, and closes when you press *OK*.
 - **What Undo can't bring back:** stopped programs and deleted folders. Their card says so before you press anything, and its button reads *I'd have said no*. It still turns the lesson into a keep and ends trust.
 - A card like this that you don't touch closes after a week.
 
-**Settings → Autopilot → Act on its own when sure** is on by default. Off, BZ asks every question, sure or not, and still checks its guesses. While Autopilot is off or look-only is on, it doesn't act either.
+**Settings → Autopilot → Act on its own when sure** is on by default. Off, BZ asks every question, sure or not, and still checks its guesses. While Autopilot is off or look-only is on, it doesn't act either. If you turn look-only on just after it acted, what it meant to burn waits too, and its card shows once you start burning.
 
 ## How I'm doing
 
@@ -141,7 +141,7 @@ Without Claude Code or Codex, or after installing with `--observe-only`, BurnZom
 - **Old copies:** **Restore** in **Findings** for 30 days. The restore point lives in the repository as `refs/burnzombies/retired/…` and holds every commit and local change. Ignored files over 5 MB, and anything inside rebuildable folders, aren't saved.
 - **Junk folders:** your tools rebuild them.
 - **Programs:** a graceful stop, which can't be undone.
-- **What BZ did on its own:** **Undo** on its card in **Teach BZ** brings back the copies it burned and turns its lesson into a keep, so it asks next time. Programs and folders can't come back; their button reads *I'd have said no* and still teaches the keep ([Act, then tell](#act-then-tell)).
+- **What BZ did on its own:** **Undo** on its card in **Teach BZ** brings back the copies it burned and turns its lesson into a keep, so it asks next time. If a copy can't come back, the card says how many and why until you press *OK*. Programs and folders can't come back; their button reads *I'd have said no* and still teaches the keep ([Act, then tell](#act-then-tell)).
 
 Uninstalling leaves restore points in place; [Uninstall](INSTALL.md#uninstall) shows how to delete them.
 
