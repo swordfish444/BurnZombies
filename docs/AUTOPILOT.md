@@ -46,7 +46,7 @@ Turn it on and the next inventory refresh brings those places in. Leftover progr
 
 ## Training
 
-BurnZombies asks one question per subject: old project copies, each kind of program (Node, Java, …) and each kind of folder (node_modules, tool caches, …). A question covers everything in its subject that sat unused at least as long as its most recent member, so one answer can settle the whole subject; what makes some of them riskier is counted on the card instead of becoming more questions. After a No, the next question is about the older ones only. It must free at least 1 GB to be asked; the biggest subjects come first, at most three at a time, one big card at a time.
+BurnZombies asks one question per subject: old project copies, each kind of program (Node, Java, …) and each kind of folder (node_modules, tool caches, …). A question covers everything in its subject that sat unused at least as long as its most recent member, so one answer can settle the whole subject; what makes some of them riskier is counted on the card. After a No, the next question is about the older ones only. A Yes covers only the risks its card showed, so leftovers that turn up later with a risk that card didn't show get a question of their own, which names that risk ([Lessons](#lessons)). It must free at least 1 GB to be asked; the biggest subjects come first, at most three at a time, one big card at a time.
 
 ### The question card
 
@@ -64,7 +64,7 @@ The card names the things it is about and when each was last used:
 - **The headline** says how many and when the most recent one was used: "you used yesterday", "untouched since Monday", "untouched for 2 weeks"; for programs, "idle for 3 hours".
 - **The rows** name up to three of them, biggest first. A copy shows its task (its chat's title, or its branch in plain words), its project and when a file last changed; a program shows its name, who started it and how long it sat idle; a folder shows which one it is ("node_modules in api") and when it last changed. Then how many more.
 - **The line under the size** says what all of them share that is safe, such as "Their work is on GitHub."
-- **Facts that make burning riskier** (work only on this Mac, unsaved changes, still running a server) show in amber, counted: "2 have unsaved changes".
+- **Facts that make burning riskier** show in amber, counted: work only on this Mac, unsaved changes ("2 have unsaved changes", or "1 has lots of unsaved changes" when there are many), still running a server, and anything BZ couldn't check ("1 couldn't be checked").
 
 The header shows where you are in the current round of questions, never a percentage.
 
@@ -74,7 +74,7 @@ The AI's questions follow the same rules: it may reword or replace the open ques
 
 Yes and No each become a lesson right away, and Yes starts burning what it covers (with look-only, once you start burning). Skip hides the question for a day and teaches nothing.
 
-A lesson is about why, not which project: it leaves out the project, where the copy lives and which tool made it, so one answer about one project's copies covers every project's. A Yes also covers things left unused even longer, and a No things used even more recently. A Yes covers only the risks its card showed: when every copy on the card had its work on GitHub and nothing unsaved, a later copy with unsaved work isn't burned under it. A lesson that covers another takes it in, so a few lessons hold all your answers.
+A lesson is about why, not which project: it leaves out the project, where the copy lives and which tool made it, so one answer about one project's copies covers every project's. A Yes also covers things left unused even longer, and a No things used even more recently. A Yes covers only the risks its card showed: when every copy on the card had its work on GitHub and nothing unsaved, a later copy with unsaved work isn't burned under it. That copy gets a question of its own, which names the new risk. A No to that question keeps everything on its card, but not the clean copies your earlier Yes covers: those still go. A lesson that covers another takes it in, so a few lessons hold all your answers.
 
 "Got it!" after an answer shows the lesson in one sentence. **Settings → Autopilot → What BZ has learned** lists them all:
 
@@ -108,7 +108,7 @@ It tells you on the first card in **Teach BZ**:
 > You'd have said yes: you said yes to 6 like these. — *Good call* · *Undo*
 
 - **Good call** closes it and counts as a right guess.
-- **Undo** first turns BZ's lesson into a keep, so nothing more burns under it, then brings back every copy it burned from its restore point. It counts as your No and as a wrong guess, which ends trust on that subject, so BZ asks before it acts there again.
+- **Undo** first turns BZ's lesson into a keep, so nothing more burns under it, then brings back every copy it burned from its restore point. The keep is the one your No to that card would have taught. It counts as your No and as a wrong guess, which ends trust on that subject, so BZ asks before it acts there again.
 - **What Undo can't bring back:** stopped programs and deleted folders. Their card says so before you press anything, and its button reads *I'd have said no*. It still turns the lesson into a keep and ends trust.
 - A card like this that you don't touch closes after a week.
 
