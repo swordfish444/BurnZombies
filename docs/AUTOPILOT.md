@@ -1,6 +1,6 @@
 # Autopilot
 
-BurnZombies cleans up on its own. It looks for three kinds of leftovers right away, then every minute for its first half hour and every 15 minutes after that. It burns the ones it is sure about and asks you a tiny yes/no question when it isn't. Each answer teaches it a rule. After about a dozen answers it handles nearly everything without you.
+BurnZombies cleans up on its own. It looks for three kinds of leftovers right away, then every minute for its first half hour and every 15 minutes after that. It burns the ones it is sure about and asks you a tiny yes/no question when it isn't. Each answer teaches it a lesson. After about a dozen answers it handles nearly everything without you.
 
 | Leftover | What it is | What "burn" does |
 | --- | --- | --- |
@@ -15,8 +15,8 @@ Only things worth it are looked at: anything freeing at least 100 MB of disk or 
 Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: node_modules"). Then, in order:
 
 1. **Protected** — never touched, never asked about: macOS, your apps, your AI tools, BurnZombies itself, anything a running chat is working in, your main project folders, copies something is using right now.
-2. **Your keeps win.** "Keep forever" on an item, a "No, keep them" answer, or a confident AI "keep" always blocks burning.
-3. **Your yes answers** burn every matching item, now and later.
+2. **Your keeps win.** "Keep forever" on an item, a "No, keep them" answer, an Undo, or a confident AI "keep" always blocks burning.
+3. **Your yes answers** burn everything their lesson covers, now and later. So do the calls BZ makes on its own once it has earned your trust ([Act, then tell](#act-then-tell)).
 4. **Starter rules** burn the obvious from the first minute (with look-only, once you start burning). Switch each off in **Settings → Autopilot**:
    - programs whose app or chat is gone, idle for 6+ hours, with no open port. A program that has barely used the CPU since it started counts as idle from its start, so old leftovers go right away;
    - old copies already merged, unchanged and untouched for a month (not ones made by Codex, Claude or Conductor). They are always backed up first;
@@ -28,9 +28,9 @@ Copies made by Codex, Claude or Conductor are checked like any other copy, so yo
 
 ## Look-only
 
-Install with `--look-only`, or switch on **Settings → Autopilot → Look only**, to see what BurnZombies would burn before it burns anything. It finds, sizes, asks and judges exactly as above, but nothing burns on its own: not the starter rules, not your yes answers, not the AI. The menu says **Look-only · nothing burns** and shows how much it would burn; **Findings** says what and why, with *I'd burn N once you start burning* on top.
+Install with `--look-only`, or switch on **Settings → Autopilot → Look only**, to see what BurnZombies would burn before it burns anything. It finds, sizes, asks and judges exactly as above, but nothing burns on its own: not the starter rules, not your yes answers, not the AI. BZ doesn't act on its own either: a question it is sure of is asked like any other. The menu says **Look-only · nothing burns** and shows how much it would burn; **Findings** says what and why, with *I'd burn N once you start burning* on top.
 
-- Your answers still become rules, and AI sweeps still run on their usual schedule, at the usual cost. When a sweep asks to burn something, the app holds it without a receipt; its verdicts burn once you start.
+- Your answers still become lessons, and AI sweeps still run on their usual schedule, at the usual cost. When a sweep asks to burn something, the app holds it without a receipt; its verdicts burn once you start.
 - **Start burning** in the menu, or switching **Look only** off, starts burning what waited right away instead of at the next look, within the usual limits per look; the rest follows at the next looks.
 - Switching look-only on holds every burn that hasn't started. One already underway, like a copy halfway through its backup, finishes.
 - **Burn now** on one item in **Findings** is you deciding, so it still burns that item.
@@ -46,17 +46,82 @@ Turn it on and the next inventory refresh brings those places in. Leftover progr
 
 ## Training
 
-BurnZombies asks one question per subject: old project copies, each kind of program (Node, Java, …) and each kind of folder (node_modules, tool caches, …). A question covers everything in its subject that sat unused at least as long as its most recent member, so one answer can settle the whole subject; what makes some of them riskier is counted on the card instead of becoming more questions. After a No, the next question is about the older ones only. It must free at least 1 GB to be asked; the biggest subjects come first, at most three at a time, one big card at a time:
+BurnZombies asks one question per subject: old project copies, each kind of program (Node, Java, …) and each kind of folder (node_modules, tool caches, …). A question covers everything in its subject that sat unused at least as long as its most recent member, so one answer can settle the whole subject; what makes some of them riskier is counted on the card instead of becoming more questions. After a No, the next question is about the older ones only. It must free at least 1 GB to be asked; the biggest subjects come first, at most three at a time, one big card at a time.
 
-> **Burn 92 old project copies?**
-> **Frees 14.4 GB** · `Unused for a week` `⚠ 12 have work only on this Mac`
+### The question card
+
+The card names the things it is about and when each was last used:
+
+> **Burn 5 copies you used yesterday?**
+> **Frees 2.8 GB**
+> Their work is on GitHub. Nothing is unsaved.
+> **fix login selector** api · yesterday 5 pm
+> **add dark mode toggle** web-app · yesterday 1 pm
+> **tidy the footer** web-app · yesterday 7 pm
+> \+ 2 more
 > Each one is backed up first, so you can undo it. — *Yes, burn them* · *No, keep them* · *Not sure — skip*
 
-Facts that make burning riskier (work only on this Mac, unsaved changes, still running a server, used since yesterday) show in amber. The header shows where you are in the current round of questions, never a percentage.
+- **The headline** says how many and when the most recent one was used: "you used yesterday", "untouched since Monday", "untouched for 2 weeks"; for programs, "idle for 3 hours".
+- **The rows** name up to three of them, biggest first. A copy shows its task (its chat's title, or its branch in plain words), its project and when a file last changed; a program shows its name, who started it and how long it sat idle; a folder shows which one it is ("node_modules in api") and when it last changed. Then how many more.
+- **The line under the size** says what all of them share that is safe, such as "Their work is on GitHub."
+- **Facts that make burning riskier** (work only on this Mac, unsaved changes, still running a server) show in amber, counted: "2 have unsaved changes".
+
+The header shows where you are in the current round of questions, never a percentage.
 
 The AI's questions follow the same rules: it may reword or replace the open question about a subject but never adds a second one, waits a day after you skip one, and never asks about things used today.
 
-Yes and No become rules immediately, and Yes starts burning the matches right away (with look-only, once you start burning). Skip hides the question for a day. **Settings → Autopilot → What BZ has learned** lists every rule in plain English with a Forget button; **Start training over** clears them.
+### Lessons
+
+Yes and No each become a lesson right away, and Yes starts burning what it covers (with look-only, once you start burning). Skip hides the question for a day and teaches nothing.
+
+A lesson is about why, not which project: it leaves out the project, where the copy lives and which tool made it, so one answer about one project's copies covers every project's. A Yes also covers things left unused even longer, and a No things used even more recently. A Yes covers only the risks its card showed: when every copy on the card had its work on GitHub and nothing unsaved, a later copy with unsaved work isn't burned under it. A lesson that covers another takes it in, so a few lessons hold all your answers.
+
+"Got it!" after an answer shows the lesson in one sentence. **Settings → Autopilot → What BZ has learned** lists them all:
+
+> Copies nobody touched for a week are done once their work is on GitHub and nothing is unsaved.
+> From 4 answers · burned 17 copies, 38.6 GB · undone 0
+
+Each has a **Forget** button, which forgets the lesson and the answers behind it so those things can be asked again. **Start training over** forgets everything you taught; the starter rules stay.
+
+### Guessing and trust
+
+Before it asks, BZ guesses your answer from what you said before about the same subject, and each Yes or No you give checks the guess. A subject is all old copies, one kind of program or one kind of folder. BZ trusts itself on a subject once its last 5 guesses there were right; one miss ends that until it gets 5 right in a row again.
+
+### Act, then tell
+
+When BZ is about to ask a question it is sure of, it answers yes itself, burns, and tells you afterwards. It is sure only when all of these hold:
+
+- it has earned trust on the subject;
+- you have said yes on that subject before, and yes is what you usually say there;
+- every risk on the question (work only on this Mac, unsaved changes, a running server, something it couldn't check) was on a card you said yes to on that subject;
+- no keep lesson of yours on that subject touches it.
+
+So it never acts on a subject you haven't answered, on a risk you haven't said yes to, or against a No. What it learns from its own call stays within the risks you approved: a later copy with a risk you never saw isn't burned under it.
+
+It tells you on the first card in **Teach BZ**:
+
+> **Burned 3 copies on my own.**
+> **Freed 2.4 GB**
+> **migrate billing tables** api · used Oct 26
+> **update onboarding copy** web-app · used Oct 24
+> **bump build tools** api · used Oct 21
+> You'd have said yes: you said yes to 6 like these. — *Good call* · *Undo*
+
+- **Good call** closes it and counts as a right guess.
+- **Undo** first turns BZ's lesson into a keep, so nothing more burns under it, then brings back every copy it burned from its restore point. It counts as your No and as a wrong guess, which ends trust on that subject, so BZ asks before it acts there again.
+- **What Undo can't bring back:** stopped programs and deleted folders. Their card says so before you press anything, and its button reads *I'd have said no*. It still turns the lesson into a keep and ends trust.
+- A card like this that you don't touch closes after a week.
+
+**Settings → Autopilot → Act on its own when sure** is on by default. Off, BZ asks every question, sure or not, and still checks its guesses. While Autopilot is off or look-only is on, it doesn't act either.
+
+## How I'm doing
+
+Below the lessons in **Settings → Autopilot**, a few plain counts, each shown once it has something to say:
+
+- "I guessed 9 of your last 10 answers right."
+- "This week: 3 questions, 6.5 GB burned on my own. Last week: 9 questions, 80.0 GB." Questions are the ones you were shown; what BZ did on its own isn't one. "On my own" is the disk BZ freed without your **Burn now**: lessons, starter rules, the AI and its own calls.
+- "You undid 0 of the 29 copies I burned."
+- Once you've answered 5 questions: "Replaying your 27 answers, I'd have asked 17 and handled the other 10 on my own the way you would have." The replay goes through your answers in order with the same lessons, guesses and trust BZ uses now. `burnzombies autopilot eval` shows it answer by answer ([Command line](#command-line)).
 
 ## The AI sweep
 
@@ -76,6 +141,7 @@ Without Claude Code or Codex, or after installing with `--observe-only`, BurnZom
 - **Old copies:** **Restore** in **Findings** for 30 days. The restore point lives in the repository as `refs/burnzombies/retired/…` and holds every commit and local change. Ignored files over 5 MB, and anything inside rebuildable folders, aren't saved.
 - **Junk folders:** your tools rebuild them.
 - **Programs:** a graceful stop, which can't be undone.
+- **What BZ did on its own:** **Undo** on its card in **Teach BZ** brings back the copies it burned and turns its lesson into a keep, so it asks next time. Programs and folders can't come back; their button reads *I'd have said no* and still teaches the keep ([Act, then tell](#act-then-tell)).
 
 Uninstalling leaves restore points in place; [Uninstall](INSTALL.md#uninstall) shows how to delete them.
 
@@ -100,4 +166,12 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
 "$bz" autopilot inspect ID   # live detail for one item
 "$bz" autopilot sweep        # run an AI sweep now
 "$bz" autopilot look-only    # hold every burn until you choose Start burning
+"$bz" autopilot eval         # replay your answers: a line each, then a summary
+"$bz" autopilot eval --json  # the same replay as JSON
+```
+
+`eval` replays your Yes and No answers in order and says what BZ would have done with each: settled by an earlier lesson, acted on because it was sure, or asked, with its guess and whether it matched. The summary counts each, the guesses it got right, and how much it would have handled without asking:
+
+```
+27 answers: 3 settled, 7 acted, 17 asked. Guessed 13 of 14 right. Wrong: 0 settled, 0 acted. Handled 126.6 GB without asking. 17 lessons.
 ```

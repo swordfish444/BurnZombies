@@ -114,7 +114,7 @@ These are display-only groups. Each is one sentence with an evidence line and a 
 - **Keeps:** one line each. Example: "Busy Java helpers serving a port stay."
 - **Evidence line:** "From 11 answers · burned 364 copies, 396 GB · undone 0".
   - Programs read "stopped … of memory"; folders read "deleted …".
-  - An answer BZ gave itself counts as "1 of my own calls".
+  - An answer BZ gave itself counts as one of "my own calls": "From 11 answers and 1 of my own calls". With no answer of the owner's behind the lesson, it reads "From my own call" (or "From 3 of my own calls").
 - **Starter rules** stay listed with their switches, as today.
 
 ### 2.5 Track record
@@ -222,7 +222,7 @@ Plain counts only:
 - "This week: 2 questions, 120 GB burned on my own. Last week: 9 questions, 80 GB."
   - Questions are those shown that week; tells don't count.
   - "On my own" is every burn whose authority isn't the owner's Burn now: lessons, starter rules, the AI and tells.
-- "You undid 0 of my 498 burns."
+- "You undid 0 of the 498 copies I burned." Only copies can be undone, so this counts copies, from the impact tally that keeps them for good.
 
 ### 4.3 Proof tests (in `scripts/test.sh --integration`)
 
