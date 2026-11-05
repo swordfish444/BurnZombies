@@ -15,7 +15,8 @@
 set -euo pipefail
 identity="${BURNZOMBIES_SIGNING_IDENTITY:-BurnZombies Local Signing}"
 
-if security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
+# A copy that isn't marked trusted (scripts/release-identity.sh load) counts too.
+if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
   echo "$identity"
   exit 0
 fi
