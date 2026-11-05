@@ -32,11 +32,17 @@ extension WorktreeService {
     func pending(_ row: WorktreeRecord) -> Bool {
       row.revision.isEmpty && row.gaps == ["Detailed inspection pending."]
     }
+    // On a busy Mac the consumer check can catch a program mid-exit, unreadable yet not gone,
+    // and then vouches for no copy. That says nothing about the copy, so it is checked again at
+    // each tick until five checks in a row have failed; then it waits like any other gap.
+    func unseen(_ row: WorktreeRecord) -> Bool {
+      row.gaps == [WorktreeInspection.consumerGap] && consumerRetries[row.id, default: 0] < 5
+    }
     let candidates = try records().filter { row in
       !row.main && !row.bare && !row.retired && !row.kept
         && protected.allows(row.path) && protected.allows(row.repository)
         && Date().timeIntervalSince(row.observedAt)
-          >= (pending(row) ? 0 : unblocked(row) ? 120 : 900)
+          >= (pending(row) || unseen(row) ? 0 : unblocked(row) ? 120 : 900)
         && (p.roots.contains(where: { WorkspaceSafety.contains($0, row.path) })
           || WorkspaceSafety.contains(privateRoot, row.path))
     }.sorted { $0.observedAt < $1.observedAt }
@@ -68,6 +74,9 @@ extension WorktreeService {
     let pendingIDs = Set(rows.filter(pending).map(\.id))
     func publishProgress(_ row: WorktreeRecord) throws {
       _ = try publish(row)
+      consumerRetries[row.id] =
+        row.gaps == [WorktreeInspection.consumerGap]
+        ? consumerRetries[row.id, default: 0] + 1 : nil
       if pendingIDs.contains(row.id) {
         try store.put(row.repository, kind: "scan", id: "pending-repository")
       }

@@ -145,6 +145,14 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try await nativeWorktreeRefreshProof() } catch { failTest("Native refresh: \(error)") }
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.contains("--worktree-exiting-programs") {
+      do { try exitingProgramsProof() } catch { failTest("Exiting programs: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--worktree-consumer-retry") {
+      do { try await consumerRetryProof() } catch { failTest("Consumer retry: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--worktree-rediscovery-native") {
       do { try await nativeWorktreeRediscoveryProof() } catch { failTest("Rediscovery: \(error)") }
       exit(failures == 0 ? 0 : 1)
@@ -229,6 +237,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     if CommandLine.arguments.contains("--worktree-native") {
       do {
         try worktreeVisibilityProof()
+        try exitingProgramsProof()
         try await worktreeNativeProof()
       } catch { failTest("Native worktrees: \(error)") }
       print("Native worktree checks: \(failures) failures")

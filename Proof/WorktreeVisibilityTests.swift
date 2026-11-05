@@ -138,3 +138,35 @@ func worktreeVisibilityProof() throws {
     "PASS strict Apple metadata protocol and moved executable with over 8,192 anonymous VM regions"
   )
 }
+
+/// A busy Mac starts and ends programs all the time. One caught exiting can't be read for a
+/// moment yet isn't gone; it holds nothing, so the snapshot of who uses a folder stays complete.
+func exitingProgramsProof() throws {
+  let before = failures
+  var loops: [Process] = []
+  defer {
+    for loop in loops {
+      kill(loop.processIdentifier, SIGKILL)
+      loop.waitUntilExit()
+    }
+  }
+  for _ in 0..<8 {
+    let loop = Process()
+    loop.executableURL = URL(fileURLWithPath: "/bin/sh")
+    loop.arguments = ["-c", "while :; do /bin/sh -c 'ls / >/dev/null; sleep 0.01'; done"]
+    loop.standardOutput = FileHandle.nullDevice
+    loop.standardError = FileHandle.nullDevice
+    try loop.run()
+    loops.append(loop)
+  }
+  Thread.sleep(forTimeInterval: 0.5)
+  var incomplete: [String] = []
+  for _ in 0..<20 {
+    let snapshot = WorktreeConsumerSnapshot(roots: [FileManager.default.temporaryDirectory.path])
+    if let gap = snapshot.gap { incomplete.append(gap) }
+  }
+  equal(incomplete, [], "programs exiting during the snapshot made it incomplete")
+  if failures == before {
+    print("PASS 20 snapshots stay complete while eight loops start and end programs")
+  }
+}

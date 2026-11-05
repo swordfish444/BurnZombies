@@ -145,6 +145,8 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
   var last = AutopilotSnapshot()
   var firstNumber: Int?
   var junkCleared: Int?
+  var finishedSet: Int?
+  let finished = Set(copies.filter { $0.merged && $0.age >= 30 * day }.map(\.name))
   let paused = git.appendingPathComponent("acme-paused")
   var previous = ""
   for minute in 0...31 {
@@ -174,6 +176,11 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
     receipts = max(receipts, snapshot.receipts.count)
     last = snapshot
     if firstBurn == nil, !burned.isEmpty { firstBurn = minute }
+    // Set to burn, or burned already. A burn can still wait on something else, like a refusal.
+    let setToBurn = Set(
+      snapshot.entries.filter { $0.item.kind == .worktree && [.burn, .burned].contains($0.status) }
+        .map(\.item.name) + burned.filter { $0.kind == .worktree }.map(\.name))
+    if finishedSet == nil, finished.isSubset(of: setToBurn) { finishedSet = minute }
     let shown = numbers.disk > 0 || numbers.memory > 0 || numbers.count > 0 || numbers.worktrees > 0
     if firstNumber == nil, shown {
       firstNumber = minute
@@ -194,12 +201,14 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
     return
   }
   print(
-    "NEWCOMER first question: \(firstQuestion.map { "t+\($0)m" } ?? "none") · first burn: \(firstBurn.map { "t+\($0)m" } ?? "none") · first non-zero panel number: \(firstNumber.map { "t+\($0)m" } ?? "none") · junk in a paused copy: \(junkCleared.map { "t+\($0)m" } ?? "kept") · sandbox ran \(Int(Date().timeIntervalSince(start))) s")
-  // Time to value: within two minutes a newcomer has a question, a burn and a number on the
-  // panel; junk inside a copy paused for weeks goes within three while the copy's work stays.
+    "NEWCOMER first question: \(firstQuestion.map { "t+\($0)m" } ?? "none") · first burn: \(firstBurn.map { "t+\($0)m" } ?? "none") · copies merged over a month ago set to burn: \(finishedSet.map { "t+\($0)m" } ?? "never") · first non-zero panel number: \(firstNumber.map { "t+\($0)m" } ?? "none") · junk in a paused copy: \(junkCleared.map { "t+\($0)m" } ?? "kept") · sandbox ran \(Int(Date().timeIntervalSince(start))) s")
+  // Time to value: within two minutes a newcomer has a question, a burn, a number on the panel
+  // and the copies merged over a month ago set to burn; junk inside a copy paused for weeks goes
+  // within three while the copy's work stays.
   check((firstQuestion ?? .max) <= 2, "first question within 2 minutes")
   check((firstBurn ?? .max) <= 2, "first burn within 2 minutes")
   check((firstNumber ?? .max) <= 2, "first number on the panel within 2 minutes")
+  check((finishedSet ?? .max) <= 2, "copies merged over a month ago set to burn within 2 minutes")
   check((junkCleared ?? .max) <= 3, "junk inside a copy paused for weeks cleared within 3 minutes")
   check(fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path), "the paused copy's work stays")
   check(
@@ -231,6 +240,12 @@ private func lookOnlyAfterward(
     "look-only: every copy stays")
   check(kill(helper, 0) == 0, "look-only: the helper keeps running")
   check(last.count(.burn) > 0, "look-only: BZ shows what it would burn")
+  let names: Set<String> = ["acme-old-1", "acme-old-2", "acme-old-3"]
+  check(
+    names.isSubset(
+      of: Set(
+        last.entries.filter { $0.item.kind == .worktree && $0.status == .burn }.map(\.item.name))),
+    "look-only: the copies merged over a month ago are among what BZ would burn")
   // BZ lists folders by their real path: /private/var, not /var.
   let junk = WorkspaceSafety.canonical(paused.appendingPathComponent("node_modules").path)
   check(
@@ -241,7 +256,6 @@ private func lookOnlyAfterward(
   // Start burning: what waited burns right away, without waiting for the next look.
   let switched = Date()
   _ = try await engine.apply(.setLookOnly(false), now: now)
-  let names: Set<String> = ["acme-old-1", "acme-old-2", "acme-old-3"]
   let merged = names.map { git.appendingPathComponent($0).path }
   // A copy's receipt is written just after its folder goes, so wait for the receipts too.
   var burned = [AutopilotReceipt]()
