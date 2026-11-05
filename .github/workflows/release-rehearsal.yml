@@ -1,0 +1,41 @@
+name: Release rehearsal (temporary)
+# Runs the release job on this branch with a throwaway identity and publishes nothing.
+# Delete before merging.
+on:
+  push:
+    branches: [claude/release-identity-1password]
+permissions:
+  contents: read
+jobs:
+  rehearse:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Throwaway identity in place of the secret
+        run: |
+          d="$RUNNER_TEMP/throwaway"; mkdir -p "$d"
+          printf '[ req ]\ndistinguished_name = dn\nprompt = no\nx509_extensions = v3\n[ dn ]\nCN = BurnZombies Local Signing\n[ v3 ]\nbasicConstraints = critical,CA:false\nkeyUsage = critical,digitalSignature\nextendedKeyUsage = critical,codeSigning\nsubjectKeyIdentifier = hash\n' > "$d/cnf"
+          /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 2 -keyout "$d/key.pem" -out "$d/cert.pem" -config "$d/cnf" 2>/dev/null
+          echo "BURNZOMBIES_RELEASE_CERT_SHA256=$(/usr/bin/openssl x509 -in "$d/cert.pem" -outform DER | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_ENV"
+          { echo 'RELEASE_SIGNING_IDENTITY<<PEM'; cat "$d/cert.pem" "$d/key.pem"; echo PEM; } >> "$GITHUB_ENV"
+      - name: Signing identity
+        run: scripts/release-identity.sh ci
+      - name: The key can sign but not be exported
+        run: |
+          if out="$(security export -k "$RUNNER_TEMP/release-signing.keychain-db" -t privKeys -f pkcs12 -P throwaway -o "$RUNNER_TEMP/out.p12" 2>&1)"; then
+            echo "::error::The private key was exported."; exit 1
+          fi
+          echo "Export refused, as it should be: $out"
+      - name: Build, sign and package
+        run: scripts/package-release.sh
+      - name: What would be published
+        run: |
+          ls -la dist/release
+          cat dist/release/SHA256SUMS
+          codesign -dvv dist/BurnZombies.app 2>&1 | grep -E 'Identifier|Authority|Signature'
+          lipo -archs dist/BurnZombies.app/Contents/MacOS/burnzombies
