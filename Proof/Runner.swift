@@ -118,6 +118,14 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       }
       exit(0)
     }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--autopilot-act-fixture" {
+      let root = URL(fileURLWithPath: CommandLine.arguments[2])
+      do { try await runAutopilotActFixture(root: root) } catch {
+        print("FAIL: \(error)")
+        exit(1)
+      }
+      exit(0)
+    }
     if CommandLine.arguments.contains("--quick") {
       // The everyday check, well under a minute with the build. Everything else runs only on
       // request: scripts/test.sh --full, or the manual GitHub workflow.

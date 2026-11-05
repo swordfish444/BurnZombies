@@ -558,7 +558,10 @@ private func askActProof() async throws {
   let (ok, reply) = await engine.handle(
     aiAsk(["saved": ["local"], "stale": ["week"]], guess: "yes", replacing: native.id))
   check(ok, reply)
-  equal(reply, sentence, "the AI hears that BZ acted")
+  // JSON like every other reply, carrying the sentence and that BZ acted.
+  let heard = (try? JSONSerialization.jsonObject(with: Data(reply.utf8))) as? [String: Any]
+  equal(heard?["message"] as? String, sentence, "the AI hears that BZ acted: \(reply)")
+  equal(heard?["acted"] as? Bool, true, "and that it acted, as a field")
   let memory = try store.memory()
   guard let tell = memory.tells.first(where: \.isOpen) else {
     return failTest("a tell for the AI's question")
@@ -786,4 +789,24 @@ private func lookOnlyAfterActProof() async throws {
   await eventually { (try? askStore.memory().tells.first?.count) == 0 }
   equal(askWorld.burns.all, [], "after ask: look-only, so nothing burned")
   equal(try askStore.memory().tells.first?.count, 0, "after ask: the tell says nothing burned")
+}
+
+/// A running app for the MCP proof that BZ answers the AI's question itself: BZ trusts itself on old
+/// copies, its own question about three of them is open, and it may act on its own.
+func runAutopilotActFixture(root: URL) async throws {
+  let now = Date()
+  var memory = trustedCopies(now: now)
+  memory.actsOnItsOwn = false
+  try AutopilotStore(root: root).save(memory: memory)
+  let engine = try Autopilot(root: root, sources: TellWorld(copies: threeCopies(now)).sources)
+  _ = await engine.tick(now: now)
+  _ = try await engine.apply(.setActsOnItsOwn(true), now: now)
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: root.appendingPathComponent("observation"),
+    accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+  let service = AgentService(monitor: monitor, autopilot: engine)
+  let listener = try AgentListener(root: root) { await service.call($0) }
+  print("READY")
+  _ = FileHandle.standardInput.readDataToEndOfFile()
+  withExtendedLifetime(listener) {}
 }

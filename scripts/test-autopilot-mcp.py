@@ -131,3 +131,33 @@ with tempfile.TemporaryDirectory(prefix="bz-ap-", dir="/tmp") as root:
             server.wait(timeout=10)
         fixture.stdin.close()
         fixture.wait(timeout=30)
+
+# BZ trusts itself on old copies and may act on its own. The AI's question about them is answered by
+# BZ itself, and the AI hears so in JSON, like every other reply.
+with tempfile.TemporaryDirectory(prefix="bz-ap-act-", dir="/tmp") as root:
+    fixture = subprocess.Popen([str(binary / "BurnProof"), "--autopilot-act-fixture", root],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    server = None
+    try:
+        assert line(fixture, 60).strip() == b"READY"
+        env = dict(os.environ, BURNZOMBIES_HOME=root, BURNZOMBIES_AUTOPILOT="1")
+        server = subprocess.Popen([str(binary / "burnzombies-mcp")], env=env, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        sequence = 0
+        send("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+                            "clientInfo": {"name": "autopilot proof", "version": "1"}})
+        send("notifications/initialized", notification=True)
+        error, page = call("autopilot_catalog", {"status": "unsure"})
+        native = next(q for q in page["openQuestions"] if q["kind"] == "worktree")
+        error, acted = call("autopilot_ask", {"kind": "worktree", "match": {"saved": ["local"], "stale": ["week"]},
+                                              "question": "Can I burn the copies nobody touched this week?",
+                                              "guess": "yes", "replace": native["id"]})
+        assert not error and acted == {
+            "acted": True, "message": "I was sure you'd say yes, so I burned them and will tell the owner."}, acted
+        print("PASS autopilot MCP: when BZ answers the AI's question itself, the reply is JSON saying it acted")
+    finally:
+        if server:
+            server.terminate()
+            server.wait(timeout=10)
+        fixture.stdin.close()
+        fixture.wait(timeout=30)

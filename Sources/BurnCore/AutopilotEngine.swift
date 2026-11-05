@@ -949,6 +949,13 @@ public actor Autopilot {
   }
 }
 
+/// What the AI hears when BZ answers its question itself: JSON like every other reply, saying that
+/// BZ acted, in a sentence.
+struct AutopilotActedReply: Codable, Sendable {
+  var acted: Bool
+  var message: String
+}
+
 /// A bounded overview for the CLI: the socket reply is capped, so no item lists.
 public struct AutopilotSummary: Codable, Sendable {
   public var counts: [String: Int]
@@ -1089,7 +1096,8 @@ extension Autopilot {
         let guess: AutopilotAnswer? = said == "yes" ? .yes : (said == "no" ? .no : nil)
         q = try ask(q, replacing: request.replace, guess: guess)
         if q.answeredBy == "bz" {
-          return (true, "I was sure you'd say yes, so I burned them and will tell the owner.")
+          let sentence = "I was sure you'd say yes, so I burned them and will tell the owner."
+          return (true, encode(AutopilotActedReply(acted: true, message: sentence)))
         }
         if q.why.isEmpty || input.why == nil {
           q.why = "I found \(q.count) like this, using \(AutopilotPolicy.format(q.bytes))."
