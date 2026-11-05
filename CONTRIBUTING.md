@@ -6,7 +6,7 @@ Run `scripts/test.sh` before opening a PR: the fast checks, the build, the core 
 
 Build with macOS 14+ and Swift 6.2+: `scripts/build-app.sh`. Use `scripts/build-app.sh --universal` for an Apple Silicon + Intel bundle. The app's monitor has no third-party dependencies; the separate MCP executable uses the official Swift SDK and its pinned dependencies. `Package.resolved` is committed.
 
-Every release since v0.13.0 is signed with one self-signed certificate, and macOS ties Full Disk Access to it, so a Mac that builds releases needs that same key, never a new one. The maintainer keeps it in 1Password: `scripts/release-identity.sh save` stores it from the Mac that has it, and `scripts/release-identity.sh load` installs it on another Mac, trusted for code signing only. [AGENTS.md](AGENTS.md) has the release steps.
+Every release since v0.13.0 is signed with one self-signed certificate, and macOS ties Full Disk Access to it, so a Mac that builds releases needs that same key, never a new one. The maintainer keeps it in 1Password: `scripts/release-identity.sh save` stores it from the Mac that has it, and `scripts/release-identity.sh load` installs it on another Mac without anyone approving it. [AGENTS.md](AGENTS.md) has the release steps.
 
 Run `python3 scripts/test-machine-setup.py` for private setup, provider pinning and reviewer cancellation. `python3 scripts/test-harness-install.py` covers the optional legacy interactive integration. Run `python3 scripts/test-mcp.py` after building to exercise the actual stdio server. `scripts/test.sh --full` includes a real preview/burn/replay-refusal lifecycle through the shared agent service. Installer validation accepts a locally packaged release: `python3 scripts/test-install.py PATH_TO_ARCHIVE`.
 

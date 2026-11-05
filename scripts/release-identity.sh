@@ -1,29 +1,29 @@
 #!/bin/bash
-# Keeps the release signing identity in 1Password, so any Mac the maintainer approves can build a
-# release. Every release since v0.13.0 is signed with one self-signed certificate, and macOS ties
-# Full Disk Access to it, so releases keep using that same key: a new identity
-# (scripts/ensure-signing-identity.sh) would make every user allow BurnZombies again.
+# Keeps the release signing identity in 1Password, so the maintainer's Macs can build releases
+# without anyone at the keyboard. Every release since v0.13.0 is signed with one self-signed
+# certificate, and macOS ties Full Disk Access to it, so releases keep using that same key: a new
+# identity (scripts/ensure-signing-identity.sh) would make every user allow BurnZombies again.
 #
-#   scripts/release-identity.sh save   On the Mac that has the identity: copies it from the login
-#                                      keychain into 1Password, then reads it back. macOS asks
-#                                      once to allow the export.
-#   scripts/release-identity.sh load   On another Mac: installs it from 1Password into the login
-#                                      keychain, trusted for code signing only (macOS asks for
-#                                      the password), then signs a test file with it.
+#   scripts/release-identity.sh load   On a Mac without the identity: installs it from 1Password
+#                                      into the login keychain, then signs a test file with it.
+#   scripts/release-identity.sh save   On the Mac that has the identity: copies it into
+#                                      1Password and reads it back. macOS asks once to allow the
+#                                      export.
 #
-# Needs the 1Password CLI (op) with 1Password > Settings > Developer > Integrate with 1Password
-# CLI turned on; 1Password asks for Touch ID. The identity is one Document item holding the
-# certificate and private key as PEM; on disk it exists only in a private temporary folder while
-# this script runs. BURNZOMBIES_OP_ACCOUNT picks the 1Password account (default
-# my.1password.com) and BURNZOMBIES_OP_VAULT the vault that save uses (default: Personal or
-# Private).
+# The identity is the Document "BurnZombies release signing identity" (certificate and private
+# key, PEM) in the 1Password vault BURNZOMBIES_OP_VAULT (default skylar). The 1Password CLI (op)
+# reads it with a service account, so nobody has to approve it: OP_SERVICE_ACCOUNT_TOKEN, or else
+# the token the maintainer's 1Password MCP keeps in the keychain item BURNZOMBIES_OP_TOKEN_ITEM
+# (default codex-1password-service-account-token). Without a token, op asks the 1Password app,
+# which wants Touch ID; BURNZOMBIES_OP_ACCOUNT then picks the account. The certificate is not
+# marked trusted: codesign and Full Disk Access don't need that. On disk the identity exists only
+# in a private temporary folder while this script runs.
 set -euo pipefail
 
 name="${BURNZOMBIES_SIGNING_IDENTITY:-BurnZombies Local Signing}"
 pin="${BURNZOMBIES_RELEASE_CERT_SHA256:-dbe8297fd599efa4bb942d0ebb5487e3bc27c15d7b71fadc8253da8ab1d697b9}"
 keychain="${BURNZOMBIES_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
-account="${BURNZOMBIES_OP_ACCOUNT:-my.1password.com}"
-vault="${BURNZOMBIES_OP_VAULT:-}"
+vault="${BURNZOMBIES_OP_VAULT:-skylar}"
 title="BurnZombies release signing identity"
 ssl=/usr/bin/openssl # macOS's LibreSSL reads and writes the PKCS#12 algorithms the keychain uses.
 sha1=""
@@ -32,16 +32,21 @@ die() {
   echo "$*" >&2
   exit 1
 }
-[[ $# -eq 1 && ("$1" == save || "$1" == load) ]] || die "Usage: $0 save|load"
+[[ $# -eq 1 && ("$1" == load || "$1" == save) ]] || die "Usage: $0 load|save"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+if [[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
+  OP_SERVICE_ACCOUNT_TOKEN="$(security find-generic-password \
+    -s "${BURNZOMBIES_OP_TOKEN_ITEM:-codex-1password-service-account-token}" -w 2>/dev/null || true)"
+fi
+if [[ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]]; then export OP_SERVICE_ACCOUNT_TOKEN; else unset OP_SERVICE_ACCOUNT_TOKEN; fi
+
 needs_op() {
-  command -v op >/dev/null ||
-    die "Needs the 1Password CLI: brew install 1password-cli, then turn on 1Password > Settings > Developer > Integrate with 1Password CLI."
+  command -v op >/dev/null || die "Needs the 1Password CLI: brew install 1password-cli."
 }
-op_() { op "$@" --account "$account"; }
+op_() { op "$@" --vault "$vault" ${BURNZOMBIES_OP_ACCOUNT:+--account "$BURNZOMBIES_OP_ACCOUNT"}; }
 
 # The SHA-256 of a PEM certificate's DER bytes: the hash package-release.sh pins.
 cert_sha256() { "$ssl" x509 -in "$1" -outform DER | shasum -a 256 | awk '{print $1}'; }
@@ -131,11 +136,11 @@ install_identity() {
     -T /usr/bin/codesign -T /usr/bin/security >/dev/null
 }
 
-# Checks that macOS accepts the identity for code signing and that a test file signed with it
-# carries the release certificate.
+# Signs a test file with the identity and checks that the signature carries the release
+# certificate.
 prove_signing() {
-  grep -qF "$sha1" <<<"$(security find-identity -v -p codesigning "$keychain")" ||
-    die "\"$name\" is in the keychain, but macOS does not accept it for code signing."
+  grep -qF "$sha1" <<<"$(security find-identity -p codesigning "$keychain")" ||
+    die "\"$name\" is not in $keychain."
   cp /usr/bin/true "$work/probe"
   local signed
   signed="$(codesign --force --sign "$sha1" --keychain "$keychain" "$work/probe" 2>&1)" ||
@@ -149,7 +154,7 @@ prove_signing() {
 saved_document() {
   local listing
   listing="$(op_ document list --format json)" ||
-    die "1Password did not answer. Unlock it, check that Settings > Developer > Integrate with 1Password CLI is on, and try again."
+    die "1Password did not answer for the vault $vault. Check OP_SERVICE_ACCOUNT_TOKEN (or that the 1Password app is unlocked) and try again."
   python3 -c '
 import json, sys
 matches = [d["id"] for d in json.load(sys.stdin) if d.get("title") == sys.argv[1]]
@@ -158,32 +163,10 @@ if len(matches) > 1:
 print(matches[0] if matches else "")' "$title" <<<"$listing"
 }
 
-save() {
-  needs_op
-  local id
-  id="$(saved_document)"
-  if [[ -n "$id" ]]; then
-    mkdir "$work/saved"
-    op_ document get "$id" --out-file "$work/saved/identity.pem" >/dev/null
-    (check_bundle "$work/saved/identity.pem" "$work/saved") ||
-      die "1Password already has a different \"$title\". Rename or archive it, then run save again."
-    echo "1Password already has \"$title\" ($account), and it is the release identity. Nothing to do." >&2
-    return
-  fi
-  export_bundle
-  op_ document create "$work/identity.pem" --title "$title" --file-name "$name.pem" --tags burnzombies \
-    ${vault:+--vault "$vault"} >/dev/null
-  # Reads it back the way load finds it: by title.
-  op_ document get "$title" --out-file "$work/readback.pem" >/dev/null ||
-    die "1Password saved \"$title\" but cannot return it. Check the app."
-  cmp -s "$work/identity.pem" "$work/readback.pem" || die "1Password returned something else for \"$title\". Check the app."
-  echo "Saved \"$name\" to 1Password as \"$title\" ($account) and read it back." >&2
-}
-
 load() {
   needs_op
   op_ document get "$title" --out-file "$work/identity.pem" >/dev/null ||
-    die "Cannot read \"$title\" from 1Password ($account). Run save on the Mac that has the identity first."
+    die "Cannot read \"$title\" from the 1Password vault $vault. Run save on the Mac that has the identity first."
   check_bundle "$work/identity.pem" "$work"
 
   # codesign finds identities by name, so another identity with this name would be ambiguous.
@@ -196,13 +179,30 @@ load() {
   if ! grep -qF "$sha1" <<<"$(security find-identity -p codesigning "$keychain")"; then
     install_identity
   fi
-  if ! grep -qF "$sha1" <<<"$(security find-identity -v -p codesigning "$keychain")"; then
-    echo "Trusting \"$name\" for code signing only. macOS asks for your password." >&2
-    security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$work/cert.pem" >/dev/null
-  fi
-  echo "Signing a test file. If macOS asks whether codesign may use the key, choose Always Allow." >&2
+  echo "Signing a test file. If macOS asks whether codesign may use the key, choose Always Allow; it asks once per Mac." >&2
   prove_signing
   echo "Ready: this Mac signs with the release certificate. scripts/build-app.sh and scripts/package-release.sh use it from now on." >&2
+}
+
+save() {
+  needs_op
+  local id
+  id="$(saved_document)"
+  if [[ -n "$id" ]]; then
+    mkdir "$work/saved"
+    op_ document get "$id" --out-file "$work/saved/identity.pem" >/dev/null
+    (check_bundle "$work/saved/identity.pem" "$work/saved") ||
+      die "The vault $vault already has a different \"$title\". Rename or archive it, then run save again."
+    echo "The 1Password vault $vault already has \"$title\", and it is the release identity. Nothing to do." >&2
+    return
+  fi
+  export_bundle
+  op_ document create "$work/identity.pem" --title "$title" --file-name "$name.pem" --tags burnzombies >/dev/null
+  # Reads it back the way load finds it: by title.
+  op_ document get "$title" --out-file "$work/readback.pem" >/dev/null ||
+    die "1Password saved \"$title\" but cannot return it. Check the vault $vault."
+  cmp -s "$work/identity.pem" "$work/readback.pem" || die "1Password returned something else for \"$title\". Check the vault $vault."
+  echo "Saved \"$name\" to the 1Password vault $vault as \"$title\" and read it back." >&2
 }
 
 "$1"
