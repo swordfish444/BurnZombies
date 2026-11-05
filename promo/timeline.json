@@ -1,0 +1,38 @@
+{
+ "end": 24.5,
+ "music": {
+  "id": "330416",
+  "offset": 0.0,
+  "end_offset": 21.65,
+  "end_from": 20.33
+ },
+ "spawn0": 1.4,
+ "gauge_full": 9.2,
+ "shots": {
+  "B1": 4.6,
+  "B2": 6.05,
+  "B3": 7.4,
+  "C": 9.64,
+  "C2": 13.24,
+  "D": 16.25,
+  "E": 20.33
+ },
+ "labels": {
+  "zombies": 4.65,
+  "worktrees": 6.4,
+  "junk": 7.8
+ },
+ "drop": 9.76,
+ "impact": 10.12,
+ "burn_zombies": 10.25,
+ "burn_crates": 10.5,
+ "backup": 13.6,
+ "burn_folders": 14.1,
+ "chip_out": 15.95,
+ "counter0": 16.35,
+ "counter1": 18.9,
+ "title": 20.45,
+ "you_build": 20.6,
+ "we_burn": 21.6,
+ "flare": 22.35
+}
