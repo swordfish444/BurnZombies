@@ -150,6 +150,8 @@ public actor Autopilot {
     items += copies.filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
       .map { Self.mentionChat($0, threads: threads, now: now) }
     items += sources.disk(records)
+    // A copy retire couldn't back up for big unsaved files carries them as risks of their own.
+    items = AutopilotPolicy.withBigFiles(items, receipts: (try? store.receipts()) ?? [])
     items = items.filter { AutopilotPolicy.worthAssessing($0, minimumBytes: minimumBytes) }
     catalog = AutopilotCatalog(
       observedAt: now, items: items, threads: threads, coverageNotes: sources.coverageNotes())
@@ -214,6 +216,8 @@ public actor Autopilot {
     for r in receipts
     where r.outcome == "refused" && now.timeIntervalSince(r.date) < retryRefusalsAfter {
       guard let revision = r.revision else { continue }
+      // One from before refusals named big files names none: trying again names them.
+      if r.bigFiles == nil && AutopilotWorktrees.unnamedBigFiles.contains(r.detail) { continue }
       let key = refusalKey(r.itemID, revision, r.authority)
       if uncheckedUse.contains(r.detail), unchecked.insert(key).inserted { continue }
       standing[key] = r
@@ -441,6 +445,7 @@ public actor Autopilot {
       return judgment.why
     }
     guard let authority = decision.authority else {
+      if AutopilotWorktrees.holdsBigFiles(item) { return AutopilotPolicy.bigFilesWait }
       return "I'm not sure about this one yet, so I'll ask you."
     }
     if authority == "operator" { return "You asked me to keep it." }
@@ -669,6 +674,9 @@ public actor Autopilot {
         wasBurned = all[i].outcome == "burned"
         all[i].outcome = "restored"
         all[i].detail = "Restored at \(backup.path)."
+        if !(all[i].bigFiles ?? []).isEmpty {
+          all[i].detail += " Its big unsaved files didn't come back: they were deleted for good."
+        }
       }
     }
     try store.updateMemoryAfterReceipts { memory, seeded in
@@ -698,6 +706,7 @@ public actor Autopilot {
     var failed = 0
     var reason: String?
     var missing = 0
+    var withoutBigFiles = 0
     for receipt in AutopilotPolicy.burns(of: tell, receipts: try store.receipts()) {
       guard receipt.outcome == "burned", receipt.restore != nil else {
         missing += 1
@@ -705,6 +714,7 @@ public actor Autopilot {
       }
       do {
         try await restore(receiptID: receipt.id)
+        if !(receipt.bigFiles ?? []).isEmpty { withoutBigFiles += 1 }
       } catch {
         failed += 1
         if reason == nil { reason = error.localizedDescription }
@@ -712,7 +722,8 @@ public actor Autopilot {
     }
     // What didn't come back stays on the tell, in Teach BZ, until the owner has read it.
     let note: String? = AutopilotPolicy.undoNote(
-      kind: tell.kind, failed: failed, reason: reason, missing: missing)
+      kind: tell.kind, failed: failed, reason: reason, missing: missing,
+      withoutBigFiles: withoutBigFiles)
     try store.updateMemory { try AutopilotPolicy.finishUndo(id, note: note, memory: &$0) }
   }
 

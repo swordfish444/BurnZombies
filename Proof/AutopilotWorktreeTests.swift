@@ -784,11 +784,12 @@ private func apBrowserProfileRetire(_ world: APWorld) throws {
 }
 
 /// Unsaved files too big to back up don't keep a copy for good. Retire names them, so the owner can
-/// be asked, and drops them only from a copy known to hold them (`bigFiles=yes`) that burns under
-/// an owner's lesson: the policy lets no other lesson burn such a copy. A folder of throwaway
-/// checkouts goes as one, ignored files inside it too, while the small new files beside it are
-/// backed up and come back on restore. The owner's Burn now and the AI still leave such a copy
-/// alone, and so does a project inside the big files.
+/// be asked, and drops them only from a copy known to hold every kind of them (`bigCode=yes` and so
+/// on) that burns under a lesson: the policy lets no lesson burn such a copy unless it names those
+/// kinds. A folder of throwaway checkouts goes as one, ignored files inside it too, while the small
+/// new files beside it are backed up and come back on restore. The owner's Burn now and the AI
+/// still leave such a copy alone, and so do a kind that turned up since and a project inside the
+/// big files.
 private func apBigFilesRetire(_ world: APWorld) throws {
   // Sparse: counts its full size, takes no disk.
   func big(_ path: String, megabytes: UInt64) throws {
@@ -798,9 +799,10 @@ private func apBigFilesRetire(_ world: APWorld) throws {
     try handle.close()
   }
   var cache: [String: AutopilotDelivery] = [:]
-  func burn(_ path: String, known: Bool, _ authority: String) throws -> AutopilotReceipt {
+  /// Retires the copy as the catalog has it, carrying the kinds of big files `known` names.
+  func burn(_ path: String, known: [String], _ authority: String) throws -> AutopilotReceipt {
     var item = try apItem(path, world, cache: &cache)
-    if known { item.facts["bigFiles"] = "yes" }
+    for risk in known { item.facts[risk] = "yes" }
     return AutopilotWorktrees.retire(
       item, authority: authority, root: world.state, inUse: { _ in 0 })
   }
@@ -815,15 +817,15 @@ private func apBigFilesRetire(_ world: APWorld) throws {
   try apWrite(copy + "/tmp/results.json", "{\"wins\": 3}\n")
   try apWrite(copy + "/tools/balance.ts", "export const damage = 7\n")
   for (known, authority, who) in [
-    (true, "operator", "the owner's Burn now"), (true, "ai:0.95", "the AI"),
-    (false, "rule:lesson", "a lesson, before the copy was known to hold them"),
+    (["bigCode"], "operator", "the owner's Burn now"), (["bigCode"], "ai:0.95", "the AI"),
+    ([], "rule:lesson", "a lesson, before the copy was known to hold them"),
   ] {
     let receipt = try burn(copy, known: known, authority)
     equal(receipt.outcome, "refused", who + " leaves it alone")
     equal(receipt.detail, "It has big files that aren't saved anywhere else, so I left it alone.")
     equal(receipt.bigFiles?.map(\.path), ["tmp/checkouts"], who + ": the refusal names them")
   }
-  let named = try burn(copy, known: false, "rule:lesson").bigFiles?.first
+  let named = try burn(copy, known: [], "rule:lesson").bigFiles?.first
   equal(named?.bytes, checkouts)
   equal(named?.files, 7)
   equal(named?.kind, "TypeScript files")
@@ -832,12 +834,12 @@ private func apBigFilesRetire(_ world: APWorld) throws {
     "with when they last changed")
   check(apExists(copy + "/tmp/checkouts/c1/game.ts"), "and leaves them there")
 
-  let receipt = try burn(copy, known: true, "rule:lesson")
-  equal(receipt.outcome, "burned", "an owner's lesson that let them go burns it: " + receipt.detail)
-  let gone = "Its big unsaved files (" + AutopilotPolicy.roughly(checkouts)
-  check(
-    receipt.detail.hasSuffix(gone + " in tmp/checkouts) were deleted for good."),
-    "the receipt says what went: " + receipt.detail)
+  let receipt = try burn(copy, known: ["bigCode"], "rule:lesson")
+  equal(receipt.outcome, "burned", "a lesson that let big code go burns it: " + receipt.detail)
+  let gone =
+    "Its big unsaved files were deleted for good: tmp/checkouts ("
+    + AutopilotPolicy.roughly(checkouts) + " of TypeScript files)."
+  check(receipt.detail.hasSuffix(gone), "the receipt says what went: " + receipt.detail)
   equal(receipt.bigFiles?.map(\.path), ["tmp/checkouts"])
   checkFalse(apExists(copy), "the copy is gone")
   if let restore = receipt.restore {
@@ -857,7 +859,7 @@ private func apBigFilesRetire(_ world: APWorld) throws {
   let dump = try world.addWorktree("dump", branch: "feature-dump")
   try big(dump + "/dump.sql", megabytes: 600)
   try apWrite(dump + "/notes.txt", "keep me\n")
-  let dropped = try burn(dump, known: true, "rule:lesson")
+  let dropped = try burn(dump, known: ["bigData"], "rule:lesson")
   equal(dropped.outcome, "burned", dropped.detail)
   equal(dropped.bigFiles?.map(\.path), ["dump.sql"])
   if let restore = dropped.restore {
@@ -876,12 +878,21 @@ private func apBigFilesRetire(_ world: APWorld) throws {
   try FileManager.default.createDirectory(atPath: inner, withIntermediateDirectories: true)
   try apGit(inner, ["init", "-q"])
   try apGit(inner, ["commit", "-q", "--allow-empty", "-m", "Work that exists only here"])
-  let kept = try burn(nested, known: true, "rule:lesson")
+  let kept = try burn(nested, known: ["bigCode"], "rule:lesson")
   equal(kept.outcome, "refused", "a project inside the big files keeps the copy")
   equal(
     kept.detail,
     "There is another project folder inside it that I can't back up, so I left it alone.")
   check(apExists(inner + "/.git"), "and it's still there")
+
+  // A kind that turned up since the card keeps the copy, named, so it can be asked about.
+  let mixed = try world.addWorktree("mixed", branch: "feature-mixed")
+  for n in 1...7 { try big(mixed + "/tmp/checkouts/c\(n)/game.ts", megabytes: 90) }
+  try big(mixed + "/qa/recordings/take.mp4", megabytes: 600)
+  let newKind = try burn(mixed, known: ["bigCode"], "rule:lesson")
+  equal(newKind.outcome, "refused", "big videos the lesson never covered keep the copy")
+  equal(newKind.bigFiles?.map(\.risk), ["bigMedia", "bigCode"], "both kinds are named")
+  check(apExists(mixed + "/tmp/checkouts/c1/game.ts"), "and nothing is gone")
 }
 
 private func apSubmoduleProof(_ world: APWorld) throws {

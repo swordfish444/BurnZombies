@@ -69,8 +69,8 @@ extension AutopilotPolicy {
   /// files come first, each with its files, so the card names what a Yes deletes.
   static func rows(of items: [AutopilotItem]) -> [AutopilotQuestionRow] {
     let biggest = items.sorted { a, b in
-      let first: Bool = a.facts["bigFiles"] == "yes"
-      let second: Bool = b.facts["bigFiles"] == "yes"
+      let first: Bool = AutopilotWorktrees.holdsBigFiles(a)
+      let second: Bool = AutopilotWorktrees.holdsBigFiles(b)
       if first != second { return first }
       return a.bytes != b.bytes ? a.bytes > b.bytes : a.id < b.id
     }

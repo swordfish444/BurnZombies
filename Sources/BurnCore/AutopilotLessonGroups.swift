@@ -138,9 +138,11 @@ extension AutopilotPolicy {
       covers(rule, "saved", any: ["unknown"]) || covers(rule, "changes", any: ["unknown"])
     }
     if unchecked { risks.append("work I couldn't check") }
-    // A named risk is covered only where a lesson names it.
-    if rules.contains(where: { $0.match["bigFiles"]?.contains("yes") == true }) {
-      risks.append("big unsaved files")
+    // Each kind of big unsaved files is covered only where a lesson names it.
+    for risk in AutopilotWorktrees.bigFileRisks {
+      if rules.contains(where: { $0.match[risk.fact]?.contains("yes") == true }) {
+        risks.append(risk.words)
+      }
     }
     return risks.isEmpty ? "" : ", even with " + either(risks)
   }

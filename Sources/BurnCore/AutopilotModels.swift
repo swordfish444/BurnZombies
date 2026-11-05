@@ -288,6 +288,9 @@ public struct AutopilotTell: Codable, Sendable, Identifiable, Equatable {
   public var note: String?
   /// For an Undo that left a note: false until the owner presses OK on it, then true. Nil otherwise.
   public var seen: Bool?
+  /// Big unsaved files its burns deleted for good, from their receipts: Undo can't bring them back,
+  /// and the card says so before it is pressed. Nil when none.
+  public var bigBytes: UInt64?
   public init(
     id: String, questionID: String, ruleID: String, kind: AutopilotKind, count: Int,
     bytes: UInt64, rows: [AutopilotQuestionRow], why: String, date: Date,

@@ -231,14 +231,19 @@ extension AutopilotPolicy {
   /// A burn lesson kept within `allowed` risks, for an owner's Yes and BZ's own act alike: each
   /// risk fact of the kind (`riskFacts`) allows its safe values and only the risky values in
   /// `allowed`, and `unknown` only when it is there. A value the lesson already left out stays out.
+  /// A named risk the lesson doesn't let go is left out of it: a burn without it covers only things
+  /// clear of it anyway (`effective`).
   static func narrowed(
     _ match: [String: [String]], kind: AutopilotKind, to allowed: Set<String>
   ) -> [String: [String]] {
     var result = match
+    let named = namedRisks[kind] ?? []
     for (fact, values) in riskFacts[kind] ?? [] {
       let kept: [String] = values.filter { value in
         !risky(fact, value) || allowed.contains(fact + "=" + value)
       }
+      let clear: Bool = named.contains { $0.fact == fact && kept == [$0.clear] }
+      if clear && result[fact] == nil { continue }
       if let mine = result[fact] {
         result[fact] = kept.filter(mine.contains)
       } else {

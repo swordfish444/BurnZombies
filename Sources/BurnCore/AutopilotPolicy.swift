@@ -85,7 +85,7 @@ public enum AutopilotPolicy {
     case .worktree:
       // Big unsaved files go for good when a copy burns: only the owner's Yes lets them.
       return !ownerManagedPlaces.contains(f["place"] ?? "") && f["inUse"] == "no"
-        && f["thread"] != "live" && f["bigFiles"] != "yes"
+        && f["thread"] != "live" && !AutopilotWorktrees.holdsBigFiles(item)
     case .disk:
       return (f["folder"] ?? "other") != "other"
     }
@@ -325,9 +325,10 @@ public enum AutopilotPolicy {
         count(
           { $0.facts["changes"] == "large" }, "has lots of unsaved changes",
           "have lots of unsaved changes"),
-        count(
-          { $0.facts["bigFiles"] == "yes" }, "has big unsaved files", "have big unsaved files"),
       ]
+      for risk in AutopilotWorktrees.bigFileRisks {
+        found.append(count({ $0.facts[risk.fact] == "yes" }, "has " + risk.words, "have " + risk.words))
+      }
     case .process:
       found = [
         count(
@@ -439,7 +440,7 @@ public enum AutopilotPolicy {
       return
         "It just stops. If something needs it again, a fresh one starts. Nothing you're working on uses it."
     case .worktree:
-      if item.facts["bigFiles"] == "yes" {
+      if AutopilotWorktrees.holdsBigFiles(item) {
         return
           "The folder goes away. Its code and smaller unsaved files are backed up so you can restore it, but its big unsaved files are deleted for good."
       }
@@ -517,6 +518,8 @@ public struct AutopilotCard: Equatable, Sendable {
   public var rows: [AutopilotCardRow] = []
   /// How many more there are than the rows show.
   public var more = 0
+  /// What a Yes deletes for good, which Undo can't bring back, said before anything is pressed.
+  public var cost: String?
 }
 
 /// One thing a question is about, ready to show: what it is called, where it lives and when it
@@ -592,14 +595,19 @@ extension AutopilotPolicy {
   static func factWords(_ kind: AutopilotKind) -> [(fact: String, words: [String: String])] {
     switch kind {
     case .worktree:
-      return [
+      let work: [(fact: String, words: [String: String])] = [
         ("saved", ["merged": "Already merged", "pushed": "Saved on GitHub", "local": "Work only on this Mac"]),
         ("changes", ["none": "No unsaved changes", "small": "Has unsaved changes", "large": "Has lots of unsaved changes"]),
-        ("bigFiles", ["yes": "Has big unsaved files"]),
+      ]
+      let big: [(fact: String, words: [String: String])] = AutopilotWorktrees.bigFileRisks.map {
+        risk in (fact: risk.fact, words: ["yes": "Has " + risk.words])
+      }
+      let rest: [(fact: String, words: [String: String])] = [
         ("stale", stalePhrases),
         ("place", ["patrol6": "Made by Patrol6 agents", "codex": "Made by Codex", "claude": "Made by Claude", "conductor": "Made by Conductor"]),
         ("thread", ["ended": "Its chat is finished"]),
       ]
+      return work + big + rest
     case .process:
       return [
         ("listening", ["yes": "Still running a server", "no": "Not serving anything"]),
@@ -709,10 +717,14 @@ extension AutopilotPolicy {
   /// Facts that make burning riskier: work that exists nowhere else, things still in use. How
   /// long something sat unused is not one: a card says that in its headline and leaves it out of
   /// its facts, and only a program with no date lists its idle time here.
-  static let cautions: Set<String> = [
-    "Work only on this Mac", "Has unsaved changes", "Has lots of unsaved changes",
-    "Has big unsaved files", "Still running a server", "Still busy", "Idle 10+ minutes",
-  ]
+  static let cautions: Set<String> = {
+    let named: [String] = AutopilotWorktrees.bigFileRisks.map { "Has " + $0.words }
+    let others: Set<String> = [
+      "Work only on this Mac", "Has unsaved changes", "Has lots of unsaved changes",
+      "Still running a server", "Still busy", "Idle 10+ minutes",
+    ]
+    return others.union(named)
+  }()
 
   /// The card for a question as it reads at `now`. The headline is "Burn 5 copies you used
   /// yesterday?": what it covers and when the most recently used of it was used, in calendar words
@@ -722,14 +734,16 @@ extension AutopilotPolicy {
   ) -> AutopilotCard {
     let one = question.count == 1
     let (single, plural) = cardNoun(question.kind, match: question.match)
+    let cost: String? = bigFilesCost(question)
     let note: String
     switch question.kind {
-    case .worktree where risks(of: question).contains("bigFiles=yes"):
-      note = bigFilesNote(question, one: one)
     case .worktree:
-      note = one
-        ? "It's backed up first, so you can undo it."
-        : "Each one is backed up first, so you can undo it."
+      // What a Yes deletes for good comes first; it is never "you can undo it".
+      note =
+        cost
+        ?? (one
+          ? "It's backed up first, so you can undo it."
+          : "Each one is backed up first, so you can undo it.")
     case .process: note = one ? "It just gets asked to quit." : "They just get asked to quit."
     case .disk: note = one ? "Your tools rebuild it when needed." : "Your tools rebuild them when needed."
     }
@@ -751,6 +765,7 @@ extension AutopilotPolicy {
     card.line = question.line
     card.rows = rows
     card.more = max(0, question.count - rows.count)
+    card.cost = cost
     return card
   }
 }

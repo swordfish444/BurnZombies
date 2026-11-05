@@ -9,11 +9,21 @@ extension AutopilotPolicy {
   public static let tellLifetime: TimeInterval = 7 * 86_400
 
   /// What an Undo of copies tells the owner about the ones that didn't come back: how many failed
-  /// to restore, with the first reason, and how many had no restore point. Stopped programs and
-  /// deleted folders never come back, and their card says so before the press, so they need none.
-  static func undoNote(kind: AutopilotKind, failed: Int, reason: String?, missing: Int) -> String? {
+  /// to restore, with the first reason, how many had no restore point, and how many came back
+  /// without the big unsaved files their burn deleted for good, as the card said before the press.
+  /// Stopped programs and deleted folders never come back, and their card says so before the press,
+  /// so they need none.
+  static func undoNote(
+    kind: AutopilotKind, failed: Int, reason: String?, missing: Int, withoutBigFiles: Int = 0
+  ) -> String? {
     guard kind == .worktree else { return nil }
     var parts: [String] = []
+    if withoutBigFiles > 0 {
+      let one: Bool = withoutBigFiles == 1
+      let copies: String = one ? "1 copy" : "\(withoutBigFiles) copies"
+      let whose: String = one ? " its" : " their"
+      parts.append(copies + " came back without" + whose + " big unsaved files, which were deleted for good.")
+    }
     if failed > 0 {
       let copies: String = failed == 1 ? "1 copy" : "\(failed) copies"
       let why: String = reason ?? "The restore failed."
@@ -89,16 +99,20 @@ extension AutopilotPolicy {
   /// on this Mac, unsaved changes, unsaved files too big to back up, a running server, and anything
   /// BZ couldn't check (`unknown`). A copy in use is protected and never burned, so "yes" isn't
   /// listed for `inUse`.
-  static let riskFacts: [AutopilotKind: [(fact: String, values: [String])]] = [
-    .worktree: [
+  static let riskFacts: [AutopilotKind: [(fact: String, values: [String])]] = {
+    let copies: [(fact: String, values: [String])] = [
       (fact: "saved", values: ["unknown", "local", "pushed", "merged"]),
       (fact: "changes", values: ["unknown", "large", "small", "none"]),
       (fact: "inUse", values: ["unknown", "no"]),
-      (fact: "bigFiles", values: ["yes", "no"]),
-    ],
-    .process: [(fact: "listening", values: ["unknown", "yes", "no"])],
-    .disk: [],
-  ]
+    ]
+    let big: [(fact: String, values: [String])] = AutopilotWorktrees.bigFileRisks.map {
+      (fact: $0.fact, values: ["yes", "no"])
+    }
+    return [
+      .worktree: copies + big, .process: [(fact: "listening", values: ["unknown", "yes", "no"])],
+      .disk: [],
+    ]
+  }()
   /// What Undo, Good call and Forget say while an Undo runs.
   public static let undoingNow = "I'm already undoing that."
   /// An Undo's note when an owner's newer answer took the act's lesson in.
@@ -110,13 +124,12 @@ extension AutopilotPolicy {
   /// said yes to on the subject (`approved`), through the same `narrowed` as an owner's Yes. Each
   /// risk fact allows its safe values and the risky values the owner approved, and `unknown` only
   /// when approved. A later thing with a risk the owner never saw isn't burned under it, but asked
-  /// about. A named risk is never BZ's to approve: only the owner's Yes deletes big unsaved files.
-  /// It is this act's alone: its id carries the tell's, so every burn it authorizes is the act's.
+  /// about, a kind of big unsaved files the owner never said yes to among them. It is this act's
+  /// alone: its id carries the tell's, so every burn it authorizes is the act's.
   static func actLesson(
     for question: AutopilotQuestion, approved: Set<String>, created: Date, tellID: String
   ) -> AutopilotRule {
-    let mine: Set<String> = approved.subtracting(namedRisks(question.kind))
-    var rule = lesson(for: question, verdict: .burn, created: created, approved: mine)
+    var rule = lesson(for: question, verdict: .burn, created: created, approved: approved)
     let key: String = AutopilotRule.key(kind: rule.kind, match: rule.match)
     rule.id = key + ":burn:" + tellID
     rule.tellID = tellID
@@ -177,6 +190,8 @@ extension AutopilotPolicy {
           ?? AutopilotItem(
             id: receipt.itemID, kind: receipt.kind, name: receipt.name, facts: [:])
         item.bytes = receipt.bytes
+        // What its burn deleted for good, as its receipt says.
+        item.bigFiles = receipt.bigFiles
         made[receipt.itemID] = item
       }
       let settling: Bool = settled.contains(memory.tells[i].id)
@@ -184,6 +199,9 @@ extension AutopilotPolicy {
       let things: [AutopilotItem] = Array(made.values)
       memory.tells[i].count = things.count
       memory.tells[i].bytes = things.reduce(0) { $0 + $1.bytes }
+      var deleted: UInt64 = 0
+      for thing in things { deleted += (thing.bigFiles ?? []).reduce(0) { $0 + $1.bytes } }
+      memory.tells[i].bigBytes = deleted > 0 ? deleted : nil
       // Rows only ever come from what the catalog shows, never from a receipt's bare name. A pass
       // that burned nothing, refused or held, keeps what BZ meant to burn for when burns come.
       let named: Bool = made.keys.allSatisfy { byID[$0] != nil }

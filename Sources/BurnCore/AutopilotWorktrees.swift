@@ -35,8 +35,16 @@ public enum AutopilotWorktrees {
 
   private struct Refusal: Error {
     var reason: String
-    init(_ reason: String) { self.reason = reason }
+    /// The unsaved files too big to back up that kept the copy, named for the owner's card.
+    var bigFiles: [AutopilotBigFiles]?
+    init(_ reason: String, bigFiles: [AutopilotBigFiles]? = nil) {
+      self.reason = reason
+      self.bigFiles = bigFiles
+    }
   }
+  /// Why a copy is left alone when a project inside it holds work Git can't back up from here.
+  private static let nestedProject =
+    "There is another project folder inside it that I can't back up, so I left it alone."
   private struct Candidate {
     var path: String
     var size: UInt64
@@ -274,7 +282,9 @@ public enum AutopilotWorktrees {
     do {
       return try perform(item, path: path, authority: authority, root: root, inUse: inUse)
     } catch let refusal as Refusal {
-      return .refused(item, authority: authority, refusal.reason)
+      var receipt: AutopilotReceipt = .refused(item, authority: authority, refusal.reason)
+      receipt.bigFiles = refusal.bigFiles
+      return receipt
     } catch {
       return .refused(
         item, authority: authority, "I could not check it safely, so I left it alone.")
@@ -350,13 +360,15 @@ public enum AutopilotWorktrees {
       throw Refusal(reason)
     }
 
-    // Big unsaved files would be copied into the repository's own storage, so they keep the copy.
-    // Browser profiles don't count: they aren't kept.
+    // Unsaved files too big for the backup would go into the repository's own storage instead of
+    // freeing the disk, so they keep the copy, named so the owner can be asked about them. Under an
+    // owner's Yes to that kind of them they go with the copy instead (`dropsBigFiles`). Browser
+    // profiles don't count: they aren't kept.
     let untracked = try WorktreeGit.run(
       path, ["ls-files", "-z", "--others", "--exclude-standard"], seconds: 60
     ).split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
     let profiles = try browserProfiles(path, untracked: untracked)
-    var unsaved: UInt64 = 0
+    var files: [AutopilotUnsavedFile] = []
     var dropped: UInt64 = 0
     for name in untracked {
       var info = stat()
@@ -368,11 +380,27 @@ public enum AutopilotWorktrees {
         dropped += bytes
         continue
       }
-      unsaved += bytes
-      if unsaved > maximumUnsavedBytes {
-        throw Refusal("It has big files that aren't saved anywhere else, so I left it alone.")
-      }
+      files.append(AutopilotUnsavedFile(path: name, bytes: bytes, changed: AutopilotDisk.changed(info)))
     }
+    var big: [AutopilotBigFiles] = []
+    if files.reduce(0, { $0 + $1.bytes }) > maximumUnsavedBytes {
+      let entries = try WorktreeGit.run(
+        path, ["ls-files", "-z", "--others", "--exclude-standard", "--directory"], seconds: 60
+      ).split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+      big = bigFiles(files, entries: entries)
+      guard dropsBigFiles(item, authority: authority, files: big) else {
+        throw Refusal(bigFilesRefusal, bigFiles: big)
+      }
+      // A project inside them would go with them unseen. It keeps the copy, as it does when Git
+      // would back it up. Git lists one as its folder.
+      let projects: [String] = untracked.filter { $0.hasSuffix("/") }
+      let hidden: Bool = projects.contains { project in
+        big.contains { project.hasPrefix($0.path + "/") }
+      }
+      if hidden { throw Refusal(nestedProject) }
+    }
+    // What isn't backed up: browser profiles, and big unsaved files a Yes let go.
+    let gone: [String] = profiles + big.map(\.path)
 
     // Snapshot with a throwaway copy of the index so the real one is never touched.
     let work = root.appendingPathComponent(
@@ -385,15 +413,15 @@ public enum AutopilotWorktrees {
     if fm.fileExists(atPath: gitDir + "/index") {
       try fm.copyItem(atPath: gitDir + "/index", toPath: index)
     }
-    // Everything but the browser profiles. They are left out as Git adds, since a blob Git
-    // writes stays in the repository's storage even after it leaves the index.
+    // Everything but what isn't backed up. It is left out as Git adds, since a blob Git writes
+    // stays in the repository's storage even after it leaves the index.
     var stage = ["add", "-A"]
-    if !profiles.isEmpty {
-      let list = work.appendingPathComponent("everything-but-profiles")
+    if !gone.isEmpty {
+      let list = work.appendingPathComponent("everything-but-what-goes")
       var bytes = Data(".".utf8)
       bytes.append(0)
-      for profile in profiles {
-        bytes.append(Data((":(exclude,literal)" + profile).utf8))
+      for left in gone {
+        bytes.append(Data((":(exclude,literal)" + left).utf8))
         bytes.append(0)
       }
       try bytes.write(to: list)
@@ -401,11 +429,8 @@ public enum AutopilotWorktrees {
     }
     _ = try WorktreeGit.run(path, stage, seconds: 150, environment: indexEnvironment)
     let added = try gitlinks(path, environment: indexEnvironment)
-    guard Set(added).isSubset(of: Set(links)) else {
-      throw Refusal(
-        "There is another project folder inside it that I can't back up, so I left it alone.")
-    }
-    let keepers = try ignoredFilesToSave(path, environment: indexEnvironment)
+    guard Set(added).isSubset(of: Set(links)) else { throw Refusal(nestedProject) }
+    let keepers = try ignoredFilesToSave(path, environment: indexEnvironment, except: gone)
     if !keepers.isEmpty {
       let list = work.appendingPathComponent("ignored-files")
       var bytes = Data()
@@ -468,15 +493,18 @@ public enum AutopilotWorktrees {
     }
     var detail = "Removed. Your unsaved changes are backed up, so you can restore it."
     if !snapshot {
-      let saved = dropped > 0 ? "Everything else" : "Everything"
+      let saved = dropped > 0 || !big.isEmpty ? "Everything else" : "Everything"
       detail = "Removed. " + saved + " in it was already saved, so you can restore it."
     }
     if dropped > 0 {
       detail += " Its browser profiles (\(AutopilotPolicy.format(dropped))) weren't kept."
     }
-    return AutopilotReceipt(
+    if !big.isEmpty { detail += " " + AutopilotPolicy.bigFilesGone(big) }
+    var receipt = AutopilotReceipt(
       itemID: item.id, kind: .worktree, name: item.name, authority: authority, outcome: "burned",
       detail: detail, bytes: item.bytes, restore: recovery)
+    receipt.bigFiles = big.isEmpty ? nil : big
+    return receipt
   }
 
   /// Browser profiles test runs leave in a copy, by path inside it: a Chrome-style profile folder,
@@ -560,11 +588,12 @@ public enum AutopilotWorktrees {
     return nil
   }
 
-  /// Ignored files worth keeping: small, and outside rebuildable folders. Shallow files come
-  /// first so configuration such as `.env` wins over a pile of cache files.
-  private static func ignoredFilesToSave(_ path: String, environment: [String: String]) throws
-    -> [String]
-  {
+  /// Ignored files worth keeping: small, and outside rebuildable folders and what goes with the
+  /// copy (`gone`). Shallow files come first so configuration such as `.env` wins over a pile of
+  /// cache files.
+  private static func ignoredFilesToSave(
+    _ path: String, environment: [String: String], except gone: [String]
+  ) throws -> [String] {
     let listing = try git(
       path, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
       seconds: 60, environment: environment)
@@ -576,6 +605,7 @@ public enum AutopilotWorktrees {
       let parts = relative.split(separator: "/").map(String.init)
       if parts.contains(where: { rebuildable.contains($0) }) { continue }
       if parts.contains(where: { $0.lowercased() == ".git" }) { continue }
+      if gone.contains(where: { relative == $0 || relative.hasPrefix($0 + "/") }) { continue }
       if isDirectory {
         try walk(path, relative, candidates: &candidates, visited: &visited)
       } else {
@@ -614,8 +644,7 @@ public enum AutopilotWorktrees {
           throw Refusal("It has too many extra files for me to back up, so I left it alone.")
         }
         if name.lowercased() == ".git" {
-          throw Refusal(
-            "There is another project folder inside it that I can't back up, so I left it alone.")
+          throw Refusal(nestedProject)
         }
         if rebuildable.contains(name) { continue }
         let child = current + "/" + name

@@ -11,10 +11,10 @@ extension AutopilotPolicy {
 
   /// Facts that make burning riskier: work only on this Mac, unsaved changes, a running server,
   /// recent use. Any fact BZ couldn't check (`unknown`) is risky too.
-  static let riskyFacts: Set<String> = [
-    "saved=local", "changes=small", "changes=large", "bigFiles=yes", "listening=yes",
-    "stale=today", "idle=active", "idle=10m",
-  ]
+  static let riskyFacts: Set<String> = Set([
+    "saved=local", "changes=small", "changes=large", "listening=yes", "stale=today",
+    "idle=active", "idle=10m",
+  ]).union(namedRisks(.worktree))
   /// Caution text on older questions, and the risk each one names.
   static let cautionRisks: [(text: String, risk: String)] = [
     ("work only on this Mac", "saved=local"), ("unsaved changes", "changes=small"),
@@ -91,9 +91,7 @@ extension AutopilotPolicy {
     let earned: Bool = trusted(topic, scores: memory.scores) && lean == .yes
     let answeredYes: Bool = same.contains { $0.answer == .yes }
     let known: Bool = asked.isSubset(of: saidYes)
-    // Only the owner's Yes deletes files that exist nowhere else; BZ asks instead.
-    let deletes: Bool = !asked.isDisjoint(with: namedRisks(question.kind))
-    let sure: Bool = earned && answeredYes && known && !kept && !deletes
+    let sure: Bool = earned && answeredYes && known && !kept
     // The words name only risks the owner said yes to among the answers counted.
     var seen = Set<String>()
     for past in yes { seen.formUnion(risks(of: past)) }
@@ -233,10 +231,10 @@ extension AutopilotPolicy {
       }
       words.insert(word)
     }
-    let order = [
-      "work only on this Mac", "unsaved changes", "big unsaved files", "a running server",
-      "things I couldn't check", "recent use",
-    ]
+    let big: [String] = AutopilotWorktrees.bigFileRisks.map(\.words)
+    let first: [String] = ["work only on this Mac", "unsaved changes"]
+    let last: [String] = ["a running server", "things I couldn't check", "recent use"]
+    let order: [String] = first + big + last
     return order.filter(words.contains)
   }
 
@@ -246,11 +244,10 @@ extension AutopilotPolicy {
     switch fact {
     case "saved": return value == "local" ? "work only on this Mac" : nil
     case "changes": return "unsaved changes"
-    case "bigFiles": return value == "yes" ? "big unsaved files" : nil
     case "listening": return value == "yes" ? "a running server" : nil
     case "stale": return value == "today" ? "recent use" : nil
     case "idle": return "recent use"
-    default: return nil
+    default: return value == "yes" ? bigFileWords(fact) : nil
     }
   }
 }
