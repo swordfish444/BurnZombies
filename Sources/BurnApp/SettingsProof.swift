@@ -195,7 +195,7 @@ import Vision
     recognition.recognitionLevel = .accurate; recognition.recognitionLanguages = ["en-US"]
     try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([recognition])
     let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-    guard visible.contains("Full Disk Access"), visible.contains(accessState == .granted ? "Manage access" : "Open Full Disk Access") else {
+    guard visible.contains("Full Disk Access"), visible.contains(accessState == .granted ? "Manage access" : "Allow Full Disk Access") else {
       throw StoreError.message("Required access controls clipped: \(visible)")
     }
     if accessState != .granted {

@@ -140,6 +140,55 @@ public enum FullDiskAccess {
     }
   }
   public enum ProbeResult { case missing, unavailable, denied, readable }
+
+  /// What one listing attempt found.
+  public enum Listing: Equatable, Sendable {
+    /// macOS refused a protected folder, so it now lists BurnZombies in Full Disk Access,
+    /// switched off: the person only has to turn it on.
+    case listed
+    /// A protected folder opened, so macOS already allows access; verify instead of asking.
+    case alreadyReadable
+    /// Nothing protected was there to be refused; the person adds BurnZombies themselves.
+    case unavailable
+  }
+
+  /// Puts this app in System Settings → Privacy & Security → Full Disk Access, switched off,
+  /// so setup is one switch and a password instead of + and a file chooser. macOS adds an app
+  /// to that list the first time it is refused a protected folder (checked on macOS 27.0.1).
+  /// Called once per explicit "Allow Full Disk Access", never on its own. It opens and closes
+  /// at most one existing folder, lists and reads nothing, and records no access: only the
+  /// verified check after the person returns counts.
+  public static func listInSettings() -> Listing {
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    return list(
+      paths: ["Library/Mail", "Library/Messages", "Library/Safari"].map {
+        home.appendingPathComponent($0).path
+      }
+    ) { path in
+      guard let directory = opendir(path) else {
+        let failure = errno
+        logger.info("Listing check for \(URL(fileURLWithPath: path).lastPathComponent, privacy: .public): errno \(failure)")
+        switch failure {
+        case EPERM, EACCES: return .denied
+        case ENOENT, ENOTDIR: return .missing
+        default: return .unavailable
+        }
+      }
+      closedir(directory)
+      return .readable
+    }
+  }
+  /// The first folder that answers decides; missing or unclear folders are skipped.
+  public static func list(paths: [String], open: (String) -> ProbeResult) -> Listing {
+    for path in paths {
+      switch open(path) {
+      case .denied: return .listed
+      case .readable: return .alreadyReadable
+      case .missing, .unavailable: continue
+      }
+    }
+    return .unavailable
+  }
   public static func evaluate(paths: [String], probe: (String) -> ProbeResult) -> FullDiskAccessStatus {
     var readable = false, unavailable = false
     for path in paths {

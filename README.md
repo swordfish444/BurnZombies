@@ -117,7 +117,7 @@ Click **Keep forever** on one in **Findings**, and BZ and the AI leave it alone.
 <details>
 <summary><b>Does it need Full Disk Access?</b></summary>
 
-No. Without it, BZ skips the places macOS protects (Desktop, Documents, Downloads, iCloud Drive and other apps' data) and tells you what it skipped. With it, the same rules cover those folders too. To grant it, click **Allow Full Disk Access** in the menu. [Access setup →](docs/INSTALL.md#optional-full-disk-access)
+No. Without it, BZ skips the places macOS protects (Desktop, Documents, Downloads, iCloud Drive and other apps' data) and tells you what it skipped. With it, the same rules cover those folders too. To grant it, click **Allow Full Disk Access** in the menu, then switch on BurnZombies in the list that opens and enter your password. [Access setup →](docs/INSTALL.md#optional-full-disk-access)
 
 </details>
 

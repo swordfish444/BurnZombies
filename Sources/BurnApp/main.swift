@@ -8,6 +8,7 @@ import UserNotifications
   @Published var state = ViewState() {
     didSet {
       if !restoringAccessPresentation && state.fullDiskAccess.canScan {
+        setAccessGuide(nil)
         accessPreferences?.removeObject(forKey: Self.accessVerificationPendingKey)
         if accessBannerDismissed {
           accessBannerDismissed = false
@@ -60,32 +61,49 @@ import UserNotifications
   private let accessPreferences: UserDefaults?
   private let accessOpener: (URL) -> Bool
   private let accessChecker: (() async throws -> FullDiskAccessStatus)?
+  private let accessLister: () -> FullDiskAccess.Listing
+  private let accessGuidePresenter: ((AccessGuide?) -> Void)?
+  /// The small guide shown beside System Settings while the person turns access on.
+  @Published private(set) var accessGuide: AccessGuide?
   private var awaitingAccessReturn = false
   private var leftForAccessSettings = false
   private var accessReturnPending = false
   var accessReady: Bool { state.fullDiskAccess.canScan }
   var showsAccessBanner: Bool { !accessReady && !accessBannerDismissed }
-  var installedAppPath: String {
-    Bundle.main.bundleURL.pathExtension == "app"
-      ? Bundle.main.bundleURL.path : "~/Applications/BurnZombies.app"
-  }
+  static let fullDiskAccessPane =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
   func dismissAccessBanner() {
     accessBannerDismissed = true
     accessPreferences?.set(true, forKey: Self.accessBannerDismissedKey)
   }
-  func copyInstalledAppPath() {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(installedAppPath, forType: .string)
-    message = "App path copied. Use +, then Command-Shift-G in Full Disk Access."
+  func closeAccessGuide() { setAccessGuide(nil) }
+  private func setAccessGuide(_ guide: AccessGuide?) {
+    guard accessGuide != guide else { return }
+    accessGuide = guide
+    if let accessGuidePresenter {
+      accessGuidePresenter(guide)
+    } else if !demo {
+      AccessGuidePanel.shared.show(guide) { [weak self] in self?.closeAccessGuide() }
+    }
   }
 
-  /// Explicit setup arms one return check and survives macOS Quit & Reopen.
-  /// The saved intent authorizes a check, never a permission grant.
+  /// Explicit setup first gets BurnZombies listed, switched off, in Full Disk Access (macOS
+  /// lists an app once it is refused a protected folder), so the person turns on one switch
+  /// and enters their password instead of hunting with + through a file chooser. It then
+  /// opens that pane with a small guide beside it and arms one return check that survives
+  /// macOS Quit & Reopen. The saved intent authorizes a check, never a permission grant.
+  /// After setup (Manage access) it only opens the pane.
   func openFullDiskAccessSettings() {
-    guard
-      let url = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
-    else { return }
+    guard let url = URL(string: Self.fullDiskAccessPane) else { return }
+    let listing = accessReady ? nil : accessLister()
+    if listing == .alreadyReadable {
+      // macOS already allows it: verify now instead of sending the person to Settings.
+      awaitingAccessReturn = false
+      leftForAccessSettings = false
+      accessReturnPending = true
+      checkAccessAfterReturnIfReady()
+      return
+    }
     awaitingAccessReturn = true
     leftForAccessSettings = false
     accessReturnPending = false
@@ -97,6 +115,7 @@ import UserNotifications
         "Open System Settings → Privacy & Security → Full Disk Access and enable BurnZombies."
       return
     }
+    if let listing { setAccessGuide(listing == .listed ? .turnOn : .dragIn) }
   }
   private func restoreAccessVerificationAfterRelaunch() {
     guard accessPreferences?.bool(forKey: Self.accessVerificationPendingKey) == true else { return }
@@ -111,6 +130,7 @@ import UserNotifications
     guard awaitingAccessReturn && leftForAccessSettings else { return }
     awaitingAccessReturn = false
     leftForAccessSettings = false
+    setAccessGuide(nil)
     accessReturnPending = true
     checkAccessAfterReturnIfReady()
   }
@@ -304,12 +324,17 @@ import UserNotifications
     demo: Bool = CommandLine.arguments.contains("--demo"), accessPreferences: UserDefaults? = nil,
     accessOpener: ((URL) -> Bool)? = nil,
     accessChecker: (() async throws -> FullDiskAccessStatus)? = nil,
+    accessLister: (() -> FullDiskAccess.Listing)? = nil,
+    accessGuide: ((AccessGuide?) -> Void)? = nil,
     huntAction: (() async -> Void)? = nil
   ) {
     self.demo = demo
     self.accessPreferences = accessPreferences ?? (demo ? nil : .standard)
     self.accessOpener = accessOpener ?? { NSWorkspace.shared.open($0) }
     self.accessChecker = accessChecker
+    // A demo or proof never touches a protected folder unless a fixture is injected.
+    self.accessLister = accessLister ?? (demo ? { .unavailable } : FullDiskAccess.listInSettings)
+    self.accessGuidePresenter = accessGuide
     self.huntAction = huntAction
     accessBannerDismissed =
       self.accessPreferences?.bool(forKey: Self.accessBannerDismissedKey) ?? false
