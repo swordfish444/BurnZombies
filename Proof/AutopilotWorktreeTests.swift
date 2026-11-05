@@ -538,7 +538,8 @@ private func apRefusalProof(_ world: APWorld, _ items: [String: AutopilotItem]) 
       return 1
     })
   equal(asked, [busy.path!], "the in-use check looked at the copy")
-  try apExpectRefusal(world, busy, "consumers unknown", inUse: { _ in -1 })
+  let unknown = try apExpectRefusal(world, busy, "consumers unknown", inUse: { _ in -1 })
+  equal(unknown.detail, "I could not check whether something is using it, so I left it alone.")
 
   // A merge in progress.
   let busyPath = world.path("busy")
@@ -583,6 +584,25 @@ private func apRefusalProof(_ world: APWorld, _ items: [String: AutopilotItem]) 
   let gone = AutopilotWorktrees.retire(
     ghost, authority: "operator", root: world.state, inUse: { _ in 0 })
   equal(gone.outcome, "refused", "missing folder")
+
+  // Checked again once the backup is written: something started using it, or the check couldn't
+  // tell, which says nothing about the copy.
+  for (answer, reason) in [
+    (Int32(1), "Something started using it, so I left it alone."),
+    (-1, "I could not check whether something is using it, so I left it alone."),
+  ] {
+    var checks = 0
+    let late = AutopilotWorktrees.retire(
+      busy, authority: "operator", root: world.state,
+      inUse: { _ in
+        checks += 1
+        return checks == 1 ? 0 : answer
+      })
+    equal(late.outcome, "refused", "second check \(answer)")
+    equal(late.detail, reason, "second check \(answer)")
+    equal(checks, 2, "second check \(answer): both checks ran")
+    equal(apRead(busyPath + "/tracked.txt"), "original\n", "second check \(answer): the copy stays")
+  }
 }
 
 // MARK: Retire and restore
@@ -808,10 +828,10 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
 
   var probed: [String] = []
   var given: Set<TimeInterval> = []
-  let ages = AutopilotAges { path, seconds in
+  let ages = AutopilotAges { path, seconds, stop in
     probed.append(path)
     given.insert(seconds)
-    return AutopilotWorktrees.lastWorked(path: path, seconds: seconds)
+    return AutopilotWorktrees.lastWorked(path: path, seconds: seconds, stop: stop)
   }
   equal(stale(ages.fill(records, budget: 0, now: later)), unknown, "no budget, no look")
   equal(probed, [], "nothing is looked at without a budget")
@@ -896,13 +916,39 @@ private func apUnwalkedAgeProof(_ world: APWorld) throws {
   check(AutopilotWorktrees.lastWorked(path: nested, seconds: 10) != nil, "readable again")
   // A copy Git can't date stays unknown, and isn't looked at again on every tick.
   var failed = 0
-  let blind = AutopilotAges { _, _ in
+  let blind = AutopilotAges { _, _, _ in
     failed += 1
     return nil
   }
   equal(stale(blind.fill(records, now: later)), unknown, "no date, no age")
   _ = blind.fill(records, now: later)
   equal(failed, paths.count, "a look that found nothing is remembered too")
+
+  // The check for programs using a copy sees BZ too, so a copy being burned isn't looked into,
+  // and a burn that starts during a look stops it; such a look isn't remembered.
+  let junk = AutopilotJunkCache()
+  var looks = 0
+  let shared = AutopilotAges(walks: junk.walks) { path, seconds, stop in
+    looks += 1
+    return AutopilotWorktrees.lastWorked(path: path, seconds: seconds, stop: stop)
+  }
+  let held = junk.clearing(edited) { shared.fill([records[1]], now: later) }
+  isNil(held[0].lastFileChange)
+  equal(looks, 0, "a copy being burned isn't looked into")
+  let burned = DispatchSemaphore(value: 0)
+  var interrupted = false
+  let cut = AutopilotAges(walks: junk.walks) { path, _, stop in
+    guard !interrupted else { return later }
+    interrupted = true
+    Thread.detachNewThread { junk.clearing(path) { burned.signal() } }
+    let limit = Date().addingTimeInterval(5)
+    while !stop() && Date() < limit { usleep(1000) }
+    return later
+  }
+  isNil(cut.fill([records[1]], now: later)[0].lastFileChange)
+  equal(burned.wait(timeout: .now() + 10), .success, "the burn went ahead once the look left")
+  equal(cut.fill([records[1]], now: later)[0].lastFileChange, later, "the copy is looked at again")
+  check(shared.fill([records[1]], now: later)[0].lastFileChange != nil, "so is a burned-past one")
 }
 
 func autopilotWorktreeProof() async throws {

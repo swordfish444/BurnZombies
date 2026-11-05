@@ -727,6 +727,21 @@ func autopilotSweepProof() async throws {
   _ = await waiting.burn(["worktree:stuck"])
   equal(stuckAttempts.all.count, 4, "and an unchanged one once the wait is over")
 
+  // A check for programs using it that couldn't finish says nothing about the copy, so the next
+  // look tries once more. A second one in a row waits like any other refusal.
+  let uncheckedUse = "I could not check whether something is using it, so I left it alone."
+  let uncheckedTries = Calls()
+  let unsure = try Autopilot(
+    root: directory.appendingPathComponent("unchecked-use"),
+    sources: AutopilotSources(
+      worktrees: { _, _, d in ([stuckCopy(stale: "older")], d) },
+      retireWorktree: { item, authority in
+        uncheckedTries.add(item.id)
+        return .refused(item, authority: authority, uncheckedUse)
+      }))
+  for minute in 0..<4 { _ = await unsure.tick(now: now.addingTimeInterval(Double(minute) * 60)) }
+  equal(uncheckedTries.all.count, 2, "a check that couldn't finish is tried once more, then waits")
+
   // One burn per item at a time. Two retires of the same copy write the same restore ref, so the
   // second could replace the backup the first had just verified. The native pass skipped an item
   // that was burning; the AI's burns and the owner's Burn now went straight in.

@@ -231,9 +231,11 @@ public enum AutopilotWorktrees {
   /// its index (Git rewrites it on add, commit, checkout and reset) and everything in it but
   /// Git's own data and what is inside its junk folders, whose own times count. Unlike the
   /// inventory's walk, this one doesn't stop at hard links, projects inside or special files.
-  /// Nil when Git can't say or the walk can't see everything within `seconds`: anything partial
-  /// could only make a copy look older than it is.
-  public static func lastWorked(path: String, seconds: TimeInterval) -> Date? {
+  /// Nil when Git can't say, or the walk can't see everything within `seconds` or `stop` says so
+  /// first: anything partial could only make a copy look older than it is.
+  public static func lastWorked(
+    path: String, seconds: TimeInterval, stop: () -> Bool = { false }
+  ) -> Date? {
     let deadline = Date().addingTimeInterval(seconds)
     func ask(_ args: [String]) -> String? {
       let wait = min(deadline.timeIntervalSinceNow, 180)
@@ -242,7 +244,7 @@ public enum AutopilotWorktrees {
     }
     guard let committed = ask(["log", "-1", "--format=%ct"]), let stamp = TimeInterval(committed),
       let index = ask(["rev-parse", "--path-format=absolute", "--git-path", "index"]),
-      let files = AutopilotDisk.newestChange(in: path, until: deadline)
+      let files = AutopilotDisk.newestChange(in: path, until: deadline, stop: stop)
     else { return nil }
     var newest = max(files, Date(timeIntervalSince1970: stamp))
     var info = stat()
@@ -324,12 +326,7 @@ public enum AutopilotWorktrees {
         throw Refusal("I could not check it safely, so I left it alone.")
       }
     }
-    switch inUse(path) {
-    case 0: break
-    case 1: throw Refusal("Something is using it right now.")
-    default:
-      throw Refusal("I could not check whether something is using it, so I left it alone.")
-    }
+    try unused(path, inUse, else: "Something is using it right now.")
 
     // What the catalog said must still be true, recomputed from the current HEAD. A fact it
     // had not checked yet may only turn out safe; anything riskier is judged again.
@@ -426,9 +423,7 @@ public enum AutopilotWorktrees {
     guard again == tree, headAgain == head else {
       throw Refusal("It changed while I was backing it up, so I left it alone.")
     }
-    guard inUse(path) == 0 else {
-      throw Refusal("Something started using it, so I left it alone.")
-    }
+    try unused(path, inUse, else: "Something started using it, so I left it alone.")
     var branch: String?
     if let symbolic = try? line(path, ["symbolic-ref", "-q", "HEAD"]),
       symbolic.hasPrefix("refs/heads/")
@@ -455,6 +450,18 @@ public enum AutopilotWorktrees {
         ? "Removed. Your unsaved changes are backed up, so you can restore it."
         : "Removed. Everything in it was already saved, so you can restore it.",
       bytes: item.bytes, restore: recovery)
+  }
+
+  /// Why a copy was left when the check for programs using it couldn't finish.
+  static let uncheckedUse = "I could not check whether something is using it, so I left it alone."
+
+  /// Refuses with `busy` when a program uses the copy, and says so when the check couldn't tell.
+  private static func unused(_ path: String, _ inUse: (String) -> Int32, else busy: String) throws {
+    switch inUse(path) {
+    case 0: return
+    case 1: throw Refusal(busy)
+    default: throw Refusal(uncheckedUse)
+    }
   }
 
   /// Same buckets as the catalog, from a fresh `git status`.
@@ -775,22 +782,30 @@ public final class AutopilotAges: @unchecked Sendable {
   }
   private let lock = NSLock()
   private var known: [String: Look] = [:]
-  private let prober: (String, TimeInterval) -> Date?
+  private let walks: AutopilotWalks?
+  private let prober: (String, TimeInterval, () -> Bool) -> Date?
+  /// With `walks`, the junk walk's, a burn of a copy waits for its look and stops it: the check
+  /// for programs using a copy would otherwise find BZ itself inside. `prober` is told to stop
+  /// through its last argument.
   public init(
-    prober: @escaping (String, TimeInterval) -> Date? = {
-      AutopilotWorktrees.lastWorked(path: $0, seconds: $1)
+    walks: AutopilotWalks? = nil,
+    prober: @escaping (String, TimeInterval, () -> Bool) -> Date? = {
+      AutopilotWorktrees.lastWorked(path: $0, seconds: $1, stop: $2)
     }
   ) {
+    self.walks = walks
     self.prober = prober
   }
 
   /// Starts no more than `limit` looks, and none once `budget` seconds have passed; each look
   /// gets 10 seconds, since a cut-short one says nothing. A look that found no date is
-  /// remembered too, so a copy that can't be dated doesn't take every tick's turn.
+  /// remembered too, so a copy that can't be dated doesn't take every tick's turn; a copy being
+  /// burned isn't looked into, and a look a burn stopped isn't remembered.
   public func fill(
     _ records: [WorktreeRecord], limit: Int = 8, budget: TimeInterval = 10, now: Date = Date()
   ) -> [WorktreeRecord] {
     let end = ProcessInfo.processInfo.systemUptime + budget
+    let walks = self.walks
     var looked = 0
     return records.map { record in
       // Without a status the inventory never read Git there: it may not look into that folder.
@@ -807,8 +822,16 @@ public final class AutopilotAges: @unchecked Sendable {
         return dated
       }
       guard looked < limit, ProcessInfo.processInfo.systemUptime < end else { return record }
+      let real = WorkspaceSafety.canonical(record.path)
+      guard walks?.enter(real) ?? true else { return record }
       looked += 1
-      let date = prober(record.path, 10)
+      var early = false
+      let date = prober(record.path, 10) {
+        if !early { early = walks?.wanted(real) ?? false }
+        return early
+      }
+      walks?.leave(real, early: early)
+      guard !early else { return record }
       let look = Look(date: date, at: now, head: record.head, status: record.status)
       lock.withLock { known[record.id] = look }
       dated.lastFileChange = date

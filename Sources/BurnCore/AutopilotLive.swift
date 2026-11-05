@@ -3,13 +3,14 @@ import Foundation
 
 extension AutopilotSources {
   /// Production wiring: the monitor's process records and burns, the worktree inventory,
-  /// agent threads, junk folders, and the three executors.
+  /// agent threads, junk folders, and the three executors. Proofs pass a `junk` cache that
+  /// measures slowly.
   public static func live(
-    monitor: Monitor, root: URL = Store.defaultRoot, home: String = NSHomeDirectory()
+    monitor: Monitor, root: URL = Store.defaultRoot, home: String = NSHomeDirectory(),
+    junk: AutopilotJunkCache = AutopilotJunkCache()
   ) -> AutopilotSources {
-    let junk = AutopilotJunkCache()
     let sizes = AutopilotSizes()
-    let ages = AutopilotAges()
+    let ages = AutopilotAges(walks: junk.walks)
     let skipped = AutopilotSkipped()
     // Without verified Full Disk Access, Autopilot leaves the places macOS protects alone.
     @Sendable func scope() -> ProtectedLocations { .current(root: root, homes: [home]) }
@@ -55,15 +56,17 @@ extension AutopilotSources {
       },
       processOutcome: { await monitor.autopilotOutcome($0) },
       retireWorktree: { item, authority in
-        let receipt = AutopilotWorktrees.retire(
-          item, authority: authority, root: root, protected: scope())
+        let receipt = junk.clearing(item.path) {
+          AutopilotWorktrees.retire(item, authority: authority, root: root, protected: scope())
+        }
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt
       },
       restoreWorktree: { try AutopilotWorktrees.restore($0, protected: scope()) },
       reclaimDisk: { item, authority in
-        let receipt = AutopilotDisk.reclaim(
-          item, authority: authority, home: home, protected: scope())
+        let receipt = junk.clearing(item.path) {
+          AutopilotDisk.reclaim(item, authority: authority, home: home, protected: scope())
+        }
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt
       },
@@ -115,13 +118,34 @@ final class AutopilotSkipped: @unchecked Sendable {
 /// background and pruned immediately after a burn. A copy the inventory reports later, or dates
 /// later, is walked on its own right away: a new install's first scan reports copies over several
 /// ticks and dates each one only when it inspects it.
-final class AutopilotJunkCache: @unchecked Sendable {
+public final class AutopilotJunkCache: @unchecked Sendable {
   private let lock = NSLock()
   private var cached: [AutopilotItem] = []
   private var refreshed: Date?
   /// Copies walked since the last full walk, by record, and whether each one was dated then.
   private var walked: [String: Bool] = [:]
   private var running = false
+  /// Where its walk is, so a burn never finds BZ inside what it removes. Copies' age looks
+  /// share it.
+  public let walks = AutopilotWalks()
+  private let sizer: (String, () -> Bool) -> UInt64?
+  /// `sizer` measures one junk folder and gives up as soon as its second argument says to.
+  public init(
+    sizer: @escaping (String, () -> Bool) -> UInt64? = {
+      AutopilotDisk.allocatedSize($0, stop: $1)
+    }
+  ) {
+    self.sizer = sizer
+  }
+
+  /// Runs a burn of `path` with the walk out of it. The check for programs using a folder sees
+  /// every program of this user, BZ included, so the walk's open folders and its Git would get
+  /// the burn refused for hours.
+  public func clearing<T>(_ path: String?, _ burn: () -> T) -> T {
+    guard let path else { return burn() }
+    return walks.clearing(path, burn)
+  }
+
   func items(_ records: [WorktreeRecord], home: String, protected: ProtectedLocations)
     -> [AutopilotItem]
   {
@@ -147,7 +171,9 @@ final class AutopilotJunkCache: @unchecked Sendable {
         // project's main checkout has a record of its own, so it is walked with the new copies.
         let fresh = AutopilotDisk.items(
           worktrees: walk.records, home: home, caches: walk.everything, mains: walk.everything,
-          protected: protected)
+          sizer: { folder in sizer(folder) { walks.wanted(folder) } }, protected: protected,
+          walks: walks)
+        let skipped = walks.skipped()
         lock.withLock {
           if walk.everything {
             cached = fresh
@@ -158,6 +184,14 @@ final class AutopilotJunkCache: @unchecked Sendable {
             merged += fresh
             merged.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
             cached = merged
+          }
+          // A copy the walk skipped or left for a burn is walked again next time, in case the
+          // burn left it there.
+          for record in walk.records {
+            let path = WorkspaceSafety.canonical(record.path)
+            if skipped.contains(where: { AutopilotWalks.overlap($0, path) }) {
+              walked[record.id] = nil
+            }
           }
           running = false
         }
@@ -178,6 +212,71 @@ final class AutopilotJunkCache: @unchecked Sendable {
   /// Whether a walk can tell how old the copy is: junk counts as inside an old copy only then.
   private static func dated(_ record: WorktreeRecord) -> Bool {
     record.main || record.lastFileChange != nil || record.lastCommitAt != nil
+  }
+}
+
+/// Where the junk walk is, by real path, so a burn never finds BZ itself inside what it removes.
+/// The walk doesn't go into a folder being burned and leaves one it is in at its next step; the
+/// burn waits for it to go.
+public final class AutopilotWalks: @unchecked Sendable {
+  private let condition = NSCondition()
+  private var burning: [String] = []
+  private var walking: [String] = []
+  /// What the walk skipped or left for a burn since `skipped()` last asked.
+  private var left: [String] = []
+
+  /// Runs `burn` once no walk is inside `path`, or once `patience` has passed: a walk still in
+  /// there is then for the burn's own check to judge.
+  func clearing<T>(_ path: String, patience: TimeInterval = 10, _ burn: () -> T) -> T {
+    let real = WorkspaceSafety.canonical(path)
+    condition.withLock {
+      burning.append(real)
+      let limit = Date().addingTimeInterval(patience)
+      while walking.contains(where: { Self.overlap($0, real) }), condition.wait(until: limit) {}
+    }
+    defer {
+      condition.withLock {
+        if let index = burning.firstIndex(of: real) { burning.remove(at: index) }
+      }
+    }
+    return burn()
+  }
+
+  /// Whether the walk may go into `target` now. Once in, it is there until `leave`.
+  func enter(_ target: String) -> Bool {
+    condition.withLock {
+      if burning.contains(where: { Self.overlap($0, target) }) {
+        left.append(target)
+        return false
+      }
+      walking.append(target)
+      return true
+    }
+  }
+
+  /// Whether a burn wants the walk out of `path`.
+  func wanted(_ path: String) -> Bool {
+    condition.withLock { burning.contains { Self.overlap($0, path) } }
+  }
+
+  func leave(_ target: String, early: Bool) {
+    condition.withLock {
+      if let index = walking.firstIndex(of: target) { walking.remove(at: index) }
+      if early { left.append(target) }
+      condition.broadcast()
+    }
+  }
+
+  func skipped() -> [String] {
+    condition.withLock {
+      defer { left = [] }
+      return left
+    }
+  }
+
+  /// One folder is the other or inside it.
+  static func overlap(_ a: String, _ b: String) -> Bool {
+    WorkspaceSafety.contains(a, b) || WorkspaceSafety.contains(b, a)
   }
 }
 
