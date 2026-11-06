@@ -296,7 +296,7 @@ public enum AutopilotDisk {
     _ item: AutopilotItem, authority: String, home: String = NSHomeDirectory(),
     inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil,
     root: URL = Store.defaultRoot, recoveryKey: SymmetricKey? = nil,
-    authorize: () -> Bool = { true }
+    authorize: () -> Bool = { true }, keys: AutopilotRecoveryKey = .shared
   ) -> AutopilotReceipt {
     let protected = protected ?? .limited(homes: [home])
     var recovery: PrivateRecovery.Reference?
@@ -381,11 +381,16 @@ public enum AutopilotDisk {
     }
     let bytes = allocatedSize(path) ?? item.bytes
     if !regenerable(path, home: base) {
+      // As retire does: no keychain question, and a dialog nobody answered refuses the folder.
+      let key: SymmetricKey
+      do { key = try recoveryKey ?? keys.forBurn() } catch {
+        return refuse(AutopilotRecoveryKey.refusal)
+      }
       do {
         recovery = try PrivateRecovery.capture(
           path, root: root,
-          excluding: recoveryExclusions(path, home: base), key: recoveryKey)
-        try PrivateRecovery.validate(recovery!, key: recoveryKey)
+          excluding: recoveryExclusions(path, home: base), key: key)
+        try PrivateRecovery.validate(recovery!, key: key)
         guard inUse(path) == 0 else {
           return refuse("Something started using that folder, so I left it alone.")
         }

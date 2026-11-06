@@ -19,6 +19,10 @@ public struct AutopilotSources: Sendable {
   public var inspect: @Sendable (AutopilotItem) -> [String: String]
   public var evidence: @Sendable (AutopilotItem, String) -> [String: String]
   public var coverageNotes: @Sendable () -> [String]
+  /// While old copies wait for the owner to allow the backup key (`AutopilotRecoveryKey.wait`).
+  public var recoveryKeyWait: @Sendable () -> AutopilotKeyWait?
+  /// The owner's Allow: reads the key with macOS's question allowed.
+  public var allowRecoveryKey: @Sendable () throws -> Void
   public init(
     threads: @escaping @Sendable () -> [AgentThread] = { [] },
     processes: @escaping @Sendable ([AgentThread]) async -> [AutopilotItem] = { _ in [] },
@@ -46,7 +50,11 @@ public struct AutopilotSources: Sendable {
     evidence: @escaping @Sendable (AutopilotItem, String) -> [String: String] = { _, _ in
       ["error": "Scoped evidence unavailable."]
     },
-    coverageNotes: @escaping @Sendable () -> [String] = { [] }
+    coverageNotes: @escaping @Sendable () -> [String] = { [] },
+    recoveryKeyWait: @escaping @Sendable () -> AutopilotKeyWait? = { nil },
+    allowRecoveryKey: @escaping @Sendable () throws -> Void = {
+      throw StoreError.message("There is no backup key to allow here.")
+    }
   ) {
     self.threads = threads
     self.processes = processes
@@ -61,6 +69,8 @@ public struct AutopilotSources: Sendable {
     self.inspect = inspect
     self.evidence = evidence
     self.coverageNotes = coverageNotes
+    self.recoveryKeyWait = recoveryKeyWait
+    self.allowRecoveryKey = allowRecoveryKey
   }
 }
 
@@ -230,7 +240,9 @@ public actor Autopilot {
   /// passes. Keyed by `refusalKey`; the latest refusal says why. A check for programs using the
   /// item that couldn't finish says nothing about the item, so the next look tries once more;
   /// a second one stands like any other.
-  static func standingRefusals(_ receipts: [AutopilotReceipt], now: Date)
+  /// `keyWaits`: old copies wait for the owner to allow the backup key. A refusal for the key
+  /// stands only that long; once the key reads, its copy is tried at the next pass.
+  static func standingRefusals(_ receipts: [AutopilotReceipt], now: Date, keyWaits: Bool)
     -> [String: AutopilotReceipt]
   {
     var standing = [String: AutopilotReceipt]()
@@ -238,6 +250,7 @@ public actor Autopilot {
     for r in receipts
     where r.outcome == "refused" && now.timeIntervalSince(r.date) < retryRefusalsAfter {
       guard let revision = r.revision else { continue }
+      if !keyWaits && r.detail == AutopilotRecoveryKey.refusal { continue }
       // One from before refusals named big files names none: trying again names them.
       if r.bigFiles == nil && AutopilotWorktrees.unnamedBigFiles.contains(r.detail) { continue }
       let key = refusalKey(r.itemID, revision, r.authority)
@@ -273,6 +286,13 @@ public actor Autopilot {
   /// What a second burn of an item hears while the first is still under way.
   static let alreadyBurning = "I'm already burning it."
 
+  /// What an agent hears when it tries to allow the backup key for the owner.
+  static let ownerAllowsKey = "Only the owner can allow my backup key, with Allow in BZ's menu."
+
+  /// What the AI and the CLI read while old copies wait for the backup key.
+  static let keyWaitNote =
+    "Old copies wait: macOS needs the owner's OK before I can use my backup key, and BZ's menu asks them. Burning an old copy now is refused."
+
   /// What the AI hears when it asks to burn something while look-only is on.
   static let lookOnlyHold =
     "Look-only: the owner hasn't turned burning on, so nothing burns yet. Your verdicts are kept and burn once they do; don't burn again this sweep."
@@ -295,13 +315,17 @@ public actor Autopilot {
     let early = memory()
     let receipts = (try? store.receipts()) ?? []
     let spent = spent(receipts)
-    let refused = Self.standingRefusals(receipts, now: now)
+    let refused = Self.standingRefusals(
+      receipts, now: now, keyWaits: sources.recoveryKeyWait() != nil)
     var used = start
     for item in items where !spent.contains(item.id) && burning[item.id] == nil {
       // A cheap first look, on memory as the pass began.
       guard AutopilotPolicy.decide(item, memory: early).status == .burn,
         used[item.kind, default: 0] < Self.maximumBurns[item.kind, default: 0]
       else { continue }
+      // Every retire needs the backup key. While it waits for the owner, old copies wait too,
+      // without a receipt: the copy that ran into it says why, and the menu asks.
+      if item.kind == .worktree, sources.recoveryKeyWait() != nil { continue }
       let memory = memory()
       let decision = AutopilotPolicy.decide(item, memory: memory)
       guard decision.status == .burn, let authority = decision.authority,
@@ -511,6 +535,7 @@ public actor Autopilot {
     var latest = [String: AutopilotReceipt]()
     for receipt in receipts { latest[receipt.itemID] = receipt }
     var result = AutopilotSnapshot()
+    result.recoveryKey = sources.recoveryKeyWait()
     var seen = Set<String>()
     for item in catalog?.items ?? [] {
       seen.insert(item.id)
@@ -631,6 +656,11 @@ public actor Autopilot {
       // Show the answer right away; matching items, and anything BZ just answered itself, burn in
       // the background.
       Task { await self.burnAuthorized(now: now, settling: acted) }
+    case .allowRecoveryKey:
+      // The owner's click, so macOS may ask now. What waited for the key burns right after.
+      let sources = sources
+      try await Task.detached { try sources.allowRecoveryKey() }.value
+      Task { await self.burnAuthorized(now: now) }
     case .burnNow(let id):
       guard let item = catalog?.items.first(where: { $0.id == id }) else {
         throw StoreError.message("I can't find that anymore. It may already be gone.")
@@ -778,7 +808,8 @@ public actor Autopilot {
     let now = Date()
     let snap = snapshot(now: now)
     let memory = memory()
-    let refused = Self.standingRefusals((try? store.receipts()) ?? [], now: now)
+    let refused = Self.standingRefusals(
+      (try? store.receipts()) ?? [], now: now, keyWaits: sources.recoveryKeyWait() != nil)
     var entries = snap.entries.filter { entry in
       (status == nil || status == "all" || entry.status.rawValue == status)
         && (kind == nil || entry.item.kind.rawValue == kind)
@@ -893,7 +924,8 @@ public actor Autopilot {
       }
       let now = Date()
       let key = Self.refusalKey(item.id, item.revision, authority)
-      if let refusal = Self.standingRefusals(stored, now: now)[key] {
+      let keyWaits = sources.recoveryKeyWait() != nil
+      if let refusal = Self.standingRefusals(stored, now: now, keyWaits: keyWaits)[key] {
         let reason = Self.waiting(after: refusal, now: now)
         receipts.append(.refused(item, authority: authority, reason))
         continue
@@ -1082,6 +1114,7 @@ public struct AutopilotSummary: Codable, Sendable {
     log = s.sweep.log.suffix(10).map(\.message)
     recent = s.receipts.prefix(20).map { "\($0.name): \($0.outcome) (\($0.authority))" }
     notes = s.coverageNotes
+    if s.recoveryKey != nil { notes.append(Autopilot.keyWaitNote) }
   }
 }
 
@@ -1216,6 +1249,8 @@ extension Autopilot {
         return (true, encode(AutopilotEval.replay(questions)))
       case "command":
         guard let command = request.command else { return failure("Pass command.") }
+        // Only the owner's click in the app makes macOS ask about the backup key.
+        if command == .allowRecoveryKey { return failure(Self.ownerAllowsKey) }
         return (true, encode(AutopilotSummary(try await apply(command))))
       default:
         return failure("Unknown autopilot tool.")

@@ -258,7 +258,8 @@ public enum AutopilotWorktrees {
   public static func retire(
     _ item: AutopilotItem, authority: String, root: URL,
     inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil,
-    recoveryKey: SymmetricKey? = nil, authorize: () -> Bool = { true }
+    recoveryKey: SymmetricKey? = nil, authorize: () -> Bool = { true },
+    keys: AutopilotRecoveryKey = .shared
   ) -> AutopilotReceipt {
     guard item.kind == .worktree, item.id.hasPrefix("worktree:"), let path = item.path else {
       return .refused(item, authority: authority, "This is not an old copy I can retire.")
@@ -271,7 +272,7 @@ public enum AutopilotWorktrees {
     do {
       return try perform(
         item, path: path, authority: authority, root: root, inUse: inUse, recoveryKey: recoveryKey,
-        authorize: authorize)
+        authorize: authorize, keys: keys)
     } catch let refusal as Refusal {
       if let big = refusal.bigFiles {
         return .refused(item, authority: authority, bigFiles: big)
@@ -301,7 +302,7 @@ public enum AutopilotWorktrees {
 
   private static func perform(
     _ item: AutopilotItem, path: String, authority: String, root: URL, inUse: (String) -> Int32,
-    recoveryKey: SymmetricKey?, authorize: () -> Bool
+    recoveryKey: SymmetricKey?, authorize: () -> Bool, keys: AutopilotRecoveryKey
   ) throws -> AutopilotReceipt {
     // A real, linked worktree that is not locked, mid-operation or in use.
     var folder = stat()
@@ -391,17 +392,23 @@ public enum AutopilotWorktrees {
     // lives only in authenticated encrypted recovery, never in a temporary Git index or blob.
     // Big unsaved files a Yes let go are left out too: they go with the copy, for good.
     let excluded = generated.union(profiles)
+    // The key, read without a keychain question and within a bound: a dialog nobody answered
+    // refuses this copy instead of holding up the burn pass. One read serves capture and check.
+    let key: SymmetricKey
+    do { key = try recoveryKey ?? keys.forBurn() } catch {
+      throw Refusal(AutopilotRecoveryKey.refusal)
+    }
     let archive = try PrivateRecovery.capture(
       path, root: root, excluding: excluded, leavingOut: Set(big.map(\.path)),
       gitPointers: try submodulePointers(path, links: links), repository: common, head: head,
-      key: recoveryKey)
+      key: key)
     let snapshot = changes != "none"
     let ref = refPrefix + archive.id.lowercased()
     _ = try WorktreeGit.run(common, ["update-ref", ref, head])
     guard try line(common, ["rev-parse", "--verify", ref + "^{commit}"]) == head else {
       throw Refusal("I could not preserve the commit, so I left it alone.")
     }
-    try PrivateRecovery.validate(archive, key: recoveryKey)
+    try PrivateRecovery.validate(archive, key: key)
     guard try line(path, ["rev-parse", "--verify", "HEAD^{commit}"]) == head else {
       throw Refusal("It changed while I was backing it up, so I left it alone.")
     }
@@ -681,9 +688,10 @@ public enum AutopilotWorktrees {
 
   /// Recreates the copy at its original path from the safety ref. Local changes come back
   /// uncommitted. Refuses to touch anything that already exists at that path. The ref stays.
+  /// The owner asked for it, so reading the backup key may show macOS's question.
   public static func restore(
     _ receipt: AutopilotReceipt, protected: ProtectedLocations? = nil,
-    recoveryKey: SymmetricKey? = nil
+    recoveryKey: SymmetricKey? = nil, keys: AutopilotRecoveryKey = .shared
   )
     throws
   {
@@ -699,8 +707,9 @@ public enum AutopilotWorktrees {
       guard archive.source == info.path else {
         throw StoreError.message("Recovery path binding changed.")
       }
+      let key = try recoveryKey ?? keys.forOwner(create: false)
       if receipt.kind == .disk {
-        try PrivateRecovery.restore(archive, to: info.path, key: recoveryKey)
+        try PrivateRecovery.restore(archive, to: info.path, key: key)
         return
       }
       guard info.ref.hasPrefix(refPrefix),
@@ -712,7 +721,7 @@ public enum AutopilotWorktrees {
         info.repository,
         ["worktree", "add", "--no-checkout", "--detach", "--", info.path, info.head], seconds: 120)
       // On failure preserve the authenticated archive and partial checkout for explicit recovery.
-      try PrivateRecovery.restore(archive, to: info.path, key: recoveryKey, emptyWorktree: true)
+      try PrivateRecovery.restore(archive, to: info.path, key: key, emptyWorktree: true)
       _ = try WorktreeGit.run(info.path, ["reset", "--quiet", "--mixed", info.head], seconds: 120)
       if let branch = info.branch, !checkedOut(info.repository, "refs/heads/" + branch),
         (try? line(info.repository, ["rev-parse", "--verify", "refs/heads/" + branch])) == info.head
