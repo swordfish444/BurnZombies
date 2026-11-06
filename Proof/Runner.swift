@@ -88,6 +88,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       ("--autopilot-sweep", "Autopilot sweep", autopilotSweepProof),
       ("--autopilot-learning", "Autopilot learning", autopilotLearningProof),
       ("--autopilot-look-only", "Autopilot look-only", lookOnlyProof),
+      ("--autopilot-recovery-key", "Autopilot backup key", autopilotRecoveryKeyProof),
       ("--agent-session-environment", "Agent session environment", agentSessionEnvironmentProof),
     ] as [(String, String, () async throws -> Void)] where CommandLine.arguments.contains(flag) {
       do { try await proof() } catch { failTest("\(name): \(error)") }
@@ -146,6 +147,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       let beforeRobots = failures
       do { try robotBrowserPolicyProof() } catch { failTest("Robot browsers: \(error)") }
       if failures == beforeRobots { print("PASS Robot browsers") }
+      do { try await autopilotRecoveryKeyProof() } catch { failTest("Backup key: \(error)") }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }

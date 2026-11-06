@@ -621,6 +621,14 @@ struct AutopilotMenuSection: View {
           .font(.system(size: 13, weight: .medium))
         Spacer(minLength: 0)
       }
+      if let wait = model.autopilot.recoveryKey {
+        // Old copies wait for the backup key: this comes before any question.
+        prompt(
+          symbol: "key.fill",
+          text: wait.asking ? "macOS is asking you now" : "Allow BZ's backup key",
+          id: "allow-recovery-key"
+        ) { model.allowRecoveryKey() }
+      }
       if openQuestions > 0 {
         prompt(
           symbol: "questionmark.bubble.fill", text: AutopilotText.questions(openQuestions),
@@ -643,10 +651,12 @@ struct AutopilotMenuSection: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { tick = $0 }
   }
-  /// The orange button that takes the owner to Teach BZ.
-  private func prompt(symbol: String, text: String, id: String) -> some View {
+  /// The orange button that takes the owner to Teach BZ, or does `action`.
+  private func prompt(
+    symbol: String, text: String, id: String, action: (() -> Void)? = nil
+  ) -> some View {
     Button {
-      model.openTeach?()
+      if let action { action() } else { model.openTeach?() }
     } label: {
       HStack(spacing: 10) {
         Image(systemName: symbol).font(.system(size: 18, weight: .semibold))
