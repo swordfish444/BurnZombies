@@ -108,7 +108,18 @@ func worktreeKeychainProof() throws {
   item[kSecValueData as String] = legacy
   equal(SecItemAdd(item as CFDictionary, nil), errSecSuccess)
 
-  let moved = try WorktreeRecoveryKey.load(create: false, namespace: service, root: root)
+  // A test or sandbox folder never reads the user's Keychain item: it makes a key of its own.
+  let sandbox = root.appendingPathComponent("sandbox", isDirectory: true)
+  let own = try WorktreeRecoveryKey.load(namespace: service, root: sandbox)
+  check(keyBytes(own) != legacy, "a sandbox folder ignores the Keychain item")
+  do {
+    _ = try WorktreeRecoveryKey.load(
+      create: false, namespace: service, root: root.appendingPathComponent("restore-sandbox"))
+    failTest("a sandbox restore read the Keychain item")
+  } catch {}
+
+  let moved = try WorktreeRecoveryKey.load(
+    create: false, namespace: service, root: root, keychain: true)
   equal(keyBytes(moved), legacy, "the Keychain key moves unchanged")
   let file = root.appendingPathComponent("recovery-key/" + service + ".key")
   equal(try Data(contentsOf: file), legacy, "into the private file")
@@ -116,6 +127,6 @@ func worktreeKeychainProof() throws {
   let later = try WorktreeRecoveryKey.load(create: false, namespace: service, root: root)
   equal(keyBytes(later), legacy, "and the file is used from then on")
   print(
-    "PASS recovery key moves from a temporary Keychain item to its private file unchanged; no production key was read or changed"
+    "PASS recovery key moves from a temporary Keychain item to its private file unchanged, and a sandbox folder never reads it; no production key was read or changed"
   )
 }
