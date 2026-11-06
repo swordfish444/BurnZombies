@@ -149,7 +149,7 @@ Native code catalogs and applies rules without any model. With Claude Code or Co
 - **Failures** back off 15 → 30 → 60 → 120 minutes (at least an hour after a login or usage-limit problem). The loop never stops for good, and your rules keep working while the AI is unavailable.
 - **Cost.** Roughly $0.30–$1.20 a sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Usage & estimated cost** shows what sweeps used.
 
-Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). **Settings → Autopilot** turns Autopilot, AI included, off.
+Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). The switch beside **Autopilot on** in the menu, or **Settings → Autopilot**, turns Autopilot, AI included, off.
 
 ## Undo
 

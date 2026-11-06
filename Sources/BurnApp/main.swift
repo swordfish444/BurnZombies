@@ -954,8 +954,14 @@ import UserNotifications
       AutopilotLocal.setStarter(&$0, id: id, enabled: enabled)
     }
   }
+  /// The switch moves at once, even while the engine is busy with a burn pass. If the engine
+  /// can't save the change, it moves back and the footer says why.
   func setAutopilot(enabled: Bool) {
-    sendAutopilot(.setEnabled(enabled)) { $0.sweep.enabled = enabled }
+    let before = autopilot.sweep.enabled
+    autopilot.sweep.enabled = enabled
+    sendAutopilot(.setEnabled(enabled), local: { $0.sweep.enabled = enabled }) { [weak self] reason in
+      if reason != nil { self?.autopilot.sweep.enabled = before }
+    }
   }
   /// Look-only holds every burn BZ would make on its own; turning it off starts burning.
   func setLookOnly(_ on: Bool) {

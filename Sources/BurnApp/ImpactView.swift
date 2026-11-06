@@ -183,11 +183,21 @@ struct BurnStatus: View {
     }
     return "Watching this Mac"
   }
+  /// In the popup, Autopilot's switch takes the status dot's place: the row reads as before, and
+  /// one click turns Autopilot off or back on.
+  var showsSwitch: Bool { compact && model.autopilotAvailable }
   var body: some View {
     HStack(spacing: compact ? 9 : 12) {
-      Circle().fill(model.state.error != nil ? .red : BurnTheme.orange)
-        .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
-      Text(status).font(.system(size: compact ? 13 : 18)).foregroundStyle(Color(white: 0.82))
+      if showsSwitch {
+        AutopilotSwitch(on: model.autopilot.sweep.enabled, alert: model.state.error != nil) {
+          model.setAutopilot(enabled: !model.autopilot.sweep.enabled)
+        }
+      } else {
+        Circle().fill(model.state.error != nil ? .red : BurnTheme.orange)
+          .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
+      }
+      Text(status).font(.system(size: compact ? 13 : 18))
+        .foregroundStyle(showsSwitch && !model.autopilot.sweep.enabled ? BurnTheme.muted : Color(white: 0.82))
       Button {
         if !model.accessReady && !model.autopilotAvailable {
           model.openFullDiskAccessSettings()
@@ -226,6 +236,36 @@ struct BurnStatus: View {
     }
   }
 }
+/// Autopilot's on/off switch, drawn in BZ's colors at the size of a small macOS switch. Off, BZ
+/// still looks and asks but burns nothing on its own, and scheduled AI sweeps wait.
+struct AutopilotSwitch: View {
+  static let size = CGSize(width: 26, height: 15)
+  let on: Bool
+  /// Red instead of orange while the app reports an error, as the status dot was.
+  var alert = false
+  let toggle: () -> Void
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  var body: some View {
+    Button(action: toggle) {
+      Capsule().fill(on ? (alert ? Color.red : BurnTheme.orange) : Color.white.opacity(0.17))
+        .overlay(alignment: on ? .trailing : .leading) {
+          Circle().fill(on ? BurnTheme.cream : Color(white: 0.62)).padding(2)
+            .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+        .padding(.vertical, 3).contentShape(Rectangle())
+    }.buttonStyle(.plain).clickPointer()
+      .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: on)
+      .help(
+        on
+          ? "Turn Autopilot off. BZ stops burning on its own until you turn it back on."
+          : "Turn Autopilot on. BZ burns what's safe and asks about the rest.")
+      .accessibilityRepresentation {
+        Toggle("Autopilot", isOn: Binding(get: { on }, set: { if $0 != on { toggle() } }))
+      }
+      .accessibilityIdentifier("autopilot-switch")
+  }
+}
 struct MemoryPressureRow: View {
   @ObservedObject var model: AppModel
   var compact = false
@@ -252,6 +292,7 @@ struct MiniImpactView: View {
   static let tabWidth: CGFloat = 72
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject var model: AppModel
+  @State private var hoveredLink: String?
   var numbers: ImpactNumbers { .make(model, period: .today) }
   var totals: ImpactNumbers { .make(model, period: model.miniImpactPeriod) }
   /// What BZ burned on its own that the owner hasn't called good or undone yet.
@@ -383,33 +424,21 @@ struct MiniImpactView: View {
       Text(lastBurn).font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
         .frame(height: 14).padding(.top, 5)
       line.padding(.top, 18)
+      // Three equal links in the same 48 pt row, each led by its own orange mark.
       HStack(spacing: 0) {
-        Button {
+        footerLink("Impact", symbol: "chart.bar.fill", help: "See everything BZ freed") {
           model.openImpact?()
-        } label: {
-          HStack(spacing: 10) {
-            Text("Impact").fontWeight(.semibold)
-            Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
-            Spacer(minLength: 0)
-          }.frame(maxWidth: .infinity).frame(height: 44).contentShape(Rectangle())
-        }.clickPointer()
-        Button {
-          model.openFindings?()
-        } label: {
-          Text("Findings").fontWeight(.semibold).frame(maxWidth: .infinity).frame(height: 44)
-            .contentShape(Rectangle())
-        }.clickPointer().help("Review discovered processes, worktrees and storage")
-        Rectangle().fill(BurnTheme.line).frame(width: 1, height: 22)
-        Button {
+        }
+        footerDivider
+        footerLink(
+          "Findings", symbol: "binoculars.fill",
+          help: "Review discovered processes, worktrees and storage"
+        ) { model.openFindings?() }
+        footerDivider
+        footerLink("Burn Log", symbol: "flame.fill", help: "Recent burns and what they freed") {
           model.openLog?()
-        } label: {
-          HStack(spacing: 10) {
-            Spacer(minLength: 0)
-            Text("Burn Log").fontWeight(.medium)
-            Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
-          }.frame(maxWidth: .infinity).frame(height: 44).contentShape(Rectangle())
-        }.clickPointer()
-      }.font(.system(size: 13)).frame(height: 48)
+        }
+      }.frame(height: 48)
       Spacer(minLength: 0)
     }.padding(.horizontal, 30).padding(.top, 20).padding(.bottom, 6)
       .frame(width: Self.size.width, height: Self.size.height)
@@ -579,6 +608,30 @@ struct MiniImpactView: View {
     }.foregroundStyle(BurnTheme.orange).frame(width: 34, height: 28).accessibilityHidden(true)
   }
   var line: some View { Rectangle().fill(BurnTheme.line).frame(height: 1) }
+  var footerDivider: some View { Rectangle().fill(BurnTheme.line).frame(width: 1, height: 18) }
+  /// A footer link: an orange mark that glows a little brighter under the pointer, then its name.
+  func footerLink(
+    _ title: String, symbol: String, help: String, action: @escaping () -> Void
+  ) -> some View {
+    let hovered = hoveredLink == title
+    return Button(action: action) {
+      HStack(spacing: 7) {
+        Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(BurnTheme.orange)
+          .shadow(color: BurnTheme.orange.opacity(hovered ? 0.7 : 0.4), radius: hovered ? 6 : 4)
+          .accessibilityHidden(true)
+        Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
+      }
+      .frame(maxWidth: .infinity).frame(height: 32)
+      .background(Color.white.opacity(hovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 8))
+      .frame(height: 44).contentShape(Rectangle())
+    }.clickPointer().help(help)
+      .onHover { inside in
+        if inside { hoveredLink = title } else if hoveredLink == title { hoveredLink = nil }
+      }
+      .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+      .accessibilityLabel(title)
+  }
   func miniMetric(_ value: String, _ title: String, flame: Bool = false) -> some View {
     let parts = value.split(separator: " ", maxSplits: 1).map(String.init)
     return VStack(alignment: .leading, spacing: 2) {
