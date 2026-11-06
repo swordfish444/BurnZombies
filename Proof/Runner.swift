@@ -38,6 +38,52 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--app-update-state" {
+      do {
+        let root = URL(fileURLWithPath: CommandLine.arguments[2])
+        let store = try AutopilotStore(root: root)
+        try store.updateSweep {
+          $0.enabled = false
+          $0.lookOnly = true
+        }
+        try store.updateMemory { $0.keptItems.insert("fixture-protected-resource") }
+        var review = MachineReviewConfiguration(
+          harness: "codex", executable: "/bin/true", launcher: "/bin/true", server: "/bin/true")
+        review.enabled = false
+        review.model = "fixture-model"
+        try review.save(root: root)
+        print("PASS private update state: cleanup held, AI off, explicit Keep and model saved")
+      } catch { failTest("Update state fixture: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.count == 5, CommandLine.arguments[1] == "--app-update-plan",
+      let pid = Int32(CommandLine.arguments[4])
+    {
+      do {
+        let app = URL(fileURLWithPath: CommandLine.arguments[2])
+        let workspace = URL(fileURLWithPath: CommandLine.arguments[3])
+        guard case .found(let parent) = Native().probe(pid) else {
+          throw StoreError.message("Fixture parent unavailable")
+        }
+        let plan = AppUpdatePlan(
+          directory: workspace.path, destination: app.path,
+          previous: try AppUpdateBundle.read(app),
+          replacement: try AppUpdateBundle.read(
+            workspace.appendingPathComponent("unpacked/BurnZombies.app")), parent: parent.identity)
+        try plan.save()
+        print(plan.file.path)
+      } catch { failTest("Update fixture plan: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--app-update-live" {
+      do { try await appUpdateLiveProof(app: URL(fileURLWithPath: CommandLine.arguments[2])) } catch
+      { failTest("Live update preparation: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--app-updates") {
+      do { try await appUpdateProof() } catch { failTest("App updates: \(error)") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--security-boundaries") {
       do { try await securityBoundaryProof() } catch { failTest("Security boundaries: \(error)") }
       if failures == 0 { print("PASS Security boundaries") }
@@ -149,7 +195,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       if failures == beforeRobots { print("PASS Robot browsers") }
       let beforeHunt = failures
       do { try await huntLiveProof() } catch { failTest("Live hunt: \(error)") }
-      if failures == beforeHunt { print("PASS Live hunt: stream, deep hunt, Stop, limit and Keep hunting") }
+      if failures == beforeHunt {
+        print("PASS Live hunt: stream, deep hunt, Stop, limit and Keep hunting")
+      }
       do { try await autopilotRecoveryKeyProof() } catch { failTest("Backup key: \(error)") }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)

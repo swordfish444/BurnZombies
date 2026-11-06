@@ -8,6 +8,26 @@ macOS 14+, Apple Silicon or Intel. The installer checks the download's checksum 
 
 BZ keeps running with no chat open, and a new install starts at login, so it comes back after you restart your Mac. macOS shows a notice when BZ adds itself to your login items. To stop that, switch off **Start at login** in Settings; updates keep your choice. Updating from v0.13.0 or earlier keeps the switch as it was; if it's off, turn it on in Settings. To remove BZ, see [Uninstall](#uninstall).
 
+## Updates and About
+
+Open **Settings → About BurnZombies** to see the installed version and build. **Check for Updates**
+checks the latest published stable GitHub release. If one is newer, choose **Update and Restart**.
+BZ downloads and verifies it, finishes work already in progress, and restarts into Settings. Your
+rules, Keep decisions, recovery files, selected harness/model and start-at-login choice stay in place.
+Updates use the same release signing certificate, preserving the app's Full Disk Access identity.
+
+Checking or downloading never starts a hunt or cleanup. You can cancel a download before the restart
+handoff. BZ never installs an older version, runs a downloaded installer script, or changes Gatekeeper.
+An update that cannot be verified leaves the installed app alone. If the new app cannot start, BZ
+restores and restarts the previous version. Replacement uses an atomic directory swap on the same
+volume, so an interruption never leaves a missing app path; rollback copies are preserved if automatic
+recovery cannot complete. Updates need write access to the app's folder, as with `~/Applications`.
+
+Update checks and downloads contact GitHub only after you press a button. No app catalog, project
+evidence, model credentials or telemetry is sent with them. There is no automatic polling or silent
+installation. Versions before 0.16.0 do not have this button: run the install command above once to
+upgrade, then use Settings for later releases.
+
 ## With or without Claude Code or Codex
 
 **With Claude Code or Codex installed and signed in,** BZ uses it to judge new things, through your existing login. If you have both, it picks Claude Code. Reinstalling keeps the one you have.

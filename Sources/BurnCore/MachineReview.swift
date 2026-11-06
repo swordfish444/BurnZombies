@@ -223,6 +223,15 @@ public actor MachineReviewer {
   private let accessCheck: @Sendable () -> FullDiskAccessStatus
   private let store: Store
   private var running = false
+  private var updatingApp = false
+  public func prepareForAppUpdate() async throws {
+    updatingApp = true
+    while running {
+      try Task.checkCancellation()
+      try await Task.sleep(nanoseconds: 50_000_000)
+    }
+  }
+  public func resumeAfterAppUpdateFailure() { updatingApp = false }
   private var state = MachineReviewState()
   private let prepareHunt: (@Sendable () async throws -> Void)?
   private let settleHunt: (@Sendable () async throws -> Void)?
@@ -275,7 +284,7 @@ public actor MachineReviewer {
   public func hunt(now: Date = Date()) async { await runHunt(manual: true, now: now) }
   public func tick(now: Date = Date()) async { await runHunt(manual: false, now: now) }
   private func runHunt(manual: Bool, now: Date) async {
-    guard !running, accessCheck().canScan else { return }
+    guard !running, !updatingApp, accessCheck().canScan else { return }
     do {
       guard let config = try MachineReviewConfiguration.load(root: root) else { return }
       guard manual || (config.enabled && state.phase != "paused") else { return }

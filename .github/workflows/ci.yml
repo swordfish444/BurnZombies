@@ -48,6 +48,10 @@ jobs:
         run: python3 scripts/test-machine-setup.py
       - name: Native Settings without opening a window
         run: .build/debug/BurnZombiesApp --settings-proof "$RUNNER_TEMP/bz-settings.png"
+      - name: App update safety, atomic replacement and rollback
+        run: .build/debug/BurnProof --app-updates
+      - name: About and update controls without opening a window
+        run: .build/debug/BurnZombiesApp --about-proof "$RUNNER_TEMP/bz-about"
       - name: Permission banner clicks without opening System Settings
         run: .build/debug/BurnZombiesApp --access-banner-proof "$RUNNER_TEMP/bz-access-banner"
       - name: Autopilot policy, processes, old copies, junk folders, sweep and look-only

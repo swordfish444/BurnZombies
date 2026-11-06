@@ -245,7 +245,8 @@ public enum AutopilotHarness {
       at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
     let brief = deep ? deepPrompt : prompt
-    let args = try arguments(c, directory: directory, root: root, prompt: brief, options: run.options)
+    let args = try arguments(
+      c, directory: directory, root: root, prompt: brief, options: run.options)
     let longest = deep ? deepTimeout : AutopilotSweeper.aiTimeout
     let seconds = String(Int(min(longest, max(1, timeout ?? longest))))
     let process = Process()
@@ -408,6 +409,19 @@ public actor AutopilotCoordinator {
   /// Claimed in the same step as the check, before anything awaits: ticks that pile up behind a
   /// slow catalog resume together, and each would otherwise start its own sweep.
   var starting = false
+  var updatingApp = false
+  public func prepareForAppUpdate() async throws {
+    updatingApp = true
+    await engine.suspendForAppUpdate(true)
+    await stop()
+    while starting { try await Task.sleep(nanoseconds: 50_000_000) }
+    await waitForAI()
+    try await engine.finishActionsForAppUpdate()
+  }
+  public func resumeAfterAppUpdateFailure() async {
+    await engine.suspendForAppUpdate(false)
+    updatingApp = false
+  }
 
   public init(
     root: URL = Store.defaultRoot, engine: Autopilot,
@@ -447,6 +461,7 @@ public actor AutopilotCoordinator {
   @discardableResult public func tick(
     now: Date = Date(), manual requestedNow: Bool = false, options requested: HuntOptions? = nil
   ) async -> AutopilotSnapshot {
+    guard !updatingApp else { return await engine.snapshot(now: now) }
     // A sweep still marked running at launch was cut short when the app quit; left alone it
     // would block every sweep after it.
     if !launched {
@@ -465,7 +480,8 @@ public actor AutopilotCoordinator {
         stale.stopReason = "stopped"
         stale.finishedAt = now
         stale.focus = nil
-        stale.detail = "The last hunt was cut short when the app quit. Everything burned stays burned."
+        stale.detail =
+          "The last hunt was cut short when the app quit. Everything burned stays burned."
         stale.append("stopped", stale.detail, date: now)
         try? stale.save(Store(root: root))
       }
@@ -485,7 +501,7 @@ public actor AutopilotCoordinator {
       manual || AutopilotSweeper.nativeDue(state, now: now)
       ? await engine.tick(now: now) : await engine.snapshot(now: now)
     let latest = await engine.sweepState()
-    guard aiTask == nil, !starting,
+    guard !updatingApp, aiTask == nil, !starting,
       AutopilotSweeper.aiDue(latest, snapshot: snapshot, now: now, manual: manual)
     else { return snapshot }
     starting = true
@@ -495,7 +511,8 @@ public actor AutopilotCoordinator {
       return await engine.snapshot(now: now)
     }
     let wired = wire(HuntOptions())
-    await engine.beginHunt(Self.opening(now: now, manual: manual, options: wired.run.options), run: wired.run)
+    await engine.beginHunt(
+      Self.opening(now: now, manual: manual, options: wired.run.options), run: wired.run)
     return await launch(config, wired: wired, snapshot: snapshot, now: now, manual: manual)
   }
 
@@ -524,7 +541,9 @@ public actor AutopilotCoordinator {
     let wired = wire(options)
     let resumed =
       options.continuing
-      ? (try? HuntSnapshot.load(root: root)).flatMap { Self.resumed($0, now: now, options: options) }
+      ? (try? HuntSnapshot.load(root: root)).flatMap {
+        Self.resumed($0, now: now, options: options)
+      }
       : nil
     await engine.beginHunt(
       resumed ?? Self.opening(now: now, manual: true, options: options), run: wired.run)
@@ -550,13 +569,15 @@ public actor AutopilotCoordinator {
     _ config: MachineReviewConfiguration, wired: Wired, snapshot: AutopilotSnapshot, now: Date,
     manual: Bool
   ) async -> AutopilotSnapshot {
+    if updatingApp { wired.run.stop("stopped") }
     let options = wired.run.options
     let waiting = await engine.startLanes()
     await engine.noteHunt(
       "scanning",
       options.deep
         ? "Judging \(waiting.formatted()) thing\(waiting == 1 ? "" : "s") with \(config.harnessName), small programs included."
-        : "Reviewing \(waiting) thing\(waiting == 1 ? "" : "s") I'm unsure about with \(config.harnessName).")
+        : "Reviewing \(waiting) thing\(waiting == 1 ? "" : "s") I'm unsure about with \(config.harnessName)."
+    )
     // Stopped while BZ was still looking: no AI run at all.
     if let reason = wired.run.stopReason {
       wired.feed.finish()
@@ -575,7 +596,8 @@ public actor AutopilotCoordinator {
       $0.running = true
       $0.requested = nil
       $0.requestedDeep = nil
-      $0.append(manual ? (options.deep ? "Deep hunt started." : "Hunt started.") : "AI sweep started.")
+      $0.append(
+        manual ? (options.deep ? "Deep hunt started." : "Hunt started.") : "AI sweep started.")
     }
     let runner = runner
     let root = root
@@ -588,6 +610,15 @@ public actor AutopilotCoordinator {
       try? ledger.save(store: store)
       return id
     }()
+    guard !updatingApp else {
+      wired.feed.finish()
+      await wired.relay.value
+      await engine.updateSweep { $0.running = false }
+      await engine.finishHunt(
+        now: Date(), failure: nil, stopReason: "stopped",
+        questions: snapshot.questions.count, interval: snapshot.sweep.intervalMinutes)
+      return await engine.snapshot(now: now)
+    }
     aiTask = Task.detached { [weak self] in
       let started = Date()
       let result = Result { try runner(config, root, wired.run) }

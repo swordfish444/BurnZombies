@@ -46,6 +46,23 @@ public actor Monitor {
   private var lastSave = Date.distantPast
   private var receiptNeedsCheckpoint = false
   private var busy = false
+  private var updatingApp = false
+  /// Hold the existing cleanup gate after operations already under way have finished.
+  /// This is transient and writes no cleanup preferences or authority.
+  public func prepareForAppUpdate() async throws {
+    while busy {
+      try Task.checkCancellation()
+      try await Task.sleep(nanoseconds: 50_000_000)
+    }
+    busy = true
+    updatingApp = true
+    try checkpoint()
+  }
+  public func resumeAfterAppUpdateFailure() {
+    guard updatingApp else { return }
+    updatingApp = false
+    busy = false
+  }
   private var preparingOwnerOperation: UUID?
   private var lastMonotonic: Double?
   private var lastWall: Date?
@@ -1628,9 +1645,10 @@ public actor Monitor {
     // helpers may be inside an app, and a robot browser at the root only while nothing can drive it.
     let robots = AutopilotProcesses.robots(in: [root] + tree, arguments: { native.arguments($0) })
     let rootRobot = robots.browsers[root.latest.identity.pid]
-    let abandoned = rootRobot.map {
-      AutopilotProcesses.abandoned($0, members: robots.members, clients: { native.clients($0) })
-    } ?? false
+    let abandoned =
+      rootRobot.map {
+        AutopilotProcesses.abandoned($0, members: robots.members, clients: { native.clients($0) })
+      } ?? false
     // Something may have connected to a robot browser's port since it was judged: it is being
     // driven again. Only the owner's own Burn stops it then.
     if authority != "operator", rootRobot?.control == .port,
