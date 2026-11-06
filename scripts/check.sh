@@ -1,6 +1,5 @@
 #!/bin/bash
-# Checks that need no compiler, done in seconds on any machine. GitHub runs these on every pull
-# request; scripts/test.sh runs them before the build and the quick proofs.
+# Local checks that need no compiler. scripts/test.sh runs these before building.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 for script in install.sh scripts/*.sh; do bash -n "$script"; done
