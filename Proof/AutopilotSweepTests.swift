@@ -800,6 +800,41 @@ func autopilotSweepProof() async throws {
     try busyStore.sweep().log.filter { $0.message.contains("busy") }.count, 1,
     "and one line in the owner's activity log")
 
+  // A refusal that came from an error ends its line in the burn log with what failed, so the log
+  // says why; the reason before it stays the owner's plain one. Other refusals log as before.
+  let failedCause = "checking its changes: git status timed out after 60 s"
+  let plainCopy = AutopilotItem(
+    id: "worktree:plain", kind: .worktree, name: "plain", bytes: 1 << 30,
+    facts: [
+      "place": "sibling", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+      "thread": "none",
+    ])
+  let causeRoot = directory.appendingPathComponent("cause")
+  let causeStore = try AutopilotStore(root: causeRoot)
+  let causing = try Autopilot(
+    root: causeRoot,
+    sources: AutopilotSources(
+      worktrees: { _, _, d in ([stuckCopy(stale: "older"), plainCopy], d) },
+      retireWorktree: { item, authority in
+        var receipt = AutopilotReceipt.refused(item, authority: authority, reason)
+        if item.id == "worktree:stuck" { receipt.cause = failedCause }
+        return receipt
+      }))
+  _ = await causing.tick(now: now, burn: false)
+  let caused = await causing.burn(["worktree:stuck"])
+  equal(caused.first?.detail, reason, "the owner's reason stays plain")
+  equal(caused.first?.cause, failedCause, "the receipt keeps what failed")
+  equal(
+    try causeStore.receipts().first { $0.itemID == "worktree:stuck" }?.cause, failedCause,
+    "and so does the saved receipt")
+  equal(
+    try causeStore.sweep().log.last?.message, "Skipped stuck: \(reason) (\(failedCause))",
+    "the burn log says what failed")
+  _ = await causing.burn(["worktree:plain"])
+  equal(
+    try causeStore.sweep().log.last?.message, "Skipped plain: \(reason)",
+    "a refusal without a cause logs as before")
+
   try await aiBriefProof()
 }
 

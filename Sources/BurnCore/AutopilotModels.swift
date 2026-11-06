@@ -450,6 +450,10 @@ public struct AutopilotReceipt: Codable, Sendable, Identifiable, Equatable {
   /// What the copy's unsaved files looked like when a refusal named them
   /// (`AutopilotPolicy.bigFilesKey`): the list holds while they still do.
   public var bigKey: String?
+  /// What failed when a refusal came from an error, in a few words with no path or name: the step
+  /// and how it failed ("checking its changes: git status timed out after 60 s"). The owner reads
+  /// `detail`; the burn log and anyone finding out why read this.
+  public var cause: String?
   public init(
     id: UUID = UUID(), itemID: String, kind: AutopilotKind, name: String, authority: String,
     outcome: String, detail: String, bytes: UInt64 = 0, date: Date = Date(),

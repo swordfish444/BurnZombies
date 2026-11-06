@@ -395,7 +395,11 @@ public enum AutopilotDisk {
           return refuse("Something started using that folder, so I left it alone.")
         }
       } catch {
-        return refuse("I couldn't preserve this folder's unique contents, so I left it alone.")
+        // As retire does: the owner reads the reason, and the receipt keeps what failed.
+        var receipt = refuse(
+          "I couldn't preserve this folder's unique contents, so I left it alone.")
+        receipt.cause = AutopilotWorktrees.cause(of: error, at: "backing it up")
+        return receipt
       }
     }
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
@@ -534,20 +538,30 @@ public enum AutopilotDisk {
         ".package-lock.json", ".modules.yaml", ".yarn-integrity", ".yarn-state.yml",
         ".pnpm-workspace-state-v1.json",
       ]
+      // Beside the packages: the package manager's store and commands, Prisma's generated client,
+      // and caches tools keep in an install.
+      let generated: Set<String> = [".bin", ".pnpm", ".prisma", ".vite", ".vite-temp", ".cache"]
       guard metadata.contains(where: regular),
         let entries = try? FileManager.default.contentsOfDirectory(atPath: path),
         entries.count <= 10_000
       else { return false }
-      return entries.allSatisfy { name in
-        if metadata.contains(name) || name == ".bin" || name == ".pnpm" { return true }
+      // pnpm links packages in, scoped ones too. Removing a link never touches what it points to.
+      func linked(_ relative: String) -> Bool {
         var info = stat()
-        guard lstat(path + "/" + name, &info) == 0 else { return false }
-        if info.st_mode & S_IFMT == S_IFLNK { return true }
-        guard info.st_mode & S_IFMT == S_IFDIR else { return false }
+        return lstat(path + "/" + relative, &info) == 0 && info.st_mode & S_IFMT == S_IFLNK
+      }
+      return entries.allSatisfy { name in
+        if metadata.contains(name) || generated.contains(name) || linked(name) { return true }
+        var info = stat()
+        guard lstat(path + "/" + name, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else {
+          return false
+        }
         if name.hasPrefix("@"),
           let packages = try? FileManager.default.contentsOfDirectory(atPath: path + "/" + name)
         {
-          return packages.allSatisfy { regular(name + "/" + $0 + "/package.json") }
+          return packages.allSatisfy {
+            linked(name + "/" + $0) || regular(name + "/" + $0 + "/package.json")
+          }
         }
         return regular(name + "/package.json")
       }
