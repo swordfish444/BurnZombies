@@ -84,8 +84,11 @@ public struct AutopilotTipDeck: Sendable, Equatable {
 extension AutopilotPolicy {
   /// The tips for a question about `kind`: the card's own reassurance first, then what the other
   /// words on the card mean, then how to use the details. `filters` says whether the details offer
-  /// risk filters, so no tip points at something that isn't there.
-  public static func tips(for kind: AutopilotKind, filters: Bool) -> [AutopilotTip] {
+  /// risk filters, so no tip points at something that isn't there. On a card about copies with
+  /// `bigFiles`, unsaved files too big to back up, no tip says everything can be undone.
+  public static func tips(for kind: AutopilotKind, filters: Bool, bigFiles: Bool = false)
+    -> [AutopilotTip]
+  {
     let one: String
     let many: String
     var own: [AutopilotTip]
@@ -108,6 +111,14 @@ extension AutopilotPolicy {
           id: "safe", text: "I never touch your main project folder, or a copy a chat is still using.",
           place: .question),
       ]
+      if bigFiles {
+        own.removeAll { $0.id == "backup" || $0.id == "unsaved" }
+        own.insert(
+          AutopilotTip(
+            id: "big-files",
+            text: "Big unsaved files can't be backed up, so a Yes deletes them for good. The rest is backed up first.",
+            place: .question, opener: true), at: 0)
+      }
     case .process:
       one = "program"
       many = "programs"

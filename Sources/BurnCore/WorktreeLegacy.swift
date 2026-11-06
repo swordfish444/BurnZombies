@@ -66,7 +66,10 @@ extension WorktreeService {
       let id = UUID().uuidString
       let path = parent.appendingPathComponent(id).path
       let head = try WorktreeGit.line(repository, ["rev-parse", "HEAD^{commit}"])
-      _ = try WorktreeGit.run(repository, ["worktree", "add", "--detach", "--", path, head])
+      _ = try WorktreeGit.run(
+        repository, ["worktree", "add", "--no-checkout", "--detach", "--", path, head])
+      try WorktreeGit.checkout(repository, revision: head, to: path)
+      _ = try WorktreeGit.run(path, ["reset", "--quiet", "--mixed", head])
       let identity = try WorkspaceSafety.identity(path, root: store.root)
       let token = UUID().uuidString + UUID().uuidString
       let old = WorkspaceClaim(

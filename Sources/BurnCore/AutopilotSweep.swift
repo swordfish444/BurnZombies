@@ -76,17 +76,17 @@ public enum AutopilotHarness {
     - autopilot_burn: burn items. The app re-checks every item and refuses anything not authorized. A refusal is final for this sweep, and the catalog marks items refused earlier as "Waiting after a refusal": burning those again only repeats the refusal.
     - autopilot_ask: ask the owner ONE yes/no question about a fact pattern that frees a lot (1 GB or more; smaller ones are refused).
     - autopilot_report: a two-sentence summary at the end.
-    - Read, Glob, Grep: read project files (package.json, README, configs) inside folders you are judging. Never read secrets such as .env files, keys or credentials.
+    - autopilot_inspect can also read a bounded project manifest or README using relative_path inside that item's project. It includes useful producer evidence by default. Secret/private files and paths outside the item are mechanically refused.
 
     What the app enforces:
     - Owner rules (earlier answers) and starter rules already burn their matches before you run. Never second-guess an owner's answer.
-    - Your burn verdict with confidence >= 0.85 authorizes a burn only for: zombie programs that are orphaned or whose chat ended and that are not serving a port; old copies not made by Codex, Claude or Conductor that nothing is using; known junk folders. Everything else needs an owner rule, so ask.
+    - Your burn verdict with confidence >= 0.85 authorizes a burn only for: zombie programs that are orphaned or whose chat ended and that are not serving a port; old copies not made by Codex, Claude or Conductor that nothing is using and that hold no big unsaved files; known junk folders. Everything else needs an owner rule, so ask.
     - A confident keep verdict blocks burning. Protected items are never burned.
     - Look-only: when the catalog summary says lookOnly, the owner is previewing. Judge and ask as usual but skip autopilot_burn: nothing burns until the owner turns burning on, and your confident verdicts burn then.
 
     How to judge:
     - Zombie program: its app or chat is gone. Burn leftover test runners, build watchers, headless browsers, language servers, dev servers from finished chats and stuck scripts. Keep databases, things the owner clearly runs on purpose (ollama, postgres, redis, tunnels, sync tools), anything recently active, and anything you cannot identify.
-    - Old copy: burning removes the folder, but the app first saves every commit and local change in a restore point, so mistakes are recoverable. Burn copies whose work is merged or pushed and that nobody touched in weeks. Be careful with copies changed in the last few days or holding unmerged work: ask instead.
+    - Old copy: burning removes the folder, but the app first saves every commit and local change in a restore point, so mistakes are recoverable. Burn copies whose work is merged or pushed and that nobody touched in weeks. Be careful with copies changed in the last few days or holding unmerged work: ask instead. A copy whose bigCode, bigMedia, bigData, bigArchives or bigOther fact is yes holds unsaved files too big for the restore point: burning deletes them for good, so only the owner's Yes to that kind lets them go. Don't judge those burn; if no question covers them, ask about their age.
     - Robot browser (fact `robot`): a browser Playwright, Puppeteer, chromedriver or an MCP server drives. `abandoned` means nothing can drive it anymore, so it can go. `driven` means a program (often a Playwright CLI daemon or an MCP server) or a client can still drive it: burn that program once its chat has ended and it sits idle, keep it while a chat works.
     - Junk folder: rebuildable output such as node_modules, build folders and caches. Burn it when the project is not being worked on right now.
 
@@ -135,8 +135,8 @@ public enum AutopilotHarness {
         "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
         "--mcp-config", try encoded(config), "--settings", try encoded(settings),
         "--disable-slash-commands", "--permission-mode", "dontAsk", "--permission-prompts",
-        "none", "--tools", "Read,Glob,Grep", "--allowedTools", "mcp__burnzombies__*", "Read",
-        "Glob", "Grep", "--disallowedTools", "Agent", "Bash", "Edit", "Write", "WebFetch",
+        "none", "--tools", "", "--allowedTools", "mcp__burnzombies__*",
+        "--disallowedTools", "Read", "Glob", "Grep", "Agent", "Bash", "Edit", "Write", "WebFetch",
         "WebSearch", "--max-turns", "40",
       ]
     case "codex":
@@ -408,7 +408,8 @@ public actor AutopilotCoordinator {
       }
       hunt.phase = "completed"
       hunt.finishedAt = now
-      hunt.detail = "Hunt complete. I'll keep sweeping every \(after.sweep.intervalMinutes) minutes."
+      hunt.detail =
+        "Hunt complete. I'll keep sweeping every \(after.sweep.intervalMinutes) minutes."
       hunt.append("complete", hunt.detail, date: now)
       try? hunt.save(Store(root: root))
     }

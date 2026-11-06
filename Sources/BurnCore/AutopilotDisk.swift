@@ -1,4 +1,5 @@
 import CBurn
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -250,23 +251,33 @@ public enum AutopilotDisk {
   /// other folder goes to the Trash, and only for an operator rule or the operator.
   public static func reclaim(
     _ item: AutopilotItem, authority: String, home: String = NSHomeDirectory(),
-    inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil
+    inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil,
+    root: URL = Store.defaultRoot, recoveryKey: SymmetricKey? = nil,
+    authorize: () -> Bool = { true }
   ) -> AutopilotReceipt {
     let protected = protected ?? .limited(homes: [home])
+    var recovery: PrivateRecovery.Reference?
     func refuse(_ reason: String) -> AutopilotReceipt {
       .refused(item, authority: authority, reason)
     }
     func finish(_ outcome: String, _ detail: String, bytes: UInt64 = 0) -> AutopilotReceipt {
-      AutopilotReceipt(
+      var receipt = AutopilotReceipt(
         itemID: item.id, kind: item.kind, name: item.name, authority: authority, outcome: outcome,
         detail: detail, bytes: bytes)
+      if let recovery {
+        var restore = AutopilotRestore(
+          repository: "", path: item.path ?? "", ref: "", head: "", branch: nil, snapshot: true)
+        restore.recovery = recovery
+        receipt.restore = restore
+      }
+      return receipt
     }
     guard item.kind == .disk, let path = item.path else {
       return refuse("That isn't a junk folder, so I left it alone.")
     }
     // The temp folder isn't in the home folder; its leftovers have checks of their own.
     if item.facts["folder"] == "browser-temp" {
-      return AutopilotBrowserTrail.reclaim(item, authority: authority)
+      return AutopilotBrowserTrail.reclaim(item, authority: authority, authorize: authorize)
     }
     let folder = item.facts["folder"] ?? "other"
     let known = kinds.contains(folder)
@@ -279,6 +290,8 @@ public enum AutopilotDisk {
     }
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
     if let reason = playwrightRefusal(path, home: base) { return refuse(reason) }
+    var originalIdentity = stat()
+    guard lstat(path, &originalIdentity) == 0 else { return refuse("That folder is already gone.") }
     if known && recognized(path, home: base) != folder {
       return refuse("That doesn't look like a folder I know how to rebuild, so I left it alone.")
     }
@@ -295,7 +308,8 @@ public enum AutopilotDisk {
           root, ["--literal-pathspecs", "ls-files", "-z", "--", relative])
       else { return refuse("I couldn't ask Git about that folder, so I left it alone.") }
       guard listing.isEmpty else {
-        return refuse("Git saves files in that folder, so they're part of your project. I left it alone.")
+        return refuse(
+          "Git saves files in that folder, so they're part of your project. I left it alone.")
       }
     }
     switch inUse(path) {
@@ -317,19 +331,66 @@ public enum AutopilotDisk {
         return finish("failed", "\(item.name) is still where it was, so nothing moved.")
       }
       // The space comes back when the Trash is emptied, so no bytes are claimed yet.
-      return finish("burned", "Moved \(item.name) to the Trash. Empty the Trash to get the space back.")
+      return finish(
+        "burned", "Moved \(item.name) to the Trash. Empty the Trash to get the space back.")
     }
     let bytes = allocatedSize(path) ?? item.bytes
+    if !regenerable(path, home: base) {
+      do {
+        recovery = try PrivateRecovery.capture(
+          path, root: root,
+          excluding: recoveryExclusions(path, home: base), key: recoveryKey)
+        try PrivateRecovery.validate(recovery!, key: recoveryKey)
+        guard inUse(path) == 0 else {
+          return refuse("Something started using that folder, so I left it alone.")
+        }
+      } catch {
+        return refuse("I couldn't preserve this folder's unique contents, so I left it alone.")
+      }
+    }
+    if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
+    var currentIdentity = stat()
+    guard lstat(path, &currentIdentity) == 0, currentIdentity.st_ino == originalIdentity.st_ino,
+      currentIdentity.st_dev == originalIdentity.st_dev
+    else { return refuse("That folder changed while preserving it, so I left it alone.") }
+    guard authorize() else {
+      return refuse("Permissions changed while preserving it, so I left it alone.")
+    }
+    if let recovery {
+      do {
+        var restore = AutopilotRestore(
+          repository: "", path: path, ref: "", head: "", branch: nil, snapshot: true)
+        restore.recovery = recovery
+        try Store(root: root).write(
+          JSONEncoder().encode(restore),
+          to: URL(fileURLWithPath: recovery.directory).appendingPathComponent("restore.json"),
+          limit: 65536)
+      } catch { return refuse("I couldn't save a recovery receipt, so I left it alone.") }
+    }
     do {
       try keepingParentTime(of: path) { try FileManager.default.removeItem(atPath: path) }
     } catch {
-      return finish("failed", "I couldn't remove all of \(item.name), so some of it is still there.")
+      return finish(
+        "failed", "I couldn't remove all of \(item.name), so some of it is still there.")
     }
     guard !exists(path) else {
       return finish("failed", "\(item.name) is still there, so I'm not counting it as burned.")
     }
-    return finish(
-      "burned", "Cleared \(item.name). Your tools will rebuild it when they need it.", bytes: bytes)
+    let retained = recovery.map { allocatedSize($0.directory) ?? $0.allocated } ?? 0
+    var receipt = finish(
+      "burned",
+      "Cleared \(item.name)."
+        + (recovery == nil
+          ? " Your tools will rebuild it when they need it."
+          : " Unique contents are encrypted and restorable."),
+      bytes: bytes > retained ? bytes - retained : 0)
+    if let recovery {
+      var restore = AutopilotRestore(
+        repository: "", path: path, ref: "", head: "", branch: nil, snapshot: true)
+      restore.recovery = recovery
+      receipt.restore = restore
+    }
+    return receipt
   }
 
   /// Removing a folder stamps its parent with the current time, which would make the old copy
@@ -371,7 +432,8 @@ public enum AutopilotDisk {
       relative == $0.lowercased() || relative.hasPrefix($0.lowercased() + "/")
     }
     guard !guarded else {
-      return "That folder is somewhere private (iCloud, Mail, Messages, Photos or keys), so I left it alone."
+      return
+        "That folder is somewhere private (iCloud, Mail, Messages, Photos or keys), so I left it alone."
     }
     guard info.st_uid == getuid() else {
       return "That folder belongs to someone else, so I left it alone."
@@ -380,7 +442,8 @@ public enum AutopilotDisk {
   }
 
   static func protectedRefusal(_ place: String) -> String {
-    "That's in " + place + ", which macOS protects, so I left it alone. Turn on Full Disk Access to let me check it."
+    "That's in " + place
+      + ", which macOS protects, so I left it alone. Turn on Full Disk Access to let me check it."
   }
 
   /// The `folder` fact a live path earns by its place (global caches) or by its name inside a
@@ -395,6 +458,91 @@ public enum AutopilotDisk {
       enclosingCheckout(of: path, home: home, levels: maximumDepth) != nil
     else { return nil }
     return folder
+  }
+
+  /// Names keep discovery broad. Permanent removal additionally needs a native producer marker;
+  /// generic build/dist folders stay eligible but their uncertain bytes get encrypted recovery.
+  public static func regenerable(_ path: String, home: String = NSHomeDirectory()) -> Bool {
+    let base = WorkspaceSafety.canonical(home)
+    let relative = path.hasPrefix(base + "/") ? String(path.dropFirst(base.count + 1)) : ""
+    if globalCaches.contains(where: {
+      $0.children ? parent(relative) == $0.path : relative == $0.path
+    }) {
+      return true
+    }
+    let folder = leaf(path)
+    let parentPath = parent(path)
+    func regular(_ relative: String) -> Bool {
+      let target = path + "/" + relative
+      var info = stat()
+      return target == WorkspaceSafety.canonical(target) && lstat(target, &info) == 0
+        && info.st_mode & S_IFMT == S_IFREG
+    }
+    switch folder {
+    case "node_modules":
+      let metadata: Set<String> = [
+        ".package-lock.json", ".modules.yaml", ".yarn-integrity", ".yarn-state.yml",
+        ".pnpm-workspace-state-v1.json",
+      ]
+      guard metadata.contains(where: regular),
+        let entries = try? FileManager.default.contentsOfDirectory(atPath: path),
+        entries.count <= 10_000
+      else { return false }
+      return entries.allSatisfy { name in
+        if metadata.contains(name) || name == ".bin" || name == ".pnpm" { return true }
+        var info = stat()
+        guard lstat(path + "/" + name, &info) == 0 else { return false }
+        if info.st_mode & S_IFMT == S_IFLNK { return true }
+        guard info.st_mode & S_IFMT == S_IFDIR else { return false }
+        if name.hasPrefix("@"),
+          let packages = try? FileManager.default.contentsOfDirectory(atPath: path + "/" + name)
+        {
+          return packages.allSatisfy { regular(name + "/" + $0 + "/package.json") }
+        }
+        return regular(name + "/package.json")
+      }
+    case ".build": return regular("workspace-state.json") && exists(parentPath + "/Package.swift")
+    case "target": return regular("CACHEDIR.TAG") && exists(parentPath + "/Cargo.toml")
+    case ".venv", "venv": return regular("pyvenv.cfg")
+    case ".pytest_cache", ".mypy_cache", ".ruff_cache": return regular("CACHEDIR.TAG")
+    case "__pycache__":
+      guard let files = try? FileManager.default.contentsOfDirectory(atPath: path),
+        !files.isEmpty, files.count <= 10_000
+      else { return false }
+      return files.allSatisfy { name in
+        guard name.hasSuffix(".pyc"), regular(name) else { return false }
+        let fd = open(path + "/" + name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let bytes = try? FileHandle(fileDescriptor: fd, closeOnDealloc: false).read(upToCount: 16)
+        return bytes.map { $0.count == 16 && $0[2] == 13 && $0[3] == 10 } ?? false
+      }
+    case ".next": return regular("BUILD_ID") && regular("build-manifest.json")
+    case ".nuxt": return regular("nuxt.json")
+    case ".svelte-kit", ".turbo", ".parcel-cache": return regular("CACHEDIR.TAG")
+    case "Pods": return regular("Manifest.lock") && exists(parentPath + "/Podfile")
+    default: return false
+    }
+  }
+
+  public static func recoveryExclusions(_ path: String, home: String = NSHomeDirectory()) -> Set<
+    String
+  > {
+    guard let checkout = try? WorktreeGit.line(path, ["rev-parse", "--show-toplevel"]) else {
+      return []
+    }
+    return Set(
+      rebuildableFolders(under: path, stop: { false }).filter { folder in
+        guard regenerable(folder.path, home: home), folder.path.hasPrefix(checkout + "/"),
+          let tracked = try? WorktreeGit.run(
+            checkout,
+            [
+              "--literal-pathspecs", "ls-files", "-z", "--",
+              String(folder.path.dropFirst(checkout.count + 1)),
+            ])
+        else { return false }
+        return tracked.isEmpty
+      }.map { String($0.path.dropFirst(path.count + 1)) })
   }
 
   /// The nearest folder above `path` holding a `.git` entry, looking at most `levels` folders

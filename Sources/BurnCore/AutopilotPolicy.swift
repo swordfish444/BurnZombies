@@ -58,9 +58,11 @@ public enum AutopilotPolicy {
       created: Date(timeIntervalSinceReferenceDate: 0)),
   ]
 
+  /// Every fact of the rule has one of its values. A burn that leaves out a named risk covers only
+  /// things clear of it, and a thing without the fact is clear (`namedRisks`).
   public static func matches(_ rule: AutopilotRule, _ item: AutopilotItem) -> Bool {
     rule.kind == item.kind
-      && rule.match.allSatisfy { key, values in item.facts[key].map(values.contains) ?? false }
+      && effective(rule).allSatisfy { key, values in value(item, key).map(values.contains) ?? false }
   }
 
   /// Order: rails, the operator's own keeps, confident AI keeps, operator burn rules,
@@ -104,8 +106,9 @@ public enum AutopilotPolicy {
       return f["listening"] == "no" && f["thread"] != "live"
         && (f["orphaned"] == "yes" || f["thread"] == "ended")
     case .worktree:
+      // Big unsaved files go for good when a copy burns: only the owner's Yes lets them.
       return !ownerManagedPlaces.contains(f["place"] ?? "") && f["inUse"] == "no"
-        && f["thread"] != "live"
+        && f["thread"] != "live" && !AutopilotWorktrees.holdsBigFiles(item)
     case .disk:
       return (f["folder"] ?? "other") != "other"
     }
@@ -240,14 +243,20 @@ public enum AutopilotPolicy {
     let past: [AutopilotQuestion] = memory.questions.filter { question in
       question.kind == kind && question.match == match && ownerAnswered(question)
     }
-    if past.contains(where: { $0.risks == nil }) { return true }
     guard !past.isEmpty else { return false }
+    // No card showed a named risk before cards named their risks, so such an answer leaves things
+    // carrying one to a question of their own.
+    let legacy: Bool = past.contains { $0.risks == nil }
+    let named = namedRisks[kind] ?? []
     let ids = Set(past.map(\.id))
     // A lesson an answer was taken into carries the answer's id in `from`.
     let taught: [AutopilotRule] = memory.rules.filter { rule in
       questionIDs(rule).contains(where: ids.contains)
     }
-    return covering.allSatisfy { item in taught.contains { matches($0, item) } }
+    return covering.allSatisfy { item in
+      if legacy && !named.contains(where: { item.facts[$0.fact] == $0.risky }) { return true }
+      return taught.contains { matches($0, item) }
+    }
   }
 
   /// A native question's id: its pattern's key, then the risks its card shows when it shows any, so
@@ -286,10 +295,14 @@ public enum AutopilotPolicy {
   }
 
   /// What a yes to a pattern burns: the pattern and everything safer. A question is about the
-  /// unsure things this covers.
+  /// unsure things this covers, those carrying a named risk too: its card shows the risk, and only
+  /// a Yes to that card lets them go.
   public static func coverage(_ kind: AutopilotKind, _ match: [String: [String]]) -> AutopilotRule {
-    AutopilotRule(
-      kind: kind, match: widen(match, verdict: .burn), verdict: .burn, source: .operator, title: "")
+    var wide: [String: [String]] = widen(match, verdict: .burn)
+    for named in namedRisks[kind] ?? [] where wide[named.fact] == nil {
+      wide[named.fact] = [named.risky, named.clear]
+    }
+    return AutopilotRule(kind: kind, match: wide, verdict: .burn, source: .operator, title: "")
   }
 
   /// A question about the things a pattern covers, with their count, size and cautions, and what
@@ -303,8 +316,7 @@ public enum AutopilotPolicy {
       kind: kind, match: match,
       question: wording(
         kind: kind, match: match, program: programs.count == 1 ? programs.first : nil),
-      why: "I found \(covering.count) like this, using \(format(bytes))."
-        + (kind == .worktree ? " I back each one up first, so you can undo it." : ""),
+      why: "",
       examples: Array(covering.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name)),
       count: covering.count, bytes: bytes, asked: now)
     question.cautions = mix(kind, covering)
@@ -336,6 +348,9 @@ public enum AutopilotPolicy {
           { $0.facts["changes"] == "large" }, "has lots of unsaved changes",
           "have lots of unsaved changes"),
       ]
+      for risk in AutopilotWorktrees.bigFileRisks {
+        found.append(count({ $0.facts[risk.fact] == "yes" }, "has " + risk.words, "have " + risk.words))
+      }
     case .process:
       found = [
         count(
@@ -449,6 +464,10 @@ public enum AutopilotPolicy {
       return
         "It just stops. If something needs it again, a fresh one starts. Nothing you're working on uses it."
     case .worktree:
+      if AutopilotWorktrees.holdsBigFiles(item) {
+        return
+          "The folder goes away. Its code and smaller unsaved files are backed up so you can restore it, but its big unsaved files are deleted for good."
+      }
       return
         "The folder goes away, but nothing is lost: your code is saved and I keep a backup you can restore."
     case .disk:
@@ -523,6 +542,8 @@ public struct AutopilotCard: Equatable, Sendable {
   public var rows: [AutopilotCardRow] = []
   /// How many more there are than the rows show.
   public var more = 0
+  /// What a Yes deletes for good, which Undo can't bring back, said before anything is pressed.
+  public var cost: String?
 }
 
 /// One thing a question is about, ready to show: what it is called, where it lives and when it
@@ -531,10 +552,13 @@ public struct AutopilotCardRow: Equatable, Sendable {
   public var title: String
   public var subtitle: String?
   public var when: String
-  public init(title: String, subtitle: String? = nil, when: String) {
+  /// Dim lines under it: a copy's big unsaved files, which a Yes deletes.
+  public var details: [String]
+  public init(title: String, subtitle: String? = nil, when: String, details: [String] = []) {
     self.title = title
     self.subtitle = subtitle
     self.when = when
+    self.details = details
   }
 }
 
@@ -596,13 +620,19 @@ extension AutopilotPolicy {
   static func factWords(_ kind: AutopilotKind) -> [(fact: String, words: [String: String])] {
     switch kind {
     case .worktree:
-      return [
+      let work: [(fact: String, words: [String: String])] = [
         ("saved", ["merged": "Already merged", "pushed": "Saved on GitHub", "local": "Work only on this Mac"]),
         ("changes", ["none": "No unsaved changes", "small": "Has unsaved changes", "large": "Has lots of unsaved changes"]),
+      ]
+      let big: [(fact: String, words: [String: String])] = AutopilotWorktrees.bigFileRisks.map {
+        risk in (fact: risk.fact, words: ["yes": "Has " + risk.words])
+      }
+      let rest: [(fact: String, words: [String: String])] = [
         ("stale", stalePhrases),
         ("place", ["patrol6": "Made by Patrol6 agents", "codex": "Made by Codex", "claude": "Made by Claude", "conductor": "Made by Conductor"]),
         ("thread", ["ended": "Its chat is finished"]),
       ]
+      return work + big + rest
     case .process:
       return [
         ("listening", ["yes": "Still running a server", "no": "Not serving anything"]),
@@ -712,10 +742,14 @@ extension AutopilotPolicy {
   /// Facts that make burning riskier: work that exists nowhere else, things still in use. How
   /// long something sat unused is not one: a card says that in its headline and leaves it out of
   /// its facts, and only a program with no date lists its idle time here.
-  static let cautions: Set<String> = [
-    "Work only on this Mac", "Has unsaved changes", "Has lots of unsaved changes",
-    "Still running a server", "Still busy", "Idle 10+ minutes",
-  ]
+  static let cautions: Set<String> = {
+    let named: [String] = AutopilotWorktrees.bigFileRisks.map { "Has " + $0.words }
+    let others: Set<String> = [
+      "Work only on this Mac", "Has unsaved changes", "Has lots of unsaved changes",
+      "Still running a server", "Still busy", "Idle 10+ minutes",
+    ]
+    return others.union(named)
+  }()
 
   /// The card for a question as it reads at `now`. The headline is "Burn 5 copies you used
   /// yesterday?": what it covers and when the most recently used of it was used, in calendar words
@@ -725,12 +759,16 @@ extension AutopilotPolicy {
   ) -> AutopilotCard {
     let one = question.count == 1
     let (single, plural) = cardNoun(question.kind, match: question.match)
+    let cost: String? = bigFilesCost(question)
     let note: String
     switch question.kind {
     case .worktree:
-      note = one
-        ? "It's backed up first, so you can undo it."
-        : "Each one is backed up first, so you can undo it."
+      // What a Yes deletes for good comes first; it is never "you can undo it".
+      note =
+        cost
+        ?? (one
+          ? "It's backed up first, so you can undo it."
+          : "Each one is backed up first, so you can undo it.")
     case .process: note = one ? "It just gets asked to quit." : "They just get asked to quit."
     case .disk: note = one ? "Your tools rebuild it when needed." : "Your tools rebuild them when needed."
     }
@@ -752,6 +790,7 @@ extension AutopilotPolicy {
     card.line = question.line
     card.rows = rows
     card.more = max(0, question.count - rows.count)
+    card.cost = cost
     return card
   }
 }

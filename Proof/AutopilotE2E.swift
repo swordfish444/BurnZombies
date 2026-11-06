@@ -1,4 +1,5 @@
 import BurnCore
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -6,6 +7,7 @@ import Foundation
 /// catalog (only processes this proof starts, only repositories it creates), the real MCP
 /// server and the operator's installed harness login.
 func autopilotEndToEndProof(root: URL, harness: String, executable: String) async throws {
+  let root = root.resolvingSymlinksInPath()
   setenv("BURNZOMBIES_HOME", root.path, 1)
   let fixtures = root.appendingPathComponent("fixtures")
   try FileManager.default.createDirectory(at: fixtures, withIntermediateDirectories: true)
@@ -29,6 +31,8 @@ func autopilotEndToEndProof(root: URL, harness: String, executable: String) asyn
     """
     git init -q --bare origin.git && git clone -q origin.git orbit-web && cd orbit-web && \
     git checkout -q -b main && echo app > app.txt && printf 'node_modules/\\n.env\\n' > .gitignore && \
+    printf '{"name":"orbit-web","scripts":{"build":"tsc"}}' > package.json && \
+    printf 'Orbit is a disposable web-project fixture. Generated dependencies can be reinstalled.\\n' > README.md && \
     git add . && git commit -q -m init && git push -q origin main && \
     git remote set-head origin main && \
     git worktree add -q -b merged-fix ../orbit-merged main && \
@@ -38,6 +42,8 @@ func autopilotEndToEndProof(root: URL, harness: String, executable: String) asyn
     git push -q origin pushed-idea && cd ../orbit-local && echo draft > draft.txt && \
     git add draft.txt && git commit -q -m draft && echo wip >> app.txt && \
     mkdir -p ../orbit-merged/node_modules/left-pad && \
+    printf '{}' > ../orbit-merged/node_modules/.package-lock.json && \
+    printf '{"name":"left-pad"}' > ../orbit-merged/node_modules/left-pad/package.json && \
     dd if=/dev/zero of=../orbit-merged/node_modules/left-pad/blob bs=1m count=120 2>/dev/null
     """, in: fixtures)
   let common = fixtures.appendingPathComponent("orbit-web/.git").path
@@ -111,13 +117,21 @@ func autopilotEndToEndProof(root: URL, harness: String, executable: String) asyn
     },
     processOutcome: { await monitor.autopilotOutcome($0) },
     retireWorktree: { item, authority in
-      AutopilotWorktrees.retire(item, authority: authority, root: root)
+      AutopilotWorktrees.retire(
+        item, authority: authority, root: root,
+        recoveryKey: SymmetricKey(data: Data(repeating: 0x76, count: 32)))
     },
-    restoreWorktree: { try AutopilotWorktrees.restore($0) },
+    restoreWorktree: {
+      try AutopilotWorktrees.restore(
+        $0, recoveryKey: SymmetricKey(data: Data(repeating: 0x76, count: 32)))
+    },
     reclaimDisk: { item, authority in
-      AutopilotDisk.reclaim(item, authority: authority, home: fixtures.path)
+      AutopilotDisk.reclaim(
+        item, authority: authority, home: fixtures.path, root: root,
+        recoveryKey: SymmetricKey(data: Data(repeating: 0x76, count: 32)))
     },
-    inspect: { AutopilotInspector.inspect($0) })
+    inspect: { AutopilotInspector.inspect($0) },
+    evidence: { AutopilotEvidence.read($0, relativePath: $1) })
   // Fixture copies hold a few kilobytes; real ones must be worth it.
   let engine = try Autopilot(root: root, sources: sources, minimumBytes: 0)
   let service = AgentService(monitor: monitor, autopilot: engine)
@@ -140,7 +154,9 @@ func autopilotEndToEndProof(root: URL, harness: String, executable: String) asyn
   print("E2E AI sweep finished in \(Int(Date().timeIntervalSince(started))) s")
   snapshot = await engine.tick()
   let memory = try AutopilotStore(root: root).memory()
-  print("E2E judgments:", memory.judgments.values.map { "\($0.label) → \($0.verdict) \($0.confidence)" })
+  print(
+    "E2E judgments:", memory.judgments.values.map { "\($0.label) → \($0.verdict) \($0.confidence)" }
+  )
   print("E2E questions:", snapshot.questions.map(\.question))
   print("E2E receipts:", snapshot.receipts.map { "\($0.name): \($0.outcome) by \($0.authority)" })
   print("E2E log:", snapshot.sweep.log.suffix(6).map(\.message))
@@ -170,8 +186,10 @@ func autopilotPreview(inventory: URL?) async throws {
   try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
   var records = [WorktreeRecord]()
   if let inventory {
-    try FileManager.default.copyItem(at: inventory, to: root.appendingPathComponent("worktrees.sqlite"))
-    records = (try WorktreeStore(root: root).values(WorktreeRecord.self, kind: "record", limit: 50_000))
+    try FileManager.default.copyItem(
+      at: inventory, to: root.appendingPathComponent("worktrees.sqlite"))
+    records =
+      (try WorktreeStore(root: root).values(WorktreeRecord.self, kind: "record", limit: 50_000))
   }
   let monitor = try Monitor(
     legacyAuthority: true, discoveryHome: nil, root: root.appendingPathComponent("observation"),
@@ -206,8 +224,11 @@ func autopilotPreview(inventory: URL?) async throws {
   let memory = AutopilotMemory()
   var byStatus = [String: [AutopilotItem]]()
   for item in items {
-    byStatus["\(item.kind.rawValue)/\(AutopilotPolicy.decide(item, memory: memory).status.rawValue)", default: []]
-      .append(item)
+    byStatus[
+      "\(item.kind.rawValue)/\(AutopilotPolicy.decide(item, memory: memory).status.rawValue)",
+      default: []
+    ]
+    .append(item)
   }
   print("Threads: \(threads.count) (\(threads.filter(\.live).count) live)")
   let processRecords = await monitor.autopilotRecords()
@@ -219,7 +240,8 @@ func autopilotPreview(inventory: URL?) async throws {
     reasons[reason, default: 0] += 1
     if reason.hasPrefix("Part of it"), let pid = item.pid {
       for child in AutopilotProcesses.descendants(of: pid, in: processRecords) {
-        if let why = AutopilotProcesses.rail(child, protectedPIDs: own, preferences: Preferences()) {
+        if let why = AutopilotProcesses.rail(child, protectedPIDs: own, preferences: Preferences())
+        {
           culprits[child.latest.name + ": " + why, default: 0] += 1
           break
         }
@@ -227,17 +249,23 @@ func autopilotPreview(inventory: URL?) async throws {
     } else if reason == "It's part of an app you use." || reason == "It's part of macOS." {
       let path =
         processRecords.values.first { $0.latest.identity.pid == item.pid }?.latest.executable ?? ""
-      culprits["root " + URL(fileURLWithPath: path).deletingLastPathComponent().path.suffix(70), default: 0] += 1
+      culprits[
+        "root " + URL(fileURLWithPath: path).deletingLastPathComponent().path.suffix(70), default: 0
+      ] += 1
     }
   }
   for (k, v) in reasons.sorted(by: { $0.value > $1.value }) { print("  reason \(v): \(k)") }
-  for (k, v) in culprits.sorted(by: { $0.value > $1.value }).prefix(15) { print("  culprit \(v): \(k)") }
+  for (k, v) in culprits.sorted(by: { $0.value > $1.value }).prefix(15) {
+    print("  culprit \(v): \(k)")
+  }
   for key in byStatus.keys.sorted() {
     let group = byStatus[key]!
     print(
       "\(key): \(group.count) using \(AutopilotPolicy.format(group.reduce(0) { $0 + $1.bytes }))")
     for item in group.sorted(by: { $0.bytes > $1.bytes }).prefix(6) {
-      print("   - \(item.name): \(item.facts.filter { $0.key != "kind" }.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))\(item.protectedReason.map { " [\($0)]" } ?? "")")
+      print(
+        "   - \(item.name): \(item.facts.filter { $0.key != "kind" }.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))\(item.protectedReason.map { " [\($0)]" } ?? "")"
+      )
     }
   }
   let unsure = items.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }

@@ -74,9 +74,10 @@ public enum AutopilotBrowserTrail {
   /// Removes every leftover in the temp folder the item names that still passes every check, one
   /// folder at a time. `inUse` answers 0 for a folder no program has open (by default from one
   /// look at every program's open files), 1 for one in use, anything else when unknown.
+  /// `authorize` says, right before the first removal, whether the decision to burn still stands.
   public static func reclaim(
     _ item: AutopilotItem, authority: String, folder: String? = nil, now: Date = Date(),
-    inUse: ((String) -> Int32)? = nil
+    inUse: ((String) -> Int32)? = nil, authorize: () -> Bool = { true }
   ) -> AutopilotReceipt {
     func refuse(_ reason: String) -> AutopilotReceipt {
       .refused(item, authority: authority, reason)
@@ -91,6 +92,9 @@ public enum AutopilotBrowserTrail {
     guard !found.isEmpty else { return refuse("Nothing robot browsers left is old enough now.") }
     let snapshot = inUse == nil ? WorktreeConsumerSnapshot(roots: [base]) : nil
     let using = inUse ?? { snapshot!.state($0) }
+    guard authorize() else {
+      return refuse("Permissions changed since I decided, so I left it alone.")
+    }
     var removed = 0
     var bytes: UInt64 = 0
     var held = 0

@@ -26,7 +26,8 @@ func autopilotSweepProof() async throws {
   // The AI wakes for unjudged unsure items, at most every 30 minutes, plus a 4-hour refresh.
   var fresh = AutopilotSweepState()
   var unsureSnapshot = AutopilotSnapshot()
-  let unsureItem = AutopilotItem(id: "process:u", kind: .process, name: "u", facts: ["family": "node"])
+  let unsureItem = AutopilotItem(
+    id: "process:u", kind: .process, name: "u", facts: ["family": "node"])
   unsureSnapshot.entries = [
     AutopilotEntry(
       item: unsureItem, status: .unsure, authority: nil, label: "u", why: "", consequence: "")
@@ -37,7 +38,8 @@ func autopilotSweepProof() async throws {
   checkFalse(
     AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false), "spacing")
   fresh.lastAISweep = now.addingTimeInterval(-31 * 60)
-  check(AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false), "new work")
+  check(
+    AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false), "new work")
   fresh.lastAIDigest = AutopilotSweeper.digest(unsureSnapshot)
   checkFalse(
     AutopilotSweeper.aiDue(fresh, snapshot: unsureSnapshot, now: now, manual: false), "same work")
@@ -106,7 +108,7 @@ func autopilotSweepProof() async throws {
   check(claude.contains("--mcp-config"), "MCP config")
   check(claude.joined(separator: " ").contains("BURNZOMBIES_AUTOPILOT"), "autopilot mode")
   check(claude.contains("sonnet"), "default model")
-  check(claude.contains("Read,Glob,Grep"), "read-only built-ins")
+  checkFalse(claude.contains("Read,Glob,Grep"), "file reads go through scoped native evidence")
   check(claude.contains("Bash"), "Bash explicitly disallowed")
   equal(claude.firstIndex(of: "--max-turns").map { claude[$0 + 1] }, "40")
   // Claude Code still loads the owner's own settings, whose `env` outranks `--effort`: an
@@ -351,7 +353,8 @@ func autopilotSweepProof() async throws {
     _ = try await engine.apply(.setInterval(minutes: 7))
     failTest("odd intervals refused")
   } catch {}
-  snapshot = try await engine.apply(.setStarter(ruleID: "starter-leftover-programs", enabled: false))
+  snapshot = try await engine.apply(
+    .setStarter(ruleID: "starter-leftover-programs", enabled: false))
   equal(snapshot.rules.first { $0.id == "starter-leftover-programs" }?.enabled, false)
   let rule = snapshot.rules.first { $0.source == .operator }!
   snapshot = try await engine.apply(.forgetRule(ruleID: rule.id))
@@ -472,7 +475,8 @@ func autopilotSweepProof() async throws {
     return await engine.handle(request)
   }
 
-  let subjectEngine = try copiesEngine("ask-subject", [localWeek, mergedDay], open: [localWeekMatch])
+  let subjectEngine = try copiesEngine(
+    "ask-subject", [localWeek, mergedDay], open: [localWeekMatch])
   _ = await subjectEngine.tick(now: now)
   let (otherOK, otherJSON) = await askAbout(subjectEngine, mergedDayMatch)
   checkFalse(otherOK, "no second question about old copies while one is open")
@@ -871,7 +875,8 @@ private func aiBriefProof() async throws {
       why: "", examples: [], count: 0, bytes: 0, source: "ai")
   }
   do {
-    _ = try await askEngine.ask(aiQuestion(["saved": ["pushed"]]), replacing: native.id, guess: .yes)
+    _ = try await askEngine.ask(
+      aiQuestion(["saved": ["pushed"]]), replacing: native.id, guess: .yes)
     failTest("a question must say how long things sat unused")
   } catch {
     equal(

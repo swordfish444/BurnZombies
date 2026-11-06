@@ -17,12 +17,14 @@ public struct AutopilotSources: Sendable {
   public var restoreWorktree: @Sendable (AutopilotReceipt) throws -> Void
   public var reclaimDisk: @Sendable (AutopilotItem, String) -> AutopilotReceipt
   public var inspect: @Sendable (AutopilotItem) -> [String: String]
+  public var evidence: @Sendable (AutopilotItem, String) -> [String: String]
   public var coverageNotes: @Sendable () -> [String]
   public init(
     threads: @escaping @Sendable () -> [AgentThread] = { [] },
     processes: @escaping @Sendable ([AgentThread]) async -> [AutopilotItem] = { _ in [] },
     worktreeRecords: @escaping @Sendable () async -> [WorktreeRecord] = { [] },
-    worktrees: @escaping @Sendable ([WorktreeRecord], [AgentThread], [String: AutopilotDelivery])
+    worktrees:
+      @escaping @Sendable ([WorktreeRecord], [AgentThread], [String: AutopilotDelivery])
       -> ([AutopilotItem], [String: AutopilotDelivery]) = { _, _, d in ([], d) },
     disk: @escaping @Sendable ([WorktreeRecord]) -> [AutopilotItem] = { _ in [] },
     burnProcess: @escaping @Sendable (AutopilotItem, String, String) async throws -> UUID = {
@@ -41,6 +43,9 @@ public struct AutopilotSources: Sendable {
       .refused($0, authority: $1, "Junk-folder cleanup is unavailable.")
     },
     inspect: @escaping @Sendable (AutopilotItem) -> [String: String] = { _ in [:] },
+    evidence: @escaping @Sendable (AutopilotItem, String) -> [String: String] = { _, _ in
+      ["error": "Scoped evidence unavailable."]
+    },
     coverageNotes: @escaping @Sendable () -> [String] = { [] }
   ) {
     self.threads = threads
@@ -54,6 +59,7 @@ public struct AutopilotSources: Sendable {
     self.restoreWorktree = restoreWorktree
     self.reclaimDisk = reclaimDisk
     self.inspect = inspect
+    self.evidence = evidence
     self.coverageNotes = coverageNotes
   }
 }
@@ -130,6 +136,17 @@ public actor Autopilot {
     try? store.refreshImpact()
   }
 
+  /// The executor repeats this after slow recovery work, immediately before removal.
+  public static func executorAllowed(_ item: AutopilotItem, authority: String, root: URL) -> Bool {
+    guard let state = try? AutopilotStore(root: root), let memory = try? state.memory(),
+      let sweep = try? state.sweep(), (try? state.receipts()) != nil
+    else { return false }
+    if authority == "operator" { return true }
+    let decision = AutopilotPolicy.decide(item, memory: memory)
+    return sweep.enabled && sweep.lookOnly != true && decision.status == .burn
+      && decision.authority == authority
+  }
+
   /// Refresh the catalog and burn everything already authorized. Uses no AI.
   @discardableResult public func tick(now: Date = Date(), burn: Bool = true) async
     -> AutopilotSnapshot
@@ -150,6 +167,8 @@ public actor Autopilot {
     items += copies.filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
       .map { Self.mentionChat($0, threads: threads, now: now) }
     items += sources.disk(records)
+    // A copy retire couldn't back up for big unsaved files carries them as risks of their own.
+    items = AutopilotPolicy.withBigFiles(items, receipts: (try? store.receipts()) ?? [])
     items = items.filter { AutopilotPolicy.worthAssessing($0, minimumBytes: minimumBytes) }
     catalog = AutopilotCatalog(
       observedAt: now, items: items, threads: threads, coverageNotes: sources.coverageNotes())
@@ -166,10 +185,15 @@ public actor Autopilot {
     return snapshot(now: now)
   }
 
-  func memory() -> AutopilotMemory { (try? store.memory()) ?? AutopilotMemory() }
+  func memory() -> AutopilotMemory {
+    if let memory = try? store.memory() { return memory }
+    var held = AutopilotMemory()
+    held.starterDisabled = Set(AutopilotPolicy.starterRules.map(\.id))
+    return held
+  }
 
   /// Whether Autopilot is switched on. Off, it catalogs and asks but burns nothing on its own.
-  func enabled() -> Bool { (try? store.sweep().enabled) ?? true }
+  func enabled() -> Bool { (try? store.sweep().enabled) ?? false }
 
   /// Whether BZ burns on its own right now: Autopilot is on and not look-only. Only then does it
   /// act on a question it is sure of; otherwise it asks, so no tell says it burned what is still
@@ -214,6 +238,8 @@ public actor Autopilot {
     for r in receipts
     where r.outcome == "refused" && now.timeIntervalSince(r.date) < retryRefusalsAfter {
       guard let revision = r.revision else { continue }
+      // One from before refusals named big files names none: trying again names them.
+      if r.bigFiles == nil && AutopilotWorktrees.unnamedBigFiles.contains(r.detail) { continue }
       let key = refusalKey(r.itemID, revision, r.authority)
       if uncheckedUse.contains(r.detail), unchecked.insert(key).inserted { continue }
       standing[key] = r
@@ -233,7 +259,8 @@ public actor Autopilot {
   static func waiting(after refusal: AutopilotReceipt, now: Date) -> String {
     let retry = refusal.date.addingTimeInterval(retryRefusalsAfter)
     let when = RelativeDateTimeFormatter().localizedString(for: retry, relativeTo: now)
-    return "Waiting after a refusal: \(refusal.detail) I'll try again \(when), or sooner if it changes."
+    return
+      "Waiting after a refusal: \(refusal.detail) I'll try again \(when), or sooner if it changes."
   }
 
   /// Look-only holds every burn BZ would make on its own. A sweep state it can't read holds them
@@ -305,6 +332,25 @@ public actor Autopilot {
   }
 
   func execute(_ item: AutopilotItem, authority: String, why: String) async -> AutopilotReceipt {
+    // A damaged policy must never become empty authority, including the operator path.
+    do {
+      _ = try store.memory()
+      _ = try store.sweep()
+      let previous = try store.receipts()
+      if previous.contains(where: {
+        $0.itemID == item.id && $0.outcome == "failed" && $0.restore?.recovery != nil
+      }) {
+        return .refused(
+          item, authority: authority,
+          "A previous cleanup has unresolved recovery. Preserve it and restore or reconcile it first."
+        )
+      }
+    } catch {
+      return .refused(
+        item, authority: authority,
+        "Cleanup paused: saved permissions or recovery receipts could not be read. Preserve the state and repair it first."
+      )
+    }
     // Every burn passes here. Look-only lets through only the owner's own Burn now, and writes
     // nothing for a held one: it isn't a refusal to wait out.
     if authority != "operator", holdsBurns() {
@@ -325,7 +371,8 @@ public actor Autopilot {
         let event = try await sources.burnProcess(item, authority, why)
         receipt = AutopilotReceipt(
           itemID: item.id, kind: .process, name: item.name, authority: authority,
-          outcome: "verifying", detail: "Asked it to stop; checking that it did.", bytes: item.bytes,
+          outcome: "verifying", detail: "Asked it to stop; checking that it did.",
+          bytes: item.bytes,
           eventID: event)
       } catch {
         receipt = .refused(item, authority: authority, error.localizedDescription)
@@ -441,6 +488,7 @@ public actor Autopilot {
       return judgment.why
     }
     guard let authority = decision.authority else {
+      if AutopilotWorktrees.holdsBigFiles(item) { return AutopilotPolicy.bigFilesWait }
       return "I'm not sure about this one yet, so I'll ask you."
     }
     if authority == "operator" { return "You asked me to keep it." }
@@ -521,7 +569,7 @@ public actor Autopilot {
     result.answers = memory.answers
     result.trainingProgress = AutopilotPolicy.trainingProgress(memory)
     result.coverage = AutopilotPolicy.coverage(result.entries)
-    result.sweep = (try? store.sweep()) ?? AutopilotSweepState()
+    result.sweep = sweepState()
     result.receipts = Array(receipts.suffix(100).reversed())
     result.coverageNotes = catalog?.coverageNotes ?? []
     result.observedAt = catalog?.observedAt
@@ -669,6 +717,9 @@ public actor Autopilot {
         wasBurned = all[i].outcome == "burned"
         all[i].outcome = "restored"
         all[i].detail = "Restored at \(backup.path)."
+        if !(all[i].bigFiles ?? []).isEmpty {
+          all[i].detail += " Its big unsaved files didn't come back: they were deleted for good."
+        }
       }
     }
     try store.updateMemoryAfterReceipts { memory, seeded in
@@ -698,6 +749,7 @@ public actor Autopilot {
     var failed = 0
     var reason: String?
     var missing = 0
+    var withoutBigFiles = 0
     for receipt in AutopilotPolicy.burns(of: tell, receipts: try store.receipts()) {
       guard receipt.outcome == "burned", receipt.restore != nil else {
         missing += 1
@@ -705,6 +757,7 @@ public actor Autopilot {
       }
       do {
         try await restore(receiptID: receipt.id)
+        if !(receipt.bigFiles ?? []).isEmpty { withoutBigFiles += 1 }
       } catch {
         failed += 1
         if reason == nil { reason = error.localizedDescription }
@@ -712,7 +765,8 @@ public actor Autopilot {
     }
     // What didn't come back stays on the tell, in Teach BZ, until the owner has read it.
     let note: String? = AutopilotPolicy.undoNote(
-      kind: tell.kind, failed: failed, reason: reason, missing: missing)
+      kind: tell.kind, failed: failed, reason: reason, missing: missing,
+      withoutBigFiles: withoutBigFiles)
     try store.updateMemory { try AutopilotPolicy.finishUndo(id, note: note, memory: &$0) }
   }
 
@@ -766,11 +820,11 @@ public actor Autopilot {
       nextOffset: offset + page.count < entries.count ? offset + page.count : nil)
   }
 
-  public func inspect(_ id: String) -> [String: String] {
+  public func inspect(_ id: String, relativePath: String? = nil) -> [String: String] {
     guard let item = catalog?.items.first(where: { $0.id == id }) else {
       return ["error": "Unknown item. Read the catalog again."]
     }
-    var result = sources.inspect(item)
+    var result = relativePath.map { sources.evidence(item, $0) } ?? sources.inspect(item)
     result["id"] = item.id
     result["facts"] = item.facts.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
       .joined(separator: ", ")
@@ -961,7 +1015,18 @@ public actor Autopilot {
     try store.updateSweep { $0.append(String(text.prefix(500))) }
   }
 
-  public func sweepState() -> AutopilotSweepState { (try? store.sweep()) ?? AutopilotSweepState() }
+  public func sweepState() -> AutopilotSweepState {
+    if let state = try? store.sweep(), (try? store.memory()) != nil, (try? store.receipts()) != nil
+    {
+      return state
+    }
+    var held = AutopilotSweepState()
+    held.enabled = false
+    held.lookOnly = true
+    held.lastError =
+      "Saved permissions could not be read. Cleanup is paused; preserve and repair the state."
+    return held
+  }
   public func updateSweep(_ change: @Sendable (inout AutopilotSweepState) -> Void) {
     try? store.updateSweep { change(&$0) }
   }
@@ -1033,6 +1098,7 @@ public struct AutopilotRequest: Codable, Sendable {
   public var judgments: [AutopilotJudgmentInput]?
   public var question: AutopilotQuestionInput?
   public var replace: String?
+  public var relativePath: String?
   public var text: String?
   public var command: AutopilotCommand?
   public init(tool: String) { self.tool = tool }
@@ -1091,7 +1157,7 @@ extension Autopilot {
         )
       case "inspect":
         guard let id = request.id else { return failure("Pass id.") }
-        return (true, encode(inspect(id)))
+        return (true, encode(inspect(id, relativePath: request.relativePath)))
       case "decide":
         guard let inputs = request.judgments, !inputs.isEmpty else {
           return failure("Pass judgments.")
@@ -1102,7 +1168,12 @@ extension Autopilot {
               itemID: $0.id, revision: "", verdict: $0.verdict, confidence: $0.confidence,
               label: $0.label, why: $0.why)
           })
-        return (true, encode(["recorded": String(inputs.count), "authorized": authorized.joined(separator: ",")]))
+        return (
+          true,
+          encode([
+            "recorded": String(inputs.count), "authorized": authorized.joined(separator: ","),
+          ])
+        )
       case "burn":
         guard let ids = request.ids, !ids.isEmpty else { return failure("Pass ids.") }
         return (true, encode(await burn(ids)))

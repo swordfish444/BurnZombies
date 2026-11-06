@@ -74,24 +74,31 @@ public struct Native {
     if mask & 4 != 0 { return "cursor" }
     return "none"
   }
-  /// The live command line for inspection. Never persisted.
+  /// Only allowlisted task-identification facts cross the model boundary, never raw argv.
   public func commandLine(_ pid: Int32, limit: Int = 600) -> String? {
-    var buffer = [CChar](repeating: 0, count: limit + 1)
-    guard bz_command_line(pid, &buffer, Int32(buffer.count)) == 1 else { return nil }
-    return String(cString: buffer)
-  }
-  /// The live arguments, the program first, one entry each. Read to recognize robot browsers;
-  /// never persisted.
-  public func arguments(_ pid: Int32, limit: Int = 131_072) -> [String]? {
-    var buffer = [UInt8](repeating: 0, count: limit)
-    let used = buffer.withUnsafeMutableBufferPointer { raw in
-      raw.baseAddress!.withMemoryRebound(to: CChar.self, capacity: raw.count) {
-        bz_arguments(pid, $0, Int32(raw.count))
-      }
+    guard case .found(let process) = probe(pid) else { return nil }
+    var buffer = [CChar](repeating: 0, count: 262144)
+    defer {
+      _ = buffer.withUnsafeMutableBytes { $0.initializeMemory(as: UInt8.self, repeating: 0) }
     }
-    defer { buffer.withUnsafeMutableBytes { _ = memset_s($0.baseAddress, $0.count, 0, $0.count) } }
+    let count = bz_command_arguments(pid, &buffer, Int32(buffer.count))
+    guard count > 0 else { return nil }
+    let arguments = buffer.prefix(Int(count)).map { UInt8(bitPattern: $0) }
+      .split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+    return String(
+      ProcessCommandSummary.describe(arguments, executable: process.executable).prefix(limit))
+  }
+  /// The live arguments, the program first, one entry each. Read only to recognize robot
+  /// browsers; never persisted and never shown to a model.
+  public func arguments(_ pid: Int32, limit: Int = 131_072) -> [String]? {
+    var buffer = [CChar](repeating: 0, count: limit)
+    defer {
+      _ = buffer.withUnsafeMutableBytes { $0.initializeMemory(as: UInt8.self, repeating: 0) }
+    }
+    let used = bz_command_arguments(pid, &buffer, Int32(buffer.count))
     guard used > 0 else { return nil }
-    return buffer[..<Int(used)].split(separator: 0, omittingEmptySubsequences: false).dropLast()
+    return buffer.prefix(Int(used)).map { UInt8(bitPattern: $0) }
+      .split(separator: 0, omittingEmptySubsequences: false).dropLast()
       .map { String(decoding: $0, as: UTF8.self) }
   }
   /// How many clients are connected to the ports the process listens on; nil when unknown.

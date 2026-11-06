@@ -55,11 +55,12 @@ import Vision
     view.frame = NSRect(x: 0, y: 0, width: 440, height: 280); view.layoutSubtreeIfNeeded()
     guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw StoreError.message("Hunt settings render unavailable") }
     view.cacheDisplay(in: view.bounds, to: bitmap)
-    guard let image = bitmap.cgImage, let png = bitmap.representation(using: .png, properties: [:]) else { throw StoreError.message("Hunt settings PNG unavailable") }
+    guard let png = bitmap.representation(using: .png, properties: [:]) else { throw StoreError.message("Hunt settings PNG unavailable") }
     try png.write(to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension("hunt-" + label + ".png"))
     let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
     recognition.recognitionLanguages = ["en-US"]
-    try VNImageRequestHandler(cgImage: image, options: [:]).perform([recognition])
+    recognition.usesLanguageCorrection = false
+    try VNImageRequestHandler(data: png, options: [:]).perform([recognition])
     let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     guard visible.contains("Zombie hunts"), visible.contains("Automatic hunts"), visible.contains("Hunt every"), visible.contains("Save") else {
       throw StoreError.message("Hunt settings controls clipped: \(visible)")

@@ -10,16 +10,16 @@ if $universal; then
   for arch in arm64 x86_64; do
     # SwiftBuild can reuse Products/Release for different triples. Separate roots
     # keep the second architecture from replacing the first before lipo runs.
-    swift build -c release --scratch-path ".build/universal-$arch" --triple "$arch-apple-macosx14.0"
+    swift build --disable-automatic-resolution -c release --scratch-path ".build/universal-$arch" --triple "$arch-apple-macosx14.0"
   done
-  built="$(swift build -c release --scratch-path .build/universal-arm64 --triple arm64-apple-macosx14.0 --show-bin-path)"
-  intel="$(swift build -c release --scratch-path .build/universal-x86_64 --triple x86_64-apple-macosx14.0 --show-bin-path)"
+  built="$(swift build --disable-automatic-resolution -c release --scratch-path .build/universal-arm64 --triple arm64-apple-macosx14.0 --show-bin-path)"
+  intel="$(swift build --disable-automatic-resolution -c release --scratch-path .build/universal-x86_64 --triple x86_64-apple-macosx14.0 --show-bin-path)"
 elif $debug; then
-  swift build
-  built="$(swift build --show-bin-path)"
+  swift build --disable-automatic-resolution
+  built="$(swift build --disable-automatic-resolution --show-bin-path)"
 else
-  swift build -c release
-  built="$(swift build -c release --show-bin-path)"
+  swift build --disable-automatic-resolution -c release
+  built="$(swift build --disable-automatic-resolution -c release --show-bin-path)"
 fi
 bundle="dist/BurnZombies.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
@@ -54,8 +54,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>BurnZombies</string>
 <key>CFBundleExecutable</key><string>BurnZombiesApp</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.14.0</string>
-<key>CFBundleVersion</key><string>61</string>
+<key>CFBundleShortVersionString</key><string>0.14.1</string>
+<key>CFBundleVersion</key><string>63</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

@@ -99,7 +99,7 @@ Already installed? Switch on **Look only** in **Settings → Autopilot**. `--obs
 <details>
 <summary><b>Can I undo a burn?</b></summary>
 
-Worktrees, yes: **Restore** in **Findings** for 30 days. The restore point is a Git ref in the repo that holds every commit and local change, small ignored files such as `.env` included; ignored files over 5 MB, anything inside rebuildable folders and browser profiles left by test runs aren't kept. The ref stays local unless you push `refs/burnzombies/*` yourself, for example with `git push --mirror`. It stays after 30 days, so you can also restore by hand, without the app:
+Worktrees, yes: **Restore** in **Findings** for 30 days. The restore point is a Git ref in the repo that holds every commit and local change, small ignored files such as `.env` included; ignored files over 5 MB, anything inside rebuildable folders and browser profiles left by test runs aren't kept. A copy with more than 512 MB of other unsaved files waits for a question that names them; a Yes deletes those for good. The ref stays local unless you push `refs/burnzombies/*` yourself, for example with `git push --mirror`. It stays after 30 days, so you can also restore by hand, without the app:
 
 ```sh
 git for-each-ref refs/burnzombies/retired          # list restore points

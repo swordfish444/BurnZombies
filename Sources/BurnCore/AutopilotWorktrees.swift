@@ -1,4 +1,5 @@
 import CBurn
+import CryptoKit
 import Foundation
 
 /// Where a worktree's commits are saved. Cached per HEAD; recomputed at retire time.
@@ -15,18 +16,10 @@ public struct AutopilotDelivery: Codable, Sendable, Equatable {
 }
 
 /// Old copies: facts from the worktree inventory plus Git delivery state, and a
-/// restorable retirement that keeps every local change in a safety ref.
+/// restorable retirement that keeps committed work in Git and local changes encrypted.
 public enum AutopilotWorktrees {
-  /// Folders that tools rebuild by themselves. Ignored files inside them are never backed up.
-  private static let rebuildable: Set<String> = [
-    "node_modules", ".build", "build", "dist", "target", ".next", ".turbo", ".gradle",
-    "DerivedData", ".venv", "venv", "__pycache__", "Pods", ".cache",
-  ]
-  private static let ignoredFileLimit: UInt64 = 5 << 20
-  private static let ignoredTotalLimit: UInt64 = 100 << 20
-  private static let walkLimit = 100_000
   /// Untracked, unignored content larger than this is never copied into a safety commit.
-  static let maximumUnsavedBytes: UInt64 = 512 << 20
+  public static let maximumUnsavedBytes: UInt64 = 512 << 20
   private static let refPrefix = "refs/burnzombies/retired/"
   private static let stateFiles = [
     "locked", "index.lock", "HEAD.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD",
@@ -35,13 +28,16 @@ public enum AutopilotWorktrees {
 
   private struct Refusal: Error {
     var reason: String
-    init(_ reason: String) { self.reason = reason }
+    /// The unsaved files too big to back up that kept the copy, named for the owner's card.
+    var bigFiles: [AutopilotBigFiles]?
+    init(_ reason: String, bigFiles: [AutopilotBigFiles]? = nil) {
+      self.reason = reason
+      self.bigFiles = bigFiles
+    }
   }
-  private struct Candidate {
-    var path: String
-    var size: UInt64
-    var depth: Int
-  }
+  /// Why a copy is left alone when a project inside it holds work that can't be backed up.
+  private static let nestedProject =
+    "There is another project folder inside it that I can't back up, so I left it alone."
 
   // MARK: Catalog
 
@@ -261,7 +257,8 @@ public enum AutopilotWorktrees {
   /// outlives the call. Refusals leave the copy untouched.
   public static func retire(
     _ item: AutopilotItem, authority: String, root: URL,
-    inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil
+    inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil,
+    recoveryKey: SymmetricKey? = nil, authorize: () -> Bool = { true }
   ) -> AutopilotReceipt {
     guard item.kind == .worktree, item.id.hasPrefix("worktree:"), let path = item.path else {
       return .refused(item, authority: authority, "This is not an old copy I can retire.")
@@ -272,8 +269,13 @@ public enum AutopilotWorktrees {
       return .refused(item, authority: authority, reason)
     }
     do {
-      return try perform(item, path: path, authority: authority, root: root, inUse: inUse)
+      return try perform(
+        item, path: path, authority: authority, root: root, inUse: inUse, recoveryKey: recoveryKey,
+        authorize: authorize)
     } catch let refusal as Refusal {
+      if let big = refusal.bigFiles {
+        return .refused(item, authority: authority, bigFiles: big)
+      }
       return .refused(item, authority: authority, refusal.reason)
     } catch {
       return .refused(
@@ -298,10 +300,9 @@ public enum AutopilotWorktrees {
   }
 
   private static func perform(
-    _ item: AutopilotItem, path: String, authority: String, root: URL, inUse: (String) -> Int32
+    _ item: AutopilotItem, path: String, authority: String, root: URL, inUse: (String) -> Int32,
+    recoveryKey: SymmetricKey?, authorize: () -> Bool
   ) throws -> AutopilotReceipt {
-    let fm = FileManager.default
-
     // A real, linked worktree that is not locked, mid-operation or in use.
     var folder = stat()
     guard lstat(path, &folder) == 0, folder.st_mode & S_IFMT == S_IFDIR else {
@@ -350,13 +351,15 @@ public enum AutopilotWorktrees {
       throw Refusal(reason)
     }
 
-    // Big unsaved files would be copied into the repository's own storage, so they keep the copy.
-    // Browser profiles don't count: they aren't kept.
+    // Unsaved files too big for the backup would only move into BZ's own storage instead of
+    // freeing the disk, so they keep the copy, named so the owner can be asked about them. Under an
+    // owner's Yes to that kind of them they go with the copy instead (`dropsBigFiles`). Browser
+    // profiles don't count: they aren't kept.
     let untracked = try WorktreeGit.run(
       path, ["ls-files", "-z", "--others", "--exclude-standard"], seconds: 60
     ).split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
     let profiles = try browserProfiles(path, untracked: untracked)
-    var unsaved: UInt64 = 0
+    var files: [AutopilotUnsavedFile] = []
     var dropped: UInt64 = 0
     for name in untracked {
       var info = stat()
@@ -368,81 +371,40 @@ public enum AutopilotWorktrees {
         dropped += bytes
         continue
       }
-      unsaved += bytes
-      if unsaved > maximumUnsavedBytes {
-        throw Refusal("It has big files that aren't saved anywhere else, so I left it alone.")
+      files.append(AutopilotUnsavedFile(path: name, bytes: bytes, changed: AutopilotDisk.changed(info)))
+    }
+    var big: [AutopilotBigFiles] = []
+    if files.reduce(0, { $0 + $1.bytes }) > maximumUnsavedBytes {
+      let entries = try WorktreeGit.run(
+        path, ["ls-files", "-z", "--others", "--exclude-standard", "--directory"], seconds: 60
+      ).split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+      big = bigFiles(files, entries: entries)
+      guard dropsBigFiles(item, authority: authority, files: big) else {
+        throw Refusal(bigFilesRefusal, bigFiles: big)
+      }
+      // A project inside them, ignored or not, would go with them unseen. It keeps the copy, as it
+      // does when Git would back it up or the walk of ignored files finds it.
+      for file in big where try holdsProject(path + "/" + file.path) {
+        throw Refusal(nestedProject)
       }
     }
 
-    // Snapshot with a throwaway copy of the index so the real one is never touched.
-    let work = root.appendingPathComponent(
-      "worktree-scratch-" + UUID().uuidString, isDirectory: true)
-    try fm.createDirectory(
-      at: work, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-    defer { try? fm.removeItem(at: work) }
-    let index = work.appendingPathComponent("index").path
-    let indexEnvironment = ["GIT_INDEX_FILE": index]
-    if fm.fileExists(atPath: gitDir + "/index") {
-      try fm.copyItem(atPath: gitDir + "/index", toPath: index)
+    // Existing commits stay in Git. Every unsaved/ignored byte outside proven generated caches
+    // lives only in authenticated encrypted recovery, never in a temporary Git index or blob.
+    // Big unsaved files a Yes let go are left out too: they go with the copy, for good.
+    let excluded = AutopilotDisk.recoveryExclusions(path).union(profiles)
+    let archive = try PrivateRecovery.capture(
+      path, root: root, excluding: excluded, leavingOut: Set(big.map(\.path)),
+      gitPointers: try submodulePointers(path, links: links), repository: common, head: head,
+      key: recoveryKey)
+    let snapshot = changes != "none"
+    let ref = refPrefix + archive.id.lowercased()
+    _ = try WorktreeGit.run(common, ["update-ref", ref, head])
+    guard try line(common, ["rev-parse", "--verify", ref + "^{commit}"]) == head else {
+      throw Refusal("I could not preserve the commit, so I left it alone.")
     }
-    // Everything but the browser profiles. They are left out as Git adds, since a blob Git
-    // writes stays in the repository's storage even after it leaves the index.
-    var stage = ["add", "-A"]
-    if !profiles.isEmpty {
-      let list = work.appendingPathComponent("everything-but-profiles")
-      var bytes = Data(".".utf8)
-      bytes.append(0)
-      for profile in profiles {
-        bytes.append(Data((":(exclude,literal)" + profile).utf8))
-        bytes.append(0)
-      }
-      try bytes.write(to: list)
-      stage += ["--pathspec-from-file=" + list.path, "--pathspec-file-nul"]
-    }
-    _ = try WorktreeGit.run(path, stage, seconds: 150, environment: indexEnvironment)
-    let added = try gitlinks(path, environment: indexEnvironment)
-    guard Set(added).isSubset(of: Set(links)) else {
-      throw Refusal(
-        "There is another project folder inside it that I can't back up, so I left it alone.")
-    }
-    let keepers = try ignoredFilesToSave(path, environment: indexEnvironment)
-    if !keepers.isEmpty {
-      let list = work.appendingPathComponent("ignored-files")
-      var bytes = Data()
-      for name in keepers {
-        bytes.append(Data(name.utf8))
-        bytes.append(0)
-      }
-      try bytes.write(to: list)
-      _ = try WorktreeGit.run(
-        path, ["add", "-f", "--pathspec-from-file=" + list.path, "--pathspec-file-nul"],
-        seconds: 150, environment: ["GIT_INDEX_FILE": index, "GIT_LITERAL_PATHSPECS": "1"])
-    }
-    let tree = try line(path, ["write-tree"], environment: indexEnvironment)
-    let headTree = try line(path, ["rev-parse", "--verify", "HEAD^{tree}"])
-    let snapshot = !keepers.isEmpty || tree != headTree
-    var target = head
-    if snapshot {
-      target = try line(
-        path,
-        [
-          "-c", "user.name=BurnZombies", "-c", "user.email=burnzombies@localhost", "-c",
-          "commit.gpgsign=false", "commit-tree", tree, "-p", head, "-m",
-          "BurnZombies safety copy of " + item.name,
-        ])
-    }
-    let ref = refPrefix + refSuffix(item.id)
-    _ = try WorktreeGit.run(common, ["update-ref", ref, target])
-    let stored = try line(common, ["rev-parse", "--verify", ref + "^{commit}"])
-    guard stored == target else {
-      throw Refusal("I could not make a backup, so I left it alone.")
-    }
-
-    // Nothing may have moved while the backup was being written.
-    _ = try WorktreeGit.run(path, stage, seconds: 150, environment: indexEnvironment)
-    let again = try line(path, ["write-tree"], environment: indexEnvironment)
-    let headAgain = try line(path, ["rev-parse", "--verify", "HEAD^{commit}"])
-    guard again == tree, headAgain == head else {
+    try PrivateRecovery.validate(archive, key: recoveryKey)
+    guard try line(path, ["rev-parse", "--verify", "HEAD^{commit}"]) == head else {
       throw Refusal("It changed while I was backing it up, so I left it alone.")
     }
     try unused(path, inUse, else: "Something started using it, so I left it alone.")
@@ -453,30 +415,89 @@ public enum AutopilotWorktrees {
       branch = String(symbolic.dropFirst("refs/heads/".count))
     }
 
-    // Point of no return: the backup exists and is verified.
+    var recovery = AutopilotRestore(
+      repository: common, path: path, ref: ref, head: head, branch: branch, snapshot: snapshot)
+    recovery.recovery = archive
+    let journal = try Store(root: root)
+    try journal.write(
+      JSONEncoder().encode(recovery),
+      to: URL(fileURLWithPath: archive.directory).appendingPathComponent("restore.json"),
+      limit: 65536)
+    var finalFolder = stat()
+    guard lstat(path, &finalFolder) == 0, finalFolder.st_ino == folder.st_ino,
+      finalFolder.st_dev == folder.st_dev,
+      WorkspaceSafety.canonical(try line(path, ["rev-parse", "--absolute-git-dir"])) == gitDir
+    else {
+      throw Refusal("This copy changed while preserving it, so I left it alone.")
+    }
+    for name in stateFiles {
+      var state = stat()
+      if lstat(gitDir + "/" + name, &state) == 0 || errno != ENOENT {
+        throw Refusal("Git started using this copy while preserving it, so I left it alone.")
+      }
+    }
+    guard authorize() else {
+      throw Refusal("Permissions changed while preserving it, so I left it alone.")
+    }
+    // Point of no return: the encrypted backup is restored, verified and durably discoverable.
     _ = try? WorktreeGit.run(common, ["worktree", "remove", "--force", "--", path], seconds: 120)
     let folderGone = !entryExists(path)
     let registrationGone = !entryExists(gitDir) && !registered(common, path)
-    let recovery = AutopilotRestore(
-      repository: common, path: path, ref: ref, head: head, branch: branch, snapshot: snapshot)
     guard folderGone, registrationGone else {
       return AutopilotReceipt(
         itemID: item.id, kind: .worktree, name: item.name, authority: authority,
         outcome: "failed",
         detail: "I made a backup but could not finish removing the copy.",
-        restore: folderGone ? recovery : nil)
+        restore: recovery)
     }
     var detail = "Removed. Your unsaved changes are backed up, so you can restore it."
     if !snapshot {
-      let saved = dropped > 0 ? "Everything else" : "Everything"
+      let saved = dropped > 0 || !big.isEmpty ? "Everything else" : "Everything"
       detail = "Removed. " + saved + " in it was already saved, so you can restore it."
     }
     if dropped > 0 {
       detail += " Its browser profiles (\(AutopilotPolicy.format(dropped))) weren't kept."
     }
-    return AutopilotReceipt(
+    if !big.isEmpty { detail += " " + AutopilotPolicy.bigFilesGone(big) }
+    let retained = AutopilotDisk.allocatedSize(archive.directory) ?? archive.allocated
+    var receipt = AutopilotReceipt(
       itemID: item.id, kind: .worktree, name: item.name, authority: authority, outcome: "burned",
-      detail: detail, bytes: item.bytes, restore: recovery)
+      detail: detail, bytes: item.bytes > retained ? item.bytes - retained : 0,
+      restore: recovery)
+    receipt.bigFiles = big.isEmpty ? nil : big
+    return receipt
+  }
+
+  /// Whether a project folder (a `.git`) is anywhere inside `folder`, outside rebuildable folders,
+  /// as recovery would find one anywhere else in the copy. A file is no folder. Refuses when it
+  /// can't look everywhere.
+  private static func holdsProject(_ folder: String) throws -> Bool {
+    var info = stat()
+    guard lstat(folder, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return false }
+    var pending: [String] = [folder]
+    var visited = 0
+    while let current = pending.popLast() {
+      let names: [String]
+      do {
+        names = try FileManager.default.contentsOfDirectory(atPath: current)
+      } catch {
+        throw Refusal("I could not look inside every folder, so I left it alone.")
+      }
+      for name in names {
+        visited += 1
+        guard visited <= 1_000_000 else {
+          throw Refusal("It has too many files for me to check, so I left it alone.")
+        }
+        if name.lowercased() == ".git" { return true }
+        if AutopilotDisk.rebuildable[name] != nil { continue }
+        var child = stat()
+        guard lstat(current + "/" + name, &child) == 0 else {
+          throw Refusal("I could not look inside every folder, so I left it alone.")
+        }
+        if child.st_mode & S_IFMT == S_IFDIR { pending.append(current + "/" + name) }
+      }
+    }
+    return false
   }
 
   /// Browser profiles test runs leave in a copy, by path inside it: a Chrome-style profile folder,
@@ -532,6 +553,24 @@ public enum AutopilotWorktrees {
     return result
   }
 
+  /// These exact initialized gitlinks were independently checked above. Preserve all their raw
+  /// contents (including ignored files), while omitting only obsolete administration pointers.
+  private static func submodulePointers(_ root: String, links: [String], depth: Int = 0) throws
+    -> Set<String>
+  {
+    guard depth <= 3 else { throw Refusal("Submodule recovery depth exceeded.") }
+    var result = Set<String>()
+    for link in links where entryExists(root + "/" + link + "/.git") {
+      result.insert(link + "/.git")
+      let nested = try gitlinks(root + "/" + link, environment: [:])
+      result.formUnion(
+        try submodulePointers(root + "/" + link, links: nested, depth: depth + 1).map {
+          link + "/" + $0
+        })
+    }
+    return result
+  }
+
   /// A reason to keep the copy when a checked-out submodule has work that exists only here.
   private static func submoduleRefusal(_ worktree: String, links: [String], depth: Int) throws
     -> String?
@@ -560,98 +599,6 @@ public enum AutopilotWorktrees {
     return nil
   }
 
-  /// Ignored files worth keeping: small, and outside rebuildable folders. Shallow files come
-  /// first so configuration such as `.env` wins over a pile of cache files.
-  private static func ignoredFilesToSave(_ path: String, environment: [String: String]) throws
-    -> [String]
-  {
-    let listing = try git(
-      path, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-      seconds: 60, environment: environment)
-    var candidates: [Candidate] = []
-    var visited = 0
-    for entry in listing.split(separator: "\0").map(String.init) {
-      let isDirectory = entry.hasSuffix("/")
-      let relative = isDirectory ? String(entry.dropLast()) : entry
-      let parts = relative.split(separator: "/").map(String.init)
-      if parts.contains(where: { rebuildable.contains($0) }) { continue }
-      if parts.contains(where: { $0.lowercased() == ".git" }) { continue }
-      if isDirectory {
-        try walk(path, relative, candidates: &candidates, visited: &visited)
-      } else {
-        var info = stat()
-        if lstat(path + "/" + relative, &info) == 0, let found = describe(info, relative) {
-          candidates.append(found)
-        }
-      }
-    }
-    var chosen: [String] = []
-    var total: UInt64 = 0
-    for candidate in candidates.sorted(by: order) {
-      guard candidate.size <= ignoredFileLimit, total + candidate.size <= ignoredTotalLimit else {
-        continue
-      }
-      total += candidate.size
-      chosen.append(candidate.path)
-    }
-    return chosen
-  }
-
-  private static func walk(
-    _ root: String, _ relative: String, candidates: inout [Candidate], visited: inout Int
-  ) throws {
-    var pending = [relative]
-    while let current = pending.popLast() {
-      let names: [String]
-      do {
-        names = try FileManager.default.contentsOfDirectory(atPath: root + "/" + current)
-      } catch {
-        throw Refusal("I could not look inside every folder, so I left it alone.")
-      }
-      for name in names.sorted() {
-        visited += 1
-        guard visited <= walkLimit else {
-          throw Refusal("It has too many extra files for me to back up, so I left it alone.")
-        }
-        if name.lowercased() == ".git" {
-          throw Refusal(
-            "There is another project folder inside it that I can't back up, so I left it alone.")
-        }
-        if rebuildable.contains(name) { continue }
-        let child = current + "/" + name
-        var info = stat()
-        guard lstat(root + "/" + child, &info) == 0 else {
-          throw Refusal("I could not look inside every folder, so I left it alone.")
-        }
-        if info.st_mode & S_IFMT == S_IFDIR {
-          pending.append(child)
-        } else if let found = describe(info, child) {
-          candidates.append(found)
-        }
-      }
-    }
-  }
-
-  /// Regular files and links can be backed up; sockets and the like cannot.
-  private static func describe(_ info: stat, _ relative: String) -> Candidate? {
-    let type = info.st_mode & S_IFMT
-    guard type == S_IFREG || type == S_IFLNK else { return nil }
-    return Candidate(
-      path: relative, size: type == S_IFREG ? UInt64(max(0, info.st_size)) : 0,
-      depth: relative.split(separator: "/").count)
-  }
-
-  private static func order(_ a: Candidate, _ b: Candidate) -> Bool {
-    (a.depth, a.size, a.path) < (b.depth, b.size, b.path)
-  }
-
-  private static func refSuffix(_ id: String) -> String {
-    let raw = id.hasPrefix("worktree:") ? String(id.dropFirst("worktree:".count)) : id
-    let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
-    let clean = String(raw.prefix(16).map { allowed.contains($0) ? $0 : "-" })
-    return clean.isEmpty ? "unnamed" : clean
-  }
-
   private static func entryExists(_ path: String) -> Bool {
     var info = stat()
     return lstat(path, &info) == 0
@@ -673,15 +620,45 @@ public enum AutopilotWorktrees {
 
   /// Recreates the copy at its original path from the safety ref. Local changes come back
   /// uncommitted. Refuses to touch anything that already exists at that path. The ref stays.
-  public static func restore(_ receipt: AutopilotReceipt, protected: ProtectedLocations? = nil)
+  public static func restore(
+    _ receipt: AutopilotReceipt, protected: ProtectedLocations? = nil,
+    recoveryKey: SymmetricKey? = nil
+  )
     throws
   {
     guard let info = receipt.restore else {
       throw StoreError.message("Nothing was saved for this copy, so there is nothing to restore.")
     }
     let protected = protected ?? .limited()
-    if let place = protected.resolution(info.path).place ?? protected.registryPlace(info.repository) {
+    if let place = protected.resolution(info.path).place ?? protected.registryPlace(info.repository)
+    {
       throw StoreError.message(AutopilotDisk.protectedRefusal(place))
+    }
+    if let archive = info.recovery {
+      guard archive.source == info.path else {
+        throw StoreError.message("Recovery path binding changed.")
+      }
+      if receipt.kind == .disk {
+        try PrivateRecovery.restore(archive, to: info.path, key: recoveryKey)
+        return
+      }
+      guard info.ref.hasPrefix(refPrefix),
+        try line(info.repository, ["rev-parse", "--verify", info.ref + "^{commit}"]) == info.head
+      else {
+        throw StoreError.message("Recovery commit binding changed.")
+      }
+      _ = try WorktreeGit.run(
+        info.repository,
+        ["worktree", "add", "--no-checkout", "--detach", "--", info.path, info.head], seconds: 120)
+      // On failure preserve the authenticated archive and partial checkout for explicit recovery.
+      try PrivateRecovery.restore(archive, to: info.path, key: recoveryKey, emptyWorktree: true)
+      _ = try WorktreeGit.run(info.path, ["reset", "--quiet", "--mixed", info.head], seconds: 120)
+      if let branch = info.branch, !checkedOut(info.repository, "refs/heads/" + branch),
+        (try? line(info.repository, ["rev-parse", "--verify", "refs/heads/" + branch])) == info.head
+      {
+        _ = try WorktreeGit.run(info.path, ["symbolic-ref", "HEAD", "refs/heads/" + branch])
+      }
+      return
     }
     guard info.path.hasPrefix("/"), info.ref.hasPrefix(refPrefix) else {
       throw StoreError.message("This backup is not one I made, so I did not restore it.")
@@ -696,7 +673,8 @@ public enum AutopilotWorktrees {
         "I could not tell whether the folder is free, so I did not restore it.")
     }
     let tip = try line(info.repository, ["rev-parse", "--verify", info.ref + "^{commit}"])
-    let base = try info.snapshot
+    let base =
+      try info.snapshot
       ? line(info.repository, ["rev-parse", "--verify", info.ref + "^1"]) : tip
     guard base == info.head else {
       throw StoreError.message("The backup does not match this copy, so I did not restore it.")
@@ -713,16 +691,14 @@ public enum AutopilotWorktrees {
         attach = name
       }
     }
+    let target = info.snapshot ? info.ref : info.head
+    _ = try WorktreeGit.run(
+      info.repository,
+      ["worktree", "add", "--no-checkout", "--detach", "--", info.path, target], seconds: 120)
+    try WorktreeGit.checkout(info.repository, revision: target, to: info.path)
+    _ = try WorktreeGit.run(info.path, ["reset", "--quiet", "--mixed", target], seconds: 120)
     if let name = attach, !info.snapshot {
-      _ = try WorktreeGit.run(
-        info.repository, ["worktree", "add", "--", info.path, name], seconds: 120)
-    } else {
-      // A snapshot is checked out as it is, then HEAD moves back to the saved commit so the
-      // difference becomes uncommitted changes (including deleted and untracked files).
-      _ = try WorktreeGit.run(
-        info.repository,
-        ["worktree", "add", "--detach", "--", info.path, info.snapshot ? info.ref : info.head],
-        seconds: 120)
+      _ = try WorktreeGit.run(info.path, ["symbolic-ref", "HEAD", "refs/heads/" + name])
     }
     do {
       if info.snapshot {

@@ -43,6 +43,9 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
   /// How many files a copy has unsaved, when Git said; the `changes` fact only buckets it. Not a
   /// fact.
   public var unsaved: Int?
+  /// A copy's unsaved files too big to back up, as the refusal that found them named them, for its
+  /// card. Not a fact: the fact is `bigFiles=yes`.
+  public var bigFiles: [AutopilotBigFiles]?
   public init(
     id: String, kind: AutopilotKind, name: String, detail: String = "", path: String? = nil,
     bytes: UInt64 = 0, facts: [String: String], protectedReason: String? = nil,
@@ -69,8 +72,9 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
     revision = Self.revision(id: id, facts: all)
   }
   public static func revision(id: String, facts: [String: String]) -> String {
-    hash(([id] + facts.sorted { $0.key < $1.key }.map { $0.key + "=" + $0.value }).joined(
-      separator: "|"))
+    hash(
+      ([id] + facts.sorted { $0.key < $1.key }.map { $0.key + "=" + $0.value }).joined(
+        separator: "|"))
   }
   public static func hash(_ text: String) -> String {
     SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -114,9 +118,10 @@ public struct AutopilotRule: Codable, Sendable, Identifiable, Equatable {
   }
   public static func key(kind: AutopilotKind, match: [String: [String]]) -> String {
     AutopilotItem.hash(
-      ([kind.rawValue] + match.sorted { $0.key < $1.key }.map {
-        $0.key + "=" + $0.value.sorted().joined(separator: ",")
-      }).joined(separator: "|"))
+      ([kind.rawValue]
+        + match.sorted { $0.key < $1.key }.map {
+          $0.key + "=" + $0.value.sorted().joined(separator: ",")
+        }).joined(separator: "|"))
   }
 }
 
@@ -179,6 +184,9 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
   /// sorted "fact=value" lists, one per distinct mix. A No, and an Undo of BZ's own call, check
   /// that their keeps hold every one of them at the card's age, so nothing on the card burns after.
   public var profiles: [[String]]?
+  /// How much of what it covers is unsaved files too big to back up, which a Yes deletes for good.
+  /// Nil when it covers none.
+  public var bigBytes: UInt64?
   public init(
     kind: AutopilotKind, match: [String: [String]], question: String, why: String,
     examples: [String], count: Int, bytes: UInt64, asked: Date = Date(), source: String = "native"
@@ -205,6 +213,8 @@ public struct AutopilotQuestionRow: Codable, Sendable, Equatable {
   public var subtitle: String?
   public var bytes: UInt64
   public var lastUsed: Date?
+  /// A copy's unsaved files too big to back up: what a Yes deletes.
+  public var bigFiles: [AutopilotBigFiles]?
   public init(title: String, subtitle: String? = nil, bytes: UInt64, lastUsed: Date? = nil) {
     self.title = title
     self.subtitle = subtitle
@@ -280,6 +290,9 @@ public struct AutopilotTell: Codable, Sendable, Identifiable, Equatable {
   public var note: String?
   /// For an Undo that left a note: false until the owner presses OK on it, then true. Nil otherwise.
   public var seen: Bool?
+  /// Big unsaved files its burns deleted for good, from their receipts: Undo can't bring them back,
+  /// and the card says so before it is pressed. Nil when none.
+  public var bigBytes: UInt64?
   public init(
     id: String, questionID: String, ruleID: String, kind: AutopilotKind, count: Int,
     bytes: UInt64, rows: [AutopilotQuestionRow], why: String, date: Date,
@@ -400,8 +413,9 @@ public struct AutopilotRestore: Codable, Sendable, Equatable {
   public var ref: String
   public var head: String
   public var branch: String?
-  /// True when the ref is a snapshot commit on top of `head` holding local changes.
+  /// Local changes exist. Legacy receipts keep them in a snapshot commit; new ones use recovery.
   public var snapshot: Bool
+  public var recovery: PrivateRecovery.Reference?
   public init(
     repository: String, path: String, ref: String, head: String, branch: String?, snapshot: Bool
   ) {
@@ -431,6 +445,11 @@ public struct AutopilotReceipt: Codable, Sendable, Identifiable, Equatable {
   public var eventID: UUID?
   /// The item revision a refusal saw, so an unchanged item is not retried every tick.
   public var revision: String?
+  /// Unsaved files too big to back up: what a refusal found, or what a burn deleted.
+  public var bigFiles: [AutopilotBigFiles]?
+  /// What the copy's unsaved files looked like when a refusal named them
+  /// (`AutopilotPolicy.bigFilesKey`): the list holds while they still do.
+  public var bigKey: String?
   public init(
     id: UUID = UUID(), itemID: String, kind: AutopilotKind, name: String, authority: String,
     outcome: String, detail: String, bytes: UInt64 = 0, date: Date = Date(),

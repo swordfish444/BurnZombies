@@ -404,6 +404,11 @@ private func browserTrailProof() throws {
     AutopilotBrowserTrail.reclaim(elsewhereItem, authority: "starter:test", folder: folder.path)
       .outcome, "refused", "only the temp folder it was found in")
 
+  let withdrawn = AutopilotBrowserTrail.reclaim(
+    item, authority: "starter:starter-browser-trail", folder: folder.path,
+    inUse: { $0.hasSuffix("-busy") ? 1 : 0 }, authorize: { false })
+  equal(withdrawn.outcome, "refused", "look-only or a new keep since the decision")
+  check(fm.fileExists(atPath: dead), "nothing removed without authority")
   let receipt = AutopilotBrowserTrail.reclaim(
     item, authority: "starter:starter-browser-trail", folder: folder.path,
     inUse: { $0.hasSuffix("-busy") ? 1 : 0 })

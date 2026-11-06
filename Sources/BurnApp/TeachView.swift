@@ -233,9 +233,13 @@ struct TeachView: View {
           }
           .transition(.opacity)
         }
+        // What a Yes deletes for good is said before anything is pressed, details open or not.
+        if let cost = card.cost { costLine(cost) }
         if listed.isEmpty {
-          Text(card.note).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
-            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+          if card.cost == nil {
+            Text(card.note).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
+              .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+          }
         } else {
           Button {
             toggleDetails(question)
@@ -275,7 +279,8 @@ struct TeachView: View {
         hover = nil
       }
       let filters = AutopilotPolicy.detailFilters(listed).contains(where: \.risky)
-      tips.start(kind: question.kind, filters: filters)
+      let bigFiles: Bool = AutopilotPolicy.bigFilesCost(question) != nil
+      tips.start(kind: question.kind, filters: filters, bigFiles: bigFiles)
     }
     .onChange(of: place, initial: true) { _, now in tips.at(now) }
     .onDisappear { tips.stop() }
@@ -332,6 +337,17 @@ struct TeachView: View {
     } else {
       model.unkeep(detail.entry, finished: undo)
     }
+  }
+
+  /// What a Yes deletes for good, which Undo can't bring back: amber, like a card's cautions.
+  private func costLine(_ text: String) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
+      Text(text).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+    }
+    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.orange)
+    .frame(maxWidth: 540)
+    .accessibilityIdentifier("teach-cost")
   }
 
   private func headline(_ text: String) -> some View {
@@ -420,7 +436,9 @@ struct TeachView: View {
     let working = model.tellActions[tell.id] == .undo
     let undoing = working || tell.state == "undoing"
     let rows = AutopilotText.tellRows(tell, now: Date(), calendar: .current)
-    let cantComeBack: String? = undoing ? nil : AutopilotText.tellCantComeBack(tell.kind)
+    // Before Undo is pressed: what it can't bring back, such as big unsaved files a burn deleted.
+    let gone: String? = AutopilotPolicy.bigFilesTold(tell) ?? AutopilotText.tellCantComeBack(tell.kind)
+    let cantComeBack: String? = undoing ? nil : gone
     return TeachCardFrame {
       VStack(spacing: 8) {
         Text(AutopilotLook.emoji(tell.kind)).font(.system(size: 34))
@@ -662,6 +680,17 @@ private struct TeachRow: View {
   let row: AutopilotCardRow
 
   var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      line
+      // A copy's big unsaved files: what a Yes deletes, or what a burn deleted, for good.
+      ForEach(Array(row.details.enumerated()), id: \.offset) { _, detail in
+        Text(detail).font(.system(size: 12.5)).foregroundStyle(Color.orange.opacity(0.85))
+          .lineLimit(1).truncationMode(.middle).accessibilityIdentifier("teach-row-detail")
+      }
+    }.padding(.vertical, 7).padding(.horizontal, 2)
+  }
+
+  private var line: some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       // A long title gives way, never the project beside it or the time on the right.
       Text(row.title).font(.system(size: 15, weight: .bold)).lineLimit(1).truncationMode(.tail)
@@ -674,6 +703,6 @@ private struct TeachRow: View {
         Text(row.when).font(.system(size: 14)).foregroundStyle(BurnTheme.cream)
           .lineLimit(1).fixedSize()
       }
-    }.padding(.vertical, 7).padding(.horizontal, 2)
+    }
   }
 }
