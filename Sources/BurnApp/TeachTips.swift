@@ -15,8 +15,8 @@ import SwiftUI
 
   @Published private(set) var tip: AutopilotTip?
   @Published private(set) var visible = false
-  /// How long the tip on screen has shown, for its timer line.
-  @Published private(set) var held: TimeInterval = 0
+  /// How long the tip on screen has shown. Nothing on screen counts it down: the tip just changes.
+  private var held: TimeInterval = 0
   /// The pointer rests on the tip: its clock stands still.
   var paused = false
   private var deck = AutopilotTipDeck(tips: [])
@@ -118,8 +118,8 @@ import SwiftUI
   }
 }
 
-/// The tip on screen, top left above the question: a bulb, TIP, one line, and a thin line under it
-/// that shrinks while it shows. Pointing at it pauses it and offers Next.
+/// The tip on screen, top left above the question: a bulb, TIP and one line. Pointing at it pauses
+/// it and offers Next.
 struct TeachTipsView: View {
   @ObservedObject var model: TeachTipsModel
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -134,12 +134,6 @@ struct TeachTipsView: View {
         Text("TIP").font(BurnTheme.display(13)).tracking(1.1).foregroundStyle(BurnTheme.orange)
         Text(tip.text).font(.system(size: 12.5)).foregroundStyle(BurnTheme.cream.opacity(0.84))
           .lineLimit(1).truncationMode(.tail)
-          .overlay(alignment: .bottomLeading) {
-            Capsule().fill(BurnTheme.orange.opacity(0.6)).frame(height: 1.5)
-              .scaleEffect(x: max(0, 1 - model.held / TeachTipsModel.shownFor), anchor: .leading)
-              .animation(.linear(duration: 0.1), value: model.held)
-              .offset(y: 4)
-          }
         Button {
           model.next()
         } label: {
