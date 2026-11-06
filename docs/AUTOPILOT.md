@@ -6,7 +6,7 @@ BurnZombies cleans up on its own. It looks for three kinds of leftovers right aw
 | --- | --- | --- |
 | **Zombies** | Programs whose app or chat is gone: test runners, build watchers, robot browsers, dev servers from finished chats. | A graceful stop (SIGTERM) for the program and everything it started. Never a force-kill. |
 | **Old copies** | Git worktrees you or your agents made and stopped using. | Every commit and local change is saved in a restore point inside the repository, then the folder is removed. **Restore** puts it back. |
-| **Junk folders** | Rebuildable output: `node_modules`, build folders, Xcode DerivedData, tool caches, old Playwright browser builds (never the newest one, never a profile), and what robot browsers left in your temp folder. | The folder is deleted. Your tools rebuild it when needed. |
+| **Junk folders** | Rebuildable output: `node_modules`, build folders, Xcode DerivedData, tool caches, Playwright browser builds that no installed Playwright uses (never a profile), and what robot browsers left in your temp folder. | The folder is deleted. Your tools rebuild it when needed. |
 
 ## How it decides
 

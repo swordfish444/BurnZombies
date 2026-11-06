@@ -7,9 +7,13 @@ import Foundation
 /// tool deletes each one on a clean close, so a leftover nothing holds is junk. All of them make
 /// one item; each folder is checked again right before it is removed.
 public enum AutopilotBrowserTrail {
-  /// Playwright's, Puppeteer's and chromedriver's names for them.
-  public static let prefixes =
-    RobotBrowser.throwawayPrefixes + ["playwright-artifacts-"]
+  /// Playwright's and Puppeteer's names for them. Chromium's own `.org.chromium.Chromium.` names
+  /// are left out: a running Chromium keeps its lock socket in one.
+  public static let prefixes = [
+    "playwright_chromiumdev_profile-", "playwright_firefoxdev_profile-",
+    "playwright_webkitdev_profile-", "puppeteer_dev_chrome_profile-",
+    "puppeteer_dev_firefox_profile-", "puppeteer_dev_profile-", "playwright-artifacts-",
+  ]
   /// A folder anything wrote to within this long may still be in use.
   public static let settle: TimeInterval = 3600
   /// Leftovers counted at most, so one look stays cheap.
@@ -21,6 +25,44 @@ public enum AutopilotBrowserTrail {
     public var changed: Date
   }
 
+  /// What running browsers still own, however quiet: each one's profile, named in its own
+  /// arguments, and the recordings folder its driver made as it started it, found by when each
+  /// browser started.
+  public struct Owners: Sendable {
+    public var profiles: Set<String>
+    public var starts: [Date]
+    public init(profiles: Set<String> = [], starts: [Date] = []) {
+      self.profiles = profiles
+      self.starts = starts
+    }
+
+    /// Every running browser of this user, from a fresh look at the process table. A browser
+    /// whose arguments can't be read still counts by when it started.
+    public static func live() -> Owners {
+      let native = Native()
+      var owners = Owners()
+      for o in native.scan().observations
+      where o.uid == getuid() && !o.zombie && RobotBrowser.isBrowser(o.executable) {
+        let arguments = native.arguments(o.identity.pid)
+        if arguments?.contains(where: { $0.hasPrefix("--type=") }) == true { continue }
+        if let profile = arguments.flatMap(RobotBrowser.profile) {
+          owners.profiles.insert(WorkspaceSafety.canonical(profile))
+        }
+        owners.starts.append(Date(timeIntervalSince1970: TimeInterval(o.identity.seconds)))
+      }
+      return owners
+    }
+
+    /// Playwright makes a browser's recordings folder moments before it starts the browser.
+    func owns(_ path: String, born: Date) -> Bool {
+      if profiles.contains(path) { return true }
+      guard (path as NSString).lastPathComponent.hasPrefix("playwright-artifacts-") else {
+        return false
+      }
+      return starts.contains { born >= $0.addingTimeInterval(-30) && born <= $0.addingTimeInterval(2) }
+    }
+  }
+
   /// This user's own temp folder, where macOS points `TMPDIR`. Canonical, or nil.
   public static func temporaryFolder() -> String? {
     var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
@@ -30,18 +72,22 @@ public enum AutopilotBrowserTrail {
   }
 
   /// Robot-browser folders directly in `folder` that are real folders of this user, untouched
-  /// for an hour and not locked by a running browser. Sized with `sizer`.
+  /// for an hour, not locked by a running browser and not owned by one (`owners`, by default a
+  /// fresh look). Sized with `sizer`.
   public static func leftovers(
-    in folder: String, now: Date = Date(),
+    in folder: String, now: Date = Date(), owners: Owners? = nil,
     sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) }
   ) -> [Leftover] {
     let base = WorkspaceSafety.canonical(folder)
+    let owners = owners ?? .live()
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: base) else { return [] }
     var found: [Leftover] = []
     for name in names.sorted() where prefixes.contains(where: name.hasPrefix) {
       guard found.count < limit else { break }
       let path = base + "/" + name
-      guard let changed = settled(path, now: now), let bytes = sizer(path) else { continue }
+      guard let changed = settled(path, now: now, owners: owners), let bytes = sizer(path) else {
+        continue
+      }
       found.append(Leftover(path: path, bytes: bytes, changed: changed))
     }
     return found
@@ -50,9 +96,9 @@ public enum AutopilotBrowserTrail {
   /// One item for all the leftovers in `folder`, or nil below `minimumBytes`.
   public static func item(
     in folder: String, now: Date = Date(), minimumBytes: UInt64 = 100_000_000,
-    sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) }
+    owners: Owners? = nil, sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) }
   ) -> AutopilotItem? {
-    let found = leftovers(in: folder, now: now, sizer: sizer)
+    let found = leftovers(in: folder, now: now, owners: owners, sizer: sizer)
     let bytes = found.reduce(0) { $0 + $1.bytes }
     guard !found.isEmpty, bytes >= minimumBytes, let newest = found.map(\.changed).max() else {
       return nil
@@ -77,7 +123,7 @@ public enum AutopilotBrowserTrail {
   /// `authorize` says, right before the first removal, whether the decision to burn still stands.
   public static func reclaim(
     _ item: AutopilotItem, authority: String, folder: String? = nil, now: Date = Date(),
-    inUse: ((String) -> Int32)? = nil, authorize: () -> Bool = { true }
+    owners: Owners? = nil, inUse: ((String) -> Int32)? = nil, authorize: () -> Bool = { true }
   ) -> AutopilotReceipt {
     func refuse(_ reason: String) -> AutopilotReceipt {
       .refused(item, authority: authority, reason)
@@ -88,7 +134,8 @@ public enum AutopilotBrowserTrail {
     guard item.path == base else {
       return refuse("That isn't your temp folder anymore, so I left it alone.")
     }
-    let found = leftovers(in: base, now: now)
+    let owners = owners ?? .live()
+    let found = leftovers(in: base, now: now, owners: owners)
     guard !found.isEmpty else { return refuse("Nothing robot browsers left is old enough now.") }
     let snapshot = inUse == nil ? WorktreeConsumerSnapshot(roots: [base]) : nil
     let using = inUse ?? { snapshot!.state($0) }
@@ -102,7 +149,7 @@ public enum AutopilotBrowserTrail {
     for leftover in found {
       // One last look at each folder right before it goes.
       let use = using(leftover.path)
-      guard use == 0, settled(leftover.path, now: now) != nil else {
+      guard use == 0, settled(leftover.path, now: now, owners: owners) != nil else {
         if use == 0 || use == 1 { held += 1 } else { unchecked += 1 }
         continue
       }
@@ -133,12 +180,17 @@ public enum AutopilotBrowserTrail {
   }
 
   /// When the folder last changed, if it is a real folder of this user whose contents nothing
-  /// changed for an hour and no running browser has locked; nil otherwise.
-  static func settled(_ path: String, now: Date) -> Date? {
+  /// changed for an hour, that no running browser has locked or owns; nil otherwise.
+  static func settled(_ path: String, now: Date, owners: Owners) -> Date? {
     var info = stat()
     guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(),
-      WorkspaceSafety.canonical(path) == path, !locked(path),
-      let changed = newestChange(path), now.timeIntervalSince(changed) >= settle
+      WorkspaceSafety.canonical(path) == path, !locked(path)
+    else { return nil }
+    let born = Date(
+      timeIntervalSince1970: TimeInterval(info.st_birthtimespec.tv_sec)
+        + TimeInterval(info.st_birthtimespec.tv_nsec) / 1e9)
+    guard !owners.owns(path, born: born), let changed = newestChange(path),
+      now.timeIntervalSince(changed) >= settle
     else { return nil }
     return changed
   }

@@ -39,18 +39,15 @@ public struct RobotBrowser: Equatable, Sendable {
   /// The robot browser `arguments` (argv, the program first) describe, or nil for anything else:
   /// another program, a browser's helper, or a browser opened by a person. A control pipe is
   /// never opened by hand; a debugging port is, so a port counts only with a sign of automation.
+  /// A browser with both is a port browser: whoever uses the port can still drive it.
   public static func fingerprint(executable: String, arguments: [String]) -> RobotBrowser? {
     guard isBrowser(executable) else { return nil }
     var pipe = false
     var port = false
     var automated = false
     var headless = false
-    var profile: String?
-    var index = 1
-    while index < arguments.count {
-      let argument = arguments[index]
+    for argument in arguments.dropFirst() {
       let flag = argument.lowercased()
-      index += 1
       if flag.hasPrefix("--type=") { return nil }
       switch flag {
       case "--remote-debugging-pipe", "--inspector-pipe", "-juggler-pipe", "--juggler-pipe":
@@ -62,11 +59,6 @@ public struct RobotBrowser: Equatable, Sendable {
         automated = true
       case "-headless", "--headless":
         headless = true
-      case "-profile", "--profile":
-        if index < arguments.count {
-          profile = arguments[index]
-          index += 1
-        }
       default:
         if flag.hasPrefix("--remote-debugging-pipe=") {
           pipe = true
@@ -74,17 +66,33 @@ public struct RobotBrowser: Equatable, Sendable {
           port = true
         } else if flag.hasPrefix("--headless=") {
           headless = true
-        } else if flag.hasPrefix("--user-data-dir=") {
-          profile = String(argument.dropFirst("--user-data-dir=".count))
         }
       }
     }
-    let throwaway = profile.map(isThrowaway) ?? false
-    if pipe {
-      return RobotBrowser(control: .pipe, throwawayProfile: throwaway, headless: headless)
+    let throwaway = profile(arguments).map(isThrowaway) ?? false
+    if port, pipe || automated || headless || throwaway {
+      return RobotBrowser(control: .port, throwawayProfile: throwaway, headless: headless)
     }
-    guard port, automated || headless || throwaway else { return nil }
-    return RobotBrowser(control: .port, throwawayProfile: throwaway, headless: headless)
+    guard pipe else { return nil }
+    return RobotBrowser(control: .pipe, throwawayProfile: throwaway, headless: headless)
+  }
+
+  /// The profile folder a browser's arguments name: Chromium's and WebKit's `--user-data-dir=`,
+  /// Firefox's `-profile` and the folder after it.
+  public static func profile(_ arguments: [String]) -> String? {
+    var found: String?
+    var index = 1
+    while index < arguments.count {
+      let argument = arguments[index]
+      index += 1
+      if argument.hasPrefix("--user-data-dir=") {
+        found = String(argument.dropFirst("--user-data-dir=".count))
+      } else if ["-profile", "--profile"].contains(argument.lowercased()), index < arguments.count {
+        found = arguments[index]
+        index += 1
+      }
+    }
+    return found.flatMap { $0.isEmpty ? nil : $0 }
   }
 
   /// Whether a profile folder is one its tool made for a single run.

@@ -104,12 +104,12 @@ int bz_command_arguments(int32_t pid, char *out, int capacity) {
 int bz_listen_peers(int32_t pid) {
     struct proc_fdinfo f[2048];
     int n = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, f, sizeof(f));
-    if (n < 0 || n >= (int)sizeof(f)) return -1;
+    if (n <= 0 || n >= (int)sizeof(f)) return -1;
     int ports[64], listening = 0, established[2048], open = 0;
     for (int i = 0; i < n / (int)sizeof(f[0]); i++) {
         if (f[i].proc_fdtype != PROX_FDTYPE_SOCKET) continue;
         struct socket_fdinfo s;
-        if (proc_pidfdinfo(pid, f[i].proc_fd, PROC_PIDFDSOCKETINFO, &s, sizeof(s)) != (int)sizeof(s)) continue;
+        if (proc_pidfdinfo(pid, f[i].proc_fd, PROC_PIDFDSOCKETINFO, &s, sizeof(s)) != (int)sizeof(s)) return -1;
         if (s.psi.soi_kind != SOCKINFO_TCP) continue;
         int state = s.psi.soi_proto.pri_tcp.tcpsi_state;
         int port = s.psi.soi_proto.pri_tcp.tcpsi_ini.insi_lport;

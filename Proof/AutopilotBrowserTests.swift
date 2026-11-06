@@ -45,6 +45,8 @@ private let headlessShell = [
   "--headless", "--remote-debugging-pipe=cbor", "--no-startup-window",
   "--user-data-dir=/var/folders/86/abc/T/playwright_chromiumdev_profile-Q9",
 ]
+/// Playwright refuses a pipe in `args` but passes a port, so Lighthouse or another tool can attach.
+private let pipeAndPort = playwrightPipe + ["--remote-debugging-port=9222"]
 /// Someone debugging their own Chrome by hand: a port, but no sign of automation.
 private let debuggingByHand = [chrome, "--remote-debugging-port=9222", "--user-data-dir=/Users/u/chrome-debug"]
 private let ownChrome = [chrome]
@@ -102,6 +104,13 @@ func robotBrowserPolicyProof() throws {
   equal(fingerprint(firefoxPipe)?.throwawayProfile, true, "Firefox names its profile apart")
   equal(fingerprint(webkitPipe)?.control, .pipe, "Playwright's WebKit")
   equal(fingerprint(headlessShell)?.control, .pipe, "headless shell, pipe with a format")
+  equal(fingerprint(pipeAndPort)?.control, .port, "a port anyone can attach to beats the pipe")
+  equal(
+    RobotBrowser.profile(firefoxPipe), "/var/folders/86/abc/T/playwright_firefoxdev_profile-9QzY")
+  equal(
+    RobotBrowser.profile(playwrightPipe),
+    "/var/folders/86/abc/T/playwright_chromiumdev_profile-Xk2a9Q")
+  isNil(RobotBrowser.profile(ownChrome))
   isNil(fingerprint(debuggingByHand))
   isNil(fingerprint(ownChrome))
   isNil(fingerprint([chrome, "--flag-switches-begin", "--flag-switches-end"]))
@@ -166,24 +175,40 @@ func robotBrowserPolicyProof() throws {
   }
 
   // A port browser is abandoned only with a throwaway profile and nothing connected; a chat
-  // working in its folder could still connect, so it protects it.
+  // working in its folder could still connect, so it protects it. One something can still drive
+  // keeps the app rail: in Applications it isn't an item at all.
   func portItem(_ arguments: [String], clients: Int, threads: [AgentThread] = []) -> AutopilotItem? {
     AutopilotProcesses.items(
       catalog([seen(800, arguments[0], age: 3 * 3600)]), threads: threads, protectedPIDs: [],
-      probe: probe(arguments: [800: arguments], listening: [800], clients: [800: clients])
+      probe: probe(arguments: [800: arguments], listening: [800], clients: [800: clients]),
+      home: "/Users/u"
     ).first
   }
   equal(portItem(puppeteerPort, clients: 0)?.facts["robot"], "abandoned")
   equal(portItem(chromedriver, clients: 0)?.facts["robot"], "abandoned")
   equal(portItem(puppeteerPort, clients: 1)?.facts["robot"], "driven", "a client is attached")
+  isNil(portItem(chromedriver, clients: 1))
   let kept = [chrome, "--headless", "--remote-debugging-port=9223", "--user-data-dir=/Users/u/.codex/passive"]
-  equal(portItem(kept, clients: 0)?.facts["robot"], "driven", "a profile someone keeps")
+  isNil(portItem(kept, clients: 0))
+  isNil(portItem(pipeAndPort, clients: 1))
+  equal(portItem(pipeAndPort, clients: 0)?.facts["robot"], "abandoned")
+  equal(
+    portItem(pipeAndPort, clients: 0, threads: [thread(true)])?.protectedReason,
+    "A chat is still working in this project.", "a chat could attach to its port")
   equal(
     portItem(puppeteerPort, clients: 0, threads: [thread(true)])?.protectedReason,
     "A chat is still working in this project.")
+  isNil(portItem(chromedriver, clients: 0)?.protectedReason)
   if let port = portItem(puppeteerPort, clients: 0) {
     equal(AutopilotPolicy.decide(port, memory: AutopilotMemory()).authority, "starter:starter-robot-browsers")
   }
+  equal(
+    AutopilotProcesses.items(
+      catalog([seen(810, chrome, age: 3 * 3600)]), threads: [], protectedPIDs: [],
+      probe: AutopilotProcessProbe(
+        listening: { _ in true }, agent: { _ in "none" }, cwd: { _ in nil }, alive: { _ in false },
+        arguments: { _ in chromedriver }, clients: { _ in nil })
+    ).count, 0, "a port it can't check for clients is still driven")
 
   // The owner's own browser is never an item, and a robot's tree may hold nothing else bundled.
   // Programs with no robot browser keep exactly the facts they had.
@@ -275,13 +300,17 @@ func robotBrowserPolicyProof() throws {
   if let robot { equal(AutopilotPolicy.decide(robot, memory: off).status, .unsure, "switched off") }
   equal(AutopilotPolicy.decide(trail, memory: off).status, .unsure)
 
-  // Playwright's downloads: only browser builds, and never the newest of each kind.
+  // Playwright's downloads: only browser builds no installed Playwright uses.
   equal(
-    AutopilotDisk.playwrightBuilds([
-      "chromium-1200", "chromium-1228", "chromium_headless_shell-1200",
-      "chromium_headless_shell-1228", "ffmpeg-1011", "ffmpeg-1013", "mcp-chrome", "mcp-firefox-2b",
-      "daemon", "b", "cli-update-check.json", ".links", "webkit-2215",
-    ]), ["chromium-1200", "chromium_headless_shell-1200", "ffmpeg-1011"])
+    AutopilotDisk.playwrightBuilds(
+      [
+        "chromium-1200", "chromium-1228", "chromium_headless_shell-1200",
+        "chromium_headless_shell-1228", "ffmpeg-1011", "ffmpeg-1013", "mcp-chrome",
+        "mcp-firefox-2b", "daemon", "b", "cli-update-check.json", ".links", "webkit-2215",
+        "chromium_tip_of_tree-1405",
+      ],
+      used: ["chromium-1228", "chromium_headless_shell-1228", "ffmpeg-1011", "webkit-2215"]),
+    ["chromium-1200", "chromium_headless_shell-1200", "ffmpeg-1013", "chromium_tip_of_tree-1405"])
   try playwrightCacheProof()
   try browserTrailProof()
 }
@@ -303,30 +332,55 @@ private func age(_ path: String, by seconds: TimeInterval) {
   }
 }
 
+/// A Playwright package as an install leaves it: its `browsers.json`, registered in a cache's
+/// `.links` the way Playwright registers every package that installs browsers.
+private func playwrightPackage(_ folder: String, revisions: [String: String], linkedIn cache: String)
+  throws
+{
+  let fm = FileManager.default
+  try fm.createDirectory(atPath: folder, withIntermediateDirectories: true)
+  let browsers = revisions.keys.sorted().map { ["name": $0, "revision": revisions[$0]!] }
+  try JSONSerialization.data(withJSONObject: ["browsers": browsers]).write(
+    to: URL(fileURLWithPath: folder + "/browsers.json"))
+  try fm.createDirectory(atPath: cache + "/.links", withIntermediateDirectories: true)
+  try folder.write(
+    toFile: cache + "/.links/" + AutopilotItem.hash(folder), atomically: true, encoding: .utf8)
+}
+
 private func playwrightCacheProof() throws {
   let home = FileManager.default.temporaryDirectory.appendingPathComponent(
     "bz-playwright-" + UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: home) }
-  let library = home.appendingPathComponent("Library/Caches/ms-playwright")
-  let dotCache = home.appendingPathComponent(".cache/ms-playwright")
+  let fm = FileManager.default
+  let canonical = WorkspaceSafety.canonical(
+    { try? fm.createDirectory(at: home, withIntermediateDirectories: true); return home.path }())
+  let library = canonical + "/Library/Caches/ms-playwright"
+  let dotCache = canonical + "/.cache/ms-playwright"
   for folder in [
-    library.appendingPathComponent("chromium-1200"), library.appendingPathComponent("chromium-1228"),
-    library.appendingPathComponent("mcp-chrome"), library.appendingPathComponent("daemon"),
-    dotCache.appendingPathComponent("chromium-1100"), dotCache.appendingPathComponent("chromium-1200"),
+    library + "/chromium-1200", library + "/chromium-1228", library + "/mcp-chrome",
+    library + "/daemon", dotCache + "/chromium-1100", dotCache + "/chromium-1200",
   ] {
-    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    try Data(count: 4096).write(to: folder.appendingPathComponent("payload"))
+    try fm.createDirectory(atPath: folder, withIntermediateDirectories: true)
+    try Data(count: 4096).write(to: URL(fileURLWithPath: folder + "/payload"))
   }
-  let canonical = WorkspaceSafety.canonical(home.path)
+  // A project uses 1228; another, since removed, used 1200. The other cache's package uses 1200.
+  try playwrightPackage(
+    canonical + "/web/node_modules/playwright-core",
+    revisions: ["chromium": "1228", "chromium-headless-shell": "1228"], linkedIn: library)
+  try "/nowhere/node_modules/playwright-core".write(
+    toFile: library + "/.links/gone", atomically: true, encoding: .utf8)
+  try playwrightPackage(
+    canonical + "/api/node_modules/playwright-core", revisions: ["chromium": "1200"],
+    linkedIn: dotCache)
+  equal(
+    AutopilotDisk.playwrightUsed(library),
+    ["chromium-1228", "chromium_headless_shell-1228"], "what installed Playwrights use")
   let items = AutopilotDisk.items(
     worktrees: [], home: home.path, caches: true, mains: false, sizer: { _ in 200_000_000 })
   let offered = items.compactMap(\.path).filter { $0.contains("ms-playwright") }.sorted()
   equal(
-    offered,
-    [
-      canonical + "/.cache/ms-playwright/chromium-1100",
-      canonical + "/Library/Caches/ms-playwright/chromium-1200",
-    ], "old builds only, in both places Playwright keeps them")
+    offered, [dotCache + "/chromium-1100", library + "/chromium-1200"],
+    "builds no installed Playwright uses, in both places Playwright keeps them")
 
   func reclaim(_ path: String) -> AutopilotReceipt {
     AutopilotDisk.reclaim(
@@ -336,15 +390,29 @@ private func playwrightCacheProof() throws {
         facts: ["folder": "package-cache", "home": "global-cache", "stale": "month"]),
       authority: "starter:test", home: home.path, inUse: { _ in 0 })
   }
-  let newest = reclaim(canonical + "/Library/Caches/ms-playwright/chromium-1228")
-  equal(newest.outcome, "refused", "the newest build is the one in use")
-  check(FileManager.default.fileExists(atPath: canonical + "/Library/Caches/ms-playwright/chromium-1228"))
-  let profile = reclaim(canonical + "/Library/Caches/ms-playwright/mcp-chrome")
+  let used = reclaim(library + "/chromium-1228")
+  equal(used.outcome, "refused", "a build an installed Playwright uses")
+  check(fm.fileExists(atPath: library + "/chromium-1228"))
+  let profile = reclaim(library + "/mcp-chrome")
   equal(profile.outcome, "refused", "an agent's browser profile holds its logins")
-  check(FileManager.default.fileExists(atPath: canonical + "/Library/Caches/ms-playwright/mcp-chrome"))
-  let old = reclaim(canonical + "/.cache/ms-playwright/chromium-1100")
+  check(fm.fileExists(atPath: library + "/mcp-chrome"))
+  let old = reclaim(dotCache + "/chromium-1100")
   equal(old.outcome, "burned", old.detail)
-  checkFalse(FileManager.default.fileExists(atPath: canonical + "/.cache/ms-playwright/chromium-1100"))
+  checkFalse(fm.fileExists(atPath: dotCache + "/chromium-1100"))
+
+  // When Playwright's record can't be read, nothing in that cache is offered.
+  try "{ not json".write(
+    toFile: canonical + "/api/node_modules/playwright-core/browsers.json", atomically: true,
+    encoding: .utf8)
+  isNil(AutopilotDisk.playwrightUsed(dotCache))
+  try fm.removeItem(atPath: library + "/.links")
+  isNil(AutopilotDisk.playwrightUsed(library))
+  let unread = AutopilotDisk.items(
+    worktrees: [], home: home.path, caches: true, mains: false, sizer: { _ in 200_000_000 })
+  checkFalse(
+    unread.contains { ($0.path ?? "").contains("ms-playwright") },
+    "no record, no Playwright folder offered")
+  equal(reclaim(library + "/chromium-1200").outcome, "refused")
 }
 
 private func browserTrailProof() throws {
@@ -371,16 +439,21 @@ private func browserTrailProof() throws {
   let stale = try make("playwright_chromiumdev_profile-stale")
   try fm.createSymbolicLink(atPath: stale + "/SingletonLock", withDestinationPath: "host-999999")
   let unrelated = try make("my-notes")
+  let lockSocket = try make(".org.chromium.Chromium.aB3dEf", files: ["SingletonCookie"])
   let elsewhere = try make("elsewhere-target")
   try fm.createSymbolicLink(
     atPath: folder.appendingPathComponent("playwright_chromiumdev_profile-link").path,
     withDestinationPath: elsewhere)
-  for path in [dead, recording, puppeteer, busy, live, stale, unrelated, elsewhere] {
+  for path in [dead, recording, puppeteer, busy, live, stale, unrelated, elsewhere, lockSocket] {
     age(path, by: 3 * 3600)
   }
 
   let base = WorkspaceSafety.canonical(folder.path)
-  let found = AutopilotBrowserTrail.leftovers(in: folder.path).map { ($0.path as NSString).lastPathComponent }
+  // Browsers running on this Mac must not change what this fixture finds.
+  let nobody = AutopilotBrowserTrail.Owners()
+  let found = AutopilotBrowserTrail.leftovers(in: folder.path, owners: nobody).map {
+    ($0.path as NSString).lastPathComponent
+  }
   equal(
     found.sorted(),
     [
@@ -388,36 +461,57 @@ private func browserTrailProof() throws {
       "playwright_chromiumdev_profile-old1", "playwright_chromiumdev_profile-stale",
       "puppeteer_dev_chrome_profile-old3",
     ], "old, unlocked, real folders with a robot browser's name")
-  guard let item = AutopilotBrowserTrail.item(in: folder.path, minimumBytes: 1) else {
+  // A running browser's own profile, and the recordings folder made as it started, stay even
+  // when nothing in them is open or locked.
+  // Backdating a folder's changes moves its creation back too, so the browser "started" just
+  // after the recordings folder was made, whenever that now reads.
+  var recordingInfo = stat()
+  _ = lstat(recording, &recordingInfo)
+  let recordingMade = Date(
+    timeIntervalSince1970: TimeInterval(recordingInfo.st_birthtimespec.tv_sec))
+  let owned = AutopilotBrowserTrail.leftovers(
+    in: folder.path,
+    owners: .init(
+      profiles: [WorkspaceSafety.canonical(dead)], starts: [recordingMade.addingTimeInterval(1)])
+  ).map { ($0.path as NSString).lastPathComponent }.sorted()
+  equal(
+    owned,
+    [
+      "playwright_chromiumdev_profile-busy", "playwright_chromiumdev_profile-stale",
+      "puppeteer_dev_chrome_profile-old3",
+    ], "what running browsers own")
+  guard let item = AutopilotBrowserTrail.item(in: folder.path, minimumBytes: 1, owners: nobody)
+  else {
     failTest("leftovers make one item")
     return
   }
   equal(item.facts["folder"], "browser-temp")
   equal(item.path, base)
   check(item.bytes >= 5 * (64 << 10), "sized: \(item.bytes)")
-  isNil(AutopilotBrowserTrail.item(in: folder.path, minimumBytes: 1 << 40))
+  isNil(AutopilotBrowserTrail.item(in: folder.path, minimumBytes: 1 << 40, owners: nobody))
 
   let elsewhereItem = AutopilotItem(
     id: item.id, kind: .disk, name: item.name, path: "/private/tmp", bytes: item.bytes,
     facts: item.facts)
   equal(
-    AutopilotBrowserTrail.reclaim(elsewhereItem, authority: "starter:test", folder: folder.path)
-      .outcome, "refused", "only the temp folder it was found in")
+    AutopilotBrowserTrail.reclaim(
+      elsewhereItem, authority: "starter:test", folder: folder.path, owners: nobody
+    ).outcome, "refused", "only the temp folder it was found in")
 
   let withdrawn = AutopilotBrowserTrail.reclaim(
-    item, authority: "starter:starter-browser-trail", folder: folder.path,
+    item, authority: "starter:starter-browser-trail", folder: folder.path, owners: nobody,
     inUse: { $0.hasSuffix("-busy") ? 1 : 0 }, authorize: { false })
   equal(withdrawn.outcome, "refused", "look-only or a new keep since the decision")
   check(fm.fileExists(atPath: dead), "nothing removed without authority")
   let receipt = AutopilotBrowserTrail.reclaim(
-    item, authority: "starter:starter-browser-trail", folder: folder.path,
+    item, authority: "starter:starter-browser-trail", folder: folder.path, owners: nobody,
     inUse: { $0.hasSuffix("-busy") ? 1 : 0 })
   equal(receipt.outcome, "burned", receipt.detail)
   check(receipt.bytes >= 4 * (64 << 10), "credited: \(receipt.bytes)")
   for gone in [dead, recording, puppeteer, stale] {
     checkFalse(fm.fileExists(atPath: gone), "removed " + gone)
   }
-  for kept in [busy, recent, live, unrelated, elsewhere] {
+  for kept in [busy, recent, live, unrelated, elsewhere, lockSocket] {
     check(fm.fileExists(atPath: kept), "kept " + kept)
   }
   check(

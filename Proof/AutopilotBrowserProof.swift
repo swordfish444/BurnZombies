@@ -213,22 +213,22 @@ func autopilotBrowserProof() async throws {
   _ = await monitor.refresh()
   items = AutopilotProcesses.items(
     await monitor.autopilotRecords(), threads: [], protectedPIDs: own, now: later)
-  let attached = items.first { $0.pid == ported }
-  equal(attached?.facts["robot"], "driven", "a client is connected")
-  equal(attached?.facts["listening"], "yes")
-  if let attached {
-    checkFalse(
-      AutopilotPolicy.decide(attached, memory: AutopilotMemory()).status == .burn,
-      "a browser something is connected to stays")
-    // Judged before the client came, it is still left running.
+  checkFalse(
+    items.contains { $0.pid == ported }, "a browser something is connected to is still an app")
+  // Judged before the client came, it is still left running.
+  if let key = await monitor.autopilotRecords().values.first(where: {
+    $0.latest.identity.pid == ported
+  })?.id {
     do {
       _ = try await monitor.autopilotBurn(
-        attached.processKey!, authority: "starter:starter-robot-browsers", label: attached.name,
+        key, authority: "starter:starter-robot-browsers", label: "Google Chrome (robot)",
         rationale: "Proof: judged before the client came.")
       failTest("a burn stops a browser a client is connected to")
     } catch {
       check(running(ported), "the connected browser keeps running")
     }
+  } else {
+    failTest("the port browser is in the catalog")
   }
   close(client)
   check(

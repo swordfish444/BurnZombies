@@ -114,6 +114,16 @@ public enum AutopilotProcesses {
     return (browsers, owned)
   }
 
+  /// Whether nothing can drive a robot browser whose launcher is gone: it was driven over a pipe
+  /// only, or it has a throwaway profile and no client is connected to it (`clients` nil, unknown,
+  /// counts as connected).
+  public static func abandoned(
+    _ robot: RobotBrowser, members: Set<Int32>, clients: (Int32) -> Int?
+  ) -> Bool {
+    if robot.control == .pipe { return true }
+    return robot.throwawayProfile && !members.contains { clients($0).map { $0 > 0 } ?? true }
+  }
+
   public static func family(_ executable: String) -> String {
     let path = executable.lowercased()
     let name = (path as NSString).lastPathComponent
@@ -222,45 +232,51 @@ public enum AutopilotProcesses {
       guard o.parent == 1, o.uid == getuid(), !o.zombie, o.identity.pid != getpid(),
         !launchAgents.contains(o.identity.pid)
       else { continue }
-      // A robot browser is the one program inside an app that may be a leftover.
+      // A robot browser is the one program inside an app that may be a leftover, and only once
+      // nothing can drive it. Its tree is needed first to tell.
       let robotRoot =
         RobotBrowser.isBrowser(o.executable)
         ? probe.arguments(o.identity.pid).flatMap {
           RobotBrowser.fingerprint(executable: o.executable, arguments: $0)
         } : nil
+      var tree: [Record] = []
+      var robots: (browsers: [Int32: RobotBrowser], members: Set<Int32>) = ([:], [])
+      if robotRoot != nil {
+        tree = descendants(of: o.identity.pid, in: records)
+        robots = Self.robots(in: [record] + tree, arguments: probe.arguments)
+      }
+      let abandoned = robotRoot.map {
+        Self.abandoned($0, members: robots.members, clients: probe.clients)
+      } ?? false
       var reason = rail(
         record, protectedPIDs: protectedPIDs, preferences: preferences, now: now, home: home,
-        robot: robotRoot != nil)
+        robot: abandoned)
       // macOS services, apps, harnesses and unreadable processes are not leftovers at all.
       if let reason, reason != "You asked me to keep it." { continue }
-      let tree = descendants(of: o.identity.pid, in: records)
+      if robotRoot == nil {
+        tree = descendants(of: o.identity.pid, in: records)
+        robots = Self.robots(in: [record] + tree, arguments: probe.arguments)
+      }
       let members = [record] + tree
-      let robots = robots(in: members, arguments: probe.arguments)
+      // A driver's own robot browser goes with it; a robot browser at the root lends its helpers
+      // that exemption only once nothing can drive it.
+      let exempt = robotRoot == nil || abandoned ? robots.members : []
       if reason == nil,
         tree.contains(where: {
           rail(
             $0, protectedPIDs: protectedPIDs, preferences: preferences, now: now, home: home,
-            robot: robots.members.contains($0.latest.identity.pid)) != nil
+            robot: exempt.contains($0.latest.identity.pid)) != nil
         })
       {
         reason = "Part of it is something I must not touch."
       }
-      // A robot browser nothing can drive anymore: its launcher is gone and it was driven over a
-      // pipe, or it has a throwaway profile and nothing is connected to its port. Anything else
-      // holding or being a robot browser is still driven, or could be.
-      let robot: String = {
-        guard let root = robots.browsers[o.identity.pid] else {
-          return robots.browsers.isEmpty ? "no" : "driven"
-        }
-        if root.control == .pipe { return "abandoned" }
-        let attached = robots.members.contains { probe.clients($0).map { $0 > 0 } ?? true }
-        return root.throwawayProfile && !attached ? "abandoned" : "driven"
-      }()
+      let robot =
+        abandoned ? "abandoned" : robotRoot != nil || !robots.browsers.isEmpty ? "driven" : "no"
       let cwd = probe.cwd(o.identity.pid)
       let thread = cwd.map { AgentThreads.state(for: $0, threads: threads).thread } ?? "none"
       // No chat can reach a pipe browser whose launcher is gone, and it holds the profile that
       // chat's next browser needs.
-      if reason == nil, thread == "live", robots.browsers[o.identity.pid]?.control != .pipe {
+      if reason == nil, thread == "live", !(abandoned && robotRoot?.control == .pipe) {
         reason = "A chat is still working in this project."
       }
       if reason == nil, members.contains(where: { claimed.contains($0.id) }) {

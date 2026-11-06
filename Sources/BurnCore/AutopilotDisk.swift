@@ -53,42 +53,80 @@ public enum AutopilotDisk {
   /// its tools keep, logins included (`mcp-chrome`, `daemon`), which are never listed.
   static let playwrightCaches: Set<String> = ["Library/Caches/ms-playwright", ".cache/ms-playwright"]
 
-  /// The browser builds among the names in a Playwright cache that may go: every one but the
-  /// newest of its kind, which is the one the installed Playwright uses. Deleting that one only
-  /// makes the next run download it again.
-  public static func playwrightBuilds(_ names: [String]) -> [String] {
-    var newest: [String: Int] = [:]
+  /// Every name Playwright has given a browser folder (its registry's
+  /// `allDownloadableDirectoriesThatEverExisted`).
+  private static let playwrightBrowsers = [
+    "android", "chromium", "firefox", "webkit", "ffmpeg", "firefox-beta", "chromium-tip-of-tree",
+    "chromium-headless-shell", "chromium-tip-of-tree-headless-shell", "winldd",
+  ]
+
+  /// The browser builds among the names in a Playwright cache that may go, by Playwright's own
+  /// rule (its registry's `_validateInstallationCache`): a browser folder no installed Playwright
+  /// uses. Profiles and files its tools keep there are never browser folders.
+  public static func playwrightBuilds(_ names: [String], used: Set<String>) -> [String] {
+    names.filter { name in
+      !used.contains(name)
+        && playwrightBrowsers.contains {
+          name.hasPrefix($0.replacingOccurrences(of: "-", with: "_") + "-")
+        }
+    }
+  }
+
+  /// The browser folders every installed Playwright uses from the cache at `folder`: each package
+  /// that installed browsers there left a file in `.links` naming it, and its `browsers.json`
+  /// names its builds. A link whose package is gone is skipped, as Playwright skips it. Nil when
+  /// any of that can't be read, or a package is somewhere macOS protects.
+  public static func playwrightUsed(_ folder: String, protected: ProtectedLocations = .limited())
+    -> Set<String>?
+  {
+    let links = folder + "/.links"
+    guard let names = try? FileManager.default.contentsOfDirectory(atPath: links) else {
+      return nil
+    }
+    var used = Set<String>()
     for name in names {
-      if let (kind, version) = build(name) { newest[kind] = max(newest[kind] ?? version, version) }
+      guard let target = try? String(contentsOfFile: links + "/" + name, encoding: .utf8) else {
+        return nil
+      }
+      let package = target.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard package.hasPrefix("/"), protected.allows(package) else { return nil }
+      var info = stat()
+      guard lstat(package, &info) == 0 else {
+        if errno == ENOENT || errno == ENOTDIR { continue }
+        return nil
+      }
+      guard let data = FileManager.default.contents(atPath: package + "/browsers.json"),
+        let list = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let browsers = list["browsers"] as? [[String: Any]]
+      else { return nil }
+      for browser in browsers {
+        guard let browserName = browser["name"] as? String,
+          let revision = browser["revision"] as? String
+        else { return nil }
+        used.insert(browserName.replacingOccurrences(of: "-", with: "_") + "-" + revision)
+        // A platform with a build of its own keeps it in a folder named for that platform.
+        for (platform, special) in (browser["revisionOverrides"] as? [String: String]) ?? [:] {
+          let prefix = browserName + "_" + platform + "_special"
+          used.insert(prefix.replacingOccurrences(of: "-", with: "_") + "-" + special)
+        }
+      }
     }
-    return names.filter { name in
-      guard let (kind, version) = build(name) else { return false }
-      return version < newest[kind] ?? version
-    }
+    return used
   }
 
-  /// A Playwright build folder's kind and version ("chromium_headless_shell-1200"), or nil.
-  private static func build(_ name: String) -> (kind: String, version: Int)? {
-    guard let dash = name.lastIndex(of: "-"), let version = Int(name[name.index(after: dash)...]),
-      version > 0
-    else { return nil }
-    let kind = String(name[..<dash])
-    let letters = kind.unicodeScalars.allSatisfy {
-      CharacterSet.lowercaseLetters.contains($0) || $0 == "_" || $0 == "-"
-    }
-    guard !kind.isEmpty, letters, !kind.hasPrefix("mcp") else { return nil }
-    return (kind, version)
-  }
-
-  /// Why a folder in a Playwright cache stays, or nil when it is an old browser build.
-  private static func playwrightRefusal(_ path: String, home: String) -> String? {
+  /// Why a folder in a Playwright cache stays, or nil when it is a build no Playwright uses.
+  private static func playwrightRefusal(
+    _ path: String, home: String, protected: ProtectedLocations
+  ) -> String? {
     let relative = String(path.dropFirst(home.count + 1))
     guard playwrightCaches.contains(parent(relative)) else { return nil }
-    let names = (try? FileManager.default.contentsOfDirectory(atPath: parent(path))) ?? []
-    if playwrightBuilds(names).contains(leaf(path)) { return nil }
-    return build(leaf(path)) == nil
-      ? "That's a browser profile or file a Playwright tool keeps, so I left it alone."
-      : "That's the newest Playwright browser of its kind, the one your tools use, so I left it alone."
+    guard let used = playwrightUsed(parent(path), protected: protected) else {
+      return "I couldn't tell which Playwright uses that browser, so I left it alone."
+    }
+    if !playwrightBuilds([leaf(path)], used: used).isEmpty { return nil }
+    return used.contains(leaf(path))
+      ? "A Playwright you have installed still uses that browser, so I left it alone."
+      : "That's a browser profile or file a Playwright tool keeps, so I left it alone."
   }
 
   private struct Checkout {
@@ -125,7 +163,12 @@ public enum AutopilotDisk {
       var targets = [location]
       if cache.children {
         var names = (try? FileManager.default.contentsOfDirectory(atPath: location)) ?? []
-        if playwrightCaches.contains(cache.path) { names = playwrightBuilds(names) }
+        if playwrightCaches.contains(cache.path) {
+          names =
+            playwrightUsed(location, protected: protected).map {
+              playwrightBuilds(names, used: $0)
+            } ?? []
+        }
         targets = names.sorted().map { location + "/" + $0 }
       }
       for target in targets {
@@ -289,7 +332,9 @@ public enum AutopilotDisk {
       return refuse("I can't find your home folder, so I left this alone.")
     }
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
-    if let reason = playwrightRefusal(path, home: base) { return refuse(reason) }
+    if let reason = playwrightRefusal(path, home: base, protected: protected) {
+      return refuse(reason)
+    }
     var originalIdentity = stat()
     guard lstat(path, &originalIdentity) == 0 else { return refuse("That folder is already gone.") }
     if known && recognized(path, home: base) != folder {
