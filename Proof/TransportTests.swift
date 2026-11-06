@@ -129,14 +129,18 @@ private func deliveredReplyShutdownProof(root: URL) async throws {
 func worktreePreviewDeadlineProof(root: URL) async throws {
   let gate = TransportGate()
   let listener = try AgentListener(root: root) { request in
-    if request.operation == "workspace_preview" {
+    if ["workspace_preview", "workspace"].contains(request.operation) {
       gate.enter()
       try? await Task.sleep(nanoseconds: 6_000_000_000)
     }
     return AgentReply(message: "fixture " + request.operation)
   }
-  let preview = Task {
-    try await AgentConnection.callAsync(.init("workspace_preview"), root: root)
+  let requests: [AgentRequest] = [
+    .init("workspace_preview"), .init("workspace", action: "create"),
+    .init("workspace", action: "release"), .init("workspace", action: "retain"),
+  ]
+  let pending: [Task<String, Error>] = requests.map { request in
+    Task { try await AgentConnection.callAsync(request, root: root) }
   }
   for _ in 0..<100 where !gate.ready { try await Task.sleep(nanoseconds: 10_000_000) }
   check(gate.ready, "Slow native preview entered its request handler")
@@ -144,13 +148,15 @@ func worktreePreviewDeadlineProof(root: URL) async throws {
   let status = try await AgentConnection.callAsync(.init("status"), root: root)
   check(status.contains("fixture status"))
   check(ProcessInfo.processInfo.systemUptime - began < 0.4, "Status waited behind a native preview")
-  do {
-    let reply = try await preview.value
-    check(reply.contains("fixture workspace_preview"))
-  } catch {
-    failTest(
-      "Valid native worktree preview exceeded the unrelated status deadline: "
-        + error.localizedDescription)
+  for (request, task) in zip(requests, pending) {
+    do {
+      let reply = try await task.value
+      check(reply.contains("fixture " + request.operation))
+    } catch {
+      failTest(
+        "Valid native worktree operation exceeded the unrelated status deadline: "
+          + error.localizedDescription)
+    }
   }
   await listener.stop()
 }

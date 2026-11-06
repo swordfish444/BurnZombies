@@ -28,9 +28,10 @@ enum AutopilotTools {
     Tool(
       name: "autopilot_inspect", title: "Look closely at one item",
       description:
-        "Live detail for one item: a program's command line, folder, parent and ports; a copy's git status, branch and recent commits; a folder's contents and producer files.",
+        "Live detail for one item: sanitized task identity, folder, parent and ports; git status and commits; contents and producer evidence. Optional relative_path reads a bounded project manifest or README inside this item's project; private files and traversal are refused.",
       inputSchema: .object([
-        "type": "object", "properties": .object(["id": string(200)]), "required": ["id"],
+        "type": "object", "properties": .object(["id": string(200), "relative_path": string(512)]),
+        "required": ["id"],
         "additionalProperties": false,
       ]),
       annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)),
@@ -118,6 +119,7 @@ enum AutopilotTools {
     case "autopilot_inspect":
       var r = AutopilotRequest(tool: "inspect")
       r.id = arguments["id"]?.stringValue
+      r.relativePath = arguments["relative_path"]?.stringValue
       return r
     case "autopilot_decide":
       var r = AutopilotRequest(tool: "decide")

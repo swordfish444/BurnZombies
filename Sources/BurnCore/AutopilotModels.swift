@@ -72,8 +72,9 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
     revision = Self.revision(id: id, facts: all)
   }
   public static func revision(id: String, facts: [String: String]) -> String {
-    hash(([id] + facts.sorted { $0.key < $1.key }.map { $0.key + "=" + $0.value }).joined(
-      separator: "|"))
+    hash(
+      ([id] + facts.sorted { $0.key < $1.key }.map { $0.key + "=" + $0.value }).joined(
+        separator: "|"))
   }
   public static func hash(_ text: String) -> String {
     SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -117,9 +118,10 @@ public struct AutopilotRule: Codable, Sendable, Identifiable, Equatable {
   }
   public static func key(kind: AutopilotKind, match: [String: [String]]) -> String {
     AutopilotItem.hash(
-      ([kind.rawValue] + match.sorted { $0.key < $1.key }.map {
-        $0.key + "=" + $0.value.sorted().joined(separator: ",")
-      }).joined(separator: "|"))
+      ([kind.rawValue]
+        + match.sorted { $0.key < $1.key }.map {
+          $0.key + "=" + $0.value.sorted().joined(separator: ",")
+        }).joined(separator: "|"))
   }
 }
 
@@ -411,8 +413,9 @@ public struct AutopilotRestore: Codable, Sendable, Equatable {
   public var ref: String
   public var head: String
   public var branch: String?
-  /// True when the ref is a snapshot commit on top of `head` holding local changes.
+  /// Local changes exist. Legacy receipts keep them in a snapshot commit; new ones use recovery.
   public var snapshot: Bool
+  public var recovery: PrivateRecovery.Reference?
   public init(
     repository: String, path: String, ref: String, head: String, branch: String?, snapshot: Bool
   ) {

@@ -52,6 +52,7 @@ jobs:
         run: .build/debug/BurnZombiesApp --access-banner-proof "$RUNNER_TEMP/bz-access-banner"
       - name: Autopilot policy, processes, old copies, junk folders, sweep and look-only
         run: |
+          .build/debug/BurnProof --security-boundaries
           .build/debug/BurnProof --autopilot-policy
           .build/debug/BurnProof --autopilot-process
           .build/debug/BurnProof --autopilot-worktrees

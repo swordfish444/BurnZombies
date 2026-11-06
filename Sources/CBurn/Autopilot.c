@@ -83,3 +83,18 @@ int bz_command_line(int32_t pid, char *out, int capacity) {
     struct bz_command_context c = {out, capacity, 0};
     return bz_procargs(pid, bz_command_visit, &c);
 }
+
+// Private argv transport preserves argument boundaries. Environment values never leave procargs.
+static void bz_argument_visit(void *context, const char *entry, size_t length, int is_env) {
+    struct bz_command_context *c = context;
+    if (is_env || c->used < 0) return;
+    if (length + 1 > (size_t)(c->capacity - c->used)) { c->used = -1; return; }
+    memcpy(c->out + c->used, entry, length);
+    c->used += (int)length;
+    c->out[c->used++] = 0;
+}
+int bz_command_arguments(int32_t pid, char *out, int capacity) {
+    if (capacity < 2) return -1;
+    struct bz_command_context c = {out, capacity, 0};
+    return bz_procargs(pid, bz_argument_visit, &c) == 1 ? c.used : -1;
+}

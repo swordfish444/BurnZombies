@@ -38,6 +38,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
 @main struct ProofRunner {
   static func main() async {
     setbuf(stdout, nil)
+    if CommandLine.arguments.contains("--security-boundaries") {
+      do { try await securityBoundaryProof() } catch { failTest("Security boundaries: \(error)") }
+      if failures == 0 { print("PASS Security boundaries") }
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--mapped-child" {
       let page = Int(getpagesize())
       let pages = 16384
@@ -55,7 +60,8 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       _ = munmap(region, page * pages)
       return
     }
-    if CommandLine.arguments.count == 5 && CommandLine.arguments[1] == "--protected-locations-child" {
+    if CommandLine.arguments.count == 5 && CommandLine.arguments[1] == "--protected-locations-child"
+    {
       do {
         let (home, state) = (CommandLine.arguments[2], CommandLine.arguments[3])
         if CommandLine.arguments[4] == "resident" {
@@ -113,7 +119,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--autopilot-fixture" {
-      do { try await runAutopilotFixture(root: URL(fileURLWithPath: CommandLine.arguments[2])) } catch {
+      do {
+        try await runAutopilotFixture(root: URL(fileURLWithPath: CommandLine.arguments[2]))
+      } catch {
         print("FAIL: \(error)")
         exit(1)
       }
@@ -520,6 +528,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await transportProof() } catch { failTest("Transport: \(error)") }
     do { try await agentBridgeProof() } catch { failTest("Agent bridge: \(error)") }
     if failures == beforeAgent { print("PASS private agent bridge, refusal and socket protection") }
+    do { try await securityBoundaryProof() } catch { failTest("Security boundaries: \(error)") }
     let beforeAutopilot = failures
     do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
     do { try await autopilotWorktreeProof() } catch { failTest("Autopilot worktrees: \(error)") }

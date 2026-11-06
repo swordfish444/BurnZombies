@@ -76,7 +76,7 @@ public enum AutopilotHarness {
     - autopilot_burn: burn items. The app re-checks every item and refuses anything not authorized. A refusal is final for this sweep, and the catalog marks items refused earlier as "Waiting after a refusal": burning those again only repeats the refusal.
     - autopilot_ask: ask the owner ONE yes/no question about a fact pattern that frees a lot (1 GB or more; smaller ones are refused).
     - autopilot_report: a two-sentence summary at the end.
-    - Read, Glob, Grep: read project files (package.json, README, configs) inside folders you are judging. Never read secrets such as .env files, keys or credentials.
+    - autopilot_inspect can also read a bounded project manifest or README using relative_path inside that item's project. It includes useful producer evidence by default. Secret/private files and paths outside the item are mechanically refused.
 
     What the app enforces:
     - Owner rules (earlier answers) and starter rules already burn their matches before you run. Never second-guess an owner's answer.
@@ -134,8 +134,8 @@ public enum AutopilotHarness {
         "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
         "--mcp-config", try encoded(config), "--settings", try encoded(settings),
         "--disable-slash-commands", "--permission-mode", "dontAsk", "--permission-prompts",
-        "none", "--tools", "Read,Glob,Grep", "--allowedTools", "mcp__burnzombies__*", "Read",
-        "Glob", "Grep", "--disallowedTools", "Agent", "Bash", "Edit", "Write", "WebFetch",
+        "none", "--tools", "", "--allowedTools", "mcp__burnzombies__*",
+        "--disallowedTools", "Read", "Glob", "Grep", "Agent", "Bash", "Edit", "Write", "WebFetch",
         "WebSearch", "--max-turns", "40",
       ]
     case "codex":
@@ -407,7 +407,8 @@ public actor AutopilotCoordinator {
       }
       hunt.phase = "completed"
       hunt.finishedAt = now
-      hunt.detail = "Hunt complete. I'll keep sweeping every \(after.sweep.intervalMinutes) minutes."
+      hunt.detail =
+        "Hunt complete. I'll keep sweeping every \(after.sweep.intervalMinutes) minutes."
       hunt.append("complete", hunt.detail, date: now)
       try? hunt.save(Store(root: root))
     }
