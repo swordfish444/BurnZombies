@@ -194,10 +194,10 @@ struct TeachView: View {
 
   /// Only what the owner needs to decide: a short headline, what it frees, one safe line and the
   /// chips. Each part is there only when the question has something to say, so no card has an
-  /// empty gap. Which things it is about waits behind View details, docked above the answers so
-  /// Hide details is right where View details was. Opened, the details take the place of the line
-  /// and chips; what the owner spares there leaves the headline, the size and the answer at once.
-  /// Tips come and go in the corner above.
+  /// empty gap. Which things it is about waits behind View details, midway between the chips and
+  /// the answers. Opened, the details take the place of the line and chips, and Hide details waits
+  /// right above the answers; what the owner spares there leaves the headline, the size and the
+  /// answer at once. Tips come and go in the corner above.
   private func questionCard(_ question: AutopilotQuestion) -> some View {
     let state = details.questionID == question.id ? details : TeachDetailsState()
     let listed = Self.listed(question, entries: snapshot.entries, overrides: state.overrides)
@@ -242,17 +242,12 @@ struct TeachView: View {
           .transition(.opacity)
         }
       }
+    } footer: {
+      // Closed, View details sits midway between the chips and the buttons.
+      if viewable && !open { detailsToggle(question, open: false, cancels: false) }
     } actions: {
-      if viewable {
-        Button {
-          toggleDetails(question)
-        } label: {
-          Text(open ? "Hide details" : "View details").font(.system(size: 13)).underline()
-            .foregroundStyle(BurnTheme.muted)
-        }
-        .buttonStyle(.plain).clickPointer().accessibilityIdentifier("teach-details")
-        .keyboardShortcut(open && state.opened == nil ? .cancelAction : nil)
-      }
+      // Open, Hide details waits right above the buttons.
+      if viewable && open { detailsToggle(question, open: true, cancels: state.opened == nil) }
       HStack(spacing: 14) {
         answerButton(
           card.yes, fill: AutopilotTheme.green, text: Color.black.opacity(0.86),
@@ -309,6 +304,19 @@ struct TeachView: View {
     case .process: return "program"
     case .disk: return "folder"
     }
+  }
+
+  /// View details or Hide details, styled like Not sure — skip. Opened with nothing opened inside,
+  /// Esc closes it (`cancels`).
+  private func detailsToggle(_ question: AutopilotQuestion, open: Bool, cancels: Bool) -> some View {
+    Button {
+      toggleDetails(question)
+    } label: {
+      Text(open ? "Hide details" : "View details").font(.system(size: 13)).underline()
+        .foregroundStyle(BurnTheme.muted)
+    }
+    .buttonStyle(.plain).clickPointer().accessibilityIdentifier("teach-details")
+    .keyboardShortcut(cancels ? .cancelAction : nil)
   }
 
   private func toggleDetails(_ question: AutopilotQuestion) {
@@ -610,33 +618,56 @@ struct TeachView: View {
   }
 }
 
-/// A card's frame: what it says on top, centered while it fits and scrolling if it ever doesn't, and
-/// its buttons docked below, so an answer is never pushed off the window.
-private struct TeachCardFrame<Details: View, Actions: View>: View {
+/// A card's frame: what it says on top, centered while it fits and scrolling if it ever doesn't; a
+/// footer, such as View details, midway between that and the buttons; and the buttons docked
+/// below, so an answer is never pushed off the window.
+private struct TeachCardFrame<Details: View, Footer: View, Actions: View>: View {
   let details: Details
+  let footer: Footer
   let actions: Actions
   /// Room kept clear above, for the tips: what it says is centered below it.
   let topInset: CGFloat
 
   init(
     topInset: CGFloat = 0, @ViewBuilder _ details: () -> Details,
-    @ViewBuilder actions: () -> Actions
+    @ViewBuilder footer: () -> Footer, @ViewBuilder actions: () -> Actions
   ) {
     self.topInset = topInset
     self.details = details()
+    self.footer = footer()
     self.actions = actions()
   }
 
   var body: some View {
-    VStack(spacing: 12) {
+    VStack(spacing: 0) {
       GeometryReader { proxy in
         ScrollView(.vertical) {
-          details.frame(maxWidth: .infinity)
-            .frame(minHeight: max(0, proxy.size.height - topInset)).padding(.top, topInset)
+          // Two spacers above and one on each side of the footer: what the card says stays in the
+          // middle, and the footer sits midway between it and the buttons. A card without a footer
+          // keeps 12 pt above its buttons, as much room as ever.
+          VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Spacer(minLength: 0)
+            details
+            Spacer(minLength: 12)
+            footer
+            Spacer(minLength: 0)
+          }
+          .frame(maxWidth: .infinity)
+          .frame(minHeight: max(0, proxy.size.height - topInset)).padding(.top, topInset)
         }.scrollBounceBehavior(.basedOnSize)
       }
       VStack(spacing: 10) { actions }
     }.padding(.horizontal, 36).padding(.top, 10).padding(.bottom, 16)
+  }
+}
+
+extension TeachCardFrame where Footer == EmptyView {
+  init(
+    topInset: CGFloat = 0, @ViewBuilder _ details: () -> Details,
+    @ViewBuilder actions: () -> Actions
+  ) {
+    self.init(topInset: topInset, details, footer: { EmptyView() }, actions: actions)
   }
 }
 
