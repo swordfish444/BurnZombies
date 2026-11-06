@@ -1439,13 +1439,17 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   wired.tellSeen(thirdTell)
   wired.setActsOnItsOwn(false)
   wired.forgetLesson(group)
+  wired.autopilot.recoveryKey = AutopilotKeyWait(since: Date())
+  wired.allowRecoveryKey()
+  try check(wired.autopilot.recoveryKey?.asking == true, "Allow shows macOS asking at once")
+  wired.allowRecoveryKey()
   let expected: [AutopilotCommand] = [
     .answer(questionID: q.id, answer: .no, risks: q.risks), .burnNow(itemID: e.id),
     .keep(itemID: e.id), .restore(receiptID: rcpt.id), .forgetRule(ruleID: rule.id),
     .setStarter(ruleID: "starter-finished-copies", enabled: false), .setEnabled(false),
     .setLookOnly(false), .setInterval(minutes: 60), .resetTraining, .sweepNow,
     .tellGood(id: firstTell.id), .tellUndo(id: secondTell.id), .tellSeen(id: thirdTell.id),
-    .setActsOnItsOwn(false), .forgetLesson(ruleIDs: group.ruleIDs),
+    .setActsOnItsOwn(false), .forgetLesson(ruleIDs: group.ruleIDs), .allowRecoveryKey,
   ]
   let deadline = Date().addingTimeInterval(3)
   while (sent.count < expected.count || wired.autopilot != marker) && Date() < deadline {
@@ -1494,8 +1498,19 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   } else {
     throw StoreError.message("Demo has no tell for the failing engine proof")
   }
+  // An Allow macOS said no to: the footer says so, and the card can be pressed again.
+  failing.autopilot.recoveryKey = AutopilotKeyWait(since: Date())
+  failing.message = nil
+  failing.allowRecoveryKey()
+  let keyDeadline = Date().addingTimeInterval(3)
+  while failing.message == nil && Date() < keyDeadline {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+  }
+  try check(
+    failing.message == refusal && failing.autopilot.recoveryKey?.asking == false,
+    "A failed Allow should say why and let the owner press it again")
   print(
-    "PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, forget a whole lesson, Good call, Undo, OK on an undone tell, act on its own, starter switch, reset, interval, sweep now, look-only and engine hand-off"
+    "PASS autopilot UI commands: answer, burn now, keep forever, restore, forget, forget a whole lesson, Good call, Undo, OK on an undone tell, act on its own, starter switch, reset, interval, sweep now, look-only, Allow the backup key and engine hand-off"
   )
 }
 
