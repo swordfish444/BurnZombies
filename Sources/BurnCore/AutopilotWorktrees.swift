@@ -279,10 +279,89 @@ public enum AutopilotWorktrees {
       }
       return .refused(item, authority: authority, refusal.reason)
     } catch {
-      return .refused(
-        item, authority: authority, "I could not check it safely, so I left it alone.")
+      return .refused(item, authority: authority, plainReason(error))
     }
   }
+
+  /// Why the backup walk, the backup or Git stopped a retire, in the owner's words. Anything
+  /// without plain words still says what stopped it, so a copy is never kept for no stated reason.
+  static func plainReason(_ error: Error) -> String {
+    let stopped = "I stopped before I finished checking it, so I left it alone."
+    if Task.isCancelled || error is CancellationError { return stopped }
+    guard case StoreError.message(let message) = error else {
+      let failure = error as NSError
+      if (failure.domain == NSPOSIXErrorDomain && failure.code == Int(ENOSPC))
+        || (failure.domain == NSCocoaErrorDomain && failure.code == NSFileWriteOutOfSpaceError)
+      {
+        return noRoom
+      }
+      return "I could not check it safely, so I left it alone. What stopped me: "
+        + failure.localizedDescription
+    }
+    if let plain = plainReasons[message] { return plain }
+    if message.hasPrefix(WorktreeGit.refusedPrefix) {
+      // The bounded runner's own codes: out of time, more output than it reads, stopped.
+      let status = message.components(separatedBy: "(status ").last ?? ""
+      switch String(status.prefix(while: \.isNumber)) {
+      case "124": return "Git took too long to answer about it, so I left it alone."
+      case "125": return tooManyFiles
+      case "130": return stopped
+      default: return "Git gave an error when I checked it, so I left it alone."
+      }
+    }
+    return "I could not check it safely, so I left it alone. What stopped me: " + message
+  }
+
+  private static let tooManyFiles = "It has too many files for me to back up, so I left it alone."
+  private static let noRoom =
+    "There isn't enough free space to back it up first, so I left it alone."
+
+  /// The walk's and the backup's own reasons (`WorktreeInspection.files`, `PrivateRecovery`), word
+  /// for word, with what the owner reads instead.
+  private static let plainReasons: [String: String] = {
+    let changed = "It changed while I was backing it up, so I left it alone."
+    let unseen = "I could not look inside every folder, so I left it alone."
+    let permissions =
+      "Some files in it have special permissions I can't back up, so I left it alone."
+    let extra = "Some files in it carry extra macOS data I can't back up, so I left it alone."
+    let names = "Git listed file names I can't read, so I left it alone."
+    var reasons: [String: String] = [
+      "Nested repository is protected.": nestedProject,
+      "Nested bare repository is protected.": nestedProject,
+      "Checkout inspection limit reached; coverage incomplete.": tooManyFiles,
+      "Recovery metadata exceeds its bound; nothing removed.": tooManyFiles,
+      "Links or special files require supported recovery.":
+        "It holds a special file, like a socket or a pipe, that I can't back up, so I left it alone.",
+      "File identity, ownership or same-volume coverage unavailable.":
+        "Some files in it belong to another user or sit on another disk, so I left it alone.",
+      "Native file flags or online-only content require owner recovery.":
+        "Some files in it are locked, hidden, compressed or only in iCloud, which I can't back up, so I left it alone.",
+      "Special permission bits require owner handling.": permissions,
+      "Extended ACLs require owner recovery.": permissions,
+      "ACL visibility is unavailable.": permissions,
+      "Extended attribute visibility is unavailable or exceeds inspection bounds.": extra,
+      "Extended attributes exceed bounded recovery support.": extra,
+      "Unsupported attribute name.": extra,
+      "Incomplete file visibility.": unseen,
+      "Cannot enumerate checkout.": unseen,
+      "Insufficient private recovery capacity; preserve the original without truncation.": noRoom,
+      "Private recovery capacity is unknown; preserve the original.": noRoom,
+      "Git returned bytes I cannot read; preserved without guessing.": names,
+      "Non-UTF-8 Git evidence requires owner handling; preserved without lossy parsing.": names,
+    ]
+    for message in [
+      "Generated folder changed during recovery.",
+      "A big file the owner let go changed during recovery.",
+      "Submodule pointer changed; preserved.", "Attribute names changed during inspection.",
+      "Attribute changed during inspection.", "Recovery source changed; nothing removed.",
+      "Recovery source unavailable; nothing removed.", "Recovery source changed.",
+      "Contents changed after recovery; nothing removed.",
+      "File contents changed after recovery; nothing removed.",
+    ] {
+      reasons[message] = changed
+    }
+    return reasons
+  }()
 
   /// Why Autopilot may not touch a copy without Full Disk Access: it, the project it belongs
   /// to, or another copy of that project is in a place macOS protects, and Git looks at all
@@ -390,7 +469,9 @@ public enum AutopilotWorktrees {
 
     // Existing commits stay in Git. Every unsaved/ignored byte outside proven generated caches
     // lives only in authenticated encrypted recovery, never in a temporary Git index or blob.
-    // Big unsaved files a Yes let go are left out too: they go with the copy, for good.
+    // Big unsaved files a Yes let go are left out too: they go with the copy, for good. A file
+    // with other names (pnpm links an injected workspace package's files into its install) is
+    // kept by its contents: removing the copy deletes only the copy's own names for it.
     let excluded = generated.union(profiles)
     // The key, read without a keychain question and within a bound: a dialog nobody answered
     // refuses this copy instead of holding up the burn pass. One read serves capture and check.
@@ -401,7 +482,7 @@ public enum AutopilotWorktrees {
     let archive = try PrivateRecovery.capture(
       path, root: root, excluding: excluded, leavingOut: Set(big.map(\.path)),
       gitPointers: try submodulePointers(path, links: links), repository: common, head: head,
-      key: key)
+      key: key, hardLinks: true)
     let snapshot = changes != "none"
     let ref = refPrefix + archive.id.lowercased()
     _ = try WorktreeGit.run(common, ["update-ref", ref, head])

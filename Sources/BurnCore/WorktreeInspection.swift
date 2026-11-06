@@ -10,6 +10,9 @@ public enum WorktreeGit {
   private static let permittedEnvironment: Set<String> = [
     "GIT_INDEX_FILE", "GIT_LITERAL_PATHSPECS",
   ]
+  /// How the runner's refusal starts; "(status N)" follows: Git's own exit status, or 124 out of
+  /// time, 125 more output than it reads, 130 stopped.
+  static let refusedPrefix = "Git refused or exceeded the bounded "
   public static func run(
     _ path: String, _ args: [String], seconds: Double = 15,
     environment extra: [String: String] = [:]
@@ -94,7 +97,8 @@ public enum WorktreeGit {
     if status == 72 { stateLock.withLock { unsafeTeardown = true } }
     guard status == 0 || (emptyConfiguration && status == 1) else {
       throw StoreError.message(
-        "Git refused or exceeded the bounded \(args.first ?? "operation") request (status \(status)); preserve the worktree and inspect its operation history."
+        refusedPrefix
+          + "\(args.first ?? "operation") request (status \(status)); preserve the worktree and inspect its operation history."
       )
     }
     try output.seek(toOffset: 0)
@@ -191,11 +195,12 @@ public enum WorktreeInspection {
       commonInode: cs.st_ino, administrationInode: ads.st_ino)
   }
   /// `excluding` names generated folders, which must stay folders; `leavingOut`, big unsaved files
-  /// and folders the owner let go, each a regular file or a folder.
+  /// and folders the owner let go, each a regular file or a folder. With `hardLinks`, a file that
+  /// has other names is taken like any other: its contents are what a backup keeps.
   public static func files(
     _ root: String, seconds: Double = 15, limit: Int = 100_000, permitLinks: Bool = false,
     excluding: Set<String> = [], leavingOut: Set<String> = [],
-    ignoringGitPointers: Set<String> = []
+    ignoringGitPointers: Set<String> = [], hardLinks: Bool = false
   ) throws -> ([WorktreeFile], UInt64) {
     let rootInfo = try WorkspaceSafety.statAt(root)
     guard rootInfo.st_mode & S_IFMT == S_IFDIR else {
@@ -325,7 +330,7 @@ public enum WorktreeInspection {
       let kind: String
       var target: String?
       if type == S_IFREG {
-        guard s.st_nlink == 1 else {
+        guard s.st_nlink == 1 || hardLinks else {
           throw StoreError.message("Hardlinked files require owner handling.")
         }
         kind = "file"

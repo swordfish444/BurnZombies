@@ -22,13 +22,16 @@ public enum PrivateRecovery {
     var repository: String?
     var head: String?
     var committed: Set<String>?
+    /// Files with other names were kept by their contents; the check walks the same way.
+    var hardLinks: Bool?
   }
   /// `excluding` names proven generated folders; `leavingOut`, big unsaved files and folders the
-  /// owner let go, which nothing keeps.
+  /// owner let go, which nothing keeps. With `hardLinks`, a file that has other names is kept by
+  /// its contents and comes back as a file of its own.
   public static func capture(
     _ path: String, root: URL, excluding: Set<String> = [], leavingOut: Set<String> = [],
     gitPointers: Set<String> = [], repository: String? = nil, head: String? = nil,
-    key: SymmetricKey? = nil
+    key: SymmetricKey? = nil, hardLinks: Bool = false
   ) throws -> Reference {
     let key = try key ?? WorktreeRecoveryKey.load()
     let storeRoot = try Store(root: root.appendingPathComponent("private-recovery")).root
@@ -42,7 +45,7 @@ public enum PrivateRecovery {
     defer { if !complete { try? FileManager.default.removeItem(at: directory) } }
     let original = try WorktreeInspection.files(
       path, seconds: 120, permitLinks: true, excluding: excluding, leavingOut: leavingOut,
-      ignoringGitPointers: gitPointers
+      ignoringGitPointers: gitPointers, hardLinks: hardLinks
     ).0
     guard
       let free = try FileManager.default.attributesOfFileSystem(forPath: base.path)[.systemFreeSize]
@@ -125,7 +128,8 @@ public enum PrivateRecovery {
     let manifest = try JSONEncoder().encode(
       Manifest(
         files: files, excluded: excluding, left: leavingOut.isEmpty ? nil : leavingOut,
-        gitPointers: gitPointers, repository: repository, head: head, committed: committed))
+        gitPointers: gitPointers, repository: repository, head: head, committed: committed,
+        hardLinks: hardLinks ? true : nil))
     guard manifest.count <= 32 << 20 else {
       throw StoreError.message("Recovery metadata exceeds its bound; nothing removed.")
     }
@@ -169,7 +173,8 @@ public enum PrivateRecovery {
     guard
       try WorktreeInspection.files(
         reference.source, seconds: 120, permitLinks: true, excluding: saved.excluded,
-        leavingOut: saved.left ?? [], ignoringGitPointers: saved.gitPointers ?? []
+        leavingOut: saved.left ?? [], ignoringGitPointers: saved.gitPointers ?? [],
+        hardLinks: saved.hardLinks ?? false
       ).0 == metadata
     else {
       throw StoreError.message("Contents changed after recovery; nothing removed.")
