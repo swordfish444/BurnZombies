@@ -103,15 +103,15 @@ import Vision
       try expect(["Hunt Zombies", "Deep hunt", "Up to $5", "A deep hunt uses more A", "Ready to clear the dead weight", "Needs you"],
         "the ready header, its deep hunt notice or the empty feed is missing")
     case "running":
-      try expect(["Hunting Zombies", "Live", "Processes seen", "Worktrees cleaned", "842", "Active development server preserved"],
-        "actual hunt evidence not displayed")
+      try expect(["Hunting Zombies", "Live", "Freed so far", "Zombies burned", "Worktrees cleaned", "Processes seen", "842",
+        "Active development server preserved"], "actual hunt evidence not displayed")
     case "completed":
-      try expect(["Memory released", "Disk reclaimed", "Zombies burned", "Worktrees cleaned", "Processes seen", "18.4 GB", "1.6 GB", "Removal verified"],
-        "verified cleanup stats missing")
+      try expect(["Freed this hunt", "20.0 GB", "1.6 GB memory", "18.4 GB disk", "Zombies burned", "Worktrees cleaned", "Processes seen",
+        "Removal verified"], "verified cleanup stats missing")
     case "paused":
       try expect(["HUNT PAUSED", "Processes seen", "Harness unavailable"], "the pause and why it paused are missing")
     case "receipts-unavailable":
-      try expect(["Processes seen", "Worktrees cleaned", "842"], "totals without receipts missing")
+      try expect(["Receipts unavailable", "Zombies burned", "Processes seen", "842"], "totals without receipts missing")
     case "deep-starting":
       try expect(["Freed so far", "Programs", "Old copies", "Junk and caches", "Not looked at yet", "Looking over this Mac", "Nothing needs you right now"],
         "a deep hunt's first moments are missing")
@@ -121,15 +121,15 @@ import Vision
         "Inside your projects", "Yes, burn them", "No, keep them", "Not sure", "View details", "1 of 2"],
         "deep hunt stats, spend, focus or question missing")
     case "deep-stopped":
-      try expect(["Keep hunting", "Hunt Zombies", "Up to $5", "Freed this hunt", "for $1.20 of A", "Stopped"],
-        "stopped deep hunt can't keep hunting")
+      try expect(["Keep hunting", "Hunt Zombies", "Up to $5", "HUNT PAUSED", "Freed this hunt", "for $1.20 of A",
+        "Stopped. Everything burned stays burned"], "stopped deep hunt can't keep hunting")
     case "deep-needs-ok":
       // The copy's name, minus the "infra" Vision sometimes reads as "intra".
       try expect(["Burn this copy?", "phase4-apply", "Made by Claude", "is sure", "Frees 4.0 GB", "Yes, burn it", "No, keep it", "Not sure"],
         "the AI's sure-but-needs-OK card is missing")
     case "deep-completed":
-      try expect(["Hunt Zombies", "Deep hunt", "Freed this hunt", "for $1.20 of A", "Done", "Deep hunt complete", "Nothing needs you right now"],
-        "a finished deep hunt or the empty Needs you is missing")
+      try expect(["Hunt Zombies", "Deep hunt", "HUNT COMPLETE", "Freed this hunt", "for $1.20 of A", "112 of 112 judged", "Deep hunt complete",
+        "Nothing needs you right now"], "a finished deep hunt or the empty Needs you is missing")
     case "deep-answered":
       try expect(["Burning them now", "BZ handles ones like these"], "the answer's confirmation is missing")
     default:

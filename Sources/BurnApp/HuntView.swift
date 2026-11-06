@@ -28,8 +28,10 @@ struct HuntView: View {
   var needsYou: Bool { autopilot && model.autopilotAvailable }
   var sceneMode: HuntSceneMode {
     if let celebration { return celebration }
+    // A deep hunt that stopped holds its position until Keep hunting; it isn't complete.
     return model.huntRunning
-      ? .searching : snapshot?.phase == "paused" ? .paused : snapshot == nil ? .idle : .complete
+      ? .searching : snapshot?.phase == "paused" || stoppedDeep
+        ? .paused : snapshot == nil ? .idle : .complete
   }
 
   var body: some View {
@@ -40,21 +42,21 @@ struct HuntView: View {
         HuntSceneView(
           mode: sceneMode, celebrationTitle: celebrationTitle, isVisible: activeVisuals,
           elapsedOverride: sceneTime, height: layout.scene
-        ).padding(.top, 16)
+        ).padding(.top, layout.afterHeader)
         if let snapshot {
           Group {
             if snapshot.isAutopilot || !(snapshot.lanes ?? []).isEmpty {
               HuntStats(snapshot: snapshot, running: model.huntRunning, layout: layout)
             } else {
-              HuntTotals(snapshot: snapshot, layout: layout)
+              HuntTotals(snapshot: snapshot, running: model.huntRunning, layout: layout)
             }
-          }.padding(.top, 20)
+          }.padding(.top, layout.afterScene)
         }
-        columns(layout).padding(.top, 22)
-        footer.padding(.top, 10)
+        columns(layout).padding(.top, layout.afterStats)
+        footer.padding(.top, layout.beforeFooter)
       }
       // The header starts below the titlebar's 28 points, where every control takes its clicks.
-      .padding(.horizontal, layout.margin).padding(.top, 30).padding(.bottom, 12)
+      .padding(.horizontal, layout.margin).padding(.top, 30).padding(.bottom, layout.bottom)
       .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
     }
     .frame(minWidth: 800, idealWidth: 948, minHeight: 760, idealHeight: 860)
@@ -134,14 +136,18 @@ struct HuntView: View {
         if !model.huntRunning && !stoppedDeep && model.deepHuntAvailable {
           // The one notice a deep hunt needs; the details wait behind the limit.
           Text("A deep hunt uses more AI and burns as it goes.")
-            .font(.system(size: 11.5)).foregroundStyle(BurnTheme.muted).lineLimit(1)
+            .font(.system(size: 12)).foregroundStyle(BurnTheme.muted).lineLimit(1)
         }
       }.fixedSize()
     }
+    // One height in every state, so nothing below it moves when a hunt starts or stops.
+    .frame(height: 52)
   }
 
+  /// While a deep hunt runs, its pill already says "Deep hunt", so the line doesn't.
   private var subtitles: [String] {
     guard deep && (model.huntRunning || stoppedDeep) else { return ["Your Mac. Less dead weight."] }
+    if model.huntRunning { return ["Uses more AI than a regular hunt. Burns as it goes."] }
     return [
       "Deep hunt · uses more AI than a regular hunt. Burns as it goes.",
       "Deep hunt · uses more AI. Burns as it goes.",
@@ -257,7 +263,8 @@ struct HuntView: View {
             systemImage: followLive ? "arrow.down.circle.fill" : "arrow.down.circle"
           )
           .font(.system(size: 11.5, weight: .medium))
-          .foregroundStyle(followLive ? BurnTheme.orange : BurnTheme.muted)
+          // Following is the quiet default; once off, it asks to be turned back on.
+          .foregroundStyle(followLive ? BurnTheme.muted : BurnTheme.orange)
         }.buttonStyle(.plain).clickPointer().fixedSize()
           .accessibilityIdentifier("follow-hunt-feed")
       }
@@ -276,8 +283,11 @@ struct HuntView: View {
         .scrollIndicators(.never)
         .mask(
           VStack(spacing: 0) {
-            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-              .frame(height: 24)
+            // Older lines fade out under the hairline instead of being cut through.
+            LinearGradient(
+              stops: [.init(color: .clear, location: 0), .init(color: .clear, location: 0.3),
+                .init(color: .black, location: 1)], startPoint: .top, endPoint: .bottom
+            ).frame(height: 34)
             Color.black
           }
         )
@@ -321,7 +331,7 @@ struct HuntView: View {
   private func ticker(_ focus: String) -> some View {
     HStack(spacing: 8) {
       Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(BurnTheme.orange)
+        .foregroundStyle(BurnTheme.muted)
       (Text("Now: ").foregroundColor(BurnTheme.muted) + Text(focus))
         .lineLimit(1).truncationMode(.middle)
       Spacer(minLength: 0)
@@ -393,9 +403,11 @@ struct HuntView: View {
     }
   }
 
+  /// Orange only for what burned and what asks for the owner.
   static func tint(_ kind: String) -> Color {
     switch kind {
-    case "burn", "detected", "ask": return BurnTheme.orange
+    case "burn", "ask": return BurnTheme.orange
+    case "detected": return BurnTheme.cream.opacity(0.75)
     case "complete": return AutopilotTheme.green
     default: return BurnTheme.muted
     }
@@ -408,8 +420,10 @@ struct HuntView: View {
     return HStack(spacing: 7) {
       Image(systemName: paused ? "pause.circle" : "shield.lefthalf.filled")
         .font(.system(size: 11)).foregroundStyle(paused ? BurnTheme.orange : HuntStyle.faint)
+      // Why a hunt paused matters, so it reads in full strength.
       Text(snapshot?.detail ?? "Active work stays protected. Every cleanup earns a receipt.")
-        .font(.system(size: 11.5)).foregroundStyle(HuntStyle.faint).lineLimit(1)
+        .font(.system(size: 11.5)).foregroundStyle(paused ? BurnTheme.cream : HuntStyle.faint)
+        .lineLimit(1)
       Spacer(minLength: 0)
     }
   }

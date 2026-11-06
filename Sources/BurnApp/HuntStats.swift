@@ -13,51 +13,85 @@ struct HuntStats: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: layout.gap) {
-      hero.frame(width: layout.unit)
+      HuntFreedCard(
+        running: running, memory: snapshot.memoryReclaimed, disk: snapshot.diskReclaimed,
+        burned: snapshot.burned,
+        cost: snapshot.deep == true && !running
+          ? snapshot.spentUSD.map { "for " + HuntOptions.dollars($0) + " of AI" } : nil
+      ).frame(width: layout.unit)
       ForEach(Self.kinds, id: \.self) { kind in
         HuntLaneCard(
-          kind: kind, lane: snapshot.lanes?.first { $0.kind == kind }, running: running,
-          stopped: snapshot.phase == "stopped", roomy: layout.roomyLanes
+          kind: kind, lane: snapshot.lanes?.first { $0.kind == kind }, roomy: layout.roomyLanes
         ).frame(width: layout.unit)
       }
     }
     .fixedSize(horizontal: false, vertical: true)
   }
+}
 
-  /// The payoff: memory and disk together, the one big number on the page.
-  private var hero: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Text(running ? "Freed so far" : "Freed this hunt")
-        .font(.system(size: 12, weight: .medium)).foregroundStyle(BurnTheme.muted)
-      HuntBytes(bytes: snapshot.memoryReclaimed + snapshot.diskReclaimed, size: 38)
-        .padding(.top, 9)
-      Text("\(snapshot.burned.formatted()) zombie\(snapshot.burned == 1 ? "" : "s") burned")
-        .font(.system(size: 13, weight: .semibold)).padding(.top, 10)
-      Text(
-        ImpactNumbers.bytes(snapshot.memoryReclaimed) + " memory · "
-          + ImpactNumbers.bytes(snapshot.diskReclaimed) + " disk"
-      )
-      .font(.system(size: 11.5)).foregroundStyle(BurnTheme.muted)
-      .lineLimit(1).minimumScaleFactor(0.85).padding(.top, 3)
-      if snapshot.deep == true, !running, let spent = snapshot.spentUSD {
-        Text("for " + HuntOptions.dollars(spent) + " of AI")
-          .font(.system(size: 11.5)).foregroundStyle(BurnTheme.muted).padding(.top, 2)
-      }
+/// The payoff: memory and disk together, the one big number on the page. Nothing freed yet reads
+/// quiet rather than as an orange zero, and without receipts it is a dash.
+struct HuntFreedCard: View {
+  let running: Bool
+  let memory: UInt64
+  let disk: UInt64
+  /// Zombies burned, when this card says it; older hunts count them in a card of their own.
+  var burned: Int? = nil
+  var cost: String? = nil
+  var receipts = true
+
+  var body: some View {
+    // What it cost rides along on the label when the card is wide enough, so a finished deep hunt
+    // doesn't make the whole row taller; narrow, it gets its own line.
+    ViewThatFits(in: .horizontal) {
+      card(costInLabel: true)
+      card(costInLabel: false)
     }
-    .padding(.horizontal, 16).padding(.vertical, 13)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .background(HuntStyle.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     .accessibilityElement(children: .combine)
     .accessibilityIdentifier("hunt-freed")
   }
+
+  private func card(costInLabel: Bool) -> some View {
+    let label = running ? "Freed so far" : "Freed this hunt"
+    return VStack(alignment: .leading, spacing: 0) {
+      Text(costInLabel ? [label, cost].compactMap { $0 }.joined(separator: " ") : label)
+        .font(.system(size: 12, weight: .medium)).foregroundStyle(BurnTheme.muted)
+        .lineLimit(1).fixedSize()
+      Group {
+        if receipts {
+          HuntBytes(bytes: memory + disk, size: 38)
+        } else {
+          Text("—").font(BurnTheme.display(38)).foregroundStyle(BurnTheme.muted).antonTrimmed(38)
+        }
+      }.padding(.top, 9)
+      if let burned, receipts {
+        Text("\(burned.formatted()) zombie\(burned == 1 ? "" : "s") burned")
+          .font(.system(size: 13, weight: .semibold)).padding(.top, 10)
+      }
+      Text(
+        receipts
+          ? ImpactNumbers.bytes(memory) + " memory · " + ImpactNumbers.bytes(disk) + " disk"
+          : "Receipts unavailable"
+      )
+      .font(.system(size: 11.5)).foregroundStyle(BurnTheme.muted)
+      .lineLimit(1).minimumScaleFactor(0.85).fixedSize(horizontal: false, vertical: true)
+      .padding(.top, burned != nil && receipts ? 3 : 10)
+      if let cost, !costInLabel {
+        Text(cost).font(.system(size: 11.5)).foregroundStyle(BurnTheme.muted)
+          .fixedSize(horizontal: false, vertical: true).padding(.top, 2)
+      }
+    }
+    .padding(.horizontal, 14).padding(.vertical, 13)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
 }
 
-/// One area of the hunt: its state, how much of it the AI judged, what burned and what BZ found.
+/// One area of the hunt: how much of it the AI judged, what burned and what BZ found. Its state
+/// is in its words and its bar; a small check says it is done.
 struct HuntLaneCard: View {
   let kind: String
   let lane: HuntLane?
-  let running: Bool
-  let stopped: Bool
   let roomy: Bool
 
   private var title: String {
@@ -82,34 +116,21 @@ struct HuntLaneCard: View {
     }
   }
   private var total: Int { lane.map { max($0.toJudge, $0.judged) } ?? 0 }
-  /// "AI" while the AI works through it; "Done", "Clear" or "Stopped" once there's nothing more.
-  private var state: String {
-    guard let lane else { return "Up next" }
-    if total == 0 { return running ? "Clear" : "Done" }
-    if lane.judged >= total { return "Done" }
-    return running ? "AI" : stopped ? "Stopped" : "Done"
-  }
-  private var tint: Color? {
-    switch state {
-    case "AI": return BurnTheme.orange
-    case "Done": return AutopilotTheme.green
-    default: return nil
-    }
-  }
+  private var done: Bool { total > 0 && (lane?.judged ?? 0) >= total }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      HStack(spacing: roomy ? 6 : 4) {
-        if roomy {
-          Image(systemName: symbol).font(.system(size: 11, weight: .medium))
-            .foregroundStyle(BurnTheme.muted)
+      HStack(spacing: 6) {
+        Image(systemName: symbol).font(.system(size: 11, weight: .medium))
+          .foregroundStyle(BurnTheme.muted)
+        Text(title).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+        if done {
+          Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
+            .foregroundStyle(AutopilotTheme.green).accessibilityLabel("Done")
         }
-        Text(title).font(.system(size: roomy ? 12.5 : 12, weight: .semibold)).lineLimit(1)
-          .minimumScaleFactor(0.85)
-        Spacer(minLength: 4)
-        HuntTag(text: state, tint: tint, compact: !roomy)
+        Spacer(minLength: 0)
       }
-      count.frame(height: 25, alignment: .bottomLeading).padding(.top, 6)
+      count.frame(height: 25, alignment: .bottomLeading).padding(.top, 7)
       bar.padding(.top, 8)
       if let lane {
         Text(
@@ -117,11 +138,12 @@ struct HuntLaneCard: View {
             ? "Burned \(lane.burned.formatted()) · " + ImpactNumbers.bytes(lane.bytes)
             : "Nothing burned yet"
         )
-        .font(.system(size: 12.5, weight: .medium)).lineLimit(1).minimumScaleFactor(0.85)
+        .font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+        .fixedSize(horizontal: false, vertical: true)
         .foregroundStyle(lane.burned > 0 ? BurnTheme.cream : BurnTheme.muted)
-        .padding(.top, 8)
+        .padding(.top, 9)
         Text(found(lane)).font(.system(size: 11.5)).foregroundStyle(BurnTheme.muted)
-          .lineLimit(1).minimumScaleFactor(0.85).padding(.top, 2)
+          .lineLimit(1).fixedSize(horizontal: false, vertical: true).padding(.top, 2)
       }
     }
     .padding(.horizontal, roomy ? 14 : 12).padding(.vertical, 13)
@@ -146,31 +168,31 @@ struct HuntLaneCard: View {
   }
 
   private var bar: some View {
-    let done = total > 0 ? min(1, Double(lane?.judged ?? 0) / Double(total)) : 0
+    let share = total > 0 ? min(1, Double(lane?.judged ?? 0) / Double(total)) : 0
     return GeometryReader { proxy in
       ZStack(alignment: .leading) {
         Capsule().fill(HuntStyle.track)
-        Capsule().fill(BurnTheme.orange).frame(width: proxy.size.width * done)
+        Capsule().fill(BurnTheme.orange).frame(width: proxy.size.width * share)
       }
     }.frame(height: 3)
   }
 }
 
-/// Hunts from before Autopilot: their totals, with what they freed first.
+/// Hunts from before Autopilot, on the same grid: what they freed first, then the zombies and
+/// worktrees they burned and the processes they saw.
 struct HuntTotals: View {
   let snapshot: HuntSnapshot
+  let running: Bool
   let layout: HuntLayout
 
   private var receipts: Bool { snapshot.receiptEvidenceAvailable != false }
 
   var body: some View {
     HStack(alignment: .top, spacing: layout.gap) {
-      cell(
-        receipts ? ImpactNumbers.bytes(snapshot.memoryReclaimed) : nil, "Memory released",
-        payoff: snapshot.memoryReclaimed > 0)
-      cell(
-        receipts ? ImpactNumbers.bytes(snapshot.diskReclaimed) : nil, "Disk reclaimed",
-        payoff: snapshot.diskReclaimed > 0)
+      HuntFreedCard(
+        running: running, memory: snapshot.memoryReclaimed, disk: snapshot.diskReclaimed,
+        receipts: receipts
+      ).frame(width: layout.unit)
       cell(receipts ? snapshot.burned.formatted() : nil, "Zombies burned")
       cell(receipts ? snapshot.worktreesCleaned.formatted() : nil, "Worktrees cleaned")
       cell(snapshot.processCount.formatted(), "Processes seen")
@@ -180,17 +202,18 @@ struct HuntTotals: View {
 
   /// A total with its label above it. Without receipts BZ can't count what burned, so it says so
   /// with a dash rather than a zero.
-  private func cell(_ value: String?, _ label: String, payoff: Bool = false) -> some View {
-    VStack(alignment: .leading, spacing: 6) {
+  private func cell(_ value: String?, _ label: String) -> some View {
+    VStack(alignment: .leading, spacing: 7) {
       Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(BurnTheme.muted)
-        .lineLimit(1).minimumScaleFactor(0.85)
+        .lineLimit(1)
       Text(value ?? "—")
         .font(.system(size: 22, weight: .semibold, design: .rounded))
-        .foregroundStyle(value == nil ? BurnTheme.muted : payoff ? BurnTheme.orange : BurnTheme.cream)
+        .foregroundStyle(value == nil ? BurnTheme.muted : BurnTheme.cream)
         .contentTransition(.numericText()).lineLimit(1).minimumScaleFactor(0.7)
     }
-    .padding(.horizontal, 16).padding(.vertical, 14)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .padding(.horizontal, 16).padding(.vertical, 13)
+    .frame(width: layout.unit, alignment: .topLeading)
+    .frame(maxHeight: .infinity, alignment: .topLeading)
     .background(HuntStyle.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     .accessibilityElement(children: .combine)
   }

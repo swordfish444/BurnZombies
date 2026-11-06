@@ -91,6 +91,7 @@ struct HuntNeedsYou: View {
         }
       }
       card.padding(.top, 9)
+      Spacer(minLength: 0)
     }
     .onChange(of: all.map(\.id), initial: true) { _, ids in
       if pinned == nil || !ids.contains(pinned!) { pinned = ids.first }
@@ -135,25 +136,32 @@ struct HuntNeedsYou: View {
 
   // MARK: The card
 
-  /// One soft card that takes the room the column gives it: what it says centered, the answers
-  /// docked at the bottom, as in Teach BZ.
-  private var card: some View {
-    ZStack {
-      if let confirmation {
-        note(confirmation).transition(.opacity)
-      } else if let current {
-        face(current).id(current.id).transition(.opacity)
-      } else {
-        empty.transition(.opacity)
-      }
+  /// One soft card that takes the room the column gives it, up to a calm height: what it says and
+  /// the answers stay together in the middle. With nothing to ask, it is only as tall as its note.
+  @ViewBuilder private var card: some View {
+    if confirmation == nil && current == nil {
+      surface(empty.frame(maxWidth: .infinity).transition(.opacity))
+    } else {
+      surface(
+        ZStack {
+          if let confirmation {
+            note(confirmation).transition(.opacity)
+          } else if let current {
+            face(current).id(current.id).transition(.opacity)
+          }
+        }
+        .frame(maxWidth: .infinity, maxHeight: 360))
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(HuntStyle.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(HuntStyle.hairline)
-    )
-    .animation(.easeOut(duration: 0.22), value: confirmation)
-    .animation(.easeOut(duration: 0.22), value: current?.id)
+  }
+
+  private func surface(_ content: some View) -> some View {
+    content
+      .background(HuntStyle.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(HuntStyle.hairline)
+      )
+      .animation(.easeOut(duration: 0.22), value: confirmation)
+      .animation(.easeOut(duration: 0.22), value: current?.id)
   }
 
   @ViewBuilder private func face(_ card: Card) -> some View {
@@ -195,6 +203,13 @@ struct HuntNeedsYou: View {
       VStack(spacing: 0) {
         ScrollView(.vertical) { words(face, roomy: false).padding(.vertical, 4) }
           .scrollBounceBehavior(.basedOnSize)
+          // Anything below the fold fades instead of being cut by the answers.
+          .mask(
+            VStack(spacing: 0) {
+              Color.black
+              LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: 18)
+            })
         answers(face, roomy: false, onYes: onYes, onNo: onNo, onSkip: onSkip, details: details)
           .padding(.top, 8)
       }.padding(.horizontal, 18).padding(.vertical, 12)
@@ -209,28 +224,30 @@ struct HuntNeedsYou: View {
     VStack(spacing: 0) {
       Spacer(minLength: 0)
       words(face, roomy: roomy)
-      Spacer(minLength: roomy ? 18 : 12).frame(minHeight: roomy ? 18 : 12, maxHeight: roomy ? 30 : 18)
+      Spacer(minLength: roomy ? 16 : 12)
+        .frame(minHeight: roomy ? 16 : 12, maxHeight: roomy ? 30 : 18)
       answers(face, roomy: roomy, onYes: onYes, onNo: onNo, onSkip: onSkip, details: details)
       Spacer(minLength: 0)
     }
-    .padding(.horizontal, 20).padding(.top, roomy ? 18 : 12).padding(.bottom, roomy ? 14 : 11)
+    .padding(.horizontal, 20).padding(.top, roomy ? 18 : 12).padding(.bottom, roomy ? 16 : 11)
   }
 
   /// Only what the owner needs to decide: the headline, what it frees, one safe line and the chips.
   private func words(_ face: Face, roomy: Bool) -> some View {
     VStack(spacing: 0) {
-      if roomy { Text(face.emoji).font(.system(size: 28)).padding(.bottom, 8) }
+      if roomy { Text(face.emoji).font(.system(size: 26)).padding(.bottom, 7) }
       Text(face.headline)
-        .font(.system(size: roomy ? 19 : 17, weight: .bold, design: .rounded))
+        .font(.system(size: roomy ? 18.5 : 17, weight: .semibold, design: .rounded))
         .multilineTextAlignment(.center).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: balanced(face.headline, HuntType.rounded(roomy ? 19 : 17, .bold)))
+        .frame(maxWidth: balanced(face.headline, HuntType.rounded(roomy ? 18.5 : 17, .semibold)))
       if let name = face.name {
-        Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(BurnTheme.cream)
+        Text(name).font(.system(size: 12.5, weight: .medium))
+          .foregroundStyle(BurnTheme.cream.opacity(0.82))
           .lineLimit(1).truncationMode(.middle).padding(.top, 3)
       }
       Text(face.frees)
-        .font(.system(size: roomy ? 16 : 15, weight: .heavy, design: .rounded))
-        .foregroundStyle(BurnTheme.orange).padding(.top, roomy ? 5 : 3)
+        .font(.system(size: roomy ? 16 : 15, weight: .bold, design: .rounded))
+        .foregroundStyle(BurnTheme.orange).padding(.top, roomy ? 6 : 4)
       if let line = face.line, !line.isEmpty {
         Text(line).font(.system(size: 12.5)).foregroundStyle(BurnTheme.muted)
           .multilineTextAlignment(.center).lineLimit(roomy ? 3 : 2)
@@ -243,7 +260,7 @@ struct HuntNeedsYou: View {
           ForEach(face.chips, id: \.self) { chip in
             HuntChip(text: chip, caution: face.cautions.contains(chip))
           }
-        }.padding(.top, roomy ? 12 : 9)
+        }.padding(.top, roomy ? 11 : 9)
       }
       if let cost = face.cost {
         Label(cost, systemImage: "exclamationmark.triangle.fill")
@@ -266,9 +283,9 @@ struct HuntNeedsYou: View {
   ) -> some View {
     VStack(spacing: roomy ? 11 : 8) {
       HStack(spacing: 10) {
-        answer(face.yes, fill: AutopilotTheme.green, text: Color.black.opacity(0.86), roomy: roomy,
-          id: "hunt-yes", action: onYes)
-        answer(face.no, fill: Color.white.opacity(0.09), text: BurnTheme.cream, roomy: roomy,
+        answer(face.yes, fill: HuntStyle.yes, stroke: .clear, roomy: roomy, id: "hunt-yes",
+          action: onYes)
+        answer(face.no, fill: .clear, stroke: Color.white.opacity(0.18), roomy: roomy,
           id: "hunt-no", action: onNo)
       }.frame(maxWidth: 420)
       HStack(spacing: 14) {
@@ -280,14 +297,16 @@ struct HuntNeedsYou: View {
   }
 
   private func answer(
-    _ title: String, fill: Color, text: Color, roomy: Bool, id: String,
+    _ title: String, fill: Color, stroke: Color, roomy: Bool, id: String,
     action: @escaping () -> Void
   ) -> some View {
     Button(action: action) {
-      Text(title).font(.system(size: roomy ? 14.5 : 14, weight: .bold, design: .rounded))
-        .foregroundStyle(text).lineLimit(1).minimumScaleFactor(0.85)
+      Text(title).font(.system(size: roomy ? 14.5 : 14, weight: .semibold, design: .rounded))
+        .foregroundStyle(BurnTheme.cream).lineLimit(1).minimumScaleFactor(0.85)
         .frame(maxWidth: .infinity).frame(height: roomy ? 38 : 34)
-        .background(fill, in: Capsule())
+        // Circular ends: a continuous capsule's flatter ends show as straight lines in an outline.
+        .background(fill, in: Capsule(style: .circular))
+        .overlay(Capsule(style: .circular).strokeBorder(stroke))
         .contentShape(Capsule())
     }.buttonStyle(.plain).clickPointer().accessibilityIdentifier(id)
   }
@@ -319,15 +338,15 @@ struct HuntNeedsYou: View {
   }
 
   private var empty: some View {
-    VStack(spacing: 8) {
-      Image(systemName: "checkmark.circle").font(.system(size: 26, weight: .regular))
-        .foregroundStyle(AutopilotTheme.green.opacity(0.9)).padding(.bottom, 4)
-      Text("Nothing needs you right now").font(.system(size: 14.5, weight: .semibold))
+    VStack(spacing: 7) {
+      Image(systemName: "checkmark.circle").font(.system(size: 22, weight: .regular))
+        .foregroundStyle(AutopilotTheme.green.opacity(0.9)).padding(.bottom, 3)
+      Text("Nothing needs you right now").font(.system(size: 14, weight: .semibold))
       Text("Cards show up here when the hunt finds something it isn't sure about.")
         .font(.system(size: 12.5)).foregroundStyle(BurnTheme.muted)
         .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: 280)
-    }.padding(24)
+    }.padding(.horizontal, 24).padding(.vertical, 26)
   }
 
   // MARK: Answers

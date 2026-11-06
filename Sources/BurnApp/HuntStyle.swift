@@ -12,6 +12,8 @@ enum HuntStyle {
   static let hairline = Color.white.opacity(0.07)
   /// Quieter than muted: timestamps and the footer.
   static let faint = Color(white: 0.52)
+  /// Yes on a Needs you card: Teach BZ's green, a shade deeper, so the card stays calm.
+  static let yes = Color(red: 0.23, green: 0.53, blue: 0.28)
 }
 
 /// One grid for the whole window: four equal columns. The freed card and the three lanes fill them,
@@ -24,11 +26,19 @@ struct HuntLayout {
   var unit: CGFloat { max(0, (width - gap * 3) / 4) }
   var feed: CGFloat { unit * 2 + gap }
   var needs: CGFloat { max(0, width - feed - gap) }
-  /// Narrow lanes drop their icons and tighten, so "Junk and caches" keeps its whole name beside
-  /// "Stopped".
+  /// Narrow lanes tighten their sides a little.
   var roomyLanes: Bool { unit >= 205 }
-  /// A quarter of the window, as the owner asked: the scene sets the mood, the numbers are the hunt.
+  /// A quarter of the window, as the owner asked: the scene sets the mood; the numbers are the
+  /// hunt.
   var scene: CGFloat { max(150, (size.height * 0.25).rounded()) }
+  /// A short window keeps the same parts with tighter gaps between them, so Needs you still has
+  /// the room to show a whole card.
+  var short: Bool { size.height < 820 }
+  var afterHeader: CGFloat { short ? 12 : 16 }
+  var afterScene: CGFloat { short ? 14 : 20 }
+  var afterStats: CGFloat { short ? 16 : 22 }
+  var beforeFooter: CGFloat { short ? 8 : 10 }
+  var bottom: CGFloat { short ? 12 : 16 }
 }
 
 /// A rounded pill for the header's actions: orange for the one that matters, quiet for the rest.
@@ -97,16 +107,15 @@ struct HuntColumnHeader<Trailing: View>: View {
   }
 }
 
-/// A small capsule word: a lane's state or the feed's Live.
+/// A small capsule word: the feed's Live.
 struct HuntTag: View {
   let text: String
   var tint: Color? = nil
-  var compact = false
 
   var body: some View {
-    Text(text).font(.system(size: compact ? 9.5 : 10, weight: .semibold)).fixedSize()
+    Text(text).font(.system(size: 10, weight: .semibold)).fixedSize()
       .foregroundStyle(tint ?? BurnTheme.muted)
-      .padding(.horizontal, compact ? 6 : 7).padding(.vertical, 2.5)
+      .padding(.horizontal, 7).padding(.vertical, 2.5)
       .background((tint ?? .white).opacity(tint == nil ? 0.07 : 0.15), in: Capsule())
   }
 }
@@ -121,15 +130,22 @@ struct HuntChip: View {
       if caution { Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)) }
       Text(text).lineLimit(1)
     }
-    .font(.system(size: 11.5, weight: .semibold))
-    .foregroundStyle(caution ? Color.orange : BurnTheme.cream.opacity(0.92))
-    .padding(.horizontal, 10).padding(.vertical, 4.5)
-    .background(caution ? Color.orange.opacity(0.14) : Color.white.opacity(0.08), in: Capsule())
+    .font(.system(size: 11.5, weight: .medium))
+    .foregroundStyle(caution ? Color.orange : BurnTheme.cream.opacity(0.88))
+    .padding(.horizontal, 10).padding(.vertical, 4)
+    .background(
+      caution ? Color.orange.opacity(0.12) : Color.white.opacity(0.05),
+      in: Capsule(style: .circular)
+    )
+    .overlay(
+      Capsule(style: .circular).strokeBorder(
+        caution ? Color.orange.opacity(0.35) : Color.white.opacity(0.11)))
   }
 }
 
 /// Even line breaks for a card's centered text, as CSS's `text-wrap: balance` does: the narrowest
-/// width that still takes no more lines, so a headline never leaves one word alone on its last line.
+/// width that still takes no more lines, so a headline never leaves one word alone on its last
+/// line.
 enum HuntType {
   static func rounded(_ size: CGFloat, _ weight: NSFont.Weight) -> NSFont {
     let base = NSFont.systemFont(ofSize: size, weight: weight)
@@ -171,7 +187,9 @@ struct HuntBytes: View {
       Text(parts.first ?? value).font(BurnTheme.display(size)).contentTransition(.numericText())
       if parts.count > 1 { Text(parts[1]).font(BurnTheme.display(size * 0.62)) }
     }
-    .foregroundStyle(BurnTheme.orange).lineLimit(1).minimumScaleFactor(0.6)
+    // Nothing freed yet is quiet, not an orange zero.
+    .foregroundStyle(bytes == 0 ? BurnTheme.cream.opacity(0.35) : BurnTheme.orange)
+    .lineLimit(1).minimumScaleFactor(0.6)
     .antonTrimmed(size)
     .accessibilityElement(children: .ignore).accessibilityLabel(value)
   }
@@ -207,7 +225,8 @@ struct HuntChipFlow: Layout {
       var x = bounds.midX - row.width / 2
       for (index, size) in row.items {
         subviews[index].place(
-          at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: ProposedViewSize(size))
+          at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
+          proposal: ProposedViewSize(size))
         x += size.width + spacing
       }
       y += row.height + lineSpacing
