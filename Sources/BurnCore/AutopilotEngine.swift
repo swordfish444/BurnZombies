@@ -25,6 +25,8 @@ public struct AutopilotSources: Sendable {
   public var allowRecoveryKey: @Sendable () throws -> Void
   /// While the key waits, one quiet read in the background, so a wait can end without the owner.
   public var retryRecoveryKey: @Sendable () -> Void
+  /// How many of the owner's programs are running, leftovers or not: what a hunt says it looked at.
+  public var processCount: @Sendable () async -> Int
   public init(
     threads: @escaping @Sendable () -> [AgentThread] = { [] },
     processes: @escaping @Sendable ([AgentThread]) async -> [AutopilotItem] = { _ in [] },
@@ -57,7 +59,8 @@ public struct AutopilotSources: Sendable {
     allowRecoveryKey: @escaping @Sendable () throws -> Void = {
       throw StoreError.message("There is no backup key to allow here.")
     },
-    retryRecoveryKey: @escaping @Sendable () -> Void = {}
+    retryRecoveryKey: @escaping @Sendable () -> Void = {},
+    processCount: @escaping @Sendable () async -> Int = { 0 }
   ) {
     self.threads = threads
     self.processes = processes
@@ -75,6 +78,7 @@ public struct AutopilotSources: Sendable {
     self.recoveryKeyWait = recoveryKeyWait
     self.allowRecoveryKey = allowRecoveryKey
     self.retryRecoveryKey = retryRecoveryKey
+    self.processCount = processCount
   }
 }
 
@@ -135,12 +139,30 @@ public actor Autopilot {
   var ticking = false
   /// Tells being undone: restores wait on Git, and a second Undo meanwhile would restore again.
   var undoing = Set<String>()
+  /// Where `hunt-state.json` lives, beside the rest of BurnZombies' state.
+  let huntStore: Store?
+  /// The hunt under way: every tool call, burn and word of the AI adds to its feed and counters.
+  var hunt: HuntSnapshot?
+  /// Its AI run, so Stop can end it from the app or the command line.
+  var huntRun: AutopilotRun?
+  /// What the AI judged during this hunt, by kind, so each thing counts once.
+  var huntJudged: [AutopilotKind: Set<String>] = [:]
+  /// What the hunt had spent before this run began, when "Keep hunting" goes on with it.
+  var huntSpentBefore = 0.0
+  var huntTokensBefore = 0
+  /// How many programs, copies and junk folders the last look saw, small ones included.
+  var seen: [AutopilotKind: Int] = [:]
+  /// While a deep hunt runs, programs this small are looked at too.
+  var programFloor: UInt64?
+  /// Tells the running app a hunt was asked for, so it starts now instead of at the next tick.
+  var wake: (@Sendable () -> Void)?
 
   public init(
     root: URL = Store.defaultRoot, sources: AutopilotSources,
     minimumBytes: UInt64 = AutopilotPolicy.worthBytes
   ) throws {
     store = try AutopilotStore(root: root)
+    huntStore = try? Store(root: root)
     self.sources = sources
     self.minimumBytes = minimumBytes
     catalog = try? store.catalog()
@@ -173,17 +195,35 @@ public actor Autopilot {
       if $0.lastTick == nil { $0.firstTick = now }
       $0.lastTick = now
     }
+    // During a hunt, the window watches this look count up as each part of it finishes.
+    if hunt != nil {
+      hunt?.focus = "Looking over this Mac"
+      saveHunt()
+    }
     let threads = sources.threads()
     let records = await sources.worktreeRecords()
     var items = await sources.processes(threads)
+    let running = await sources.processCount()
+    seen[.process] = running > 0 ? running : items.count
+    looked(.process, seen[.process] ?? 0)
     let (copies, cache) = sources.worktrees(records, threads, delivery)
     delivery = cache
     items += copies.filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
       .map { Self.mentionChat($0, threads: threads, now: now) }
-    items += sources.disk(records)
+    seen[.worktree] = records.count
+    looked(.worktree, records.count)
+    let junk = sources.disk(records)
+    items += junk
+    seen[.disk] = junk.count
+    looked(.disk, junk.count)
     // A copy retire couldn't back up for big unsaved files carries them as risks of their own.
     items = AutopilotPolicy.withBigFiles(items, receipts: (try? store.receipts()) ?? [])
-    items = items.filter { AutopilotPolicy.worthAssessing($0, minimumBytes: minimumBytes) }
+    // A deep hunt looks at small programs too: a swarm of them frees as much as one big one.
+    let floor = minimumBytes
+    let programs = programFloor.map { min($0, floor) } ?? floor
+    items = items.filter {
+      AutopilotPolicy.worthAssessing($0, minimumBytes: $0.kind == .process ? programs : floor)
+    }
     catalog = AutopilotCatalog(
       observedAt: now, items: items, threads: threads, coverageNotes: sources.coverageNotes())
     try? store.save(catalog: catalog!)
@@ -414,6 +454,7 @@ public actor Autopilot {
       receipt = await Task.detached { sources.reclaimDisk(item, authority) }.value
     }
     if (try? store.append(receipt)) != nil { tally([receipt]) }
+    recordBurn(receipt, item: item)
     let verb = receipt.outcome == "refused" ? "Skipped" : "Burned"
     try? store.updateSweep {
       $0.append(
@@ -727,6 +768,17 @@ public actor Autopilot {
       refreshQuestions(now: now, acting: false)
     case .sweepNow:
       try store.updateSweep { $0.requested = true }
+      wake?()
+    case .deepHunt(let limit):
+      // Taken by the next tick, like "hunt now"; the running app wakes it at once. From the
+      // command line it spends at most the Hunt window's top limit.
+      try store.updateSweep {
+        $0.requested = true
+        $0.requestedDeep = min(HuntOptions.limits.max() ?? 15, max(HuntOptions.smallestRun, limit))
+      }
+      wake?()
+    case .stopHunt:
+      stopHunt()
     case .tellGood(let id):
       try store.updateMemory { try AutopilotPolicy.callGood(id, memory: &$0, now: now) }
     case .tellUndo(let id):
@@ -1174,8 +1226,15 @@ public struct AutopilotQuestionInput: Codable, Sendable {
 }
 
 extension Autopilot {
-  /// Dispatches one request and returns `(ok, json)`.
+  /// Dispatches one request and returns `(ok, json)`. During a hunt, what the AI did with it
+  /// shows in the Hunt window's feed and counters.
   public func handle(_ request: AutopilotRequest) async -> (Bool, String) {
+    let reply = await respond(request)
+    if hunt != nil { recordTool(request, ok: reply.0, reply: reply.1) }
+    return reply
+  }
+
+  func respond(_ request: AutopilotRequest) async -> (Bool, String) {
     func encode<T: Encodable>(_ value: T) -> String {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.sortedKeys]

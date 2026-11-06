@@ -553,6 +553,8 @@ public struct AutopilotSweepState: Codable, Sendable, Equatable {
   public var running = false
   /// Set by "Hunt now" from the CLI or MCP; the coordinator starts an AI sweep next tick.
   public var requested: Bool?
+  /// A deep hunt asked for from the command line, with its spending limit in US dollars.
+  public var requestedDeep: Double?
   public var log: [AutopilotLogEntry] = []
   public init() {}
   public mutating func append(_ message: String, date: Date = Date()) {
@@ -705,4 +707,8 @@ public enum AutopilotCommand: Codable, Sendable, Equatable {
   /// The owner's Allow in the menu: macOS asks whether BZ may use its backup key. Never from the
   /// agent socket.
   case allowRecoveryKey
+  /// A deep hunt: the AI reads everything, small programs included, until it has spent the limit.
+  case deepHunt(limitUSD: Double)
+  /// Ends the hunt under way. What it burned stays burned.
+  case stopHunt
 }

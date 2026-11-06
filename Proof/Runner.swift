@@ -147,8 +147,16 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       let beforeRobots = failures
       do { try robotBrowserPolicyProof() } catch { failTest("Robot browsers: \(error)") }
       if failures == beforeRobots { print("PASS Robot browsers") }
+      let beforeHunt = failures
+      do { try await huntLiveProof() } catch { failTest("Live hunt: \(error)") }
+      if failures == beforeHunt { print("PASS Live hunt: stream, deep hunt, Stop, limit and Keep hunting") }
       do { try await autopilotRecoveryKeyProof() } catch { failTest("Backup key: \(error)") }
       print("Quick checks completed; \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--hunt-live") {
+      do { try await huntLiveProof() } catch { failTest("Live hunt: \(error)") }
+      if failures == 0 { print("PASS Live hunt") }
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--start-at-login") {

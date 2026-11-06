@@ -14,6 +14,8 @@ struct HuntSceneView: View {
   var isVisible = true
   var elapsedOverride: TimeInterval? = nil
   var reduceMotionOverride: Bool? = nil
+  /// The Hunt window gives the scene a strip at the top; its stats and feed are the main event.
+  var height: CGFloat = 310
   @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
   private var reduceMotion: Bool { reduceMotionOverride ?? systemReduceMotion }
   @State private var epoch = Date()
@@ -54,10 +56,10 @@ struct HuntSceneView: View {
           }.padding(.horizontal, 10).padding(.vertical, 7)
             .background(Color.black.opacity(0.20), in: Capsule())
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.07)))
-        }.padding(24)
+        }.padding(height < 250 ? 16 : 24)
       }
     }
-    .frame(height: 310)
+    .frame(height: height)
     .clipShape(RoundedRectangle(cornerRadius: 14))
     .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.white.opacity(0.09)))
     .onChange(of: mode) { _, _ in epoch = Date() }
@@ -85,7 +87,13 @@ private struct HuntScenePainter {
     // One world coordinate system keeps the characters and ground aligned while
     // allowing the window to become narrower without scaling the text overlays.
     let scale = size.width / 900
-    context.scaleBy(x: scale, y: size.height / 310)
+    if size.height < 310 * scale * 0.9 {
+      // A strip: the same proportions, keeping the ground and the hunters and cropping the sky.
+      context.translateBy(x: 0, y: size.height - 310 * scale)
+      context.scaleBy(x: scale, y: scale)
+    } else {
+      context.scaleBy(x: scale, y: size.height / 310)
+    }
     let bounds = CGRect(x: 0, y: 0, width: 900, height: 310)
     context.fill(Path(bounds), with: .linearGradient(Gradient(colors: [
       Color(red: 0.071, green: 0.081, blue: 0.088), Color(red: 0.10, green: 0.12, blue: 0.13),
@@ -261,8 +269,9 @@ private struct HuntScenePainter {
         line(&c, from: CGPoint(x: x, y: y), to: CGPoint(x: x, y: y + (sy == 0 ? 8 : -8)), color: brackets, width: 1)
       }
     }
-    let text = mode == .detected ? "DETECTED" : "\(Int(progress * 100))%"
-    let width = mode == .detected ? 86.0 : 56.0
+    // No made-up percentage: the scene is atmosphere, and the real counts are below it.
+    let text = mode == .detected ? "DETECTED" : "CHECKING"
+    let width = 86.0
     c.fill(Path(roundedRect: CGRect(x: targetX - width / 2, y: 117, width: width, height: 25), cornerRadius: 4), with: .color(mode == .detected ? orange.opacity(0.18) : .black.opacity(0.42)))
     label(&c, text, x: targetX, y: 130, size: 12, color: mode == .detected ? orange : cream)
     label(&c, mode == .detected ? "THREAT IDENTIFIED" : "SCANNING", x: targetX, y: 103, size: 8, color: cream.opacity(0.46))

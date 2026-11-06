@@ -115,7 +115,13 @@ extension AutopilotSources {
       },
       recoveryKeyWait: { keys.wait },
       allowRecoveryKey: { try keys.allow() },
-      retryRecoveryKey: { keys.retry() })
+      retryRecoveryKey: { keys.retry() },
+      processCount: {
+        let uid = getuid()
+        return await monitor.autopilotRecords().values.filter {
+          $0.missingSince == nil && $0.latest.uid == uid
+        }.count
+      })
   }
 
   /// PIDs of the user's LaunchAgents: started on purpose by launchd, never orphans.
