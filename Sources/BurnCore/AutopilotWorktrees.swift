@@ -358,20 +358,18 @@ public enum AutopilotWorktrees {
     let untracked = try WorktreeGit.run(
       path, ["ls-files", "-z", "--others", "--exclude-standard"], seconds: 60
     ).split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
-    let profiles = try browserProfiles(path, untracked: untracked)
+    let generated = AutopilotDisk.recoveryExclusions(path)
+    let profiles = try browserProfiles(path, untracked: untracked, skipping: generated)
+    let dropped = try profileBytes(path, profiles)
     var files: [AutopilotUnsavedFile] = []
-    var dropped: UInt64 = 0
-    for name in untracked {
+    for name in untracked where !profiles.contains(where: { name.hasPrefix($0 + "/") }) {
       var info = stat()
       guard lstat(path + "/" + name, &info) == 0, info.st_mode & S_IFMT == S_IFREG else {
         continue
       }
-      let bytes = UInt64(max(0, info.st_size))
-      if profiles.contains(where: { name.hasPrefix($0 + "/") }) {
-        dropped += bytes
-        continue
-      }
-      files.append(AutopilotUnsavedFile(path: name, bytes: bytes, changed: AutopilotDisk.changed(info)))
+      files.append(
+        AutopilotUnsavedFile(
+          path: name, bytes: UInt64(max(0, info.st_size)), changed: AutopilotDisk.changed(info)))
     }
     var big: [AutopilotBigFiles] = []
     if files.reduce(0, { $0 + $1.bytes }) > maximumUnsavedBytes {
@@ -392,7 +390,7 @@ public enum AutopilotWorktrees {
     // Existing commits stay in Git. Every unsaved/ignored byte outside proven generated caches
     // lives only in authenticated encrypted recovery, never in a temporary Git index or blob.
     // Big unsaved files a Yes let go are left out too: they go with the copy, for good.
-    let excluded = AutopilotDisk.recoveryExclusions(path).union(profiles)
+    let excluded = generated.union(profiles)
     let archive = try PrivateRecovery.capture(
       path, root: root, excluding: excluded, leavingOut: Set(big.map(\.path)),
       gitPointers: try submodulePointers(path, links: links), repository: common, head: head,
@@ -501,17 +499,47 @@ public enum AutopilotWorktrees {
   }
 
   /// Browser profiles test runs leave in a copy, by path inside it: a Chrome-style profile folder,
-  /// with `Local State` beside `Default/Preferences`. Test state, not work, so they are neither
-  /// backed up nor counted as unsaved. A folder holding a file Git tracks is somebody's fixture.
-  private static func browserProfiles(_ path: String, untracked: [String]) throws -> [String] {
-    var found: [String] = []
-    for name in untracked where name.hasSuffix("/Local State") {
-      let folder = String(name.dropLast("/Local State".count))
-      var info = stat()
-      guard lstat(path + "/" + folder + "/Default/Preferences", &info) == 0,
-        info.st_mode & S_IFMT == S_IFREG
+  /// with `Local State` beside `Default/Preferences`, among the unsaved files or in a folder Git
+  /// ignores. Test state, not work, so they are neither backed up nor counted as unsaved. A folder
+  /// holding a file Git tracks is somebody's fixture. `generated` folders aren't kept anyway.
+  private static func browserProfiles(
+    _ path: String, untracked: [String], skipping generated: Set<String>
+  ) throws -> [String] {
+    func profile(_ folder: String) -> Bool {
+      ["/Local State", "/Default/Preferences"].allSatisfy { name in
+        var info = stat()
+        return lstat(path + "/" + folder + name, &info) == 0 && info.st_mode & S_IFMT == S_IFREG
+      }
+    }
+    var found = untracked.filter { $0.hasSuffix("/Local State") }
+      .map { String($0.dropLast("/Local State".count)) }.filter(profile)
+    // Git names a folder it ignores as one entry, so those are searched on disk. The search only
+    // finds profiles; one it can't reach is backed up with the rest of the folder.
+    let ignored = (try? WorktreeGit.run(
+      path, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+      seconds: 60)) ?? Data()
+    let skipped = generated.union(found)
+    var pending = ignored.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+      .filter { $0.hasSuffix("/") }.map { String($0.dropLast()) }
+      .filter { folder in !skipped.contains { folder == $0 || folder.hasPrefix($0 + "/") } }
+    var listed = 0
+    while let folder = pending.popLast(), listed < 100_000 {
+      if profile(folder) {
+        found.append(folder)
+        continue
+      }
+      guard let names = try? FileManager.default.contentsOfDirectory(atPath: path + "/" + folder)
       else { continue }
-      found.append(folder)
+      listed += names.count
+      for name in names where name.lowercased() != ".git" {
+        let child = folder + "/" + name
+        var info = stat()
+        if !generated.contains(child), lstat(path + "/" + child, &info) == 0,
+          info.st_mode & S_IFMT == S_IFDIR
+        {
+          pending.append(child)
+        }
+      }
     }
     // One inside another goes with it.
     found = found.filter { inner in !found.contains { inner.hasPrefix($0 + "/") } }
@@ -519,6 +547,39 @@ public enum AutopilotWorktrees {
     let tracked = try git(path, ["--literal-pathspecs", "ls-files", "-z", "--"] + found)
       .split(separator: "\0").map(String.init)
     return found.filter { folder in !tracked.contains { $0.hasPrefix(folder + "/") } }
+  }
+
+  /// The bytes in the browser profiles. They go with the copy and nothing else looks inside them,
+  /// so a project in one keeps the copy, as does a folder in them that can't be read.
+  private static func profileBytes(_ path: String, _ profiles: [String]) throws -> UInt64 {
+    var bytes: UInt64 = 0
+    var pending = profiles.map { path + "/" + $0 }
+    var visited = 0
+    while let current = pending.popLast() {
+      let names: [String]
+      do {
+        names = try FileManager.default.contentsOfDirectory(atPath: current)
+      } catch {
+        throw Refusal("I could not look inside every folder, so I left it alone.")
+      }
+      for name in names {
+        visited += 1
+        guard visited <= 1_000_000 else {
+          throw Refusal("It has too many files for me to check, so I left it alone.")
+        }
+        if name.lowercased() == ".git" { throw Refusal(nestedProject) }
+        var info = stat()
+        guard lstat(current + "/" + name, &info) == 0 else {
+          throw Refusal("I could not look inside every folder, so I left it alone.")
+        }
+        switch info.st_mode & S_IFMT {
+        case S_IFDIR: pending.append(current + "/" + name)
+        case S_IFREG: bytes += UInt64(max(0, info.st_size))
+        default: break
+        }
+      }
+    }
+    return bytes
   }
 
   /// Why a copy was left when the check for programs using it couldn't finish.
