@@ -59,16 +59,24 @@ import Vision
       snapshot.detail = "Stopped. Everything burned stays burned: 18.4 GB freed for $1.20 of AI."
       snapshot.append("stopped", snapshot.detail, date: now.addingTimeInterval(-10))
     }
+    if phase == "completed" {
+      snapshot.lanes = snapshot.lanes?.map { lane in var done = lane; done.judged = lane.toJudge; return done }
+      snapshot.focus = nil; snapshot.finishedAt = now.addingTimeInterval(-10)
+      snapshot.append("burn", "Burned 6 old copies, merged and idle 2+ weeks. Restore points saved. 11.7 GB back.", date: now.addingTimeInterval(-40))
+      snapshot.detail = "Deep hunt complete: 18.4 GB freed for $1.20 of AI."
+      snapshot.append("complete", snapshot.detail, date: now.addingTimeInterval(-10))
+    }
     return snapshot
   }
-  func render(_ name: String, width: CGFloat = 948) throws {
-    let host = NSHostingView(rootView: HuntView(model: model, sceneTime: 7.625))
-    host.frame = NSRect(x: 0, y: 0, width: width, height: 860)
+  /// The window at its default size, or at `width` × `height` such as the minimum, 800 × 760.
+  func render(_ name: String, width: CGFloat = 948, height: CGFloat = 860, confirmation: HuntConfirmation? = nil) throws {
+    let host = NSHostingView(rootView: HuntView(model: model, sceneTime: 7.625, needsYouConfirmation: confirmation))
+    host.frame = NSRect(x: 0, y: 0, width: width, height: height)
     let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
     window.contentView = host
     RunLoop.main.run(until: Date().addingTimeInterval(0.08))
     host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
-    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(width * 2), pixelsHigh: 1720,
+    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(width * 2), pixelsHigh: Int(height * 2),
       bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
       bytesPerRow: 0, bitsPerPixel: 0), !window.isVisible, !window.isKeyWindow else { throw StoreError.message("Offscreen hunt rendering unavailable") }
     bitmap.size = host.bounds.size
@@ -83,34 +91,73 @@ import Vision
     // Vision may split tracked labels into separate observations on macOS 15.
     // Preserve its raw output, but compare words independently of OCR line breaks.
     let text = recognized.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
-    // Older hunts show their totals; Autopilot hunts their lanes.
-    let labels = name.hasPrefix("deep") ? ["Programs", "Old copies", "Junk and caches"] : ["Processes seen", "Worktrees cleaned"]
-    guard text.contains("HUNT ZOMBIES"), text.contains("HUNT FEED"), labels.allSatisfy(text.contains) else { throw StoreError.message("Hunt interface clipped: \(text)") }
-    if name == "deep-running" {
-      guard text.contains("$1.20 of $5"), text.contains("Stop"), text.uppercased().contains("NEEDS YOU"), text.contains("Yes, burn them"),
-        text.contains("18.4 GB"), text.contains("tsserver in orbit-web") else { throw StoreError.message("Deep hunt stats, spend, focus or question missing: \(text)") }
+    func expect(_ words: [String], _ problem: String) throws {
+      let missing = words.filter { !text.contains($0) }
+      guard missing.isEmpty else { throw StoreError.message("Hunt \(name): \(problem). Missing \(missing) in: \(text)") }
     }
-    if name == "deep-needs-ok" {
-      guard text.contains("Burn this copy?"), text.contains("p6-infra-phase4-apply"), text.contains("Made by Claude"), text.contains("Yes, burn it")
-      else { throw StoreError.message("The AI's sure-but-needs-OK card is missing: \(text)") }
+    // Every state: the window's title and the feed. Vision reads "AI" as "Al", so checks stop short of it.
+    try expect(["HUNT ZOMBIES", "Hunt feed"], "header or feed clipped")
+    let base = name.replacingOccurrences(of: "-small", with: "")
+    switch base {
+    case "ready":
+      try expect(["Hunt Zombies", "Deep hunt", "Up to $5", "A deep hunt uses more A", "Ready to clear the dead weight", "Needs you"],
+        "the ready header, its deep hunt notice or the empty feed is missing")
+    case "running":
+      try expect(["Hunting Zombies", "Live", "Processes seen", "Worktrees cleaned", "842", "Active development server preserved"],
+        "actual hunt evidence not displayed")
+    case "completed":
+      try expect(["Memory released", "Disk reclaimed", "Zombies burned", "Worktrees cleaned", "Processes seen", "18.4 GB", "1.6 GB", "Removal verified"],
+        "verified cleanup stats missing")
+    case "paused":
+      try expect(["HUNT PAUSED", "Processes seen", "Harness unavailable"], "the pause and why it paused are missing")
+    case "receipts-unavailable":
+      try expect(["Processes seen", "Worktrees cleaned", "842"], "totals without receipts missing")
+    case "deep-starting":
+      try expect(["Freed so far", "Programs", "Old copies", "Junk and caches", "Not looked at yet", "Looking over this Mac", "Nothing needs you right now"],
+        "a deep hunt's first moments are missing")
+    case "deep-running":
+      try expect(["Deep hunt", "$1.20 of $5", "Stop", "Freed so far", "18.4 GB", "41 zombies burned", "Programs", "Old copies", "Junk and caches",
+        "34 of 112 judged", "Burned 23", "2,212 running", "tsserver in orbit-web", "Needs you", "Xcode build folders", "Frees 31.0 GB",
+        "Inside your projects", "Yes, burn them", "No, keep them", "Not sure", "View details", "1 of 2"],
+        "deep hunt stats, spend, focus or question missing")
+    case "deep-stopped":
+      try expect(["Keep hunting", "Hunt Zombies", "Up to $5", "Freed this hunt", "for $1.20 of A", "Stopped"],
+        "stopped deep hunt can't keep hunting")
+    case "deep-needs-ok":
+      // The copy's name, minus the "infra" Vision sometimes reads as "intra".
+      try expect(["Burn this copy?", "phase4-apply", "Made by Claude", "is sure", "Frees 4.0 GB", "Yes, burn it", "No, keep it", "Not sure"],
+        "the AI's sure-but-needs-OK card is missing")
+    case "deep-completed":
+      try expect(["Hunt Zombies", "Deep hunt", "Freed this hunt", "for $1.20 of A", "Done", "Deep hunt complete", "Nothing needs you right now"],
+        "a finished deep hunt or the empty Needs you is missing")
+    case "deep-answered":
+      try expect(["Burning them now", "BZ handles ones like these"], "the answer's confirmation is missing")
+    default:
+      throw StoreError.message("Hunt \(name) has no checks")
     }
-    if name == "deep-stopped" {
-      guard text.contains("Keep hunting"), text.contains("for $1.20 of A") /* Vision reads "AI" as "Al" */, text.contains("Up to $5") else { throw StoreError.message("Stopped deep hunt can't keep hunting: \(text)") }
-    }
-    if name == "running" { guard text.contains("842"), text.contains("Active development server preserved") else { throw StoreError.message("Actual hunt evidence not displayed") } }
-    if name == "completed" { guard text.contains("18.4 GB"), text.contains("Removal verified") else { throw StoreError.message("Verified cleanup stats missing") } }
   }
   try render("ready")
-  model.huntSnapshot = fixture("hunting"); try render("running"); try render("running-small", width: 800)
+  model.huntSnapshot = fixture("hunting"); try render("running"); try render("running-small", width: 800, height: 760)
   model.huntSnapshot = fixture("completed"); try render("completed")
   model.huntSnapshot = fixture("paused"); try render("paused")
   model.huntSnapshot?.receiptEvidenceAvailable = false; try render("receipts-unavailable")
-  var question = AutopilotQuestion(kind: .disk, match: ["family": ["xcode"], "stale": ["week"]], question: "Can I burn Xcode build caches untouched for two weeks?",
-    why: "", examples: [], count: 14, bytes: 31_000_000_000)
+  // A deep hunt's first seconds: nothing counted yet, so the lanes say so without a number.
+  model.autopilot.questions = []; model.autopilot.entries = []
+  var starting = HuntSnapshot(startedAt: now.addingTimeInterval(-4))
+  starting.lane = "autopilot"; starting.deep = true; starting.limitUSD = 5; starting.spentUSD = 0
+  starting.focus = "Looking over this Mac"; starting.detail = "Deep hunt: the AI reads everything and burns as it goes."
+  starting.append("info", "Deep hunt started, up to $5. It burns as it goes, so stopping keeps every win.", date: now.addingTimeInterval(-4))
+  model.huntSnapshot = starting; try render("deep-starting")
+  var question = AutopilotQuestion(kind: .disk, match: ["folder": ["xcode-derived"], "stale": ["week"], "home": ["repo"]],
+    question: "Can I burn Xcode build caches untouched for two weeks?", why: "", examples: [], count: 14, bytes: 31_000_000_000)
   question.line = "Your tools rebuild them when needed."
-  model.autopilot.questions = [question]
-  model.huntSnapshot = deepFixture("hunting"); try render("deep-running"); try render("deep-running-small", width: 800)
-  model.huntSnapshot = deepFixture("stopped"); try render("deep-stopped")
+  var servers = AutopilotQuestion(kind: .process, match: ["family": ["node"], "listening": ["yes"], "idle": ["1d"], "thread": ["ended"]],
+    question: "Can I burn dev servers from chats that ended?", why: "", examples: [], count: 6, bytes: 3_400_000_000)
+  servers.line = "They just get asked to quit."
+  model.autopilot.questions = [question, servers]
+  model.huntSnapshot = deepFixture("hunting"); try render("deep-running"); try render("deep-running-small", width: 800, height: 760)
+  try render("deep-answered", confirmation: HuntConfirmation(title: "Burning them now", line: "BZ handles ones like these on its own from now on.", symbol: "flame.fill"))
+  model.huntSnapshot = deepFixture("stopped"); try render("deep-stopped"); try render("deep-stopped-small", width: 800, height: 760)
   // Something the AI is sure about but may not burn itself waits for the owner's OK.
   var copy = AutopilotEntry(
     item: AutopilotItem(id: "worktree:infra", kind: .worktree, name: "p6-infra-phase4-apply", bytes: 3_960_000_000,
@@ -118,7 +165,10 @@ import Vision
     status: .unsure, authority: nil, label: "Merged infra copy", why: "", consequence: "")
   copy.needsOK = true; copy.aiWhy = "Its work is merged on GitHub and nobody touched it in weeks."
   model.autopilot.questions = []; model.autopilot.entries = [copy]
-  model.huntSnapshot = deepFixture("hunting"); try render("deep-needs-ok")
+  model.huntSnapshot = deepFixture("hunting"); try render("deep-needs-ok"); try render("deep-needs-ok-small", width: 800, height: 760)
+  // A deep hunt that finished with nothing left to ask: Needs you rests.
+  model.autopilot.entries = []
+  model.huntSnapshot = deepFixture("completed"); try render("deep-completed")
 
   var calls = 0, opens = 0
   let control = AppModel(demo: true, huntAction: {
@@ -161,6 +211,6 @@ import Vision
   let raceDeadline = Date().addingTimeInterval(2)
   while (racedCalls < 2 || raced.huntRunning) && Date() < raceDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
   guard racedCalls == 2, racedOpens == 1, !raced.huntRunning else { throw StoreError.message("An automatic no-op swallowed the manual hunt") }
-  print("PASS native Hunt Zombies hit, manual with automatic off, active progress opening, duplicate prevention, live feed/counters and ready/running/complete/paused/unknown renders, deep hunt lanes, spend chip, Stop, Needs you questions and OK cards, and Keep hunting; no model calls or visible windows")
+  print("PASS native Hunt Zombies hit, manual with automatic off, active progress opening, duplicate prevention, live feed/counters and ready/running/complete/paused/unknown renders at the default and minimum sizes, deep hunt starting/running/stopped/completed with lanes, spend chip, Stop, Keep hunting, and Needs you question, OK, answered and empty cards; no model calls or visible windows")
 }
 #endif

@@ -2,10 +2,13 @@ import BurnCore
 import SwiftUI
 
 /// The game is atmosphere, a strip at the top; the stats, the live feed and the questions below
-/// it are the hunt itself, and every number there comes from the hunt's receipts.
+/// it are the hunt itself, and every number there comes from the hunt's receipts. Top to bottom:
+/// what was freed, how far each area got, then the feed beside what needs the owner.
 struct HuntView: View {
   @ObservedObject var model: AppModel
   var sceneTime: TimeInterval? = nil
+  /// Starts Needs you on an answer's note, for offscreen renders.
+  var needsYouConfirmation: HuntConfirmation? = nil
   @State private var visible = false
   @State private var followLive = true
   @State private var celebration: HuntSceneMode?
@@ -17,46 +20,42 @@ struct HuntView: View {
   /// The limit panel says to raise it: Keep hunting found nothing left under it.
   @State private var limitNote = false
   var snapshot: HuntSnapshot? { model.huntSnapshot }
-  var receiptsAvailable: Bool { snapshot?.receiptEvidenceAvailable != false }
   var activeVisuals: Bool { visible && model.huntProgressVisible }
   /// Autopilot hunts show lanes, the live ticker and the questions; older hunts their totals.
   var autopilot: Bool { snapshot?.isAutopilot == true || (snapshot == nil && model.autopilotAvailable) }
   var deep: Bool { snapshot?.deep == true }
   var stoppedDeep: Bool { deep && snapshot?.phase == "stopped" && !model.huntRunning }
+  var needsYou: Bool { autopilot && model.autopilotAvailable }
   var sceneMode: HuntSceneMode {
     if let celebration { return celebration }
     return model.huntRunning
       ? .searching : snapshot?.phase == "paused" ? .paused : snapshot == nil ? .idle : .complete
   }
+
   var body: some View {
     GeometryReader { proxy in
-      VStack(alignment: .leading, spacing: 12) {
+      let layout = HuntLayout(size: proxy.size)
+      VStack(alignment: .leading, spacing: 0) {
         header
-        // A quarter of the window: the scene sets the mood, the numbers below are the hunt.
         HuntSceneView(
           mode: sceneMode, celebrationTitle: celebrationTitle, isVisible: activeVisuals,
-          elapsedOverride: sceneTime, height: max(140, (proxy.size.height * 0.25).rounded()))
-        if let lanes = snapshot?.lanes, !lanes.isEmpty {
-          HuntStats(snapshot: snapshot!, running: model.huntRunning)
-        } else {
-          totals
+          elapsedOverride: sceneTime, height: layout.scene
+        ).padding(.top, 16)
+        if let snapshot {
+          Group {
+            if snapshot.isAutopilot || !(snapshot.lanes ?? []).isEmpty {
+              HuntStats(snapshot: snapshot, running: model.huntRunning, layout: layout)
+            } else {
+              HuntTotals(snapshot: snapshot, layout: layout)
+            }
+          }.padding(.top, 20)
         }
-        if autopilot, model.huntRunning, let focus = snapshot?.focus {
-          ticker(focus)
-        }
-        feed
-        if autopilot && model.autopilotAvailable {
-          HuntNeedsYou(model: model, running: model.huntRunning)
-        }
-        HStack(spacing: 8) {
-          Image(systemName: snapshot?.phase == "paused" ? "pause.circle" : "shield.lefthalf.filled")
-            .foregroundStyle(snapshot?.phase == "paused" ? BurnTheme.orange : BurnTheme.muted)
-          Text(snapshot?.detail ?? "Active work stays protected. Every cleanup earns a receipt.")
-            .font(.system(size: 11)).foregroundStyle(BurnTheme.muted).lineLimit(1)
-          Spacer(minLength: 0)
-        }
-      }.padding(.horizontal, 24).padding(.top, 30).padding(.bottom, 16)
-        .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+        columns(layout).padding(.top, 22)
+        footer.padding(.top, 10)
+      }
+      // The header starts below the titlebar's 28 points, where every control takes its clicks.
+      .padding(.horizontal, layout.margin).padding(.top, 30).padding(.bottom, 12)
+      .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
     }
     .frame(minWidth: 800, idealWidth: 948, minHeight: 760, idealHeight: 860)
     .foregroundStyle(BurnTheme.cream).background(BurnBackdrop())
@@ -118,64 +117,88 @@ struct HuntView: View {
   // MARK: Header
 
   private var header: some View {
-    HStack(alignment: .top, spacing: 12) {
-      Skull(size: 38)
-      VStack(alignment: .leading, spacing: 2) {
-        Text("HUNT ZOMBIES").font(BurnTheme.display(28)).tracking(0.4)
-        Text(
-          deep && (model.huntRunning || stoppedDeep)
-            ? "Deep hunt · uses more AI than a regular hunt. Burns as it goes."
-            : "Your Mac. Less dead weight."
-        )
-        .font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
-      }
-      Spacer()
-      VStack(alignment: .trailing, spacing: 5) {
+    HStack(alignment: .center, spacing: 12) {
+      Skull(size: 36)
+      VStack(alignment: .leading, spacing: 7) {
+        Text("HUNT ZOMBIES").font(BurnTheme.display(26)).tracking(0.5).antonTrimmed(26)
+        // Narrow, a deep hunt's line keeps its point in fewer words rather than trailing off.
+        ViewThatFits(in: .horizontal) {
+          ForEach(subtitles, id: \.self) { line in
+            Text(line).font(.system(size: 12.5)).foregroundStyle(BurnTheme.muted).lineLimit(1)
+          }
+        }
+      }.layoutPriority(1)
+      Spacer(minLength: 16)
+      VStack(alignment: .trailing, spacing: 7) {
         HStack(spacing: 8) { controls }
         if !model.huntRunning && !stoppedDeep && model.deepHuntAvailable {
           // The one notice a deep hunt needs; the details wait behind the limit.
           Text("A deep hunt uses more AI and burns as it goes.")
-            .font(.system(size: 11)).foregroundStyle(BurnTheme.muted)
+            .font(.system(size: 11.5)).foregroundStyle(BurnTheme.muted).lineLimit(1)
         }
-      }
+      }.fixedSize()
     }
   }
 
+  private var subtitles: [String] {
+    guard deep && (model.huntRunning || stoppedDeep) else { return ["Your Mac. Less dead weight."] }
+    return [
+      "Deep hunt · uses more AI than a regular hunt. Burns as it goes.",
+      "Deep hunt · uses more AI. Burns as it goes.",
+    ]
+  }
+
+  /// The action that matters most sits on the right, in orange: Hunt Zombies or Keep hunting. While
+  /// a hunt runs, what's running and Stop.
   @ViewBuilder private var controls: some View {
     if model.huntRunning {
-      HStack(spacing: 8) {
-        Circle().fill(BurnTheme.orange).frame(width: 7, height: 7)
-        Text(deep ? "Deep hunt" : "Hunting Zombies").font(.system(size: 12, weight: .semibold))
-      }.padding(.horizontal, 12).padding(.vertical, 9)
-        .background(BurnTheme.orange.opacity(0.10), in: Capsule())
+      livePill
       if deep { limitChip }
       if autopilot && model.autopilotAvailable {
-        capsule("Stop", symbol: "stop.fill", filled: false, id: "hunt-stop") { model.stopHunt() }
+        Button { model.stopHunt() } label: { Label("Stop", systemImage: "stop.fill") }
+          .buttonStyle(HuntPillStyle()).clickPointer().accessibilityIdentifier("hunt-stop")
           .help("Ends the hunt now. Everything it burned stays burned.")
       }
     } else if stoppedDeep {
+      Button { model.requestAgentCleanup() } label: { Label("Hunt Zombies", systemImage: "scope") }
+        .buttonStyle(HuntPillStyle()).clickPointer().accessibilityIdentifier("hunt-again")
+        .disabled(!model.accessReady || !model.harnessConfigured)
       limitChip
-      capsule("Keep hunting", symbol: "play.fill", filled: true, id: "hunt-keep") {
+      Button {
         if !model.keepHunting() {
           limitNote = true
           showLimit = true
         }
-      }.disabled(!model.accessReady)
-      capsule("Hunt Zombies", symbol: "scope", filled: false, id: "hunt-again") {
-        model.requestAgentCleanup()
-      }.disabled(!model.accessReady || !model.harnessConfigured)
+      } label: {
+        Label("Keep hunting", systemImage: "play.fill")
+      }
+      .buttonStyle(HuntPillStyle(prominent: true)).clickPointer()
+      .accessibilityIdentifier("hunt-keep").disabled(!model.accessReady)
     } else {
-      capsule("Hunt Zombies", symbol: "scope", filled: true, id: "hunt-again") {
-        model.requestAgentCleanup()
-      }.disabled(!model.accessReady || !model.harnessConfigured)
       if model.deepHuntAvailable {
-        capsule("Deep hunt", symbol: "flame", filled: false, id: "hunt-deep") {
-          model.requestDeepHunt()
-        }.disabled(!model.accessReady)
+        Button { model.requestDeepHunt() } label: { Label("Deep hunt", systemImage: "flame") }
+          .buttonStyle(HuntPillStyle()).clickPointer().accessibilityIdentifier("hunt-deep")
+          .disabled(!model.accessReady)
           .help("The AI goes through everything, small programs too, and burns as it goes.")
         limitChip
       }
+      Button { model.requestAgentCleanup() } label: { Label("Hunt Zombies", systemImage: "scope") }
+        .buttonStyle(HuntPillStyle(prominent: true)).clickPointer()
+        .accessibilityIdentifier("hunt-again")
+        .disabled(!model.accessReady || !model.harnessConfigured)
+        .padding(.leading, model.deepHuntAvailable ? 4 : 0)
     }
+  }
+
+  /// "Deep hunt" or "Hunting Zombies", with a live dot: what's running, not a button.
+  private var livePill: some View {
+    HStack(spacing: 7) {
+      Circle().fill(BurnTheme.orange).frame(width: 7, height: 7)
+        .shadow(color: BurnTheme.orange.opacity(0.7), radius: 3)
+      Text(deep ? "Deep hunt" : "Hunting Zombies").font(.system(size: 12.5, weight: .semibold))
+    }
+    .padding(.horizontal, 12).frame(height: 30)
+    .background(BurnTheme.orange.opacity(0.13), in: Capsule())
   }
 
   /// "$1.20 of $5" while a deep hunt runs, "Up to $5" otherwise. The details open on a click.
@@ -185,16 +208,13 @@ struct HuntView: View {
       showLimit.toggle()
     } label: {
       HStack(spacing: 5) {
-        Image(systemName: "dollarsign.circle")
+        Image(systemName: "dollarsign.circle").font(.system(size: 11.5, weight: .medium))
         Text(chipText).monospacedDigit()
-        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+        Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold))
+          .foregroundStyle(BurnTheme.muted)
       }
-      .font(.system(size: 12, weight: .medium)).foregroundStyle(BurnTheme.cream)
-      .padding(.horizontal, 11).padding(.vertical, 8)
-      .background(Color.white.opacity(0.06), in: Capsule())
-      .overlay(Capsule().strokeBorder(BurnTheme.line))
     }
-    .buttonStyle(.plain).clickPointer().accessibilityIdentifier("hunt-limit")
+    .buttonStyle(HuntPillStyle()).clickPointer().accessibilityIdentifier("hunt-limit")
     .popover(isPresented: $showLimit, arrowEdge: .bottom) {
       HuntLimitPanel(model: model, note: limitNote, running: model.huntRunning && deep)
     }
@@ -208,65 +228,27 @@ struct HuntView: View {
     return "Up to " + HuntOptions.dollars(model.deepLimitUSD)
   }
 
-  private func capsule(
-    _ title: String, symbol: String, filled: Bool, id: String, action: @escaping () -> Void
-  ) -> some View {
-    Button(action: action) {
-      Label(title, systemImage: symbol)
-        .font(.system(size: 12, weight: .semibold)).padding(.horizontal, 12).padding(.vertical, 9)
-        .background(filled ? BurnTheme.orange : Color.white.opacity(0.06), in: Capsule())
-        .overlay(Capsule().strokeBorder(filled ? Color.clear : BurnTheme.line))
-        .foregroundStyle(filled ? Color.black.opacity(0.85) : BurnTheme.cream)
-    }.buttonStyle(.plain).clickPointer().accessibilityIdentifier(id)
-  }
+  // MARK: Feed and Needs you
 
-  // MARK: Stats
-
-  /// Hunts from before Autopilot: their totals, as they always read.
-  private var totals: some View {
-    HStack(spacing: 0) {
-      metric(String(snapshot?.processCount ?? 0), "Processes seen")
-      metric(receiptsAvailable ? String(snapshot?.burned ?? 0) : "—", "Zombies burned")
-      metric(
-        receiptsAvailable ? ImpactNumbers.bytes(snapshot?.memoryReclaimed ?? 0) : "—",
-        "Memory released")
-      metric(
-        receiptsAvailable ? ImpactNumbers.bytes(snapshot?.diskReclaimed ?? 0) : "—",
-        "Disk reclaimed")
-      metric(
-        receiptsAvailable ? String(snapshot?.worktreesCleaned ?? 0) : "—", "Worktrees cleaned",
-        last: true)
-    }.padding(.vertical, 12)
-      .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
-      .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BurnTheme.line))
-  }
-
-  private func ticker(_ focus: String) -> some View {
-    HStack(spacing: 8) {
-      Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(BurnTheme.orange)
-      Text("Now:").foregroundStyle(BurnTheme.muted)
-      Text(focus).lineLimit(1).truncationMode(.middle)
-      Spacer(minLength: 0)
+  /// The feed beside what needs the owner, on the stats' columns. Older hunts have no questions, so
+  /// their feed takes the whole width.
+  @ViewBuilder private func columns(_ layout: HuntLayout) -> some View {
+    if needsYou {
+      HStack(alignment: .top, spacing: layout.gap) {
+        feed.frame(width: layout.feed)
+        HuntNeedsYou(
+          model: model, running: model.huntRunning, width: layout.needs,
+          confirmation: needsYouConfirmation
+        ).frame(width: layout.needs)
+      }.frame(maxHeight: .infinity, alignment: .top)
+    } else {
+      feed.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
-    .font(.system(size: 12, design: .monospaced))
-    .padding(.horizontal, 12).padding(.vertical, 7)
-    .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
-    .accessibilityIdentifier("hunt-now")
   }
-
-  // MARK: Feed
 
   private var feed: some View {
     VStack(alignment: .leading, spacing: 0) {
-      HStack {
-        Label("HUNT FEED", systemImage: "text.bubble").font(
-          .system(size: 11, weight: .semibold, design: .monospaced)
-        ).tracking(1)
-        if model.huntRunning {
-          Text("LIVE").font(.system(size: 9, weight: .bold)).foregroundStyle(BurnTheme.orange)
-        }
-        Spacer()
-        Text(feedSummary).font(.system(size: 11)).foregroundStyle(BurnTheme.muted)
+      HuntColumnHeader(title: "Hunt feed", subtitle: feedSummary, live: model.huntRunning) {
         Button {
           followLive.toggle()
         } label: {
@@ -274,54 +256,87 @@ struct HuntView: View {
             followLive ? "Following" : "Follow live",
             systemImage: followLive ? "arrow.down.circle.fill" : "arrow.down.circle"
           )
-          .font(.system(size: 11)).foregroundStyle(
-            followLive ? BurnTheme.orange : BurnTheme.muted)
-        }.buttonStyle(.plain).clickPointer().padding(.leading, 10)
+          .font(.system(size: 11.5, weight: .medium))
+          .foregroundStyle(followLive ? BurnTheme.orange : BurnTheme.muted)
+        }.buttonStyle(.plain).clickPointer().fixedSize()
           .accessibilityIdentifier("follow-hunt-feed")
-      }.padding(.horizontal, 16).padding(.vertical, 11)
-      Rectangle().fill(BurnTheme.line).frame(height: 1)
+      }
+      Rectangle().fill(HuntStyle.hairline).frame(height: 1).padding(.top, 9)
       ScrollViewReader { reader in
         ScrollView {
-          LazyVStack(alignment: .leading, spacing: 10) {
+          LazyVStack(alignment: .leading, spacing: 11) {
             if let snapshot, !snapshot.log.isEmpty {
               ForEach(snapshot.log) { entry in logRow(entry).id(entry.id) }
-            } else {
-              HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "scope").foregroundStyle(BurnTheme.orange)
-                VStack(alignment: .leading, spacing: 5) {
-                  Text(
-                    model.huntRunning
-                      ? "The hunt is getting underway." : "Ready to clear the dead weight."
-                  )
-                  .font(.system(size: 13, weight: .medium))
-                  Text(
-                    model.huntRunning
-                      ? "Measuring processes and storage before the AI reviews them."
-                      : "Start a hunt to see what it checks, judges and burns, as it happens."
-                  )
-                  .font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
-                }
-              }.padding(.vertical, 10)
             }
             Color.clear.frame(height: 1).id("feed-bottom")
-          }.padding(.horizontal, 16).padding(.vertical, 12)
+          }.padding(.top, 14).padding(.bottom, 6).padding(.trailing, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
-        }.defaultScrollAnchor(.bottom).frame(minHeight: 110, maxHeight: .infinity)
-          .onChange(of: snapshot?.log.map(\.id) ?? []) { _, _ in
-            if followLive { reader.scrollTo("feed-bottom", anchor: .bottom) }
-            receiveEffects()
+        }
+        .defaultScrollAnchor(.bottom)
+        .scrollIndicators(.never)
+        .mask(
+          VStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+              .frame(height: 24)
+            Color.black
           }
-          .onChange(of: followLive) { _, following in
-            if following { reader.scrollTo("feed-bottom", anchor: .bottom) }
-          }
+        )
+        .overlay {
+          if snapshot?.log.isEmpty != false { emptyFeed }
+        }
+        .frame(minHeight: 90, maxHeight: .infinity)
+        .onChange(of: snapshot?.log.map(\.id) ?? []) { _, _ in
+          if followLive { reader.scrollTo("feed-bottom", anchor: .bottom) }
+          receiveEffects()
+        }
+        .onChange(of: followLive) { _, following in
+          if following { reader.scrollTo("feed-bottom", anchor: .bottom) }
+        }
       }
-    }.background(Color.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-      .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BurnTheme.line))
+      if autopilot, model.huntRunning, let focus = snapshot?.focus {
+        ticker(focus).padding(.top, 8)
+      }
+    }
+  }
+
+  /// Before the first line: what the feed will show.
+  private var emptyFeed: some View {
+    VStack(spacing: 7) {
+      Image(systemName: "scope").font(.system(size: 22, weight: .light))
+        .foregroundStyle(BurnTheme.orange).padding(.bottom, 3)
+      Text(model.huntRunning ? "The hunt is getting underway." : "Ready to clear the dead weight.")
+        .font(.system(size: 14, weight: .semibold))
+      Text(
+        model.huntRunning
+          ? "Measuring processes and storage before the AI reviews them."
+          : "Start a hunt to see what it checks, judges and burns, as it happens."
+      )
+      .font(.system(size: 12.5)).foregroundStyle(BurnTheme.muted)
+      .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+      .frame(maxWidth: 300)
+    }.padding(20)
+  }
+
+  /// What the hunt is looking at this second, at the live end of the feed.
+  private func ticker(_ focus: String) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(BurnTheme.orange)
+      (Text("Now: ").foregroundColor(BurnTheme.muted) + Text(focus))
+        .lineLimit(1).truncationMode(.middle)
+      Spacer(minLength: 0)
+    }
+    .font(.system(size: 11.5, design: .monospaced))
+    .padding(.horizontal, 12).frame(height: 30)
+    .background(HuntStyle.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    .accessibilityElement(children: .combine)
+    .accessibilityIdentifier("hunt-now")
   }
 
   private var feedSummary: String {
-    guard let snapshot else { return "" }
-    guard let lanes = snapshot.lanes, !lanes.isEmpty else {
+    guard let snapshot else { return "What the hunt checks, judges and burns, as it happens." }
+    let lanes = snapshot.lanes ?? []
+    guard snapshot.isAutopilot || !lanes.isEmpty else {
       return "\(snapshot.evidenceReviewed) evidence groups · \(snapshot.attempts) review passes"
     }
     let judged = lanes.reduce(0) { $0 + $1.judged }
@@ -348,27 +363,20 @@ struct HuntView: View {
     effectQueue += new
     effectQueue = Array(effectQueue.suffix(12))
   }
-  private func metric(_ value: String, _ label: String, last: Bool = false) -> some View {
-    HStack(spacing: 0) {
-      VStack(alignment: .leading, spacing: 6) {
-        Text(value).font(BurnTheme.display(25)).contentTransition(.numericText())
-        Text(label).font(.system(size: 11)).foregroundStyle(BurnTheme.muted).lineLimit(1)
-      }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 17)
-      if !last { Rectangle().fill(BurnTheme.line).frame(width: 1, height: 38) }
-    }
-  }
+
   private func logRow(_ entry: HuntLogEntry) -> some View {
-    HStack(alignment: .top, spacing: 11) {
-      Image(systemName: Self.symbol(entry.kind))
-        .font(.system(size: 13)).foregroundStyle(Self.tint(entry.kind))
-        .frame(width: 18).padding(.top, 2)
-      Text(entry.message).font(.system(size: 12)).lineSpacing(3).textSelection(.enabled)
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
+      Text(Image(systemName: Self.symbol(entry.kind)))
+        .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Self.tint(entry.kind))
+        .frame(width: 16)
+      Text(entry.message).font(.system(size: 12.5)).lineSpacing(2.5).textSelection(.enabled)
         .foregroundStyle(entry.kind == "thinking" ? BurnTheme.muted : BurnTheme.cream)
         .frame(maxWidth: .infinity, alignment: .leading)
-      Text(entry.date, format: .dateTime.hour().minute().second()).font(
-        .system(size: 10, design: .monospaced)
+      Text(
+        entry.date,
+        format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits)
       )
-      .foregroundStyle(BurnTheme.muted).padding(.top, 2)
+      .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(HuntStyle.faint)
     }
   }
 
@@ -392,104 +400,18 @@ struct HuntView: View {
     default: return BurnTheme.muted
     }
   }
-}
 
-/// Freed so far, then one card per area: what the AI judged there, what burned and what BZ saw.
-struct HuntStats: View {
-  let snapshot: HuntSnapshot
-  let running: Bool
+  // MARK: Footer
 
-  var body: some View {
-    HStack(alignment: .top, spacing: 10) {
-      hero.frame(width: 210)
-      ForEach(order(snapshot.lanes ?? [])) { lane in card(lane) }
-    }.fixedSize(horizontal: false, vertical: true)
-  }
-
-  private var hero: some View {
-    VStack(alignment: .leading, spacing: 3) {
-      Text(running ? "FREED SO FAR" : "FREED THIS HUNT")
-        .font(.system(size: 10, weight: .semibold, design: .monospaced)).tracking(1)
-        .foregroundStyle(BurnTheme.muted)
-      Text(ImpactNumbers.bytes(snapshot.memoryReclaimed + snapshot.diskReclaimed))
-        .font(BurnTheme.display(30)).foregroundStyle(BurnTheme.orange)
-        .contentTransition(.numericText()).lineLimit(1).minimumScaleFactor(0.7)
-      Text("\(snapshot.burned.formatted()) zombie\(snapshot.burned == 1 ? "" : "s") burned")
-        .font(.system(size: 13, weight: .medium))
-      Text(
-        ImpactNumbers.bytes(snapshot.memoryReclaimed) + " memory · "
-          + ImpactNumbers.bytes(snapshot.diskReclaimed) + " disk"
-      )
-      .font(.system(size: 11)).foregroundStyle(BurnTheme.muted).lineLimit(1)
-      if snapshot.deep == true, !running, let spent = snapshot.spentUSD {
-        Text("for " + HuntOptions.dollars(spent) + " of AI")
-          .font(.system(size: 11)).foregroundStyle(BurnTheme.muted)
-      }
+  private var footer: some View {
+    let paused = snapshot?.phase == "paused"
+    return HStack(spacing: 7) {
+      Image(systemName: paused ? "pause.circle" : "shield.lefthalf.filled")
+        .font(.system(size: 11)).foregroundStyle(paused ? BurnTheme.orange : HuntStyle.faint)
+      Text(snapshot?.detail ?? "Active work stays protected. Every cleanup earns a receipt.")
+        .font(.system(size: 11.5)).foregroundStyle(HuntStyle.faint).lineLimit(1)
+      Spacer(minLength: 0)
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    .padding(12)
-    .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BurnTheme.line))
-    .accessibilityIdentifier("hunt-freed")
-  }
-
-  private func order(_ lanes: [HuntLane]) -> [HuntLane] {
-    let kinds = ["process", "worktree", "disk"]
-    return lanes.sorted { (kinds.firstIndex(of: $0.kind) ?? 9) < (kinds.firstIndex(of: $1.kind) ?? 9) }
-  }
-
-  private func card(_ lane: HuntLane) -> some View {
-    let total = max(lane.toJudge, lane.judged)
-    let (title, symbol, found): (String, String, String) = {
-      switch lane.kind {
-      case "process": return ("Programs", "cpu", "\(lane.seen.formatted()) running")
-      case "worktree":
-        return ("Old copies", "arrow.triangle.branch", "\(lane.seen.formatted()) copies found")
-      default: return ("Junk and caches", "folder", "\(lane.seen.formatted()) folders found")
-      }
-    }()
-    let state: String =
-      total == 0
-      ? (running ? "Clear" : "Done")
-      : lane.judged >= total ? "Done" : running ? "AI" : snapshot.phase == "stopped" ? "Stopped" : "Done"
-    return VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 6) {
-        Label(title, systemImage: symbol).font(.system(size: 12, weight: .semibold))
-          .lineLimit(1).minimumScaleFactor(0.8)
-        Spacer(minLength: 4)
-        Text(state).font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(state == "AI" ? BurnTheme.orange : BurnTheme.muted)
-          .padding(.horizontal, 7).padding(.vertical, 2)
-          .background(
-            (state == "AI" ? BurnTheme.orange.opacity(0.14) : Color.white.opacity(0.06)),
-            in: Capsule())
-      }
-      HStack(alignment: .firstTextBaseline, spacing: 4) {
-        if total == 0 {
-          Text("Nothing to judge").font(.system(size: 13, weight: .medium))
-            .foregroundStyle(BurnTheme.muted)
-        } else {
-          Text(lane.judged.formatted()).font(BurnTheme.display(20))
-            .contentTransition(.numericText())
-          Text("of \(total.formatted()) judged").font(.system(size: 11))
-            .foregroundStyle(BurnTheme.muted)
-        }
-      }
-      ProgressView(value: Double(min(lane.judged, total)), total: Double(max(total, 1)))
-        .progressViewStyle(.linear).tint(BurnTheme.orange).controlSize(.small)
-      Text(
-        lane.burned > 0
-          ? "Burned \(lane.burned.formatted()) · " + ImpactNumbers.bytes(lane.bytes)
-          : "Nothing burned yet"
-      )
-      .font(.system(size: 11, weight: .medium))
-      .foregroundStyle(lane.burned > 0 ? BurnTheme.cream : BurnTheme.muted)
-      Text(found).font(.system(size: 11)).foregroundStyle(BurnTheme.muted).lineLimit(1)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    .padding(12)
-    .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
-    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BurnTheme.line))
   }
 }
 
@@ -538,267 +460,5 @@ struct HuntLimitPanel: View {
       .fixedSize(horizontal: false, vertical: true)
     }
     .padding(14).frame(width: 300)
-  }
-}
-
-/// What a hunt runs into that needs the owner, one card at a time like Teach BZ, answered while it
-/// keeps going: BZ's questions, and things the AI is sure about but may not burn on its own. A card
-/// stays until it is answered; new ones add a dot. Biggest first.
-struct HuntNeedsYou: View {
-  @ObservedObject var model: AppModel
-  let running: Bool
-  @State private var pinned: String?
-  @State private var answered = Set<String>()
-  @State private var confirmation: (title: String, line: String, symbol: String)?
-
-  enum Card: Identifiable {
-    case question(AutopilotQuestion)
-    case ok(AutopilotEntry)
-    var id: String {
-      switch self {
-      case .question(let q): return "q:" + q.id
-      case .ok(let e): return "ok:" + e.id
-      }
-    }
-    var bytes: UInt64 {
-      switch self {
-      case .question(let q): return q.bytes
-      case .ok(let e): return e.item.bytes
-      }
-    }
-  }
-
-  private var cards: [Card] {
-    let questions = model.autopilot.questions.filter(\.isOpen).map(Card.question)
-    let waiting = model.autopilot.entries.filter { $0.needsOK == true && $0.status == .unsure }
-      .map(Card.ok)
-    return (questions + waiting).filter { !answered.contains($0.id) }.sorted { $0.bytes > $1.bytes }
-  }
-  private var current: Card? {
-    let all = cards
-    return all.first { $0.id == pinned } ?? all.first
-  }
-
-  var body: some View {
-    let all = cards
-    return VStack(alignment: .leading, spacing: 10) {
-      HStack(alignment: .center, spacing: 10) {
-        Label("NEEDS YOU", systemImage: "hand.raised")
-          .font(.system(size: 11, weight: .semibold, design: .monospaced)).tracking(1)
-          .fixedSize()
-        Text(
-          running
-            ? "The hunt keeps going. A yes burns right away."
-            : "A yes still burns right away. Questions also wait in Teach BZ."
-        )
-        .font(.system(size: 11)).foregroundStyle(BurnTheme.muted).lineLimit(1)
-        Spacer(minLength: 8)
-        if all.count > 1, let current, let index = all.firstIndex(where: { $0.id == current.id }) {
-          HStack(spacing: 8) {
-            HStack(spacing: 5) {
-              ForEach(0..<min(all.count, 8), id: \.self) { i in
-                Circle().fill(i == index ? BurnTheme.orange : Color.white.opacity(0.2))
-                  .frame(width: 7, height: 7)
-              }
-            }
-            Text("\(index + 1) of \(all.count)").font(.system(size: 11))
-              .foregroundStyle(BurnTheme.muted).monospacedDigit()
-            arrow("chevron.left") { step(-1) }
-            arrow("chevron.right") { step(1) }
-          }
-        }
-      }
-      if let confirmation {
-        HStack(spacing: 12) {
-          Image(systemName: confirmation.symbol).font(.system(size: 22))
-            .foregroundStyle(BurnTheme.orange)
-          VStack(alignment: .leading, spacing: 2) {
-            Text(confirmation.title).font(.system(size: 16, weight: .bold, design: .rounded))
-            Text(confirmation.line).font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
-          }
-          Spacer()
-        }.frame(minHeight: 84)
-      } else if let card = current {
-        switch card {
-        case .question(let question): questionCard(question)
-        case .ok(let entry): okCard(entry)
-        }
-      } else {
-        Text("Nothing needs you right now. Cards show up here when the hunt finds something it isn't sure about.")
-          .font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
-      }
-    }
-    .padding(.horizontal, 14).padding(.vertical, 12)
-    .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
-    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BurnTheme.line))
-    .onChange(of: all.map(\.id), initial: true) { _, ids in
-      if pinned == nil || !ids.contains(pinned!) { pinned = ids.first }
-    }
-    .accessibilityIdentifier("hunt-needs-you")
-  }
-
-  private func arrow(_ symbol: String, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
-        .frame(width: 22, height: 22)
-        .background(Color.white.opacity(0.06), in: Circle())
-    }.buttonStyle(.plain).clickPointer()
-  }
-
-  private func step(_ by: Int) {
-    let list = cards
-    guard !list.isEmpty, confirmation == nil else { return }
-    let index = list.firstIndex { $0.id == current?.id } ?? 0
-    pinned = list[(index + by + list.count) % list.count].id
-  }
-
-  private func questionCard(_ question: AutopilotQuestion) -> some View {
-    let card = AutopilotPolicy.card(question)
-    return layout(
-      emoji: AutopilotLook.emoji(question.kind), headline: card.headline, name: nil,
-      frees: card.frees, line: card.line, chips: Array(card.facts.prefix(3)),
-      cautions: Set(card.cautions), cost: card.cost, yes: card.yes, no: card.no,
-      onYes: { respond(question, .yes) }, onNo: { respond(question, .no) },
-      onSkip: { respond(question, .skip) }, details: { model.openTeach?() })
-  }
-
-  /// One thing the AI is sure should burn but may not burn itself: the owner's Yes is Burn now.
-  private func okCard(_ entry: AutopilotEntry) -> some View {
-    let noun = TeachView.noun(entry.item.kind)
-    let reason = AutopilotPolicy.needsOK(entry.item)
-    return layout(
-      emoji: AutopilotLook.emoji(entry.item.kind), headline: "Burn this \(noun)?",
-      name: entry.item.name,
-      frees: "Frees " + AutopilotPolicy.roughly(entry.item.bytes)
-        + (entry.item.kind == .process ? " of memory" : ""),
-      line: entry.aiWhy, chips: [reason, "AI is sure"], cautions: [reason], cost: nil,
-      yes: "Yes, burn it", no: "No, keep it",
-      onYes: { decide(entry, burn: true) }, onNo: { decide(entry, burn: false) },
-      onSkip: { skip(entry) }, details: { model.openFindings?() })
-  }
-
-  private func layout(
-    emoji: String, headline: String, name: String?, frees: String, line: String?,
-    chips: [String], cautions: Set<String>, cost: String?, yes: String, no: String,
-    onYes: @escaping () -> Void, onNo: @escaping () -> Void, onSkip: @escaping () -> Void,
-    details: @escaping () -> Void
-  ) -> some View {
-    HStack(alignment: .center, spacing: 16) {
-      VStack(alignment: .leading, spacing: 4) {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-          Text(emoji).font(.system(size: 20))
-          Text(headline).font(.system(size: 18, weight: .bold, design: .rounded))
-            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-        }
-        if let name {
-          Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-            .truncationMode(.middle)
-        }
-        Text(frees).font(.system(size: 15, weight: .heavy, design: .rounded))
-          .foregroundStyle(BurnTheme.orange)
-        if let line, !line.isEmpty {
-          Text(line).font(.system(size: 12)).foregroundStyle(BurnTheme.muted).lineLimit(2)
-        }
-        if !chips.isEmpty {
-          HStack(spacing: 6) {
-            ForEach(chips, id: \.self) { fact in
-              let caution = cautions.contains(fact)
-              HStack(spacing: 4) {
-                if caution {
-                  Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
-                }
-                Text(fact).lineLimit(1)
-              }
-              .font(.system(size: 11, weight: .semibold))
-              .foregroundStyle(caution ? Color.orange : BurnTheme.cream)
-              .padding(.horizontal, 9).padding(.vertical, 4)
-              .background(
-                caution ? Color.orange.opacity(0.14) : Color.white.opacity(0.07), in: Capsule())
-            }
-          }
-        }
-        if let cost {
-          Label(cost, systemImage: "exclamationmark.triangle.fill")
-            .font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.orange).lineLimit(2)
-        }
-      }
-      Spacer(minLength: 8)
-      VStack(spacing: 6) {
-        answer(yes, fill: AutopilotTheme.green, text: Color.black.opacity(0.86), id: "hunt-yes") {
-          onYes()
-        }
-        answer(no, fill: Color.white.opacity(0.08), text: BurnTheme.cream, id: "hunt-no") { onNo() }
-        HStack(spacing: 12) {
-          link("Not sure — skip", action: onSkip)
-          link("View details", action: details)
-        }
-      }.frame(width: 196)
-    }
-  }
-
-  private func answer(
-    _ title: String, fill: Color, text: Color, id: String, action: @escaping () -> Void
-  ) -> some View {
-    Button(action: action) {
-      Text(title).font(.system(size: 14, weight: .bold, design: .rounded))
-        .foregroundStyle(text).frame(maxWidth: .infinity).frame(height: 30)
-        .background(fill, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(BurnTheme.line))
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-    }.buttonStyle(.plain).clickPointer().accessibilityIdentifier(id)
-  }
-
-  private func link(_ title: String, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      Text(title).font(.system(size: 11)).underline().foregroundStyle(BurnTheme.muted)
-    }.buttonStyle(.plain).clickPointer()
-  }
-
-  private func respond(_ question: AutopilotQuestion, _ answer: AutopilotAnswer) {
-    guard confirmation == nil else { return }
-    model.answer(question, answer)
-    answered.insert(Card.question(question).id)
-    switch answer {
-    case .yes:
-      show("Burning them now", "BZ handles ones like these on its own from now on.", "flame.fill")
-    case .no:
-      show("Keeping them", "BZ won't ask about these again.", "hand.raised.fill")
-    default:
-      show("Skipped", "It waits in Teach BZ for later.", "clock")
-    }
-  }
-
-  /// Yes is the owner's Burn now; No keeps it for good, as Keep forever does.
-  private func decide(_ entry: AutopilotEntry, burn: Bool) {
-    guard confirmation == nil else { return }
-    answered.insert(Card.ok(entry).id)
-    if burn {
-      model.burnNow(entry)
-      let line: String
-      switch entry.item.kind {
-      case .worktree: line = "It's saved in a restore point first, so you can undo it."
-      case .process: line = "It just gets asked to quit."
-      case .disk: line = "Your tools rebuild it when needed."
-      }
-      show("Burning it now", line, "flame.fill")
-    } else {
-      model.keepForever(entry)
-      show("Keeping it", "BZ won't burn it.", "hand.raised.fill")
-    }
-  }
-
-  private func skip(_ entry: AutopilotEntry) {
-    guard confirmation == nil else { return }
-    answered.insert(Card.ok(entry).id)
-    show("Skipped", "It stays as it is for now.", "clock")
-  }
-
-  private func show(_ title: String, _ line: String, _ symbol: String) {
-    confirmation = (title, line, symbol)
-    Task { @MainActor in
-      try? await Task.sleep(for: .seconds(1.6))
-      confirmation = nil
-      pinned = nil
-    }
   }
 }
