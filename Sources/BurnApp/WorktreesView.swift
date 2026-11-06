@@ -242,7 +242,7 @@ struct WorktreesView: View {
         }.disabled(completion.count < 20)
       } message: {
         Text(
-          "\(confirmation?.path ?? "")\nAn encrypted recovery copy will be restored and verified before removal. Recovery depends on this Mac's Keychain key. Active consumers and inspection gaps still block the action."
+          "\(confirmation?.path ?? "")\nAn encrypted recovery copy will be restored and verified before removal. Recovery depends on this Mac's recovery key. Active consumers and inspection gaps still block the action."
         )
       }
       .sheet(

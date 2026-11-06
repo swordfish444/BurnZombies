@@ -344,6 +344,13 @@ func huntLiveProof() async throws {
   equal(picked.options?.limitUSD, 2)
   sweep = await coordEngine.sweepState()
   isNil(sweep.requestedDeep)
+  _ = try await coordEngine.apply(.deepHunt(limitUSD: 500))
+  sweep = await coordEngine.sweepState()
+  equal(sweep.requestedDeep, 15, "the command line spends at most the window's top limit")
+  await coordEngine.updateSweep {
+    $0.requested = nil
+    $0.requestedDeep = nil
+  }
 
   // A hunt cut short when the app quit doesn't hunt forever in the window.
   var interrupted = try HuntSnapshot.load(root: coordRoot)

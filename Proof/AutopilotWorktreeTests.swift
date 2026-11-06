@@ -732,20 +732,22 @@ private func apDirtyRetire(_ world: APWorld, _ item: AutopilotItem) throws {
 
 /// Test runs leave browser profiles in copies (Chrome keeps one in a folder with `Local State`
 /// beside `Default/Preferences`): test state, not work. A copy whose big unsaved files are such a
-/// profile is burned without it, and its other unsaved work is backed up. Any other big unsaved
-/// files still keep the copy, as does a profile folder that holds a file Git tracks.
+/// profile is burned without it, and its other unsaved work is backed up. A profile in a folder Git
+/// ignores goes whole too, while the other ignored files beside it are backed up. Any other big
+/// unsaved files still keep the copy, as do a profile folder that holds a file Git tracks and a
+/// project inside a profile.
 private func apBrowserProfileRetire(_ world: APWorld) throws {
   // Sparse: counts its full size, takes no disk.
-  func big(_ path: String) throws {
+  func big(_ path: String, megabytes: UInt64 = 600) throws {
     try apWrite(path, "")
     let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
-    try handle.truncate(atOffset: 600 << 20)
+    try handle.truncate(atOffset: megabytes << 20)
     try handle.close()
   }
-  func profile(_ folder: String) throws {
+  func profile(_ folder: String, megabytes: UInt64 = 600) throws {
     try apWrite(folder + "/Local State", "{}\n")
     try apWrite(folder + "/Default/Preferences", "{}\n")
-    try big(folder + "/Default/Cache/data_1")
+    try big(folder + "/Default/Cache/data_1", megabytes: megabytes)
   }
   var cache: [String: AutopilotDelivery] = [:]
   func burn(_ path: String) throws -> AutopilotReceipt {
@@ -776,6 +778,44 @@ private func apBrowserProfileRetire(_ world: APWorld) throws {
   } else {
     failTest("the burn left no way to restore it")
   }
+
+  // Test output often lands in a folder Git ignores, or the ignored folder is the profile itself.
+  // Such profiles go whole as well, the small files Chrome writes in them included.
+  let ignored = try world.addWorktree("ignoredprofiles", branch: "feature-ignoredprofiles")
+  try apWrite(ignored + "/.gitignore", ".qa-artifacts/\nchrome-profile/\n")
+  try apGit(ignored, ["add", ".gitignore"])
+  try apGit(ignored, ["commit", "-q", "-m", "Ignore test output"])
+  try profile(ignored + "/.qa-artifacts/run 1/profile", megabytes: 8)
+  try apWrite(ignored + "/.qa-artifacts/run 1/profile/chrome_debug.log", "log\n")
+  try apWrite(ignored + "/.qa-artifacts/run 1/report.txt", "3 passed\n")
+  try profile(ignored + "/chrome-profile", megabytes: 8)
+  let swept = try burn(ignored)
+  equal(swept.outcome, "burned", "profiles in ignored folders don't keep it: " + swept.detail)
+  let both = AutopilotPolicy.format((16 << 20) + 16)
+  check(
+    swept.detail.hasSuffix("Its browser profiles (\(both)) weren't kept."),
+    "the receipt counts all of both profiles: " + swept.detail)
+  if swept.restore != nil {
+    try apRestore(swept)
+    equal(
+      apRead(ignored + "/.qa-artifacts/run 1/report.txt"), "3 passed\n",
+      "the ignored file beside the profile is back")
+    checkFalse(apExists(ignored + "/.qa-artifacts/run 1/profile"), "the profile in it isn't")
+    checkFalse(apExists(ignored + "/chrome-profile"), "nor the ignored profile folder")
+  } else {
+    failTest("the burn left no way to restore it")
+  }
+
+  // Nothing looks inside a profile that isn't kept, so a project in one keeps the copy.
+  let nested = try world.addWorktree("profileproject", branch: "feature-profileproject")
+  try profile(nested + "/.qa artifacts/profile")
+  try apGit(nested + "/.qa artifacts/profile/Default", ["init", "-q", "tool"])
+  let held = try burn(nested)
+  equal(held.outcome, "refused", "a project inside a profile keeps the copy")
+  equal(
+    held.detail,
+    "There is another project folder inside it that I can't back up, so I left it alone.")
+  check(apExists(nested + "/.qa artifacts/profile/Default/tool/.git"), "and it's still there")
 
   // Only browser profiles are let go.
   let other = try world.addWorktree("bigfiles", branch: "feature-bigfiles")
@@ -1249,6 +1289,7 @@ func autopilotWorktreeProof() async throws {
   try apDirtyRetire(world, items["dirty"]!)
   try apBrowserProfileRetire(world)
   try apBigFilesRetire(world)
+  try apBlockedKeyRetire(world)
   try apUnwalkedAgeProof(world)
   try apSubmoduleProof(world)
   try await apRestartProof(world)
@@ -1258,6 +1299,44 @@ func autopilotWorktreeProof() async throws {
     Set(leftovers).isSubset(of: ["leases", "private-recovery"]),
     "temporary scratch was left behind: \(leftovers)")
   check(leftovers.contains("private-recovery"), "verified private recovery outlives retirement")
+}
+
+/// Retire with a backup-key read that never answers, as `SecItemCopyMatching` does while macOS's
+/// keychain question waits for the owner: the copy is refused within the bound and left exactly as
+/// it was, with no restore point and no archive.
+private func apBlockedKeyRetire(_ world: APWorld) throws {
+  let path = try world.addWorktree("keywait", branch: "feature-keywait")
+  var cache: [String: AutopilotDelivery] = [:]
+  let item = try apItem(path, world, cache: &cache)
+  equal(item.facts["saved"], "merged", "the waiting copy is otherwise ready to retire")
+  let refs = try apGit(world.main, ["for-each-ref", "refs/burnzombies/retired/"])
+  let archives = (try? FileManager.default.contentsOfDirectory(
+    atPath: world.state.appendingPathComponent("private-recovery").path)) ?? []
+  let answer = DispatchSemaphore(value: 0)
+  defer { answer.signal() }
+  let bound: TimeInterval = 0.5
+  let keys = AutopilotRecoveryKey(bound: bound) { _, _ in
+    answer.wait()
+    throw StoreError.message("The owner never answered.")
+  }
+  let started = Date()
+  let receipt = AutopilotWorktrees.retire(
+    item, authority: "starter:starter-finished-copies", root: world.state, inUse: { _ in 0 },
+    keys: keys)
+  let took = Date().timeIntervalSince(started)
+  equal(receipt.outcome, "refused", "no key, no retire: " + receipt.detail)
+  equal(receipt.detail, AutopilotRecoveryKey.refusal, "the refusal says what to do")
+  check(took < bound + 5, "retire didn't wait on the key past its bound: \(took)")
+  check(keys.wait != nil, "the owner will be asked")
+  check(apExists(path + "/.git"), "the copy is still there")
+  let listing = try apGit(world.main, ["worktree", "list", "--porcelain"])
+  check(listing.contains("worktree " + path + "\n"), "and still registered")
+  equal(
+    try apGit(world.main, ["for-each-ref", "refs/burnzombies/retired/"]), refs,
+    "no restore point was made")
+  let after = (try? FileManager.default.contentsOfDirectory(
+    atPath: world.state.appendingPathComponent("private-recovery").path)) ?? []
+  equal(after.sorted(), archives.sorted(), "no archive was started")
 }
 
 private let apRecoveryKey = SymmetricKey(data: Data(repeating: 0x73, count: 32))

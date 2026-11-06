@@ -651,6 +651,8 @@ public struct AutopilotSnapshot: Codable, Sendable, Equatable {
   /// Whether BZ acts on its own when sure (Settings → Autopilot): the owner's setting, not
   /// something it learned.
   public var actsOnItsOwn = true
+  /// While old copies wait for the owner to allow the backup key; the menu asks.
+  public var recoveryKey: AutopilotKeyWait?
   public init() {}
   public func count(_ status: AutopilotStatus) -> Int { counts[status.rawValue] ?? 0 }
 }
@@ -702,6 +704,9 @@ public enum AutopilotCommand: Codable, Sendable, Equatable {
   case setActsOnItsOwn(Bool)
   /// Forgets every lesson of a group, as Settings shows them.
   case forgetLesson(ruleIDs: [String])
+  /// The owner's Allow in the menu: macOS asks whether BZ may use its backup key. Never from the
+  /// agent socket.
+  case allowRecoveryKey
   /// A deep hunt: the AI reads everything, small programs included, until it has spent the limit.
   case deepHunt(limitUSD: Double)
   /// Ends the hunt under way. What it burned stays burned.

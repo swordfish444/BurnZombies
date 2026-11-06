@@ -172,7 +172,7 @@ do {
       request.tool = "command"
       request.command = .sweepNow
     } else if request.tool == "deep" {
-      // A deep hunt with a spending limit in US dollars (5 unless given).
+      // A deep hunt with a spending limit in US dollars: 5 unless given, 15 at most.
       request.tool = "command"
       request.command = .deepHunt(
         limitUSD: args.count > 2 ? Double(args[2]) ?? HuntOptions.defaultLimit : HuntOptions.defaultLimit)

@@ -88,6 +88,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       ("--autopilot-sweep", "Autopilot sweep", autopilotSweepProof),
       ("--autopilot-learning", "Autopilot learning", autopilotLearningProof),
       ("--autopilot-look-only", "Autopilot look-only", lookOnlyProof),
+      ("--autopilot-recovery-key", "Autopilot backup key", autopilotRecoveryKeyProof),
       ("--agent-session-environment", "Agent session environment", agentSessionEnvironmentProof),
     ] as [(String, String, () async throws -> Void)] where CommandLine.arguments.contains(flag) {
       do { try await proof() } catch { failTest("\(name): \(error)") }
@@ -149,6 +150,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       let beforeHunt = failures
       do { try await huntLiveProof() } catch { failTest("Live hunt: \(error)") }
       if failures == beforeHunt { print("PASS Live hunt: stream, deep hunt, Stop, limit and Keep hunting") }
+      do { try await autopilotRecoveryKeyProof() } catch { failTest("Backup key: \(error)") }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
@@ -603,6 +605,10 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       (
         "start at login on a fresh install, kept off through updates, older installs unchanged",
         startAtLoginProof
+      ),
+      (
+        "recovery key in a private file: made once, reused, out of the Keychain and Time Machine, unsafe files refused",
+        recoveryKeyFileProof
       ),
       (
         "sweeps and reviews start outside the installing agent's session",
