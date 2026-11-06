@@ -54,6 +54,7 @@ The app has one (`.shared`); proofs build their own with a fake reader and a sho
 - While the key waits:
   - the burn pass holds old copies without a receipt, since every retire needs the key. The copy that ran into it carries the refusal;
   - a key refusal stands only while the key waits. Once a read succeeds, those items are tried at the next pass, not 6 hours later;
+  - each pass starts one quiet read in the background (`retry`). If it gets the key, say because the keychain was unlocked, the wait ends without the owner, and the next pass burns what waited;
   - Burn now and the AI's burns get the refusal at once.
 - When the owner allows the key, a burn pass starts right away.
 - Undo and Restore of an Autopilot burn read the key with `forOwner`: the owner just clicked, so macOS may ask then.
@@ -75,5 +76,6 @@ The app has one (`.shared`); proofs build their own with a fake reader and a sho
   - A reader that fails like the keychain does: a wait starts. `allow()` with a working interactive read ends it, and `forBurn()` then returns the key.
   - The engine with that blocking gate: a tick finishes within the bound plus slack. The first copy is refused with the key reason, and the second is held with no receipt. The next tick runs. The snapshot shows the wait. Allow ends it, and both copies burn.
   - The socket's `command` tool refuses Allow.
+  - A reader that refuses and then works (a keychain that gets unlocked): a failed retry writes nothing, and once the key reads, the wait ends and the copy burns without Allow.
 - `BurnProof --autopilot-worktrees`: retire of a real worktree with a blocking reader returns the key refusal within the bound. The folder, its registration and the refs are untouched, and no archive is left.
 - `BurnZombiesApp --autopilot-proof`: the popover card and the Details prompt render.

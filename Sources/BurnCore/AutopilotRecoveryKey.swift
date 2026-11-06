@@ -123,6 +123,21 @@ public final class AutopilotRecoveryKey: @unchecked Sendable {
     }
   }
 
+  /// While old copies wait, one quiet read that nobody waits on. If the key reads again by itself
+  /// (the keychain was unlocked, or the key moved to its file), the wait ends without the owner.
+  /// Never while another read is out or macOS is asking.
+  public func retry() {
+    lock.withLock {
+      guard let waiting, !waiting.asking, flight == nil else { return }
+      let started = Flight()
+      started.done.enter()
+      flight = started
+      DispatchQueue.global(qos: .utility).async { [self] in
+        finish(started, Result { try read(false, true) })
+      }
+    }
+  }
+
   private func finish(_ done: Flight, _ result: Result<SymmetricKey, Error>) {
     lock.withLock {
       done.result = result

@@ -225,4 +225,60 @@ private func recoveryKeyEngineProof() async throws {
   equal(receipts.filter { $0.outcome == "burned" }.count, 2, "both burns are recorded")
 
   if failures == before { print("PASS backup key: ticks go on, and one Allow lets copies burn") }
+  try await recoveryKeyHealsProof()
+}
+
+/// A key read that fails for a while (a locked keychain) and then works: the wait ends on its own,
+/// without the owner, and what waited burns at a later look. Each look retries one quiet read that
+/// nobody waits on, never two at once.
+private func recoveryKeyHealsProof() async throws {
+  let before = failures
+  let root = URL(fileURLWithPath: "/private/tmp/bz-key-heal-" + UUID().uuidString.prefix(8))
+  defer { try? FileManager.default.removeItem(at: root) }
+  let keychain = RKKeychain(quietBlocks: false)
+  let gate = AutopilotRecoveryKey(bound: 0.5, read: keychain.read)
+  let burned = RKBurns()
+  let facts = [
+    "saved": "merged", "changes": "none", "stale": "month", "inUse": "no", "thread": "none",
+    "place": "other",
+  ]
+  let copy = AutopilotItem(
+    id: "worktree:h", kind: .worktree, name: "copy-h", bytes: 3 << 30, facts: facts)
+  let sources = AutopilotSources(
+    worktrees: { _, _, d in ([copy].filter { !burned.all.contains($0.id) }, d) },
+    retireWorktree: { item, authority in
+      do { _ = try gate.forBurn() } catch {
+        return .refused(item, authority: authority, error.localizedDescription)
+      }
+      burned.add(item.id)
+      return AutopilotReceipt(
+        itemID: item.id, kind: .worktree, name: item.name, authority: authority,
+        outcome: "burned", detail: "Removed.", bytes: item.bytes)
+    },
+    recoveryKeyWait: { gate.wait },
+    allowRecoveryKey: { try gate.allow() },
+    retryRecoveryKey: { gate.retry() })
+  let engine = try Autopilot(root: root, sources: sources)
+  let now = Date()
+  _ = await engine.tick(now: now)
+  check(gate.wait != nil, "a refused read starts a wait")
+  equal(keychain.quiet, 1)
+
+  // Still refused at the next look: the retry fails quietly and nothing new is written.
+  _ = await engine.tick(now: now.addingTimeInterval(900))
+  rkWaitUntil(2) { keychain.quiet >= 2 }
+  equal(keychain.quiet, 2, "each look retries one quiet read while the key waits")
+  check(gate.wait != nil, "a failed retry keeps the wait")
+  equal(try AutopilotStore(root: root).receipts().count, 1, "a retry writes no receipt")
+
+  // The keychain is unlocked: the next look's retry reads the key, and the look after burns.
+  keychain.answer()
+  _ = await engine.tick(now: now.addingTimeInterval(1800))
+  rkWaitUntil(2) { gate.wait == nil }
+  isNil(gate.wait)
+  _ = await engine.tick(now: now.addingTimeInterval(2700))
+  for _ in 0..<100 where burned.all.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+  equal(burned.all, ["worktree:h"], "the copy burns once the key reads again")
+  equal(keychain.interactive, 0, "nobody had to click Allow")
+  if failures == before { print("PASS backup key: a wait ends on its own once the key reads") }
 }

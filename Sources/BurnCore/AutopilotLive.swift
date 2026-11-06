@@ -114,7 +114,8 @@ extension AutopilotSources {
         return [note + " Turn on Full Disk Access to cover them too. Everything else is covered."]
       },
       recoveryKeyWait: { keys.wait },
-      allowRecoveryKey: { try keys.allow() })
+      allowRecoveryKey: { try keys.allow() },
+      retryRecoveryKey: { keys.retry() })
   }
 
   /// PIDs of the user's LaunchAgents: started on purpose by launchd, never orphans.

@@ -23,6 +23,8 @@ public struct AutopilotSources: Sendable {
   public var recoveryKeyWait: @Sendable () -> AutopilotKeyWait?
   /// The owner's Allow: reads the key with macOS's question allowed.
   public var allowRecoveryKey: @Sendable () throws -> Void
+  /// While the key waits, one quiet read in the background, so a wait can end without the owner.
+  public var retryRecoveryKey: @Sendable () -> Void
   public init(
     threads: @escaping @Sendable () -> [AgentThread] = { [] },
     processes: @escaping @Sendable ([AgentThread]) async -> [AutopilotItem] = { _ in [] },
@@ -54,7 +56,8 @@ public struct AutopilotSources: Sendable {
     recoveryKeyWait: @escaping @Sendable () -> AutopilotKeyWait? = { nil },
     allowRecoveryKey: @escaping @Sendable () throws -> Void = {
       throw StoreError.message("There is no backup key to allow here.")
-    }
+    },
+    retryRecoveryKey: @escaping @Sendable () -> Void = {}
   ) {
     self.threads = threads
     self.processes = processes
@@ -71,6 +74,7 @@ public struct AutopilotSources: Sendable {
     self.coverageNotes = coverageNotes
     self.recoveryKeyWait = recoveryKeyWait
     self.allowRecoveryKey = allowRecoveryKey
+    self.retryRecoveryKey = retryRecoveryKey
   }
 }
 
@@ -312,6 +316,9 @@ public actor Autopilot {
       refreshTells(settling: settling)
       return start
     }
+    // While old copies wait for the key, each pass tries one quiet read in the background: if the
+    // key reads again by itself, the next pass burns them without the owner's click.
+    if sources.recoveryKeyWait() != nil { sources.retryRecoveryKey() }
     let early = memory()
     let receipts = (try? store.receipts()) ?? []
     let spent = spent(receipts)
