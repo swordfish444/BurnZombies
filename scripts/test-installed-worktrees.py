@@ -129,7 +129,7 @@ with tempfile.TemporaryDirectory(prefix="bz-installed-worktrees-") as temporary:
                 assert (restored / "binary").read_bytes() == bytes([0, 255, 32, 1])
             # Exact verified test IDs only; never select other recovery items.
             request({"action": "purge", "id": operation["id"], "evidence": "PURGE RECOVERY"})
-        print("PASS installed clean/dirty retirement, real Keychain recovery, standalone restoration after original-repository loss, and exact test-archive purge")
+        print("PASS installed clean/dirty retirement, real recovery key, standalone restoration after original-repository loss, and exact test-archive purge")
     finally:
         request({"action": "remove_root", "path": str(root)})
 print("PASS actual installed app/CLI/native guard journey; no simulated consumer or access boundary")
