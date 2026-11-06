@@ -1091,15 +1091,21 @@ private func status(_ d: Disposition) -> String {
 struct Dashboard: View {
   @StateObject private var reviewerSettings: ReviewSettingsModel
   @StateObject private var huntSettings: HuntSettingsModel
+  @StateObject private var diskSettings: DiskSettingsModel
+  @StateObject private var sections: SettingsExpansion
   @ObservedObject var model: AppModel
   /// Proofs pass scratch-folder models so rendering never reads the real state folder.
   init(
     model: AppModel, reviewerSettings: ReviewSettingsModel? = nil,
-    huntSettings: HuntSettingsModel? = nil
+    huntSettings: HuntSettingsModel? = nil, diskSettings: DiskSettingsModel? = nil,
+    sections: SettingsExpansion? = nil
   ) {
     self.model = model
     _reviewerSettings = StateObject(wrappedValue: reviewerSettings ?? ReviewSettingsModel())
     _huntSettings = StateObject(wrappedValue: huntSettings ?? HuntSettingsModel())
+    _diskSettings = StateObject(
+      wrappedValue: diskSettings ?? DiskSettingsModel(root: reviewerSettings?.root ?? Store.defaultRoot))
+    _sections = StateObject(wrappedValue: sections ?? SettingsExpansion())
   }
   var eligible: Int { model.state.findings.filter { $0.disposition == .eligible }.count }
   var attention: Int {
@@ -1141,8 +1147,13 @@ struct Dashboard: View {
           Text("History").tag("History")
           Text("Settings").tag("Settings")
         }.clickPointer().pickerStyle(.segmented).padding([.horizontal, .top], 16)
+        if model.tab == "Settings" {
+          AboutSettingsView(updates: model.appUpdates).disabled(model.demo)
+            .padding(.horizontal, 20).padding(.vertical, 12)
+          Divider()
+        }
         ScrollView {
-          VStack(alignment: .leading, spacing: 18) {
+          VStack(alignment: .leading, spacing: model.tab == "Settings" ? 10 : 18) {
             if model.tab == "Overview" {
               overview
             } else if model.tab == "History" {
@@ -1151,7 +1162,7 @@ struct Dashboard: View {
               settings
             }
           }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-        }
+        }.id(model.tab)
       }
       if let message = model.message {
         Text(message).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20).padding(
@@ -1346,83 +1357,91 @@ struct Dashboard: View {
   }
   var settings: some View {
     Group {
-      AboutSettingsView(updates: model.appUpdates).disabled(model.demo)
-      Divider()
-      FullDiskAccessView(model: model)
-      if model.autopilotAvailable {
-        AutopilotSettingsView(model: model)
-      } else {
-        Text("Quiet by default.").font(.title2.weight(.semibold))
-        Text("Your whole Mac. One observer.").font(.headline)
-        Text(
-          "BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running."
-        )
-        .font(.caption).foregroundStyle(.secondary)
-        Text(
-          model.accessReady
-            ? model.machineReview.detail
-            : "Background reviews wait until Full Disk Access is available."
-        ).font(.caption).foregroundStyle(.secondary)
-        if model.accessReady && model.machineReview.phase == "paused" {
-          Button("Resume scheduled hunts") { model.setAutomatic(true) }.clickPointer()
-        }
-        // Autopilot replaces the evidence-led hunt schedule when it is available.
-        HuntSettingsView(settings: huntSettings, onSaved: model.reloadReviewConfiguration)
-          .disabled(model.demo)
+      SettingsSection(section: .permissions, expansion: sections) {
+        FullDiskAccessView(model: model)
       }
-      ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
-      UsageHistoryView().disabled(model.demo)
-      DiskSettingsView(accessReady: model.accessReady).disabled(model.demo)
-      Toggle(
-        "Grouped notifications",
-        isOn: Binding(
-          get: { model.state.catalog.preferences.notifications }, set: model.setNotifications)
-      ).clickPointer()
-      Text(
-        "Off by default. A finding notifies once; materially worse impact can notify again after a day. Snoozed and protected activities stay quiet."
-      ).font(.caption).foregroundStyle(.secondary)
-      Toggle(
-        "Start at login",
-        isOn: Binding(get: { SMAppService.mainApp.status == .enabled }, set: model.login)
-      ).clickPointer().disabled(model.demo)
-      Text(
-        "On for a new install, so Autopilot keeps running after a restart. Updates keep your choice."
-      ).font(.caption).foregroundStyle(.secondary)
-      Divider()
-      Text("Protected executables").font(.headline)
-      if model.state.catalog.preferences.protectedExecutables.isEmpty {
-        Text(
-          "App bundles, system services, browsers, device tools, recordings, transfers, and credential tools are always protected."
-        ).font(.caption).foregroundStyle(.secondary)
-      }
-      ForEach(Array(model.state.catalog.preferences.protectedExecutables).sorted(), id: \.self) {
-        p in
-        HStack {
-          Text((p as NSString).lastPathComponent).font(.callout)
-          Spacer()
-          Button("Remove") { model.unprotect(p) }.clickPointer()
+      SettingsSection(section: .autopilot, expansion: sections) {
+        if model.autopilotAvailable {
+          AutopilotSettingsView(model: model)
+        } else {
+          Text("Quiet by default.").font(.title2.weight(.semibold))
+          Text("Your whole Mac. One observer.").font(.headline)
+          Text(
+            "BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running."
+          )
+          .font(.caption).foregroundStyle(.secondary)
+          Text(
+            model.accessReady
+              ? model.machineReview.detail
+              : "Background reviews wait until Full Disk Access is available."
+          ).font(.caption).foregroundStyle(.secondary)
+          if model.accessReady && model.machineReview.phase == "paused" {
+            Button("Resume scheduled hunts") { model.setAutomatic(true) }.clickPointer()
+          }
+          // Autopilot replaces the evidence-led hunt schedule when it is available.
+          HuntSettingsView(settings: huntSettings, onSaved: model.reloadReviewConfiguration)
+            .disabled(model.demo)
         }
       }
-      Divider()
-      Text("Local and bounded").font(.headline)
-      Text(
-        "No BurnZombies account or analytics. Reviews use your selected harness's existing account and usage allowance. Process evidence can reach that harness's model provider. No command arguments or environment collected. At most 4,096 process records, eight samples each."
-      ).font(.caption).foregroundStyle(.secondary)
-      Text(
-        String(
-          format: "Last scan %.1f ms · checkpoint %@", model.state.scanMS,
-          bytes(UInt64(model.state.checkpointBytes)))
-      ).font(.caption.monospaced()).foregroundStyle(.secondary)
-      if let observed = model.state.catalog.lastSample {
-        Text("Last observation \(observed.formatted(date: .omitted, time: .standard))")
-          .font(.caption.monospaced()).foregroundStyle(.secondary)
+      SettingsSection(section: .intelligence, expansion: sections) {
+        ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
+        UsageHistoryView(root: reviewerSettings.root).disabled(model.demo)
       }
-      Link(
-        "Build, safety, and uninstall guide",
-        destination: URL(string: "https://github.com/swordfish444/BurnZombies")!
-      ).clickPointer().font(.callout)
+      DiskSettingsView(model: diskSettings, accessReady: model.accessReady).disabled(model.demo)
+      SettingsSection(section: .general, expansion: sections) {
+        Toggle(
+          "Grouped notifications",
+          isOn: Binding(
+            get: { model.state.catalog.preferences.notifications }, set: model.setNotifications)
+        ).clickPointer()
+        Text(
+          "Off by default. A finding notifies once; materially worse impact can notify again after a day. Snoozed and protected activities stay quiet."
+        ).font(.caption).foregroundStyle(.secondary)
+        Toggle(
+          "Start at login",
+          isOn: Binding(get: { SMAppService.mainApp.status == .enabled }, set: model.login)
+        ).clickPointer().disabled(model.demo)
+        Text(
+          "On for a new install, so Autopilot keeps running after a restart. Updates keep your choice."
+        ).font(.caption).foregroundStyle(.secondary)
+      }
+      SettingsSection(section: .protection, expansion: sections) {
+        Text("Protected executables").font(.headline)
+        if model.state.catalog.preferences.protectedExecutables.isEmpty {
+          Text(
+            "App bundles, system services, browsers, device tools, recordings, transfers, and credential tools are always protected."
+          ).font(.caption).foregroundStyle(.secondary)
+        }
+        ForEach(Array(model.state.catalog.preferences.protectedExecutables).sorted(), id: \.self) {
+          p in
+          HStack {
+            Text((p as NSString).lastPathComponent).font(.callout)
+            Spacer()
+            Button("Remove") { model.unprotect(p) }.clickPointer()
+          }
+        }
+        Divider()
+        Text("Local and bounded").font(.headline)
+        Text(
+          "No BurnZombies account or analytics. Reviews use your selected harness's existing account and usage allowance. Process evidence can reach that harness's model provider. No command arguments or environment collected. At most 4,096 process records, eight samples each."
+        ).font(.caption).foregroundStyle(.secondary)
+        Text(
+          String(
+            format: "Last scan %.1f ms · checkpoint %@", model.state.scanMS,
+            bytes(UInt64(model.state.checkpointBytes)))
+        ).font(.caption.monospaced()).foregroundStyle(.secondary)
+        if let observed = model.state.catalog.lastSample {
+          Text("Last observation \(observed.formatted(date: .omitted, time: .standard))")
+            .font(.caption.monospaced()).foregroundStyle(.secondary)
+        }
+        Link(
+          "Build, safety, and uninstall guide",
+          destination: URL(string: "https://github.com/swordfish444/BurnZombies")!
+        ).clickPointer().font(.callout)
+      }
     }
   }
+
 }
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -1808,6 +1827,20 @@ MainActor.assumeIsolated {
       Task { @MainActor in
         do {
           try await aboutSettingsProof(output: CommandLine.arguments[2])
+          exit(0)
+        } catch {
+          print("FAIL \(error.localizedDescription)")
+          exit(1)
+        }
+      }
+      app.run()
+      exit(1)
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--settings-layout-proof" {
+      app.setActivationPolicy(.prohibited)
+      Task { @MainActor in
+        do {
+          try settingsLayoutProof(output: CommandLine.arguments[2])
           exit(0)
         } catch {
           print("FAIL \(error.localizedDescription)")
