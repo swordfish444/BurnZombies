@@ -105,7 +105,7 @@ import SwiftUI
       do {
         let plan = try await prepare(release) { progress in
           Task { @MainActor in
-            guard let self, self.operation == id else { return }
+            guard self.operation == id else { return }
             switch progress {
             case .downloading(let fraction):
               if self.phase == .downloading { self.fraction = fraction }
