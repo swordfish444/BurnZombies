@@ -53,31 +53,27 @@ BurnZombies asks one question per subject: old project copies, each kind of prog
 
 ### The question card
 
-The card names the things it is about and when each was last used:
+The card says only what you need to decide: what it is about, what it frees, what is safe and what is risky. Which things it covers waits behind **View details**:
 
 > **Burn 5 copies you used yesterday?**
 > **Frees 2.8 GB**
 > Their work is on GitHub. Nothing is unsaved.
-> **fix login selector** api · yesterday 5 pm
-> **add dark mode toggle** web-app · yesterday 1 pm
-> **tidy the footer** web-app · yesterday 7 pm
-> \+ 2 more
-> View details — *Yes, burn them* · *No, keep them* · *Not sure — skip*
+> View details
+> *Yes, burn them* · *No, keep them* · *Not sure — skip*
 
 - **The headline** says how many and when the most recent one was used: "you used yesterday", "untouched since Monday", "untouched for 2 weeks"; for programs, "idle for 3 hours".
-- **The rows** name up to three of them, biggest first. A copy shows its task (its chat's title, or its branch in plain words), its project and when a file last changed; a program shows its name, who started it and how long it sat idle; a folder shows which one it is ("node_modules in api") and when it last changed. Then how many more.
 - **The line under the size** says what all of them share that is safe, such as "Their work is on GitHub."
 - **Facts that make burning riskier** show in amber, counted: work only on this Mac, unsaved changes ("2 have unsaved changes", or "1 has lots of unsaved changes" when there are many), big unsaved files by kind ("1 has big unsaved code files"), still running a server, and anything BZ couldn't check ("1 couldn't be checked").
-- **Big unsaved files** are untracked files too big for a restore point: more than 512 MB of them in a copy. BZ never burns such a copy without your Yes to a card about it, and that card says so:
-  - Under the copy's row, it names each big folder or file: where it is, how big, what kind and when it last changed ("tmp/checkouts · 914 MB of TypeScript files · Oct 10").
-  - Before you press anything, an amber line says what a Yes costs: "A Yes deletes its 914 MB of big unsaved files for good. Undo won't bring these back; everything else in it is backed up first."
+- **Big unsaved files** are untracked files too big for a restore point: more than 512 MB of them in a copy. BZ never burns such a copy without your Yes to a card about it, and that card's amber facts say which kinds it holds:
+  - View details names each big folder or file: where it is, how big, what kind and when it last changed ("tmp/checkouts · 914 MB of TypeScript files · Oct 10").
+  - An amber ⚠ beside the filters says, under the pointer, what a Yes costs: "A Yes deletes its 914 MB of big unsaved files for good. Undo won't bring these back; everything else in it is backed up first."
   - Only as many go as it takes for the rest to fit in the backup, biggest first. A folder that also holds files Git tracks never goes whole, so new files you wrote beside big output are backed up.
 
 The header shows where you are in the current round of questions, never a percentage.
 
 ### View details, Spare and tips
 
-**View details** sits where the card's reassuring line was, styled like *Not sure — skip*. It opens everything the card is about in the space the chips and rows took, biggest first, with filters for the risky ones (*Only on this Mac*, *Unsaved changes*, *Big files*, anything BZ couldn't check) and for what you spared. Each row shows its name, project, size, when it was last used and its risks; rest the pointer on a row for a moment and a card shows everything BZ knows: its folder, branch, where it lives, how its work is saved, how many files are unsaved and what burning it does. Click a row to open it; **‹ ›** or the arrow keys flip to the next one in the same list, and **Back** or Esc returns to the same spot. *Hide details* puts the card back.
+**View details** sits just above the answers, styled like *Not sure — skip*, and *Hide details* takes its place in the same spot, so it never has to be looked for. It opens everything the card is about in the space the line and chips took, biggest first, with filters for the risky ones (*Only on this Mac*, *Unsaved changes*, *Big files*, anything BZ couldn't check) and for what you spared. Each row shows its name, project, size, when it was last used and its risks; rest the pointer on a row for a moment and a card shows everything BZ knows: its folder, branch, where it lives, how its work is saved, how many files are unsaved and what burning it does. Click a row to open it; **‹ ›** or the arrow keys flip to the next one in the same list, and **Back** or Esc returns to the same spot. *Hide details* puts the card back.
 
 **Spare** takes a thing out of the fire, now and later: it is the same keep as *Keep forever* in **Findings**, so no lesson, starter rule or AI call burns it. A spared row stays in the list, greyed out, so you can change your mind: on a spared row the button reads *Spared*, and under the pointer it turns into **Unspare**, which hands it back to BZ. The headline, the size and the chips follow at once, and so does what a *Yes* covers: risks that only spared things had leave the card, so the lesson doesn't cover them. The card counts what you spared ("2 spared"), and after a *Yes* the note says they stay.
 
