@@ -444,4 +444,5 @@ func autopilotPolicyProof() throws {
   equal(permissions.st_mode & 0o777, 0o600, "private file")
 
   autopilotDetailsProof()
+  try bigFilesPolicyProof()
 }

@@ -40,6 +40,23 @@ extension AutopilotPolicy {
     question.risks = risks(question.kind, items)
     question.profiles = profiles(question.kind, items)
     question.line = safeLine(question.kind, items)
+    // What a Yes deletes in all, rows the card shows or not.
+    var big: UInt64 = 0
+    for item in items { big += (item.bigFiles ?? []).reduce(0) { $0 + $1.bytes } }
+    question.bigBytes = big > 0 ? big : nil
+    if question.source == "native" { question.why = nativeWhy(question, covering: items) }
+  }
+
+  /// BZ's own words on why it asks: "I found 3 like this, using 2.8 GB. I back each one up first,
+  /// so you can undo it." A copy's big unsaved files can't be backed up, so then it says so.
+  static func nativeWhy(_ question: AutopilotQuestion, covering items: [AutopilotItem]) -> String {
+    let bytes: UInt64 = items.reduce(0) { $0 + $1.bytes }
+    let found: String = "I found \(items.count) like this, using \(format(bytes))."
+    guard question.kind == .worktree else { return found }
+    guard bigFilesCost(question) != nil else {
+      return found + " I back each one up first, so you can undo it."
+    }
+    return found + " I back each one up first, except its big unsaved files, which a Yes deletes for good."
   }
 
   /// Each thing's risky facts, of the kinds a lesson keeps within (`riskFacts`), and how long it sat
@@ -61,14 +78,22 @@ extension AutopilotPolicy {
     return found.sorted { $0.joined(separator: ",") < $1.joined(separator: ",") }
   }
 
-  /// The three biggest, biggest first, with ties kept in a fixed order.
+  /// The three biggest, biggest first, with ties kept in a fixed order. Copies with big unsaved
+  /// files come first, each with its files, so the card names what a Yes deletes.
   static func rows(of items: [AutopilotItem]) -> [AutopilotQuestionRow] {
-    let biggest = items.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
+    let biggest = items.sorted { a, b in
+      let first: Bool = AutopilotWorktrees.holdsBigFiles(a)
+      let second: Bool = AutopilotWorktrees.holdsBigFiles(b)
+      if first != second { return first }
+      return a.bytes != b.bytes ? a.bytes > b.bytes : a.id < b.id
+    }
     return biggest.prefix(3).map { item in
       let title: String = item.title ?? item.name
-      return AutopilotQuestionRow(
+      var row = AutopilotQuestionRow(
         title: String(title.prefix(rowTitleLimit)), subtitle: subtitle(of: item),
         bytes: item.bytes, lastUsed: item.lastUsed)
+      row.bigFiles = item.bigFiles
+      return row
     }
   }
 
@@ -281,7 +306,9 @@ extension AutopilotPolicy {
       if let used = row.lastUsed {
         when = timeWords(used, kind: kind, now: now, calendar: calendar)
       }
-      return AutopilotCardRow(title: row.title, subtitle: row.subtitle, when: when)
+      let details: [String] = bigFilesLines(row.bigFiles ?? [], now: now, calendar: calendar)
+      return AutopilotCardRow(
+        title: row.title, subtitle: row.subtitle, when: when, details: details)
     }
   }
 }

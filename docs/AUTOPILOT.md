@@ -64,13 +64,17 @@ The card names the things it is about and when each was last used:
 - **The headline** says how many and when the most recent one was used: "you used yesterday", "untouched since Monday", "untouched for 2 weeks"; for programs, "idle for 3 hours".
 - **The rows** name up to three of them, biggest first. A copy shows its task (its chat's title, or its branch in plain words), its project and when a file last changed; a program shows its name, who started it and how long it sat idle; a folder shows which one it is ("node_modules in api") and when it last changed. Then how many more.
 - **The line under the size** says what all of them share that is safe, such as "Their work is on GitHub."
-- **Facts that make burning riskier** show in amber, counted: work only on this Mac, unsaved changes ("2 have unsaved changes", or "1 has lots of unsaved changes" when there are many), still running a server, and anything BZ couldn't check ("1 couldn't be checked").
+- **Facts that make burning riskier** show in amber, counted: work only on this Mac, unsaved changes ("2 have unsaved changes", or "1 has lots of unsaved changes" when there are many), big unsaved files by kind ("1 has big unsaved code files"), still running a server, and anything BZ couldn't check ("1 couldn't be checked").
+- **Big unsaved files** are untracked files too big for a restore point: more than 512 MB of them in a copy. BZ never burns such a copy without your Yes to a card about it, and that card says so:
+  - Under the copy's row, it names each big folder or file: where it is, how big, what kind and when it last changed ("tmp/checkouts · 914 MB of TypeScript files · Oct 10").
+  - Before you press anything, an amber line says what a Yes costs: "A Yes deletes its 914 MB of big unsaved files for good. Undo won't bring these back; everything else in it is backed up first."
+  - Only as many go as it takes for the rest to fit in the backup, biggest first. A folder that also holds files Git tracks never goes whole, so new files you wrote beside big output are backed up.
 
 The header shows where you are in the current round of questions, never a percentage.
 
 ### View details, Spare and tips
 
-**View details** sits where the card's reassuring line was, styled like *Not sure — skip*. It opens everything the card is about in the space the chips and rows took, biggest first, with filters for the risky ones (*Only on this Mac*, *Unsaved changes*, anything BZ couldn't check) and for what you spared. Each row shows its name, project, size, when it was last used and its risks; rest the pointer on a row for a moment and a card shows everything BZ knows: its folder, branch, where it lives, how its work is saved, how many files are unsaved and what burning it does. Click a row to open it; **‹ ›** or the arrow keys flip to the next one in the same list, and **Back** or Esc returns to the same spot. *Hide details* puts the card back.
+**View details** sits where the card's reassuring line was, styled like *Not sure — skip*. It opens everything the card is about in the space the chips and rows took, biggest first, with filters for the risky ones (*Only on this Mac*, *Unsaved changes*, *Big files*, anything BZ couldn't check) and for what you spared. Each row shows its name, project, size, when it was last used and its risks; rest the pointer on a row for a moment and a card shows everything BZ knows: its folder, branch, where it lives, how its work is saved, how many files are unsaved and what burning it does. Click a row to open it; **‹ ›** or the arrow keys flip to the next one in the same list, and **Back** or Esc returns to the same spot. *Hide details* puts the card back.
 
 **Spare** takes a thing out of the fire, now and later: it is the same keep as *Keep forever* in **Findings**, so no lesson, starter rule or AI call burns it. A spared row stays in the list, greyed out, so you can change your mind: on a spared row the button reads *Spared*, and under the pointer it turns into **Unspare**, which hands it back to BZ. The headline, the size and the chips follow at once, and so does what a *Yes* covers: risks that only spared things had leave the card, so the lesson doesn't cover them. The card counts what you spared ("2 spared"), and after a *Yes* the note says they stay.
 
@@ -83,6 +87,10 @@ The AI's questions follow the same rules: it may reword or replace the open ques
 Yes and No each become a lesson right away, and Yes starts burning what it covers (with look-only, once you start burning). Skip hides the question for a day and teaches nothing; after that it can be asked again, as a new card.
 
 A lesson is about why, not which project: it leaves out the project, where the copy lives and which tool made it, so one answer about one project's copies covers every project's. A Yes also covers things left unused even longer. A No keeps everything as recent as the newest thing on its card, and anything newer; the older things on the card get the next question. A Yes covers only the risks its card showed, as you saw it, even if BZ found more while the card was on screen: when every copy on the card had its work on GitHub and nothing unsaved, a later copy with unsaved work isn't burned under it. That copy gets a question of its own, which names the new risk. A No to that question keeps the copies on that card, as recent as its newest and newer, but not the clean copies your earlier Yes covers: those still go. A lesson that covers another takes it in, so a few lessons hold all your answers.
+
+Big unsaved files are a risk of their own for each kind: code, media, data, archives and other files.
+- A folder counts as every kind that makes up a tenth of it, and as code whenever it holds any.
+- Only a Yes to a card that showed every kind a folder holds lets it go. A Yes to big code files covers later copies with big code files, while a copy with big videos, or with videos among the code, gets a card of its own. A No to such a card keeps only the copies with those big files, at that age and newer; the clean copies your other lessons burn still go.
 
 "Got it!" after an answer shows the lesson in one sentence. **Settings → Autopilot → What BZ has learned** lists them all:
 
@@ -101,7 +109,7 @@ When BZ is about to ask a question it is sure of, it answers yes itself, burns, 
 
 - it has earned trust on the subject;
 - you have said yes on that subject before, and yes is what you usually say there;
-- every risk on the question (work only on this Mac, unsaved changes, a running server, something it couldn't check) was on a card you said yes to on that subject;
+- every risk on the question (work only on this Mac, unsaved changes, each kind of big unsaved files, a running server, something it couldn't check) was on a card you said yes to on that subject;
 - no keep lesson of yours on that subject touches it.
 
 So it never acts on a subject you haven't answered, on a risk you haven't said yes to, or against a No. What it learns from its own call stays within the risks you approved: a later copy with a risk you never saw isn't burned under it.
@@ -117,7 +125,7 @@ It tells you on the first card in **Teach BZ**:
 
 - **Good call** closes it and counts as a right guess.
 - **Undo** first turns BZ's lesson into a keep, so nothing more burns under it, then brings back every copy it burned from its restore point. The keep is the one your No to that card would have taught. It counts as your No and as a wrong guess, which ends trust on that subject, so BZ asks before it acts there again. If a copy can't come back, the card stays after the Undo, says how many and why, and closes when you press *OK*.
-- **What Undo can't bring back:** stopped programs and deleted folders. Their card says so before you press anything, and its button reads *I'd have said no*. It still turns the lesson into a keep and ends trust.
+- **What Undo can't bring back:** stopped programs and deleted folders. Their card says so before you press anything, and its button reads *I'd have said no*. It still turns the lesson into a keep and ends trust. Big unsaved files BZ deleted with a copy don't come back either. The card names them under the copy and says, before you press Undo, that it brings the copies back without them. After the Undo, it says how many came back that way and waits for your *OK*.
 - A card like this that you don't touch closes after a week.
 
 **Settings → Autopilot → Act on its own when sure** is on by default. Off, BZ asks every question, sure or not, and still checks its guesses. While Autopilot is off or look-only is on, it doesn't act either. If you turn look-only on just after it acted, what it meant to burn waits too, and its card shows once you start burning.
@@ -146,10 +154,10 @@ Without Claude Code or Codex, or after installing with `--observe-only`, BurnZom
 
 ## Undo
 
-- **Old copies:** **Restore** in **Findings** for 30 days. The restore point lives in the repository as `refs/burnzombies/retired/…` and holds every commit and local change. Ignored files over 5 MB, anything inside rebuildable folders, and browser profiles that test runs leave in a copy (a Chrome-style profile folder) aren't saved. A copy with more than 512 MB of other unsaved files is left alone.
+- **Old copies:** **Restore** in **Findings** for 30 days. The restore point lives in the repository as `refs/burnzombies/retired/…` and holds every commit and local change. Ignored files over 5 MB, anything inside rebuildable folders, and browser profiles that test runs leave in a copy (a Chrome-style profile folder) aren't saved. A copy with more than 512 MB of other unsaved files is left alone until you say its big files can go ([The question card](#the-question-card)). Then those files are deleted for good: the receipt names them, and Restore brings the copy back without them.
 - **Junk folders:** your tools rebuild them.
 - **Programs:** a graceful stop, which can't be undone.
-- **What BZ did on its own:** **Undo** on its card in **Teach BZ** brings back the copies it burned and turns its lesson into a keep, so it asks next time. If a copy can't come back, the card says how many and why until you press *OK*. Programs and folders can't come back; their button reads *I'd have said no* and still teaches the keep ([Act, then tell](#act-then-tell)).
+- **What BZ did on its own:** **Undo** on its card in **Teach BZ** brings back the copies it burned and turns its lesson into a keep, so it asks next time. If a copy can't come back, the card says how many and why until you press *OK*. Big unsaved files deleted with a copy don't come back, and the card says so before you press Undo. Programs and folders can't come back; their button reads *I'd have said no* and still teaches the keep ([Act, then tell](#act-then-tell)).
 
 Uninstalling leaves restore points in place; [Uninstall](INSTALL.md#uninstall) shows how to delete them.
 
@@ -159,6 +167,7 @@ Uninstalling leaves restore points in place; [Uninstall](INSTALL.md#uninstall) s
 - Something the app refused waits 6 hours before it is tried again, unless it or the answer that allows it changes. AI sweeps wait too, so they don't repeat checks the app already refused. If BZ couldn't finish checking whether a program is using it, the next look tries once more first.
 - One burn per item at a time: while a copy is being backed up and removed, a second burn of it, from the AI or from **Burn now**, is turned away.
 - Old copies are only removed after their restore point verifies; submodules with unsaved work, locked copies, in-progress merges/rebases and copies a program is using are refused. BZ's own measuring of junk folders steps out of whatever is burning, so it never counts as that program.
+- Unsaved files too big for a restore point are deleted only under a lesson from your Yes to a card that showed that kind of them, or BZ's own call on a kind you said yes to. **Burn now**, the AI and the starter rules never delete them. A copy holding them waits instead of being tried every 6 hours.
 - Junk folders must be a known rebuildable kind, untracked by git, outside private areas (iCloud, Mail, Messages, Photos, `.ssh`, Keychains), and unused by any program.
 - Without Full Disk Access, nothing in a place macOS protects is read, sized, judged or burned, and neither is a copy whose project lives in one.
 - At most 50 programs, 20 copies and 20 junk folders burned per look.

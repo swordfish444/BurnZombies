@@ -346,6 +346,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   hint(teach, "teach", ["Not sure", listed.isEmpty ? card.note : "View details"])
   try teachDetailsProof(
     asking, question: questions[0], listed: listed, directory: directory, hint: hint)
+  try bigFilesProof(directory: directory, demoTell: demoTell)
   // Real questions come in many shapes; every one stays readable with its rows, and none leaves an
   // empty gap where chips would be. The first has three chips and a long title, the last has none.
   let used: Date = Date().addingTimeInterval(-9 * 86_400)
@@ -934,7 +935,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     "settings lost the toggle caption. OCR saw: \(settings.raw)")
   try check(
     AutopilotSettingsView.actsCaption
-      == "When I'm sure, I'll do it and tell you after. Copies can be undone. Off means I always ask first.",
+      == "When I'm sure, I'll do it and tell you after. Copies can be undone, but not big unsaved files you let me delete. Off means I always ask first.",
     "The toggle caption says only copies can be undone")
   try check(
     snapshot.lessons.allSatisfy {
@@ -1446,4 +1447,59 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     "PASS autopilot UI Teach BZ details: \(listed.count) listed with filters, one opened (\(position)), a Spare that leaves \(left.count) on the card, a tip and the note that spared copies stay"
   )
 }
+/// Big unsaved files: a question card about a copy holding them says what a Yes deletes for good
+/// before anything is pressed and names each big folder under its copy; a tell whose burns deleted
+/// some says so before Undo is pressed.
+@MainActor private func bigFilesProof(directory: URL, demoTell: AutopilotTell) throws {
+  let used: Date = Date().addingTimeInterval(-8 * 86_400)
+  var row = AutopilotQuestionRow(
+    title: "tune damage numbers", subtitle: "game", bytes: 1_360_000_000, lastUsed: used)
+  row.bigFiles = [
+    AutopilotBigFiles(
+      path: "tmp/checkouts", bytes: 914_000_000, files: 31_000, kind: "TypeScript files",
+      changed: used)
+  ]
+  var big = AutopilotQuestion(
+    kind: .worktree, match: ["stale": ["week"]], question: "Can I burn old project copies?",
+    why: "", examples: [], count: 1, bytes: 1_360_000_000)
+  big.risks = ["bigCode=yes", "changes=large"]
+  big.cautions = ["1 has lots of unsaved changes", "1 has big unsaved code files"]
+  big.bigBytes = 914_000_000
+  big.newest = used
+  big.rows = [row]
+  big.line = "Its work is on GitHub."
+  let asking = AppModel(demo: true)
+  asking.autopilot.tells = []
+  asking.autopilot.questions = [big]
+  let view = try render(
+    TeachView(model: asking), size: TeachView.size, name: "teach-big-files", directory: directory)
+  let card = AutopilotPolicy.card(big)
+  guard let cost = card.cost else { throw StoreError.message("A big-files card says no cost") }
+  try require(view, ["for good", "tmp/checkouts"], in: "teach-big-files")
+  if !view.hasWords(of: cost) || !view.has("Undo won't bring") {
+    throw StoreError.message("teach-big-files lost what a Yes costs. OCR saw: \(view.raw)")
+  }
+  if view.has("so you can undo it") {
+    throw StoreError.message("teach-big-files promises an undo. OCR saw: \(view.raw)")
+  }
+
+  var told = demoTell
+  told.count = 1
+  told.rows = [row]
+  told.bigBytes = 914_000_000
+  let telling = AppModel(demo: true)
+  telling.autopilot.tells = [told]
+  let tellView = try render(
+    TeachView(model: telling), size: TeachView.size, name: "teach-tell-big-files",
+    directory: directory)
+  guard let gone = AutopilotPolicy.bigFilesTold(told) else {
+    throw StoreError.message("A tell that deleted big files says nothing of them")
+  }
+  try require(tellView, ["deleted for good", "tmp/checkouts", "Undo"], in: "teach-tell-big-files")
+  if !tellView.hasWords(of: gone) {
+    throw StoreError.message("teach-tell-big-files lost what Undo can't bring back. OCR saw: \(tellView.raw)")
+  }
+  print("PASS autopilot UI big files: the card and the tell say what is deleted for good")
+}
+
 #endif

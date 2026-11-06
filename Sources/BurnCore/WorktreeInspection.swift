@@ -190,9 +190,12 @@ public enum WorktreeInspection {
       path: path, common: common, administration: admin, device: s.st_dev, inode: s.st_ino,
       commonInode: cs.st_ino, administrationInode: ads.st_ino)
   }
+  /// `excluding` names generated folders, which must stay folders; `leavingOut`, big unsaved files
+  /// and folders the owner let go, each a regular file or a folder.
   public static func files(
     _ root: String, seconds: Double = 15, limit: Int = 100_000, permitLinks: Bool = false,
-    excluding: Set<String> = [], ignoringGitPointers: Set<String> = []
+    excluding: Set<String> = [], leavingOut: Set<String> = [],
+    ignoringGitPointers: Set<String> = []
   ) throws -> ([WorktreeFile], UInt64) {
     let rootInfo = try WorkspaceSafety.statAt(root)
     guard rootInfo.st_mode & S_IFMT == S_IFDIR else {
@@ -227,6 +230,20 @@ public enum WorktreeInspection {
           throw StoreError.message("Generated folder changed during recovery.")
         }
         walk.skipDescendants()
+        continue
+      }
+      if leavingOut.contains(relative) {
+        // A folder is passed over whole. A file is passed over without a skip: on macOS 27 a skip
+        // asked for at a file lands on the next folder in the listing.
+        var left = stat()
+        guard lstat(url.path, &left) == 0 else {
+          throw StoreError.message("A big file the owner let go changed during recovery.")
+        }
+        let type = left.st_mode & S_IFMT
+        guard type == S_IFDIR || type == S_IFREG else {
+          throw StoreError.message("A big file the owner let go changed during recovery.")
+        }
+        if type == S_IFDIR { walk.skipDescendants() }
         continue
       }
       if ignoringGitPointers.contains(relative) {

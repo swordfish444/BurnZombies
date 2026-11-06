@@ -19,7 +19,7 @@ public struct AutopilotDelivery: Codable, Sendable, Equatable {
 /// restorable retirement that keeps committed work in Git and local changes encrypted.
 public enum AutopilotWorktrees {
   /// Untracked, unignored content larger than this is never copied into a safety commit.
-  static let maximumUnsavedBytes: UInt64 = 512 << 20
+  public static let maximumUnsavedBytes: UInt64 = 512 << 20
   private static let refPrefix = "refs/burnzombies/retired/"
   private static let stateFiles = [
     "locked", "index.lock", "HEAD.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD",
@@ -28,8 +28,17 @@ public enum AutopilotWorktrees {
 
   private struct Refusal: Error {
     var reason: String
-    init(_ reason: String) { self.reason = reason }
+    /// The unsaved files too big to back up that kept the copy, named for the owner's card.
+    var bigFiles: [AutopilotBigFiles]?
+    init(_ reason: String, bigFiles: [AutopilotBigFiles]? = nil) {
+      self.reason = reason
+      self.bigFiles = bigFiles
+    }
   }
+  /// Why a copy is left alone when a project inside it holds work that can't be backed up.
+  private static let nestedProject =
+    "There is another project folder inside it that I can't back up, so I left it alone."
+
   // MARK: Catalog
 
   /// `delivery` caches Git delivery state by worktree record id; `budget` bounds how many
@@ -264,6 +273,9 @@ public enum AutopilotWorktrees {
         item, path: path, authority: authority, root: root, inUse: inUse, recoveryKey: recoveryKey,
         authorize: authorize)
     } catch let refusal as Refusal {
+      if let big = refusal.bigFiles {
+        return .refused(item, authority: authority, bigFiles: big)
+      }
       return .refused(item, authority: authority, refusal.reason)
     } catch {
       return .refused(
@@ -339,13 +351,15 @@ public enum AutopilotWorktrees {
       throw Refusal(reason)
     }
 
-    // Big unsaved files would be copied into the repository's own storage, so they keep the copy.
-    // Browser profiles don't count: they aren't kept.
+    // Unsaved files too big for the backup would only move into BZ's own storage instead of
+    // freeing the disk, so they keep the copy, named so the owner can be asked about them. Under an
+    // owner's Yes to that kind of them they go with the copy instead (`dropsBigFiles`). Browser
+    // profiles don't count: they aren't kept.
     let untracked = try WorktreeGit.run(
       path, ["ls-files", "-z", "--others", "--exclude-standard"], seconds: 60
     ).split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
     let profiles = try browserProfiles(path, untracked: untracked)
-    var unsaved: UInt64 = 0
+    var files: [AutopilotUnsavedFile] = []
     var dropped: UInt64 = 0
     for name in untracked {
       var info = stat()
@@ -357,17 +371,30 @@ public enum AutopilotWorktrees {
         dropped += bytes
         continue
       }
-      unsaved += bytes
-      if unsaved > maximumUnsavedBytes {
-        throw Refusal("It has big files that aren't saved anywhere else, so I left it alone.")
+      files.append(AutopilotUnsavedFile(path: name, bytes: bytes, changed: AutopilotDisk.changed(info)))
+    }
+    var big: [AutopilotBigFiles] = []
+    if files.reduce(0, { $0 + $1.bytes }) > maximumUnsavedBytes {
+      let entries = try WorktreeGit.run(
+        path, ["ls-files", "-z", "--others", "--exclude-standard", "--directory"], seconds: 60
+      ).split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+      big = bigFiles(files, entries: entries)
+      guard dropsBigFiles(item, authority: authority, files: big) else {
+        throw Refusal(bigFilesRefusal, bigFiles: big)
+      }
+      // A project inside them, ignored or not, would go with them unseen. It keeps the copy, as it
+      // does when Git would back it up or the walk of ignored files finds it.
+      for file in big where try holdsProject(path + "/" + file.path) {
+        throw Refusal(nestedProject)
       }
     }
 
     // Existing commits stay in Git. Every unsaved/ignored byte outside proven generated caches
     // lives only in authenticated encrypted recovery, never in a temporary Git index or blob.
+    // Big unsaved files a Yes let go are left out too: they go with the copy, for good.
     let excluded = AutopilotDisk.recoveryExclusions(path).union(profiles)
     let archive = try PrivateRecovery.capture(
-      path, root: root, excluding: excluded,
+      path, root: root, excluding: excluded, leavingOut: Set(big.map(\.path)),
       gitPointers: try submodulePointers(path, links: links), repository: common, head: head,
       key: recoveryKey)
     let snapshot = changes != "none"
@@ -425,17 +452,52 @@ public enum AutopilotWorktrees {
     }
     var detail = "Removed. Your unsaved changes are backed up, so you can restore it."
     if !snapshot {
-      let saved = dropped > 0 ? "Everything else" : "Everything"
+      let saved = dropped > 0 || !big.isEmpty ? "Everything else" : "Everything"
       detail = "Removed. " + saved + " in it was already saved, so you can restore it."
     }
     if dropped > 0 {
       detail += " Its browser profiles (\(AutopilotPolicy.format(dropped))) weren't kept."
     }
+    if !big.isEmpty { detail += " " + AutopilotPolicy.bigFilesGone(big) }
     let retained = AutopilotDisk.allocatedSize(archive.directory) ?? archive.allocated
-    return AutopilotReceipt(
+    var receipt = AutopilotReceipt(
       itemID: item.id, kind: .worktree, name: item.name, authority: authority, outcome: "burned",
       detail: detail, bytes: item.bytes > retained ? item.bytes - retained : 0,
       restore: recovery)
+    receipt.bigFiles = big.isEmpty ? nil : big
+    return receipt
+  }
+
+  /// Whether a project folder (a `.git`) is anywhere inside `folder`, outside rebuildable folders,
+  /// as recovery would find one anywhere else in the copy. A file is no folder. Refuses when it
+  /// can't look everywhere.
+  private static func holdsProject(_ folder: String) throws -> Bool {
+    var info = stat()
+    guard lstat(folder, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return false }
+    var pending: [String] = [folder]
+    var visited = 0
+    while let current = pending.popLast() {
+      let names: [String]
+      do {
+        names = try FileManager.default.contentsOfDirectory(atPath: current)
+      } catch {
+        throw Refusal("I could not look inside every folder, so I left it alone.")
+      }
+      for name in names {
+        visited += 1
+        guard visited <= 1_000_000 else {
+          throw Refusal("It has too many files for me to check, so I left it alone.")
+        }
+        if name.lowercased() == ".git" { return true }
+        if AutopilotDisk.rebuildable[name] != nil { continue }
+        var child = stat()
+        guard lstat(current + "/" + name, &child) == 0 else {
+          throw Refusal("I could not look inside every folder, so I left it alone.")
+        }
+        if child.st_mode & S_IFMT == S_IFDIR { pending.append(current + "/" + name) }
+      }
+    }
+    return false
   }
 
   /// Browser profiles test runs leave in a copy, by path inside it: a Chrome-style profile folder,

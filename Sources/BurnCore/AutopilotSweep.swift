@@ -80,13 +80,13 @@ public enum AutopilotHarness {
 
     What the app enforces:
     - Owner rules (earlier answers) and starter rules already burn their matches before you run. Never second-guess an owner's answer.
-    - Your burn verdict with confidence >= 0.85 authorizes a burn only for: zombie programs that are orphaned or whose chat ended and that are not serving a port; old copies not made by Codex, Claude or Conductor that nothing is using; known junk folders. Everything else needs an owner rule, so ask.
+    - Your burn verdict with confidence >= 0.85 authorizes a burn only for: zombie programs that are orphaned or whose chat ended and that are not serving a port; old copies not made by Codex, Claude or Conductor that nothing is using and that hold no big unsaved files; known junk folders. Everything else needs an owner rule, so ask.
     - A confident keep verdict blocks burning. Protected items are never burned.
     - Look-only: when the catalog summary says lookOnly, the owner is previewing. Judge and ask as usual but skip autopilot_burn: nothing burns until the owner turns burning on, and your confident verdicts burn then.
 
     How to judge:
     - Zombie program: its app or chat is gone. Burn leftover test runners, build watchers, headless browsers, language servers, dev servers from finished chats and stuck scripts. Keep databases, things the owner clearly runs on purpose (ollama, postgres, redis, tunnels, sync tools), anything recently active, and anything you cannot identify.
-    - Old copy: burning removes the folder, but the app first saves every commit and local change in a restore point, so mistakes are recoverable. Burn copies whose work is merged or pushed and that nobody touched in weeks. Be careful with copies changed in the last few days or holding unmerged work: ask instead.
+    - Old copy: burning removes the folder, but the app first saves every commit and local change in a restore point, so mistakes are recoverable. Burn copies whose work is merged or pushed and that nobody touched in weeks. Be careful with copies changed in the last few days or holding unmerged work: ask instead. A copy whose bigCode, bigMedia, bigData, bigArchives or bigOther fact is yes holds unsaved files too big for the restore point: burning deletes them for good, so only the owner's Yes to that kind lets them go. Don't judge those burn; if no question covers them, ask about their age.
     - Junk folder: rebuildable output such as node_modules, build folders and caches. Burn it when the project is not being worked on right now.
 
     The owner's lessons (catalog `lessons`) are their intent and your brief: judge unsure items by why they burn or keep things, ask only where no lesson reaches, never contradict one.

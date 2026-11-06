@@ -11,10 +11,10 @@ extension AutopilotPolicy {
 
   /// Facts that make burning riskier: work only on this Mac, unsaved changes, a running server,
   /// recent use. Any fact BZ couldn't check (`unknown`) is risky too.
-  static let riskyFacts: Set<String> = [
+  static let riskyFacts: Set<String> = Set([
     "saved=local", "changes=small", "changes=large", "listening=yes", "stale=today",
     "idle=active", "idle=10m",
-  ]
+  ]).union(namedRisks(.worktree))
   /// Caution text on older questions, and the risk each one names.
   static let cautionRisks: [(text: String, risk: String)] = [
     ("work only on this Mac", "saved=local"), ("unsaved changes", "changes=small"),
@@ -82,7 +82,7 @@ extension AutopilotPolicy {
     let lean: AutopilotAnswer = yes.count > no ? .yes : .no
     let asked = risks(of: question)
     let saidYes = approvedRisks(topic, memory, besides: question.id)
-    let general = generalize(question.kind, question.match)
+    let general = askedPattern(question)
     let kept = memory.rules.contains { rule in
       guard rule.verdict == .keep, rule.kind == question.kind else { return false }
       guard subject(rule.kind, rule.match) == topic else { return false }
@@ -231,10 +231,10 @@ extension AutopilotPolicy {
       }
       words.insert(word)
     }
-    let order = [
-      "work only on this Mac", "unsaved changes", "a running server", "things I couldn't check",
-      "recent use",
-    ]
+    let big: [String] = AutopilotWorktrees.bigFileRisks.map(\.words)
+    let first: [String] = ["work only on this Mac", "unsaved changes"]
+    let last: [String] = ["a running server", "things I couldn't check", "recent use"]
+    let order: [String] = first + big + last
     return order.filter(words.contains)
   }
 
@@ -247,7 +247,7 @@ extension AutopilotPolicy {
     case "listening": return value == "yes" ? "a running server" : nil
     case "stale": return value == "today" ? "recent use" : nil
     case "idle": return "recent use"
-    default: return nil
+    default: return value == "yes" ? bigFileWords(fact) : nil
     }
   }
 }
@@ -339,13 +339,14 @@ public enum AutopilotEval {
     memory: inout AutopilotMemory
   ) -> Step {
     let subject = AutopilotPolicy.subject(question.kind, question.match)
-    let general = AutopilotPolicy.generalize(question.kind, question.match)
+    // A card that showed big unsaved files is about them: only a lesson that names them settles it.
+    let general = AutopilotPolicy.askedPattern(question)
     let lessons = memory.rules.filter { $0.kind == question.kind }
     let kept = lessons.contains {
       $0.verdict == .keep && AutopilotPolicy.overlaps($0.match, general)
     }
     let burned = lessons.contains {
-      $0.verdict == .burn && AutopilotPolicy.subsumes($0.match, general)
+      $0.verdict == .burn && AutopilotPolicy.subsumes(AutopilotPolicy.effective($0), general)
     }
     var lean: AutopilotAnswer?
     var outcome = "settled"

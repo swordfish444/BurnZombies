@@ -98,7 +98,8 @@ extension AutopilotPolicy {
   public static func detailFilters(_ details: [AutopilotDetail]) -> [AutopilotDetailFilter] {
     var filters = [AutopilotDetailFilter(id: "all", label: "All", count: details.count, risky: false)]
     let risks: [(id: String, label: String)] = [
-      ("local", "Only on this Mac"), ("unsaved", "Unsaved changes"), ("serving", "Still serving"),
+      ("local", "Only on this Mac"), ("unsaved", "Unsaved changes"), ("big", "Big files"),
+      ("serving", "Still serving"),
       ("unchecked", "Not checked"), ("failed", "Failed last time"),
     ]
     for risk in risks {
@@ -158,6 +159,12 @@ extension AutopilotPolicy {
         tags.append(Tag(text: "Changes not checked", risky: true, filter: "unchecked"))
       }
       if f["inUse"] == "unknown" { tags.append(Tag(text: "Use not checked", risky: true, filter: "unchecked")) }
+      if AutopilotWorktrees.holdsBigFiles(item) {
+        // What a Yes deletes for good: big unsaved files no backup holds.
+        let big: UInt64 = (item.bigFiles ?? []).reduce(0) { $0 + $1.bytes }
+        let words: String = big > 0 ? roughly(big) + " not backed up" : "Big files not backed up"
+        tags.append(Tag(text: words, risky: true, filter: "big"))
+      }
       if tags.isEmpty, f["saved"] == "merged" { tags.append(Tag(text: "Merged", risky: false, filter: nil)) }
       if tags.isEmpty, f["saved"] == "pushed" { tags.append(Tag(text: "On GitHub", risky: false, filter: nil)) }
     case .process:
@@ -203,12 +210,17 @@ extension AutopilotPolicy {
         unsaved = Fact(label: "Unsaved changes", value: words, risky: true)
       default: unsaved = Fact(label: "Unsaved changes", value: "Not checked yet", risky: true)
       }
-      return [
+      var facts: [Fact] = [
         Fact(label: "Size", value: roughly(item.bytes), risky: false),
         Fact(label: "Last used", value: used, risky: false), work, unsaved,
-        Fact(label: "Branch", value: item.branch ?? "None", risky: false),
-        Fact(label: "Where", value: placeWords(f["place"]), risky: false),
       ]
+      // Each big unsaved file or folder a Yes deletes for good.
+      for line in bigFilesLines(item.bigFiles ?? [], now: now, calendar: calendar) {
+        facts.append(Fact(label: "Not backed up", value: line, risky: true))
+      }
+      facts.append(Fact(label: "Branch", value: item.branch ?? "None", risky: false))
+      facts.append(Fact(label: "Where", value: placeWords(f["place"]), risky: false))
+      return facts
     case .process:
       var idle = "Not known"
       if let date = item.lastUsed { idle = String(idleText(date, now: now).dropFirst("idle ".count)) }

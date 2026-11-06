@@ -74,9 +74,11 @@ extension AutopilotPolicy {
       else { return false }
       return pinsRecency(other.kind, other.match)
     }
+    // Matches as they cover things: a burn without a named risk covers only things clear of it,
+    // so a lesson that lets big unsaved files go is never taken into one that doesn't.
     func joinable(_ other: AutopilotRule) -> Bool {
       guard other.tellID == nil, mergeable(other) else { return false }
-      return subsumes(other.match, rule.match)
+      return subsumes(effective(other), effective(rule))
     }
     if let i = rules.firstIndex(where: joinable) {
       var ids: [String] = []
@@ -88,13 +90,13 @@ extension AutopilotPolicy {
       return rules[i].id
     }
     var lesson = rule
-    for old in rules where mergeable(old) && subsumes(rule.match, old.match) {
+    for old in rules where mergeable(old) && subsumes(effective(rule), effective(old)) {
       var ids: [String] = [old.id]
       ids.append(contentsOf: old.formerIDs ?? [])
       lesson.from = adding(questionIDs(old), to: lesson.from, except: lesson.questionID)
       lesson.formerIDs = adding(ids, to: lesson.formerIDs, except: lesson.id)
     }
-    rules.removeAll { mergeable($0) && subsumes(rule.match, $0.match) }
+    rules.removeAll { mergeable($0) && subsumes(effective(rule), effective($0)) }
     rules.append(lesson)
     return lesson.id
   }
@@ -133,24 +135,30 @@ extension AutopilotPolicy {
   }
 
   /// What an answer teaches: `lesson(for:)`, except for a No to a question asked again for risks
-  /// earlier cards about its pattern didn't show. A keep over the whole pattern would also cover
-  /// what the owner already said could go, and keeps beat burns, so that No keeps less; but never
-  /// less than every thing on its card at the card's age, since BZ never acts against a No:
-  /// 1. the things carrying a risk the card showed for the first time, one keep per such risk
+  /// earlier cards about its pattern didn't show, or to one that showed a named risk, which no
+  /// other lesson burns, so it was asked for that risk. A keep over the whole pattern would also
+  /// cover what the owner already said could go, and keeps beat burns, so that No keeps less; but
+  /// never less than every thing on its card at the card's age, since BZ never acts against a No:
+  /// 1. the things carrying a named risk the card showed, one keep per named risk;
+  /// 2. the things carrying a risk the card showed for the first time, one keep per such risk
   ///    fact, kept to its new risky values;
-  /// 2. failing that, the things carrying any risk the card showed, one keep per risk fact;
-  /// 3. failing that, everything at that age, as any No keeps.
+  /// 3. failing that, the things carrying any risk the card showed, one keep per risk fact;
+  /// 4. failing that, everything at that age, as any No keeps.
   /// `earlier` holds the questions answered before this one, by the owner or by BZ.
   public static func lessons(
     for question: AutopilotQuestion, verdict: AutopilotVerdict, created: Date,
     earlier: [AutopilotQuestion]
   ) -> [AutopilotRule] {
     let wide = lesson(for: question, verdict: verdict, created: created)
-    guard verdict == .keep, let shown = question.risks,
-      let before = shownBefore(question, in: earlier)
-    else { return [wide] }
-    let fresh: Set<String> = Set(shown).subtracting(before)
-    for risks in [fresh, Set(shown)] {
+    guard verdict == .keep, let shown = question.risks else { return [wide] }
+    let named: Set<String> = Set(shown).intersection(namedRisks(question.kind))
+    let before: Set<String>? = shownBefore(question, in: earlier)
+    guard before != nil || !named.isEmpty else { return [wide] }
+    var tries: [Set<String>] = []
+    if !named.isEmpty { tries.append(named) }
+    if let before { tries.append(Set(shown).subtracting(before)) }
+    tries.append(Set(shown))
+    for risks in tries {
       let keeps: [AutopilotRule] = narrowKeeps(wide, risks: risks, question: question)
       if !keeps.isEmpty, keepsAll(keeps, of: question, wide: wide) { return keeps }
     }
@@ -223,14 +231,19 @@ extension AutopilotPolicy {
   /// A burn lesson kept within `allowed` risks, for an owner's Yes and BZ's own act alike: each
   /// risk fact of the kind (`riskFacts`) allows its safe values and only the risky values in
   /// `allowed`, and `unknown` only when it is there. A value the lesson already left out stays out.
+  /// A named risk the lesson doesn't let go is left out of it: a burn without it covers only things
+  /// clear of it anyway (`effective`).
   static func narrowed(
     _ match: [String: [String]], kind: AutopilotKind, to allowed: Set<String>
   ) -> [String: [String]] {
     var result = match
+    let named = namedRisks[kind] ?? []
     for (fact, values) in riskFacts[kind] ?? [] {
       let kept: [String] = values.filter { value in
         !risky(fact, value) || allowed.contains(fact + "=" + value)
       }
+      let clear: Bool = named.contains { $0.fact == fact && kept == [$0.clear] }
+      if clear && result[fact] == nil { continue }
       if let mine = result[fact] {
         result[fact] = kept.filter(mine.contains)
       } else {

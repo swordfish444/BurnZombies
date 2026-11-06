@@ -8,9 +8,10 @@ struct AutopilotSettingsView: View {
   @ObservedObject var model: AppModel
   @State private var confirmReset = false
   static let intervals = [5, 15, 30, 60, 240]
-  /// Under the toggle. Only copies can be undone, so it says so.
+  /// Under the toggle. Only copies can be undone, and not the big unsaved files the owner let go, so
+  /// it says so.
   static let actsCaption =
-    "When I'm sure, I'll do it and tell you after. Copies can be undone. Off means I always ask first."
+    "When I'm sure, I'll do it and tell you after. Copies can be undone, but not big unsaved files you let me delete. Off means I always ask first."
 
   private var sweep: AutopilotSweepState { model.autopilot.sweep }
   private var lessons: [AutopilotLessonGroup] { model.autopilot.lessons }

@@ -16,14 +16,19 @@ public enum PrivateRecovery {
   struct Manifest: Codable {
     var files: [WorktreeFile]
     var excluded: Set<String>
+    /// Big unsaved files and folders the owner let go: never kept, deleted with the copy.
+    var left: Set<String>?
     var gitPointers: Set<String>?
     var repository: String?
     var head: String?
     var committed: Set<String>?
   }
+  /// `excluding` names proven generated folders; `leavingOut`, big unsaved files and folders the
+  /// owner let go, which nothing keeps.
   public static func capture(
-    _ path: String, root: URL, excluding: Set<String> = [], gitPointers: Set<String> = [],
-    repository: String? = nil, head: String? = nil, key: SymmetricKey? = nil
+    _ path: String, root: URL, excluding: Set<String> = [], leavingOut: Set<String> = [],
+    gitPointers: Set<String> = [], repository: String? = nil, head: String? = nil,
+    key: SymmetricKey? = nil
   ) throws -> Reference {
     let key = try key ?? WorktreeRecoveryKey.load()
     let storeRoot = try Store(root: root.appendingPathComponent("private-recovery")).root
@@ -36,7 +41,8 @@ public enum PrivateRecovery {
     var complete = false
     defer { if !complete { try? FileManager.default.removeItem(at: directory) } }
     let original = try WorktreeInspection.files(
-      path, seconds: 120, permitLinks: true, excluding: excluding, ignoringGitPointers: gitPointers
+      path, seconds: 120, permitLinks: true, excluding: excluding, leavingOut: leavingOut,
+      ignoringGitPointers: gitPointers
     ).0
     guard
       let free = try FileManager.default.attributesOfFileSystem(forPath: base.path)[.systemFreeSize]
@@ -118,8 +124,8 @@ public enum PrivateRecovery {
     }
     let manifest = try JSONEncoder().encode(
       Manifest(
-        files: files, excluded: excluding, gitPointers: gitPointers,
-        repository: repository, head: head, committed: committed))
+        files: files, excluded: excluding, left: leavingOut.isEmpty ? nil : leavingOut,
+        gitPointers: gitPointers, repository: repository, head: head, committed: committed))
     guard manifest.count <= 32 << 20 else {
       throw StoreError.message("Recovery metadata exceeds its bound; nothing removed.")
     }
@@ -162,8 +168,8 @@ public enum PrivateRecovery {
     }
     guard
       try WorktreeInspection.files(
-        reference.source, seconds: 120, permitLinks: true,
-        excluding: saved.excluded, ignoringGitPointers: saved.gitPointers ?? []
+        reference.source, seconds: 120, permitLinks: true, excluding: saved.excluded,
+        leavingOut: saved.left ?? [], ignoringGitPointers: saved.gitPointers ?? []
       ).0 == metadata
     else {
       throw StoreError.message("Contents changed after recovery; nothing removed.")
