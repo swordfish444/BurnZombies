@@ -100,6 +100,33 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   return Reading(text)
 }
 
+/// A card's rows whose titles its own words don't already say, such as "java" under "Burn 4 leftover
+/// Java helpers?": what the card would show only if it drew its rows.
+private func rowsOnlyIn(_ card: AutopilotCard) -> [AutopilotCardRow] {
+  let said = Reading(([card.headline, card.frees, card.line ?? ""] + card.facts).joined(separator: "\n"))
+  return card.rows.filter { !said.has($0.title) }
+}
+
+/// Where OCR finds a line that reads exactly `phrase` in a saved render, as a share of its width and
+/// height from the top left; nil when it finds none. For checks that something stays put.
+private func spot(of phrase: String, in name: String, directory: URL) throws -> CGPoint? {
+  let png = try Data(contentsOf: directory.appendingPathComponent(name + ".png"))
+  let wanted = Reading.normalize(phrase)
+  for corrected in [true, false] {
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.recognitionLanguages = ["en-US"]
+    request.usesLanguageCorrection = corrected
+    try VNImageRequestHandler(data: png, options: [:]).perform([request])
+    for result in request.results ?? [] {
+      guard let line = result.topCandidates(1).first?.string, Reading.normalize(line) == wanted
+      else { continue }
+      return CGPoint(x: result.boundingBox.midX, y: 1 - result.boundingBox.midY)
+    }
+  }
+  return nil
+}
+
 @MainActor private func render<V: View>(
   _ root: V, size: NSSize, name: String, directory: URL
 ) throws -> Reading {
@@ -321,36 +348,37 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   print("PASS autopilot UI menu prompts: quick questions first, then what BZ burned on its own")
 
   // Teach BZ: what BZ did on its own first, then one big question at a time.
-  // The question card as the owner sees it once no tell waits: the things it is about, with when.
+  // The question card as the owner sees it once no tell waits: the headline, what it frees, the
+  // safe line and the chips. Which things it is about waits behind View details.
   let asking = AppModel(demo: true)
   asking.autopilot.tells = []
   let teach = try render(
     TeachView(model: asking), size: TeachView.size, name: "teach", directory: directory)
   let card = AutopilotPolicy.card(questions[0])
-  try require(teach, ["Frees", "Question 1 of 3", "\(card.more) more"], in: "teach")
+  try require(teach, ["Frees", "Question 1 of 3", "View details"], in: "teach")
   try check(teach.hasWords(of: card.headline), "teach is missing the headline. OCR saw: \(teach.raw)")
   try check(teach.hasWords(of: card.yes), "teach is missing the yes button. OCR saw: \(teach.raw)")
   try check(teach.hasWords(of: card.no), "teach is missing the no button. OCR saw: \(teach.raw)")
   if let line = card.line {
     try check(teach.hasWords(of: line), "teach is missing the safe line. OCR saw: \(teach.raw)")
   }
-  for row in card.rows {
+  for row in rowsOnlyIn(card) {
     try check(
-      teach.hasWords(of: row.title), "teach lost the row \"\(row.title)\". OCR saw: \(teach.raw)")
-    var beside: [String] = [row.when]
-    if let project = row.subtitle { beside.append(project) }
-    hint(teach, "teach", beside)
+      !teach.has(row.title), "teach shows the row \"\(row.title)\" before View details. OCR saw: \(teach.raw)")
   }
+  try check(
+    !teach.has("\(card.more) more"), "teach shows how many more before View details. OCR saw: \(teach.raw)")
   for confusing in ["trained", "on my own", "%"] {
     try check(!teach.raw.contains(confusing), "teach shows \"\(confusing)\". OCR saw: \(teach.raw)")
   }
   let listed = TeachView.listed(questions[0], entries: asking.autopilot.entries, overrides: [:])
-  hint(teach, "teach", ["Not sure", listed.isEmpty ? card.note : "View details"])
+  hint(teach, "teach", ["Not sure"])
   try teachDetailsProof(
     asking, question: questions[0], listed: listed, directory: directory, hint: hint)
   try bigFilesProof(directory: directory, demoTell: demoTell)
-  // Real questions come in many shapes; every one stays readable with its rows, and none leaves an
-  // empty gap where chips would be. The first has three chips and a long title, the last has none.
+  // Real questions come in many shapes; every one stays readable, keeps its rows behind View
+  // details, and none leaves an empty gap where chips would be. The first has three chips and a
+  // long title, the last has none.
   let used: Date = Date().addingTimeInterval(-9 * 86_400)
   func busy(_ kind: AutopilotKind, _ match: [String: [String]], count: Int, bytes: UInt64)
     -> AutopilotQuestion
@@ -411,14 +439,24 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
         shown.hasWords(of: fact, share: 0.6),
         "\(name) lost the chip \"\(fact)\". OCR saw: \(shown.raw)")
     }
-    for row in busyCard.rows {
+    for row in rowsOnlyIn(busyCard) {
       try check(
-        shown.hasWords(of: row.title), "\(name) lost \"\(row.title)\". OCR saw: \(shown.raw)")
+        !shown.has(row.title), "\(name) shows \"\(row.title)\" before View details. OCR saw: \(shown.raw)")
     }
+    try require(shown, ["View details"], in: name)
+    hint(shown, name, ["Not sure"])
+    // Opened, the rows are there.
+    let busyOpen = TeachDetailsState(open: true, questionID: question.id)
+    let opened = try render(
+      TeachView(model: busyModel, details: busyOpen), size: TeachView.size, name: name + "-details",
+      directory: directory)
+    try require(opened, ["Hide details"], in: name + "-details")
     let busyListed = TeachView.listed(question, entries: busyModel.autopilot.entries, overrides: [:])
-    hint(
-      shown, name,
-      ["Not sure", busyListed.isEmpty ? busyCard.note : "View details", "\(busyCard.more) more"])
+    if busyListed.isEmpty, let row = busyCard.rows.last {
+      try check(
+        opened.hasWords(of: row.title),
+        "\(name)-details lost \"\(row.title)\". OCR saw: \(opened.raw)")
+    }
     if name == "teach-caches" {
       try check(
         busyCard.facts.isEmpty, "The tool-caches card should have no chips to leave a gap")
@@ -848,7 +886,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
       && abs(windowHeight - TeachView.size.height) < 1,
     "Teach BZ window should be \(Int(TeachView.size.width)) wide and unshown")
   print(
-    "PASS autopilot UI Teach BZ render: question card with rows, heavier cards, copy, program and folder tells, working, failed and stalled tells, an Undo that left a copy behind, a tell that waits for the card on screen, lesson confirmation and empty state"
+    "PASS autopilot UI Teach BZ render: question card with its rows behind View details, heavier cards, copy, program and folder tells, working, failed and stalled tells, an Undo that left a copy behind, a tell that waits for the card on screen, lesson confirmation and empty state"
   )
 
   // Findings: an entry that needs the operator is selected so the detail card shows.
@@ -1401,6 +1439,19 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     list.hasWords(of: first.title), "teach-details lost \"\(first.title)\". OCR saw: \(list.raw)")
   try check(!list.has("View details"), "teach-details still says View details. OCR saw: \(list.raw)")
   hint(list, "teach-details", [first.size] + first.tags.map(\.text))
+  // Hide details is right where View details was, so the owner never hunts for it.
+  guard let shut = try spot(of: "View details", in: "teach", directory: directory) else {
+    throw StoreError.message("OCR found no line reading View details in teach")
+  }
+  guard let shown = try spot(of: "Hide details", in: "teach-details", directory: directory) else {
+    throw StoreError.message("OCR found no line reading Hide details in teach-details")
+  }
+  let moved = CGSize(
+    width: abs(shut.x - shown.x) * TeachView.size.width,
+    height: abs(shut.y - shown.y) * TeachView.size.height)
+  try check(
+    moved.width < 8 && moved.height < 3,
+    "Hide details is not where View details was: it moved \(Int(moved.width)) pt across and \(Int(moved.height)) pt down")
 
   var opened = open
   opened.opened = first.id
@@ -1449,9 +1500,10 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     "PASS autopilot UI Teach BZ details: \(listed.count) listed with filters, one opened (\(position)), a Spare that leaves \(left.count) on the card, a tip and the note that spared copies stay"
   )
 }
-/// Big unsaved files: a question card about a copy holding them says what a Yes deletes for good
-/// before anything is pressed and names each big folder under its copy; a tell whose burns deleted
-/// some says so before Undo is pressed.
+/// Big unsaved files: a question card about a copy holding them stays as short as any other, its
+/// chips saying what's risky; View details names each big folder under its copy, and the warning
+/// there is an icon whose tooltip says what a Yes deletes for good. A tell whose burns deleted some
+/// says so before Undo is pressed.
 @MainActor private func bigFilesProof(directory: URL, demoTell: AutopilotTell) throws {
   let used: Date = Date().addingTimeInterval(-8 * 86_400)
   var row = AutopilotQuestionRow(
@@ -1470,19 +1522,49 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   big.newest = used
   big.rows = [row]
   big.line = "Its work is on GitHub."
+  // The copy itself, as the engine lists it, so View details has it to name.
+  var copy = AutopilotItem(
+    id: "worktree:tune-damage-numbers", kind: .worktree, name: "tune damage numbers",
+    path: "/tmp/game-tune-damage-numbers", bytes: 1_360_000_000,
+    facts: [
+      "repo": "game", "place": "other", "saved": "pushed", "changes": "large", "stale": "week",
+      "inUse": "no", "thread": "none", "bigCode": "yes",
+    ], lastUsed: used, title: "tune damage numbers")
+  copy.bigFiles = row.bigFiles
   let asking = AppModel(demo: true)
   asking.autopilot.tells = []
   asking.autopilot.questions = [big]
+  asking.autopilot.entries = [
+    AutopilotEntry(
+      item: copy, status: .unsure, authority: nil, label: copy.name, why: "",
+      consequence: AutopilotPolicy.consequence(copy))
+  ]
   let view = try render(
     TeachView(model: asking), size: TeachView.size, name: "teach-big-files", directory: directory)
   let card = AutopilotPolicy.card(big)
-  guard let cost = card.cost else { throw StoreError.message("A big-files card says no cost") }
-  try require(view, ["for good", "tmp/checkouts"], in: "teach-big-files")
-  if !view.hasWords(of: cost) || !view.has("Undo won't bring") {
-    throw StoreError.message("teach-big-files lost what a Yes costs. OCR saw: \(view.raw)")
+  guard card.cost != nil else { throw StoreError.message("A big-files card says no cost") }
+  try require(view, ["View details"], in: "teach-big-files")
+  for chip in big.cautions ?? [] where !view.hasWords(of: chip, share: 0.6) {
+    throw StoreError.message("teach-big-files lost the chip \"\(chip)\". OCR saw: \(view.raw)")
   }
-  if view.has("so you can undo it") {
-    throw StoreError.message("teach-big-files promises an undo. OCR saw: \(view.raw)")
+  for early in ["Undo won't bring", "for good", "tmp/checkouts", "so you can undo it"]
+  where view.has(early) {
+    throw StoreError.message(
+      "teach-big-files says \"\(early)\" before View details. OCR saw: \(view.raw)")
+  }
+  let open = TeachDetailsState(open: true, questionID: big.id)
+  let opened = try render(
+    TeachView(model: asking, details: open), size: TeachView.size,
+    name: "teach-big-files-details", directory: directory)
+  let listed = TeachView.listed(big, entries: asking.autopilot.entries, overrides: [:])
+  guard listed.map(\.id) == [copy.id] else {
+    throw StoreError.message("teach-big-files-details should list the copy: \(listed.map(\.id))")
+  }
+  try require(
+    opened, ["Hide details", "Big files", "914 MB not backed up"], in: "teach-big-files-details")
+  for spelled in ["Undo won't bring", "so you can undo it"] where opened.has(spelled) {
+    throw StoreError.message(
+      "teach-big-files-details spells out \"\(spelled)\"; it belongs in the icon's tooltip. OCR saw: \(opened.raw)")
   }
 
   var told = demoTell
@@ -1501,7 +1583,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
   if !tellView.hasWords(of: gone) {
     throw StoreError.message("teach-tell-big-files lost what Undo can't bring back. OCR saw: \(tellView.raw)")
   }
-  print("PASS autopilot UI big files: the card and the tell say what is deleted for good")
+  print("PASS autopilot UI big files: the card stays short, View details names the big folder, and the tell says what was deleted for good")
 }
 
 #endif

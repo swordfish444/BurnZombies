@@ -27,12 +27,14 @@ struct TeachHover: Equatable {
   var frame: CGRect
 }
 
-/// The details, in the space the chips and rows had: everything the card is about with filters, or
+/// The details, in the space the line and chips had: everything the card is about with filters, or
 /// one thing opened, with ‹ › to flip through and Back to return to the same spot in the list.
 struct TeachDetailsPanel: View {
   static let height: CGFloat = 256
   let listed: [AutopilotDetail]
   let noun: String
+  /// What a Yes deletes for good, for the warning beside the filters.
+  let cost: String?
   @Binding var state: TeachDetailsState
   @Binding var hover: TeachHover?
   let spare: (AutopilotDetail) -> Void
@@ -45,8 +47,8 @@ struct TeachDetailsPanel: View {
     let index: Int? = state.opened.flatMap { id in shown.firstIndex { $0.id == id } }
     ZStack {
       TeachDetailList(
-        filters: filters, filter: filter, shown: shown, noun: noun, state: $state, hover: $hover,
-        open: open, spare: spare, did: did
+        filters: filters, filter: filter, shown: shown, noun: noun, cost: cost, state: $state,
+        hover: $hover, open: open, spare: spare, did: did
       )
       .opacity(index == nil ? 1 : 0)
       .offset(x: index == nil ? 0 : -28)
@@ -104,6 +106,7 @@ private struct TeachDetailList: View {
   let filter: String
   let shown: [AutopilotDetail]
   let noun: String
+  let cost: String?
   @Binding var state: TeachDetailsState
   @Binding var hover: TeachHover?
   let open: (AutopilotDetail) -> Void
@@ -175,6 +178,16 @@ private struct TeachDetailList: View {
         .buttonStyle(.plain).clickPointer().accessibilityIdentifier("teach-filter-" + item.id)
       }
       Spacer(minLength: 0)
+      // What a Yes deletes for good, which Undo can't bring back: an amber warning whose tooltip
+      // says it, rather than a paragraph on the card.
+      if let cost {
+        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 13))
+          .foregroundStyle(Color.orange)
+          .frame(width: 26, height: 26).contentShape(Rectangle())
+          .help(cost)
+          .accessibilityElement().accessibilityLabel(cost)
+          .accessibilityIdentifier("teach-cost")
+      }
     }
     .padding(.horizontal, 14).frame(height: 34)
   }

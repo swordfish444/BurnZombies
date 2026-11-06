@@ -192,10 +192,12 @@ struct TeachView: View {
 
   // MARK: Question
 
-  /// A short headline, what it frees, one safe line, the things it is about and View details.
-  /// Each part is there only when the question has something to say, so no card has an empty gap.
-  /// Opened, the details take the place of the chips and rows; what the owner spares there leaves
-  /// the headline, the size and the answer at once. Tips come and go in the corner above.
+  /// Only what the owner needs to decide: a short headline, what it frees, one safe line and the
+  /// chips. Each part is there only when the question has something to say, so no card has an
+  /// empty gap. Which things it is about waits behind View details, docked above the answers so
+  /// Hide details is right where View details was. Opened, the details take the place of the line
+  /// and chips; what the owner spares there leaves the headline, the size and the answer at once.
+  /// Tips come and go in the corner above.
   private func questionCard(_ question: AutopilotQuestion) -> some View {
     let state = details.questionID == question.id ? details : TeachDetailsState()
     let listed = Self.listed(question, entries: snapshot.entries, overrides: state.overrides)
@@ -207,7 +209,9 @@ struct TeachView: View {
     let card = AutopilotPolicy.card(drawn)
     let spared = listed.filter(\.spared).count
     let allSpared = drawn.count == 0 && spared > 0
-    let open = state.open && !listed.isEmpty
+    // With nothing listed (the things aren't in the snapshot), the details are the question's rows.
+    let viewable = !listed.isEmpty || !card.rows.isEmpty
+    let open = state.open && viewable
     let place: AutopilotTip.Place = !open ? .question : state.opened == nil ? .list : .entry
     return TeachCardFrame(topInset: Self.tipRoom) {
       VStack(spacing: 8) {
@@ -218,10 +222,15 @@ struct TeachView: View {
         headline(allSpared ? "Nothing left to burn" : card.headline)
         sizeLine(allSpared ? "You spared all \(spared)" : card.frees)
         if open {
-          TeachDetailsPanel(
-            listed: listed, noun: Self.noun(question.kind), state: $details, hover: $hover,
-            spare: toggleSpare, did: { tips.did($0) }
-          )
+          Group {
+            if listed.isEmpty {
+              TeachRows(rows: card.rows, more: card.more)
+            } else {
+              TeachDetailsPanel(
+                listed: listed, noun: Self.noun(question.kind), cost: card.cost, state: $details,
+                hover: $hover, spare: toggleSpare, did: { tips.did($0) })
+            }
+          }
           .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
         } else {
           VStack(spacing: 8) {
@@ -229,29 +238,21 @@ struct TeachView: View {
             if !card.facts.isEmpty || spared > 0 {
               facts(card.facts, cautions: Set(card.cautions), spared: spared)
             }
-            TeachRows(rows: card.rows, more: card.more)
           }
           .transition(.opacity)
         }
-        // What a Yes deletes for good is said before anything is pressed, details open or not.
-        if let cost = card.cost { costLine(cost) }
-        if listed.isEmpty {
-          if card.cost == nil {
-            Text(card.note).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
-              .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-          }
-        } else {
-          Button {
-            toggleDetails(question)
-          } label: {
-            Text(open ? "Hide details" : "View details").font(.system(size: 13)).underline()
-              .foregroundStyle(BurnTheme.muted)
-          }
-          .buttonStyle(.plain).clickPointer().accessibilityIdentifier("teach-details")
-          .keyboardShortcut(open && state.opened == nil ? .cancelAction : nil)
-        }
       }
     } actions: {
+      if viewable {
+        Button {
+          toggleDetails(question)
+        } label: {
+          Text(open ? "Hide details" : "View details").font(.system(size: 13)).underline()
+            .foregroundStyle(BurnTheme.muted)
+        }
+        .buttonStyle(.plain).clickPointer().accessibilityIdentifier("teach-details")
+        .keyboardShortcut(open && state.opened == nil ? .cancelAction : nil)
+      }
       HStack(spacing: 14) {
         answerButton(
           card.yes, fill: AutopilotTheme.green, text: Color.black.opacity(0.86),
@@ -337,17 +338,6 @@ struct TeachView: View {
     } else {
       model.unkeep(detail.entry, finished: undo)
     }
-  }
-
-  /// What a Yes deletes for good, which Undo can't bring back: amber, like a card's cautions.
-  private func costLine(_ text: String) -> some View {
-    HStack(alignment: .firstTextBaseline, spacing: 6) {
-      Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
-      Text(text).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-    }
-    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.orange)
-    .frame(maxWidth: 540)
-    .accessibilityIdentifier("teach-cost")
   }
 
   private func headline(_ text: String) -> some View {
