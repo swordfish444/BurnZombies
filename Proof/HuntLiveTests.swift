@@ -211,6 +211,23 @@ func huntLiveProof() async throws {
   let ended = await engine.currentHunt()
   isNil(ended)
 
+  // The AI is sure about the server but may not burn it: it waits for the owner's OK, with why.
+  var sure = AutopilotRequest(tool: "decide")
+  sure.judgments = [
+    AutopilotJudgmentInput(
+      id: server.id, verdict: .burn, confidence: 0.95, label: "Dev server from a done chat",
+      why: "Its chat ended a day ago and nothing has used it since.")
+  ]
+  _ = await engine.handle(sure)
+  let waitingForOK = await engine.snapshot().entries.first { $0.id == server.id }
+  equal(waitingForOK?.status, .unsure, "the AI alone can't burn a server")
+  equal(waitingForOK?.needsOK, true, "so it waits for the owner's OK")
+  equal(waitingForOK?.aiWhy, "Its chat ended a day ago and nothing has used it since.")
+  equal(AutopilotPolicy.needsOK(server), "Serving a port")
+  var claudeCopy = copy
+  claudeCopy.facts["place"] = "claude"
+  equal(AutopilotPolicy.needsOK(claudeCopy), "Made by Claude")
+
   // A deep hunt looks at small programs too, and only while it runs.
   let small = AutopilotItem(
     id: "process:small", kind: .process, name: "mcp-server", bytes: 50 << 20,

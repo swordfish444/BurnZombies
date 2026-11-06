@@ -465,8 +465,15 @@ struct HuntStats: View {
             in: Capsule())
       }
       HStack(alignment: .firstTextBaseline, spacing: 4) {
-        Text(lane.judged.formatted()).font(BurnTheme.display(20)).contentTransition(.numericText())
-        Text("of \(total.formatted()) judged").font(.system(size: 11)).foregroundStyle(BurnTheme.muted)
+        if total == 0 {
+          Text("Nothing to judge").font(.system(size: 13, weight: .medium))
+            .foregroundStyle(BurnTheme.muted)
+        } else {
+          Text(lane.judged.formatted()).font(BurnTheme.display(20))
+            .contentTransition(.numericText())
+          Text("of \(total.formatted()) judged").font(.system(size: 11))
+            .foregroundStyle(BurnTheme.muted)
+        }
       }
       ProgressView(value: Double(min(lane.judged, total)), total: Double(max(total, 1)))
         .progressViewStyle(.linear).tint(BurnTheme.orange).controlSize(.small)
@@ -534,8 +541,9 @@ struct HuntLimitPanel: View {
   }
 }
 
-/// The questions a hunt runs into, one card at a time like Teach BZ, answered while it keeps going.
-/// A card stays until it is answered; new ones add a dot. Biggest first.
+/// What a hunt runs into that needs the owner, one card at a time like Teach BZ, answered while it
+/// keeps going: BZ's questions, and things the AI is sure about but may not burn on its own. A card
+/// stays until it is answered; new ones add a dot. Biggest first.
 struct HuntNeedsYou: View {
   @ObservedObject var model: AppModel
   let running: Bool
@@ -543,36 +551,57 @@ struct HuntNeedsYou: View {
   @State private var answered = Set<String>()
   @State private var confirmation: (title: String, line: String, symbol: String)?
 
-  private var questions: [AutopilotQuestion] {
-    model.autopilot.questions.filter { $0.isOpen && !answered.contains($0.id) }
-      .sorted { $0.bytes > $1.bytes }
+  enum Card: Identifiable {
+    case question(AutopilotQuestion)
+    case ok(AutopilotEntry)
+    var id: String {
+      switch self {
+      case .question(let q): return "q:" + q.id
+      case .ok(let e): return "ok:" + e.id
+      }
+    }
+    var bytes: UInt64 {
+      switch self {
+      case .question(let q): return q.bytes
+      case .ok(let e): return e.item.bytes
+      }
+    }
   }
-  private var current: AutopilotQuestion? {
-    questions.first { $0.id == pinned } ?? questions.first
+
+  private var cards: [Card] {
+    let questions = model.autopilot.questions.filter(\.isOpen).map(Card.question)
+    let waiting = model.autopilot.entries.filter { $0.needsOK == true && $0.status == .unsure }
+      .map(Card.ok)
+    return (questions + waiting).filter { !answered.contains($0.id) }.sorted { $0.bytes > $1.bytes }
+  }
+  private var current: Card? {
+    let all = cards
+    return all.first { $0.id == pinned } ?? all.first
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    let all = cards
+    return VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .center, spacing: 10) {
         Label("NEEDS YOU", systemImage: "hand.raised")
           .font(.system(size: 11, weight: .semibold, design: .monospaced)).tracking(1)
           .fixedSize()
         Text(
           running
-            ? "The hunt keeps going. A yes burns them right away and teaches BZ."
-            : "A yes still burns them right away. The rest wait in Teach BZ."
+            ? "The hunt keeps going. A yes burns right away."
+            : "A yes still burns right away. Questions also wait in Teach BZ."
         )
         .font(.system(size: 11)).foregroundStyle(BurnTheme.muted).lineLimit(1)
         Spacer(minLength: 8)
-        if questions.count > 1, let current, let index = questions.firstIndex(where: { $0.id == current.id }) {
+        if all.count > 1, let current, let index = all.firstIndex(where: { $0.id == current.id }) {
           HStack(spacing: 8) {
             HStack(spacing: 5) {
-              ForEach(Array(questions.prefix(8).enumerated()), id: \.offset) { i, _ in
+              ForEach(0..<min(all.count, 8), id: \.self) { i in
                 Circle().fill(i == index ? BurnTheme.orange : Color.white.opacity(0.2))
                   .frame(width: 7, height: 7)
               }
             }
-            Text("\(index + 1) of \(questions.count)").font(.system(size: 11))
+            Text("\(index + 1) of \(all.count)").font(.system(size: 11))
               .foregroundStyle(BurnTheme.muted).monospacedDigit()
             arrow("chevron.left") { step(-1) }
             arrow("chevron.right") { step(1) }
@@ -589,8 +618,11 @@ struct HuntNeedsYou: View {
           }
           Spacer()
         }.frame(minHeight: 84)
-      } else if let question = current {
-        card(question)
+      } else if let card = current {
+        switch card {
+        case .question(let question): questionCard(question)
+        case .ok(let entry): okCard(entry)
+        }
       } else {
         Text("Nothing needs you right now. Cards show up here when the hunt finds something it isn't sure about.")
           .font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
@@ -599,7 +631,7 @@ struct HuntNeedsYou: View {
     .padding(.horizontal, 14).padding(.vertical, 12)
     .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BurnTheme.line))
-    .onChange(of: questions.map(\.id), initial: true) { _, ids in
+    .onChange(of: all.map(\.id), initial: true) { _, ids in
       if pinned == nil || !ids.contains(pinned!) { pinned = ids.first }
     }
     .accessibilityIdentifier("hunt-needs-you")
@@ -614,30 +646,62 @@ struct HuntNeedsYou: View {
   }
 
   private func step(_ by: Int) {
-    let list = questions
+    let list = cards
     guard !list.isEmpty, confirmation == nil else { return }
     let index = list.firstIndex { $0.id == current?.id } ?? 0
     pinned = list[(index + by + list.count) % list.count].id
   }
 
-  private func card(_ question: AutopilotQuestion) -> some View {
+  private func questionCard(_ question: AutopilotQuestion) -> some View {
     let card = AutopilotPolicy.card(question)
-    let cautions = Set(card.cautions)
-    return HStack(alignment: .center, spacing: 16) {
+    return layout(
+      emoji: AutopilotLook.emoji(question.kind), headline: card.headline, name: nil,
+      frees: card.frees, line: card.line, chips: Array(card.facts.prefix(3)),
+      cautions: Set(card.cautions), cost: card.cost, yes: card.yes, no: card.no,
+      onYes: { respond(question, .yes) }, onNo: { respond(question, .no) },
+      onSkip: { respond(question, .skip) }, details: { model.openTeach?() })
+  }
+
+  /// One thing the AI is sure should burn but may not burn itself: the owner's Yes is Burn now.
+  private func okCard(_ entry: AutopilotEntry) -> some View {
+    let noun = TeachView.noun(entry.item.kind)
+    let reason = AutopilotPolicy.needsOK(entry.item)
+    return layout(
+      emoji: AutopilotLook.emoji(entry.item.kind), headline: "Burn this \(noun)?",
+      name: entry.item.name,
+      frees: "Frees " + AutopilotPolicy.roughly(entry.item.bytes)
+        + (entry.item.kind == .process ? " of memory" : ""),
+      line: entry.aiWhy, chips: [reason, "AI is sure"], cautions: [reason], cost: nil,
+      yes: "Yes, burn it", no: "No, keep it",
+      onYes: { decide(entry, burn: true) }, onNo: { decide(entry, burn: false) },
+      onSkip: { skip(entry) }, details: { model.openFindings?() })
+  }
+
+  private func layout(
+    emoji: String, headline: String, name: String?, frees: String, line: String?,
+    chips: [String], cautions: Set<String>, cost: String?, yes: String, no: String,
+    onYes: @escaping () -> Void, onNo: @escaping () -> Void, onSkip: @escaping () -> Void,
+    details: @escaping () -> Void
+  ) -> some View {
+    HStack(alignment: .center, spacing: 16) {
       VStack(alignment: .leading, spacing: 4) {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-          Text(AutopilotLook.emoji(question.kind)).font(.system(size: 20))
-          Text(card.headline).font(.system(size: 18, weight: .bold, design: .rounded))
+          Text(emoji).font(.system(size: 20))
+          Text(headline).font(.system(size: 18, weight: .bold, design: .rounded))
             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
         }
-        Text(card.frees).font(.system(size: 15, weight: .heavy, design: .rounded))
+        if let name {
+          Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+            .truncationMode(.middle)
+        }
+        Text(frees).font(.system(size: 15, weight: .heavy, design: .rounded))
           .foregroundStyle(BurnTheme.orange)
-        if let line = card.line, !line.isEmpty {
+        if let line, !line.isEmpty {
           Text(line).font(.system(size: 12)).foregroundStyle(BurnTheme.muted).lineLimit(2)
         }
-        if !card.facts.isEmpty {
+        if !chips.isEmpty {
           HStack(spacing: 6) {
-            ForEach(Array(card.facts.prefix(3)), id: \.self) { fact in
+            ForEach(chips, id: \.self) { fact in
               let caution = cautions.contains(fact)
               HStack(spacing: 4) {
                 if caution {
@@ -653,22 +717,20 @@ struct HuntNeedsYou: View {
             }
           }
         }
-        if let cost = card.cost {
+        if let cost {
           Label(cost, systemImage: "exclamationmark.triangle.fill")
             .font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.orange).lineLimit(2)
         }
       }
       Spacer(minLength: 8)
       VStack(spacing: 6) {
-        answer(card.yes, fill: AutopilotTheme.green, text: Color.black.opacity(0.86), id: "hunt-yes") {
-          respond(question, .yes)
+        answer(yes, fill: AutopilotTheme.green, text: Color.black.opacity(0.86), id: "hunt-yes") {
+          onYes()
         }
-        answer(card.no, fill: Color.white.opacity(0.08), text: BurnTheme.cream, id: "hunt-no") {
-          respond(question, .no)
-        }
+        answer(no, fill: Color.white.opacity(0.08), text: BurnTheme.cream, id: "hunt-no") { onNo() }
         HStack(spacing: 12) {
-          link("Not sure — skip") { respond(question, .skip) }
-          link("View details") { model.openTeach?() }
+          link("Not sure — skip", action: onSkip)
+          link("View details", action: details)
         }
       }.frame(width: 196)
     }
@@ -695,17 +757,44 @@ struct HuntNeedsYou: View {
   private func respond(_ question: AutopilotQuestion, _ answer: AutopilotAnswer) {
     guard confirmation == nil else { return }
     model.answer(question, answer)
-    answered.insert(question.id)
+    answered.insert(Card.question(question).id)
     switch answer {
     case .yes:
-      confirmation = (
-        "Burning them now", "BZ handles ones like these on its own from now on.", "flame.fill"
-      )
+      show("Burning them now", "BZ handles ones like these on its own from now on.", "flame.fill")
     case .no:
-      confirmation = ("Keeping them", "BZ won't ask about these again.", "hand.raised.fill")
+      show("Keeping them", "BZ won't ask about these again.", "hand.raised.fill")
     default:
-      confirmation = ("Skipped", "It waits in Teach BZ for later.", "clock")
+      show("Skipped", "It waits in Teach BZ for later.", "clock")
     }
+  }
+
+  /// Yes is the owner's Burn now; No keeps it for good, as Keep forever does.
+  private func decide(_ entry: AutopilotEntry, burn: Bool) {
+    guard confirmation == nil else { return }
+    answered.insert(Card.ok(entry).id)
+    if burn {
+      model.burnNow(entry)
+      let line: String
+      switch entry.item.kind {
+      case .worktree: line = "It's saved in a restore point first, so you can undo it."
+      case .process: line = "It just gets asked to quit."
+      case .disk: line = "Your tools rebuild it when needed."
+      }
+      show("Burning it now", line, "flame.fill")
+    } else {
+      model.keepForever(entry)
+      show("Keeping it", "BZ won't burn it.", "hand.raised.fill")
+    }
+  }
+
+  private func skip(_ entry: AutopilotEntry) {
+    guard confirmation == nil else { return }
+    answered.insert(Card.ok(entry).id)
+    show("Skipped", "It stays as it is for now.", "clock")
+  }
+
+  private func show(_ title: String, _ line: String, _ symbol: String) {
+    confirmation = (title, line, symbol)
     Task { @MainActor in
       try? await Task.sleep(for: .seconds(1.6))
       confirmation = nil

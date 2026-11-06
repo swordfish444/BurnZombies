@@ -51,7 +51,8 @@ extension Autopilot {
   /// What a look found, as it finds it: the lane's count, and on the hunt's first look a line.
   func looked(_ kind: AutopilotKind, _ count: Int) {
     guard hunt != nil else { return }
-    let first = (hunt?.lanes?.first { $0.kind == kind.rawValue }?.seen ?? 0) == 0
+    // Only the hunt's first look says so: a later one, such as the closing look, only counts.
+    let first = hunt?.lanes?.contains { $0.kind == kind.rawValue } != true
     hunt?.update(lane: kind.rawValue) { $0.seen = count }
     if kind == .process { hunt?.processCount = count }
     guard first, count > 0 else {

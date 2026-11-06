@@ -577,6 +577,10 @@ public struct AutopilotEntry: Codable, Sendable, Identifiable, Equatable {
   public var receipt: AutopilotReceipt?
   /// True when the AI has judged this exact revision.
   public var judged: Bool?
+  /// The AI is sure it should burn, but it isn't something the AI may burn on its own: it waits for
+  /// the owner's OK. `aiWhy` is the AI's reason.
+  public var needsOK: Bool?
+  public var aiWhy: String?
   public var id: String { item.id }
   public init(
     item: AutopilotItem, status: AutopilotStatus, authority: String?, label: String, why: String,
