@@ -395,7 +395,11 @@ public enum AutopilotDisk {
           return refuse("Something started using that folder, so I left it alone.")
         }
       } catch {
-        return refuse("I couldn't preserve this folder's unique contents, so I left it alone.")
+        // As retire does: the owner reads the reason, and the receipt keeps what failed.
+        var receipt = refuse(
+          "I couldn't preserve this folder's unique contents, so I left it alone.")
+        receipt.cause = AutopilotWorktrees.cause(of: error, at: "backing it up")
+        return receipt
       }
     }
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
@@ -538,16 +542,30 @@ public enum AutopilotDisk {
         let entries = try? FileManager.default.contentsOfDirectory(atPath: path),
         entries.count <= 10_000
       else { return false }
+      func linked(_ relative: String) -> Bool {
+        var info = stat()
+        return lstat(path + "/" + relative, &info) == 0 && info.st_mode & S_IFMT == S_IFLNK
+      }
       return entries.allSatisfy { name in
         if metadata.contains(name) || name == ".bin" || name == ".pnpm" { return true }
         var info = stat()
         guard lstat(path + "/" + name, &info) == 0 else { return false }
-        if info.st_mode & S_IFMT == S_IFLNK { return true }
-        guard info.st_mode & S_IFMT == S_IFDIR else { return false }
+        let type = info.st_mode & S_IFMT
+        if type == S_IFLNK { return true }
+        // npm forbids package names that start with a dot, so such a folder or file is the package
+        // manager's own state or a tool's cache (.cache, .vite, .prisma), which the tools make
+        // again. A repository never is.
+        if name.hasPrefix("."), name.lowercased() != ".git" {
+          return type == S_IFDIR || type == S_IFREG
+        }
+        guard type == S_IFDIR else { return false }
         if name.hasPrefix("@"),
           let packages = try? FileManager.default.contentsOfDirectory(atPath: path + "/" + name)
         {
-          return packages.allSatisfy { regular(name + "/" + $0 + "/package.json") }
+          // pnpm links each scoped package, as it does the others.
+          return packages.allSatisfy {
+            linked(name + "/" + $0) || regular(name + "/" + $0 + "/package.json")
+          }
         }
         return regular(name + "/package.json")
       }

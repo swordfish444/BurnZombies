@@ -6,6 +6,14 @@ import Foundation
 /// Raw local changes never enter Git objects. Every retained byte is authenticated, compressed
 /// and encrypted with the existing device recovery key, then restored and verified before use.
 public enum PrivateRecovery {
+  /// What a backup says when it stops at something a burn can tell the owner plainly.
+  static let noRoom =
+    "Insufficient private recovery capacity; preserve the original without truncation."
+  static let sourceGone = "Recovery source unavailable; nothing removed."
+  static let sourceChanged = "Recovery source changed; nothing removed."
+  static let sourceMoved = "Recovery source changed."
+  static let contentsChanged = "Contents changed after recovery; nothing removed."
+  static let fileChanged = "File contents changed after recovery; nothing removed."
   public struct Reference: Codable, Sendable, Equatable {
     public var directory: String
     public var id: String
@@ -78,15 +86,10 @@ public enum PrivateRecovery {
     for i in files.indices where files[i].kind == "file" {
       if committed.contains(files[i].path) { continue }
       uniqueBytes += UInt64(max(0, files[i].size))
-      guard free.uint64Value > uniqueBytes + 67_108_864 else {
-        throw StoreError.message(
-          "Insufficient private recovery capacity; preserve the original without truncation.")
-      }
+      guard free.uint64Value > uniqueBytes + 67_108_864 else { throw StoreError.message(noRoom) }
       let file = URL(fileURLWithPath: path).appendingPathComponent(files[i].path)
       let fd = open(file.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
-      guard fd >= 0 else {
-        throw StoreError.message("Recovery source unavailable; nothing removed.")
-      }
+      guard fd >= 0 else { throw StoreError.message(sourceGone) }
       let input = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
       defer { try? input.close() }
       var before = stat()
@@ -94,7 +97,7 @@ public enum PrivateRecovery {
       guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
         before.st_ino == files[i].inode, before.st_size == files[i].size
       else {
-        throw StoreError.message("Recovery source changed; nothing removed.")
+        throw StoreError.message(sourceChanged)
       }
       var hash = SHA256()
       var size: Int64 = 0
@@ -117,7 +120,7 @@ public enum PrivateRecovery {
         before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
         before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec
       else {
-        throw StoreError.message("Recovery source changed; nothing removed.")
+        throw StoreError.message(sourceChanged)
       }
       files[i].blocks = blocks
       files[i].digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
@@ -172,12 +175,12 @@ public enum PrivateRecovery {
         leavingOut: saved.left ?? [], ignoringGitPointers: saved.gitPointers ?? []
       ).0 == metadata
     else {
-      throw StoreError.message("Contents changed after recovery; nothing removed.")
+      throw StoreError.message(contentsChanged)
     }
     for file in saved.files
     where file.kind == "file" && !(saved.committed ?? []).contains(file.path) {
       let fd = open(reference.source + "/" + file.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-      guard fd >= 0 else { throw StoreError.message("Recovery source changed.") }
+      guard fd >= 0 else { throw StoreError.message(sourceMoved) }
       let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
       defer { try? handle.close() }
       var hash = SHA256()
@@ -185,7 +188,7 @@ public enum PrivateRecovery {
         hash.update(data: bytes)
       }
       guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == file.digest else {
-        throw StoreError.message("File contents changed after recovery; nothing removed.")
+        throw StoreError.message(fileChanged)
       }
     }
   }

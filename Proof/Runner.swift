@@ -151,6 +151,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do { try await huntLiveProof() } catch { failTest("Live hunt: \(error)") }
       if failures == beforeHunt { print("PASS Live hunt: stream, deep hunt, Stop, limit and Keep hunting") }
       do { try await autopilotRecoveryKeyProof() } catch { failTest("Backup key: \(error)") }
+      let beforeCause = failures
+      do { try retireCauseProof() } catch { failTest("Retire causes: \(error)") }
+      if failures == beforeCause { print("PASS Retire causes and pnpm's node_modules") }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }

@@ -1002,6 +1002,112 @@ private func apSubmoduleProof(_ world: APWorld) throws {
   equal(head, receipt.restore?.head, "restored at the saved commit")
 }
 
+// MARK: Why a copy was left
+
+/// A refusal that came from an error says which step stopped it and how; the owner reads a plain
+/// reason. Neither holds the copy's path or name. The checks' own refusals need no cause.
+private func apCauseProof(_ world: APWorld) throws {
+  var cache: [String: AutopilotDelivery] = [:]
+  func clean(_ cause: String?, _ path: String, _ label: String) {
+    let text = cause ?? ""
+    checkFalse(text.contains(path), label + ": the cause names the copy's folder: " + text)
+    checkFalse(
+      text.contains((path as NSString).lastPathComponent), label + ": the cause names the copy: "
+        + text)
+  }
+
+  // Git's own failures say which command failed and how.
+  do {
+    _ = try WorktreeGit.run(world.main, ["rev-parse", "--verify", "refs/heads/no-such-branch"])
+    failTest("a branch that doesn't exist was verified")
+  } catch let failure as WorktreeGit.Failure {
+    equal(failure.command, "rev-parse")
+    equal(failure.status, 128)
+    equal(failure.summary, "git rev-parse exited with status 128")
+    equal(
+      failure.localizedDescription,
+      "Git refused or exceeded the bounded rev-parse request (status 128); preserve the worktree and inspect its operation history.",
+      "the message is what it always was")
+  }
+  do {
+    _ = try WorktreeGit.run(
+      world.main, ["--literal-pathspecs", "ls-files", "--error-unmatch", "--", "missing.txt"])
+    failTest("a file Git doesn't track was matched")
+  } catch let failure as WorktreeGit.Failure {
+    equal(failure.command, "ls-files", "options before the subcommand don't name it")
+    equal(failure.status, 1)
+  }
+
+  // A project inside the copy, as a session folder holding another repository's copy.
+  let nesting = try world.addWorktree("holds-a-project", branch: "feature-holds-a-project")
+  try apGit(nesting, ["init", "--initial-branch=main", "inner"])
+  try apWrite(nesting + "/inner/notes.txt", "inner work\n")
+  let nested = try apExpectRefusal(
+    world, try apItem(nesting, world, cache: &cache), "a project inside")
+  equal(
+    nested.detail,
+    "There is another project folder inside it that I can't back up, so I left it alone.")
+  equal(nested.cause, "backing it up: Nested repository is protected.")
+  clean(nested.cause, nesting, "a project inside")
+  equal(apRead(nesting + "/inner/notes.txt"), "inner work\n", "the project inside is untouched")
+
+  // Git can't read the index, so it can't say what changed.
+  let broken = try world.addWorktree("broken-index", branch: "feature-broken-index")
+  let brokenItem = try apItem(broken, world, cache: &cache)
+  let index = try apLine(broken, ["rev-parse", "--path-format=absolute", "--git-path", "index"])
+  let saved = try Data(contentsOf: URL(fileURLWithPath: index))
+  try Data("not an index".utf8).write(to: URL(fileURLWithPath: index))
+  let failed = try apExpectRefusal(world, brokenItem, "a broken index")
+  equal(failed.detail, "I could not check it safely, so I left it alone.")
+  equal(failed.cause, "checking its changes: git status exited with status 128")
+  clean(failed.cause, broken, "a broken index")
+  try saved.write(to: URL(fileURLWithPath: index))
+
+  // A check's own refusal already says it all.
+  let locked = try world.addWorktree("locked-late", branch: "feature-locked-late")
+  let lockedItem = try apItem(locked, world, cache: &cache)
+  try apGit(world.main, ["worktree", "lock", "--reason", "proof", locked])
+  let held = try apExpectRefusal(world, lockedItem, "locked after cataloging")
+  equal(held.detail, "It is locked, so I left it alone.")
+  isNil(held.cause)
+  try apGit(world.main, ["worktree", "unlock", locked])
+}
+
+/// pnpm links each package in `node_modules` into `.pnpm`, scoped ones too, hard-links files from
+/// its store, and tools keep their caches beside them (`.vite`, `.prisma`). That `node_modules` is
+/// rebuildable, so the copy retires without backing it up, and the store keeps its file.
+private func apPnpmRetire(_ world: APWorld) throws {
+  let fm = FileManager.default
+  let copy = try world.addWorktree("pnpm-install", branch: "feature-pnpm-install")
+  let modules = copy + "/node_modules"
+  try apWrite(modules + "/.modules.yaml", "layoutVersion: 5\n")
+  let package = modules + "/.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg"
+  try apWrite(package + "/package.json", "{}\n")
+  let store = world.path("pnpm-store/index.js")
+  try apWrite(store, "module.exports = 1\n")
+  try fm.linkItem(atPath: store, toPath: package + "/index.js")
+  try fm.createDirectory(atPath: modules + "/@scope", withIntermediateDirectories: true)
+  try fm.createSymbolicLink(
+    atPath: modules + "/@scope/pkg",
+    withDestinationPath: "../.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg")
+  try apWrite(modules + "/.vite/deps/chunk.js", "cached\n")
+  try apWrite(modules + "/.prisma/client/index.js", "generated\n")
+  check(AutopilotDisk.regenerable(modules), "pnpm's node_modules is rebuildable")
+
+  var cache: [String: AutopilotDelivery] = [:]
+  let item = try apItem(copy, world, cache: &cache)
+  let receipt = apRetire(item, authority: "operator", root: world.state, inUse: { _ in 0 })
+  equal(
+    receipt.outcome, "burned",
+    "a copy with pnpm's node_modules retires: \(receipt.detail) \(receipt.cause ?? "")")
+  checkFalse(apExists(copy), "the copy is gone")
+  equal(apRead(store), "module.exports = 1\n", "the store keeps its file")
+  guard receipt.outcome == "burned" else { return }
+  try apRestore(receipt)
+  equal(apRead(copy + "/tracked.txt"), "original\n", "the copy is back")
+  checkFalse(apExists(modules), "node_modules wasn't backed up")
+}
+
 // MARK: Copies the inventory couldn't walk
 
 /// The inventory's file walk stops at a hard-linked file (or a project inside a copy, or a special
@@ -1292,6 +1398,8 @@ func autopilotWorktreeProof() async throws {
   try apBlockedKeyRetire(world)
   try apUnwalkedAgeProof(world)
   try apSubmoduleProof(world)
+  try apCauseProof(world)
+  try apPnpmRetire(world)
   try await apRestartProof(world)
 
   let leftovers = (try? fm.contentsOfDirectory(atPath: world.state.path)) ?? []

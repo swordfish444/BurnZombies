@@ -4,6 +4,47 @@ import Darwin
 import Foundation
 
 public enum WorktreeGit {
+  /// A Git run that failed or was stopped: its subcommand, the runner's status and the time it
+  /// had. The status is Git's own exit status, or the runner's: 124 at the time limit, 125 past
+  /// 8 MB of output, 130 when stopped, 64, 71 or 72 when Git couldn't run, and 128 plus the signal
+  /// when it was killed. Its message is what Git failures always said.
+  public struct Failure: Error, LocalizedError, Sendable, Equatable {
+    public var command: String
+    public var status: Int32
+    public var seconds: Double
+    public var message: String
+    public init(command: String, status: Int32, seconds: Double, message: String) {
+      self.command = command
+      self.status = status
+      self.seconds = seconds
+      self.message = message
+    }
+    public var errorDescription: String? { message }
+    /// What happened in a few words, never with a path or a name:
+    /// "git status timed out after 60 s".
+    public var summary: String {
+      let named = !command.isEmpty && WorktreeGit.subcommand([command]) == command
+      let name = named ? "git " + command : "git"
+      switch status {
+      case 124: return name + " timed out after \(Int(seconds.rounded())) s"
+      case 125: return name + " printed more than 8 MB"
+      case 130: return name + " was stopped"
+      case 64, 71, 72: return name + " couldn't run (status \(status))"
+      case 129...: return name + " was killed by signal \(status - 128)"
+      default: return name + " exited with status \(status)"
+      }
+    }
+  }
+
+  /// The Git subcommand in `args`: the first word that isn't an option, if it looks like one.
+  static func subcommand(_ args: [String]) -> String? {
+    guard let word = args.first(where: { !$0.hasPrefix("-") }), let first = word.first,
+      first.isLowercase, first.isASCII,
+      word.allSatisfy({ ($0.isLowercase || $0.isNumber || $0 == "-") && $0.isASCII })
+    else { return nil }
+    return word
+  }
+
   private static let stateLock = NSLock()
   private static var unsafeTeardown = false
   /// Git variables a caller may add. None of them widens what the bounded runner may touch.
@@ -31,6 +72,7 @@ public enum WorktreeGit {
         break
       }
     }
+    let rest = Array(args.dropFirst(cursor))
     if args.first != "init" {
       let data = try capture(
         path,
@@ -38,7 +80,7 @@ public enum WorktreeGit {
           "config", "--null", "--name-only", "--get-regexp",
           "^filter\\..*\\.(clean|smudge|process|required)$",
         ],
-        seconds: seconds, emptyConfiguration: true)
+        seconds: seconds, emptyConfiguration: true, command: "config")
       for bytes in data.split(separator: 0) {
         guard let key = String(data: Data(bytes), encoding: .utf8),
           !key.contains("\n"), !key.contains("\r"), key.lowercased().hasPrefix("filter.")
@@ -47,13 +89,14 @@ public enum WorktreeGit {
       }
     }
     return try capture(
-      path, context + overrides + Array(args.dropFirst(cursor)), seconds: seconds,
-      environment: extra)
+      path, context + overrides + rest, seconds: seconds, environment: extra,
+      command: subcommand(rest) ?? "")
   }
 
+  /// `command` names the run in a `Failure`: Git's subcommand, or empty when it can't be told.
   private static func capture(
     _ path: String, _ args: [String], seconds: Double = 15,
-    environment extra: [String: String] = [:], emptyConfiguration: Bool = false
+    environment extra: [String: String] = [:], emptyConfiguration: Bool = false, command: String
   ) throws -> Data {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "bz-worktree-git-" + UUID().uuidString)
@@ -93,8 +136,10 @@ public enum WorktreeGit {
       &unreaped)
     if status == 72 { stateLock.withLock { unsafeTeardown = true } }
     guard status == 0 || (emptyConfiguration && status == 1) else {
-      throw StoreError.message(
-        "Git refused or exceeded the bounded \(args.first ?? "operation") request (status \(status)); preserve the worktree and inspect its operation history."
+      throw Failure(
+        command: command, status: status, seconds: seconds,
+        message:
+          "Git refused or exceeded the bounded \(args.first ?? "operation") request (status \(status)); preserve the worktree and inspect its operation history."
       )
     }
     try output.seek(toOffset: 0)
@@ -172,6 +217,14 @@ public struct WorktreeFile: Codable, Equatable, Sendable {
 public enum WorktreeInspection {
   /// The gap a copy gets when the consumer check can't see every program.
   static let consumerGap = "Complete same-user cwd/file-handle visibility is unavailable."
+  /// What the file walk says when it stops at something a burn can tell the owner plainly.
+  static let nestedRepository = "Nested repository is protected."
+  static let nestedBareRepository = "Nested bare repository is protected."
+  static let tooManyEntries = "Checkout inspection limit reached; coverage incomplete."
+  static let outOfTime = "Checkout inspection ran out of time; coverage incomplete."
+  static let cancelled = "Checkout inspection was cancelled; coverage incomplete."
+  static let generatedChanged = "Generated folder changed during recovery."
+  static let leftOutChanged = "A big file the owner let go changed during recovery."
   public static func identity(_ path: String) throws -> WorktreeIdentity {
     guard path == WorkspaceSafety.canonical(path) else {
       throw StoreError.message("Worktree path resolves elsewhere.")
@@ -221,13 +274,17 @@ public enum WorktreeInspection {
         return URL(fileURLWithPath: root)
       }() : walk.nextObject() as? URL
     {
-      guard !Task.isCancelled, result.count < limit, ProcessInfo.processInfo.systemUptime < deadline
-      else { throw StoreError.message("Checkout inspection limit reached; coverage incomplete.") }
+      // Each says which limit it was, so a big copy can be told from a busy Mac.
+      guard !Task.isCancelled else { throw StoreError.message(cancelled) }
+      guard result.count < limit else { throw StoreError.message(tooManyEntries) }
+      guard ProcessInfo.processInfo.systemUptime < deadline else {
+        throw StoreError.message(outOfTime)
+      }
       let relative = url.path == root ? "" : String(url.path.dropFirst(root.count + 1))
       if excluding.contains(relative) {
         var omitted = stat()
         guard lstat(url.path, &omitted) == 0, omitted.st_mode & S_IFMT == S_IFDIR else {
-          throw StoreError.message("Generated folder changed during recovery.")
+          throw StoreError.message(generatedChanged)
         }
         walk.skipDescendants()
         continue
@@ -236,12 +293,10 @@ public enum WorktreeInspection {
         // A folder is passed over whole. A file is passed over without a skip: on macOS 27 a skip
         // asked for at a file lands on the next folder in the listing.
         var left = stat()
-        guard lstat(url.path, &left) == 0 else {
-          throw StoreError.message("A big file the owner let go changed during recovery.")
-        }
+        guard lstat(url.path, &left) == 0 else { throw StoreError.message(leftOutChanged) }
         let type = left.st_mode & S_IFMT
         guard type == S_IFDIR || type == S_IFREG else {
-          throw StoreError.message("A big file the owner let go changed during recovery.")
+          throw StoreError.message(leftOutChanged)
         }
         if type == S_IFDIR { walk.skipDescendants() }
         continue
@@ -264,7 +319,7 @@ public enum WorktreeInspection {
         continue
       }
       guard url.lastPathComponent.lowercased() != ".git" else {
-        throw StoreError.message("Nested repository is protected.")
+        throw StoreError.message(nestedRepository)
       }
       var s = stat()
       guard lstat(url.path, &s) == 0, s.st_uid == getuid(), s.st_dev == rootInfo.st_dev else {
@@ -278,7 +333,7 @@ public enum WorktreeInspection {
         && FileManager.default.fileExists(atPath: url.path + "/objects")
         && FileManager.default.fileExists(atPath: url.path + "/config")
       {
-        throw StoreError.message("Nested bare repository is protected.")
+        throw StoreError.message(nestedBareRepository)
       }
       guard s.st_mode & 0o7000 == 0 else {
         throw StoreError.message("Special permission bits require owner handling.")
