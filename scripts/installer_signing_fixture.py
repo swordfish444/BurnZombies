@@ -23,7 +23,11 @@ class SigningFixture:
         self.password = secrets.token_hex(16)
 
     def run(self, *args):
-        return subprocess.run(args, check=True, capture_output=True)
+        result = subprocess.run(args, capture_output=True)
+        if result.returncode:
+            error = result.stderr.decode(errors="replace").replace(self.password, "[redacted]")
+            raise RuntimeError(f"{Path(args[0]).name} failed ({result.returncode}): {error}")
+        return result
 
     def create(self):
         configuration = self.root / "openssl.cnf"
