@@ -444,6 +444,9 @@ public struct AutopilotReceipt: Codable, Sendable, Identifiable, Equatable {
   public var revision: String?
   /// Unsaved files too big to back up: what a refusal found, or what a burn deleted.
   public var bigFiles: [AutopilotBigFiles]?
+  /// What the copy's unsaved files looked like when a refusal named them
+  /// (`AutopilotPolicy.bigFilesKey`): the list holds while they still do.
+  public var bigKey: String?
   public init(
     id: UUID = UUID(), itemID: String, kind: AutopilotKind, name: String, authority: String,
     outcome: String, detail: String, bytes: UInt64 = 0, date: Date = Date(),

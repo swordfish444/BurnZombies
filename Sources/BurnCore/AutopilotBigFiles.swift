@@ -8,20 +8,36 @@ public struct AutopilotBigFiles: Codable, Sendable, Equatable {
   public var path: String
   public var bytes: UInt64
   public var files: Int
-  /// What most of its bytes are: "TypeScript files", "videos", or just "files".
+  /// What its bytes are: "TypeScript files", "videos and Swift files", or just "files".
   public var kind: String
   /// When a file in it last changed.
   public var changed: Date?
-  public init(path: String, bytes: UInt64, files: Int, kind: String, changed: Date?) {
+  /// The risks it is to a copy ("bigCode", "bigMedia", "bigData", "bigArchives", "bigOther"): every
+  /// kind making up a tenth of its bytes or more, and code whenever it holds any, so a Yes to big
+  /// videos never deletes code that sits among them.
+  public var risks: [String]
+  public init(
+    path: String, bytes: UInt64, files: Int, kind: String, changed: Date?, risks: [String]? = nil
+  ) {
     self.path = path
     self.bytes = bytes
     self.files = files
     self.kind = kind
     self.changed = changed
+    self.risks = risks ?? [AutopilotWorktrees.bigFileRisk(kind)]
   }
-  /// The risk it is to a copy, by its kind: "bigCode", "bigMedia", "bigData", "bigArchives" or
-  /// "bigOther".
-  public var risk: String { AutopilotWorktrees.bigFileRisk(kind) }
+  /// One without its risks, as a refusal may have stored it, is the risk its kind is.
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    path = try values.decode(String.self, forKey: .path)
+    bytes = try values.decode(UInt64.self, forKey: .bytes)
+    files = try values.decode(Int.self, forKey: .files)
+    kind = try values.decode(String.self, forKey: .kind)
+    changed = try values.decodeIfPresent(Date.self, forKey: .changed)
+    risks =
+      try values.decodeIfPresent([String].self, forKey: .risks)
+      ?? [AutopilotWorktrees.bigFileRisk(kind)]
+  }
 }
 
 /// One unsaved file in a copy, as retire finds it.
@@ -74,7 +90,7 @@ extension AutopilotWorktrees {
     _ item: AutopilotItem, authority: String, files: [AutopilotBigFiles]
   ) -> Bool {
     guard authority.hasPrefix("rule:"), !files.isEmpty else { return false }
-    return files.allSatisfy { item.facts[$0.risk] == "yes" }
+    return files.allSatisfy { file in file.risks.allSatisfy { item.facts[$0] == "yes" } }
   }
 
   /// The unsaved files to leave out of a backup that can't hold them all (`limit`), biggest first
@@ -134,7 +150,8 @@ extension AutopilotWorktrees {
     }
     return chosen.sorted(by: Pile.biggest).map { path, pile in
       AutopilotBigFiles(
-        path: path, bytes: pile.bytes, files: pile.files, kind: pile.kind, changed: pile.newest)
+        path: path, bytes: pile.bytes, files: pile.files, kind: pile.kind, changed: pile.newest,
+        risks: pile.risks)
     }
   }
 
@@ -195,23 +212,61 @@ private struct Pile {
   var files = 0
   var newest: Date?
   var kinds: [String: UInt64] = [:]
+  /// How many of them are code, of any size.
+  var code = 0
 
   mutating func add(_ file: AutopilotUnsavedFile) {
     bytes += file.bytes
     files += 1
     newest = max(newest ?? file.changed, file.changed)
-    kinds[AutopilotWorktrees.kind(of: file.path), default: 0] += file.bytes
+    let words: String = AutopilotWorktrees.kind(of: file.path)
+    kinds[words, default: 0] += file.bytes
+    if AutopilotWorktrees.bigFileRisk(words) == "bigCode" { code += 1 }
   }
 
-  /// The kind most of its bytes are, or "files" when no kind is half of them.
+  /// Whether `share` bytes are a real part of it: a tenth or more.
+  private func real(_ share: UInt64) -> Bool { share * 10 >= bytes }
+
+  /// The kinds making up a tenth of its bytes or more, biggest first, at most two: "TypeScript
+  /// files", "videos and Swift files", "images and other files"; "files" when none does.
   var kind: String {
-    let top = kinds.max { a, b in a.value != b.value ? a.value < b.value : a.key > b.key }
-    guard let top, top.value * 2 >= bytes else { return "files" }
-    return top.key
+    let ranked = kinds.sorted { a, b in a.value != b.value ? a.value > b.value : a.key < b.key }
+    var shown: [String] = ranked.filter { real($0.value) }.prefix(2).map(\.key)
+    guard !shown.isEmpty else { return "files" }
+    if shown.count == 2, let other = shown.firstIndex(of: "files") {
+      shown.remove(at: other)
+      shown.append("other files")
+    }
+    return shown.joined(separator: " and ")
+  }
+
+  /// The risks it is: each kind making up a tenth of its bytes or more, and code whenever it holds
+  /// any, in the order of `bigFileRisks`.
+  var risks: [String] {
+    var shares: [String: UInt64] = [:]
+    for (words, share) in kinds { shares[AutopilotWorktrees.bigFileRisk(words), default: 0] += share }
+    var found = Set(shares.filter { real($0.value) }.keys)
+    if code > 0 { found.insert("bigCode") }
+    if found.isEmpty { found.insert("bigOther") }
+    return AutopilotWorktrees.bigFileRisks.map(\.fact).filter(found.contains)
   }
 
   static func biggest(_ a: (path: String, pile: Pile), _ b: (path: String, pile: Pile)) -> Bool {
     a.pile.bytes != b.pile.bytes ? a.pile.bytes > b.pile.bytes : a.path < b.path
+  }
+}
+
+extension AutopilotReceipt {
+  /// A refusal that names a copy's big unsaved files, kept with what the copy's files looked like
+  /// (`AutopilotPolicy.bigFilesKey`), so the engine marks the copy with them.
+  public static func refused(
+    _ item: AutopilotItem, authority: String, bigFiles: [AutopilotBigFiles]
+  ) -> AutopilotReceipt {
+    var receipt: AutopilotReceipt = .refused(
+      item, authority: authority, AutopilotWorktrees.bigFilesRefusal)
+    receipt.bigFiles = bigFiles
+    receipt.bigKey = AutopilotPolicy.bigFilesKey(item)
+    return receipt
   }
 }
 
@@ -263,16 +318,27 @@ extension AutopilotPolicy {
     AutopilotWorktrees.bigFileRisks.first { $0.fact == fact }?.words
   }
 
+  /// What a copy's unsaved files look like, as far as BZ can tell without looking again: its facts
+  /// but its age, use, chat and big-file risks, and how many files it has unsaved. A refusal's list
+  /// of big files holds while this does, so a copy that just got older, or whose risks BZ marked,
+  /// keeps them.
+  public static func bigFilesKey(_ item: AutopilotItem) -> String {
+    var skipped: Set<String> = ["stale", "inUse", "thread"]
+    for risk in AutopilotWorktrees.bigFileRisks { skipped.insert(risk.fact) }
+    var facts: [String: String] = item.facts.filter { !skipped.contains($0.key) }
+    facts["unsaved"] = item.unsaved.map(String.init) ?? "unknown"
+    return AutopilotItem.revision(id: item.id, facts: facts)
+  }
+
   /// Why a copy with big unsaved files waits: no question is promised, since one may not come, as
   /// when it is too small to ask about on its own.
   public static let bigFilesWait =
     "It has big files that aren't saved anywhere else, so I won't burn it without your OK."
 
   /// Copies retire couldn't back up for big unsaved files carry a risk for each kind of them
-  /// (`bigCode=yes` and so on), with what those files are, while the copy is as the refusal that
-  /// named them saw it: its revision without those risks, or with them, as after the owner's Burn
-  /// now. The latest such refusal of each copy counts; one that rolled out of the receipts is
-  /// found again by the next refusal.
+  /// (`bigCode=yes` and so on), with what those files are, while the copy's files look as they did
+  /// to the refusal that named them (`bigFilesKey`). The latest such refusal of each copy counts;
+  /// one that rolled out of the receipts is found again by the next refusal.
   public static func withBigFiles(_ items: [AutopilotItem], receipts: [AutopilotReceipt])
     -> [AutopilotItem]
   {
@@ -284,12 +350,12 @@ extension AutopilotPolicy {
     return items.map { item in
       guard item.kind == .worktree, let receipt = named[item.id], let found = receipt.bigFiles
       else { return item }
+      guard receipt.bigKey == bigFilesKey(item) else { return item }
       var marked = item
-      for file in found { marked.facts[file.risk] = "yes" }
-      marked.revision = AutopilotItem.revision(id: item.id, facts: marked.facts)
-      guard receipt.revision == item.revision || receipt.revision == marked.revision else {
-        return item
+      for file in found {
+        for risk in file.risks { marked.facts[risk] = "yes" }
       }
+      marked.revision = AutopilotItem.revision(id: item.id, facts: marked.facts)
       marked.bigFiles = found
       return marked
     }

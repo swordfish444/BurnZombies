@@ -46,20 +46,20 @@ A copy's unsaved files are its untracked, unignored files, leaving out browser p
 2. Candidates are taken biggest first, only until what is left fits in a restore point. Anything smaller stays in the backup, as before.
 3. If that is not enough, the biggest remaining untracked entries are taken the same way.
 
-Each pick is an `AutopilotBigFiles`: its path inside the copy, bytes, file count, kind and newest change.
+Each pick is an `AutopilotBigFiles`: its path inside the copy, bytes, file count, kind, newest change and risks.
 
-- The kind is what most of its bytes are: "TypeScript files", "videos", "images", "archives", "databases", "logs" and so on. With no majority, it is just "files".
-- Each kind maps to one of five risks: `bigCode`, `bigMedia`, `bigData`, `bigArchives` and `bigOther`.
+- **Kind:** the kinds making up a tenth of its bytes or more, biggest first, at most two: "TypeScript files", "videos and Swift files", "images and other files". With none, it is just "files".
+- **Risks:** one of five per kind (`bigCode`, `bigMedia`, `bigData`, `bigArchives`, `bigOther`), for every kind making up a tenth of its bytes or more. Code counts whenever it holds any, however small, so a Yes to big videos never deletes code that sits among them.
 
 A copy that doesn't qualify to have them dropped (see 5) is refused as today: "It has big files that aren't saved anywhere else, so I left it alone." The receipt now carries the list.
 
-A project inside a dropped entry (a nested `.git`) still refuses the copy. It does today, when Git would add it.
+A project inside a dropped entry (a nested `.git`), ignored or not, still refuses the copy. That matches today: Git would add it, or the walk of ignored files would find it. Before anything is dropped, retire walks each dropped folder for one, skipping rebuildable folders as that walk does.
 
 ## 2. The risk facts
 
-The engine marks a copy from the latest refusal receipt that names its big files, as long as the copy's facts are still what that refusal saw (its revision):
+The engine marks a copy from the latest refusal receipt that names its big files, as long as the copy's files still look as they did to that refusal. `bigFilesKey` is the copy's facts, leaving out its age, use, chat and big-file risks, plus its count of unsaved files. So a copy that only got older, or that was already marked with one kind when a new one turned up, keeps or gains its marks.
 
-- It sets one fact per kind found, such as `bigCode=yes` or `bigMedia=yes`.
+- It sets one fact per risk found, such as `bigCode=yes` or `bigMedia=yes`.
 - The item keeps the list, so the card can show it.
 
 A copy without these facts has no big files that BZ knows of, and reads as `bigCode=no` and so on.
@@ -127,8 +127,9 @@ The AI's sweep prompt says to ask about such copies instead of judging them burn
 
 ## Data changes
 
-- `AutopilotBigFiles` {path, bytes, files, kind, changed}, with its `risk` derived from the kind.
+- `AutopilotBigFiles` {path, bytes, files, kind, changed, risks}. One stored without risks reads as the risk its kind is.
 - `AutopilotReceipt.bigFiles`: what a refusal found, or what a burn deleted.
+- `AutopilotReceipt.bigKey`: what the copy's files looked like when a refusal named them.
 - `AutopilotItem.bigFiles`: the list the engine attached, for the card. It is not a fact.
 - `AutopilotQuestionRow.bigFiles`, and `AutopilotQuestion.bigBytes`: what a Yes deletes in all.
 - `AutopilotTell.bigBytes`: what its burns deleted for good.
@@ -142,9 +143,11 @@ Every new field is optional, so old files still load.
   - Retire names a folder of checkouts, leaving the small new files beside it out.
   - It burns under a lesson without the big files: the small files are restored, and ignored files inside the dropped folder aren't kept.
   - It refuses under the AI, under **Burn now**, before the copy is known to hold them, and when a new kind turns up.
-  - A project inside a big folder still refuses the copy.
+  - A project inside a big folder still refuses the copy, and so does one in an ignored folder inside it.
 - **`--autopilot-policy`:**
-  - Picking the big files, named-risk matching, coverage, `subsumes`, the legacy `answered`, guesses, the replay and the AI's eligibility.
+  - Picking the big files, with their kinds and risks (a folder of videos and code is both).
+  - The key that keeps a copy marked.
+  - Named-risk matching, coverage, `subsumes`, the legacy `answered`, guesses, the replay and the AI's eligibility.
   - The card's cautions, rows and cost line; the details tag, facts and filter.
   - The Yes and No lessons, and their sentences.
 - **`--autopilot-learning`** (`AutopilotBigFilesTests.swift`), engine scenarios:

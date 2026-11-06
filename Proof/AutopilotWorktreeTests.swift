@@ -871,6 +871,24 @@ private func apBigFilesRetire(_ world: APWorld) throws {
     failTest("the dump's copy left no way to restore it")
   }
 
+  // A project in an ignored folder inside the big files keeps the copy too, as the walk of ignored
+  // files finds it when nothing is big.
+  let ignored = try world.addWorktree("ignored-project", branch: "feature-ignored-project")
+  try apWrite(ignored + "/.gitignore", "*.local\n")
+  try apGit(ignored, ["add", ".gitignore"])
+  try apGit(ignored, ["commit", "-q", "-m", "Ignore local tools"])
+  for n in 1...7 { try big(ignored + "/tmp/checkouts/c\(n)/game.ts", megabytes: 90) }
+  let tools = ignored + "/tmp/checkouts/c1/tools.local"
+  try FileManager.default.createDirectory(atPath: tools, withIntermediateDirectories: true)
+  try apGit(tools, ["init", "-q"])
+  try apGit(tools, ["commit", "-q", "--allow-empty", "-m", "Tools that exist only here"])
+  let hidden = try burn(ignored, known: ["bigCode"], "rule:lesson")
+  equal(hidden.outcome, "refused", "a project in an ignored folder inside the big files")
+  equal(
+    hidden.detail,
+    "There is another project folder inside it that I can't back up, so I left it alone.")
+  check(apExists(tools + "/.git"), "and it's still there")
+
   // A project inside the big files keeps the copy, as it does when Git would back it up.
   let nested = try world.addWorktree("nested", branch: "feature-nested")
   for n in 1...7 { try big(nested + "/tmp/checkouts/c\(n)/game.ts", megabytes: 90) }
@@ -891,7 +909,7 @@ private func apBigFilesRetire(_ world: APWorld) throws {
   try big(mixed + "/qa/recordings/take.mp4", megabytes: 600)
   let newKind = try burn(mixed, known: ["bigCode"], "rule:lesson")
   equal(newKind.outcome, "refused", "big videos the lesson never covered keep the copy")
-  equal(newKind.bigFiles?.map(\.risk), ["bigCode", "bigMedia"], "both kinds are named, biggest first")
+  equal(newKind.bigFiles?.map(\.risks), [["bigCode"], ["bigMedia"]], "both kinds are named, biggest first")
   check(apExists(mixed + "/tmp/checkouts/c1/game.ts"), "and nothing is gone")
 }
 

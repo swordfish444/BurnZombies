@@ -282,9 +282,10 @@ public enum AutopilotWorktrees {
     do {
       return try perform(item, path: path, authority: authority, root: root, inUse: inUse)
     } catch let refusal as Refusal {
-      var receipt: AutopilotReceipt = .refused(item, authority: authority, refusal.reason)
-      receipt.bigFiles = refusal.bigFiles
-      return receipt
+      if let big = refusal.bigFiles {
+        return .refused(item, authority: authority, bigFiles: big)
+      }
+      return .refused(item, authority: authority, refusal.reason)
     } catch {
       return .refused(
         item, authority: authority, "I could not check it safely, so I left it alone.")
@@ -391,13 +392,11 @@ public enum AutopilotWorktrees {
       guard dropsBigFiles(item, authority: authority, files: big) else {
         throw Refusal(bigFilesRefusal, bigFiles: big)
       }
-      // A project inside them would go with them unseen. It keeps the copy, as it does when Git
-      // would back it up. Git lists one as its folder.
-      let projects: [String] = untracked.filter { $0.hasSuffix("/") }
-      let hidden: Bool = projects.contains { project in
-        big.contains { project.hasPrefix($0.path + "/") }
+      // A project inside them, ignored or not, would go with them unseen. It keeps the copy, as it
+      // does when Git would back it up or the walk of ignored files finds it.
+      for file in big where try holdsProject(path + "/" + file.path) {
+        throw Refusal(nestedProject)
       }
-      if hidden { throw Refusal(nestedProject) }
     }
     // What isn't backed up: browser profiles, and big unsaved files a Yes let go.
     let gone: [String] = profiles + big.map(\.path)
@@ -505,6 +504,38 @@ public enum AutopilotWorktrees {
       detail: detail, bytes: item.bytes, restore: recovery)
     receipt.bigFiles = big.isEmpty ? nil : big
     return receipt
+  }
+
+  /// Whether a project folder (a `.git`) is anywhere inside `folder`, outside rebuildable folders,
+  /// as the walk of ignored files would find one. A file is no folder. Refuses when it can't look
+  /// everywhere.
+  private static func holdsProject(_ folder: String) throws -> Bool {
+    var info = stat()
+    guard lstat(folder, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return false }
+    var pending: [String] = [folder]
+    var visited = 0
+    while let current = pending.popLast() {
+      let names: [String]
+      do {
+        names = try FileManager.default.contentsOfDirectory(atPath: current)
+      } catch {
+        throw Refusal("I could not look inside every folder, so I left it alone.")
+      }
+      for name in names {
+        visited += 1
+        guard visited <= 10 * walkLimit else {
+          throw Refusal("It has too many files for me to check, so I left it alone.")
+        }
+        if name.lowercased() == ".git" { return true }
+        if rebuildable.contains(name) { continue }
+        var child = stat()
+        guard lstat(current + "/" + name, &child) == 0 else {
+          throw Refusal("I could not look inside every folder, so I left it alone.")
+        }
+        if child.st_mode & S_IFMT == S_IFDIR { pending.append(current + "/" + name) }
+      }
+    }
+    return false
   }
 
   /// Browser profiles test runs leave in a copy, by path inside it: a Chrome-style profile folder,

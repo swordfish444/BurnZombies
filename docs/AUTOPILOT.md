@@ -88,7 +88,9 @@ Yes and No each become a lesson right away, and Yes starts burning what it cover
 
 A lesson is about why, not which project: it leaves out the project, where the copy lives and which tool made it, so one answer about one project's copies covers every project's. A Yes also covers things left unused even longer. A No keeps everything as recent as the newest thing on its card, and anything newer; the older things on the card get the next question. A Yes covers only the risks its card showed, as you saw it, even if BZ found more while the card was on screen: when every copy on the card had its work on GitHub and nothing unsaved, a later copy with unsaved work isn't burned under it. That copy gets a question of its own, which names the new risk. A No to that question keeps the copies on that card, as recent as its newest and newer, but not the clean copies your earlier Yes covers: those still go. A lesson that covers another takes it in, so a few lessons hold all your answers.
 
-Big unsaved files are a risk of their own for each kind: code, media, data, archives and other files. Only a Yes to a card that showed that kind lets them go: a Yes to big code files covers later copies with big code files, and a copy with big videos gets a card of its own. A No to such a card keeps only the copies with those big files, at that age and newer; the clean copies your other lessons burn still go.
+Big unsaved files are a risk of their own for each kind: code, media, data, archives and other files.
+- A folder counts as every kind that makes up a tenth of it, and as code whenever it holds any.
+- Only a Yes to a card that showed every kind a folder holds lets it go. A Yes to big code files covers later copies with big code files, while a copy with big videos, or with videos among the code, gets a card of its own. A No to such a card keeps only the copies with those big files, at that age and newer; the clean copies your other lessons burn still go.
 
 "Got it!" after an answer shows the lesson in one sentence. **Settings → Autopilot → What BZ has learned** lists them all:
 

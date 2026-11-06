@@ -929,7 +929,7 @@ private func require(_ reading: Reading, _ phrases: [String], in name: String) t
     "settings lost the toggle caption. OCR saw: \(settings.raw)")
   try check(
     AutopilotSettingsView.actsCaption
-      == "When I'm sure, I'll do it and tell you after. Copies can be undone. Off means I always ask first.",
+      == "When I'm sure, I'll do it and tell you after. Copies can be undone, but not big unsaved files you let me delete. Off means I always ask first.",
     "The toggle caption says only copies can be undone")
   try check(
     snapshot.lessons.allSatisfy {

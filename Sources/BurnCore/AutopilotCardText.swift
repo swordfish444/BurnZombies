@@ -44,6 +44,19 @@ extension AutopilotPolicy {
     var big: UInt64 = 0
     for item in items { big += (item.bigFiles ?? []).reduce(0) { $0 + $1.bytes } }
     question.bigBytes = big > 0 ? big : nil
+    if question.source == "native" { question.why = nativeWhy(question, covering: items) }
+  }
+
+  /// BZ's own words on why it asks: "I found 3 like this, using 2.8 GB. I back each one up first,
+  /// so you can undo it." A copy's big unsaved files can't be backed up, so then it says so.
+  static func nativeWhy(_ question: AutopilotQuestion, covering items: [AutopilotItem]) -> String {
+    let bytes: UInt64 = items.reduce(0) { $0 + $1.bytes }
+    let found: String = "I found \(items.count) like this, using \(format(bytes))."
+    guard question.kind == .worktree else { return found }
+    guard bigFilesCost(question) != nil else {
+      return found + " I back each one up first, so you can undo it."
+    }
+    return found + " I back each one up first, except its big unsaved files, which a Yes deletes for good."
   }
 
   /// Each thing's risky facts, of the kinds a lesson keeps within (`riskFacts`), and how long it sat

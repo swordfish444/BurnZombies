@@ -293,8 +293,7 @@ public enum AutopilotPolicy {
       kind: kind, match: match,
       question: wording(
         kind: kind, match: match, program: programs.count == 1 ? programs.first : nil),
-      why: "I found \(covering.count) like this, using \(format(bytes))."
-        + (kind == .worktree ? " I back each one up first, so you can undo it." : ""),
+      why: "",
       examples: Array(covering.sorted { $0.bytes > $1.bytes }.prefix(3).map(\.name)),
       count: covering.count, bytes: bytes, asked: now)
     question.cautions = mix(kind, covering)

@@ -27,7 +27,7 @@ private func bigFilesChoiceProof() {
   equal(chosen.first?.files, 210)
   equal(chosen.first?.bytes, 210 * 4_350_000)
   equal(chosen.first?.kind, "TypeScript files")
-  equal(chosen.first?.risk, "bigCode", "TypeScript is code")
+  equal(chosen.first?.risks, ["bigCode"], "TypeScript is code")
   equal(chosen.first?.changed, now.addingTimeInterval(-3 * 86_400), "when it last changed")
 
   let fits: [AutopilotBigFiles] = AutopilotWorktrees.bigFiles(
@@ -39,7 +39,7 @@ private func bigFilesChoiceProof() {
     entries: ["data/dump.sql", "data/notes.md"])
   equal(dump.map(\.path), ["data/dump.sql"])
   equal(dump.first?.files, 1)
-  equal(dump.first?.risk, "bigData", "a database dump is data")
+  equal(dump.first?.risks, ["bigData"], "a database dump is data")
   // Biggest first, and only as many as it takes: the smaller folder still fits in the backup.
   var two: [AutopilotUnsavedFile] = []
   for n in 0..<10 { two.append(file("renders/r\(n)/frame.png", 45)) }
@@ -47,13 +47,27 @@ private func bigFilesChoiceProof() {
   let biggest = AutopilotWorktrees.bigFiles(two, entries: ["renders/", "recordings/"])
   equal(biggest.map(\.path), ["renders"], "the biggest is enough")
   equal(biggest.first?.kind, "images")
-  equal(biggest.first?.risk, "bigMedia")
+  equal(biggest.first?.risks, ["bigMedia"])
   // Nothing big enough on its own: the biggest loose files go, until the rest fits.
   var loose: [AutopilotUnsavedFile] = []
   for n in 0..<7 { loose.append(file("src/gen/part\(n).bin", 90 - Double(n))) }
   let spread = AutopilotWorktrees.bigFiles(loose, entries: loose.map(\.path))
   equal(spread.map(\.path), ["src/gen/part0.bin"], "the biggest of many small ones")
-  equal(spread.first?.risk, "bigOther", "a kind with no name is other files")
+  equal(spread.first?.risks, ["bigOther"], "a kind with no name is other files")
+  // A folder of two kinds is both, so a Yes to one never deletes the other; code among anything
+  // makes it code too, however small.
+  let mixed = AutopilotWorktrees.bigFiles(
+    [file("prototype/demo.mp4", 320), file("prototype/App.swift", 280)], entries: ["prototype/"])
+  equal(mixed.first?.kind, "videos and Swift files")
+  equal(mixed.first?.risks, ["bigCode", "bigMedia"])
+  let script = AutopilotWorktrees.bigFiles(
+    [file("qa/run.mp4", 600), file("qa/index.js", 0.001)], entries: ["qa/"])
+  equal(script.first?.kind, "videos", "a tiny script isn't a kind the card names")
+  equal(script.first?.risks, ["bigCode", "bigMedia"], "but it is code a Yes to videos never covers")
+  let unnamed = AutopilotWorktrees.bigFiles(
+    [file("lab/a.ipynb", 300), file("lab/b.png", 250)], entries: ["lab/"])
+  equal(unnamed.first?.kind, "images and other files", "other files come last")
+  equal(unnamed.first?.risks, ["bigMedia", "bigOther"])
 }
 
 /// A copy untouched for a week whose work is merged, with lots of unsaved changes, 1.4 GB, and big
@@ -308,10 +322,16 @@ func bigFilesPolicyProof() throws {
   let replay = AutopilotEval.replay([doneSinceYesterday(now), yes])
   equal(replay.steps.map(\.outcome), ["asked", "asked"], "big files are asked about in the replay too")
 
-  // What retire found reaches the copy while it is as the refusal saw it.
-  var refusal = AutopilotReceipt.refused(
-    gameCopy("checkouts", now: now), authority: "rule:x", AutopilotWorktrees.bigFilesRefusal)
-  refusal.bigFiles = [checkoutsFolder(now), recordingsFolder(now)]
+  // The question's own words never promise an undo it can't keep.
+  check(question.why.hasSuffix("except its big unsaved files, which a Yes deletes for good."), question.why)
+  check(
+    AutopilotPolicy.proposeQuestions([bigger], memory: AutopilotMemory(), now: now).first?.why
+      .hasSuffix("so you can undo it.") == true, "a card without big files still can")
+
+  // What retire found reaches the copy while its files look as the refusal saw them.
+  let refusal = AutopilotReceipt.refused(
+    gameCopy("checkouts", now: now), authority: "rule:x",
+    bigFiles: [checkoutsFolder(now), recordingsFolder(now)])
   let plainItems: [AutopilotItem] = [gameCopy("checkouts", now: now), clean]
   let marked = AutopilotPolicy.withBigFiles(plainItems, receipts: [refusal])
   equal(marked.first?.facts["bigCode"], "yes", "the copy carries each kind as a risk")
@@ -326,7 +346,32 @@ func bigFilesPolicyProof() throws {
   let changedCopy = gameCopy("checkouts", changes: "small", now: now)
   equal(
     AutopilotPolicy.withBigFiles([changedCopy], receipts: [refusal]).first?.facts["bigCode"], nil,
-    "a copy that changed since is looked at again")
+    "a copy whose files changed since is looked at again")
+  var counted = gameCopy("checkouts", now: now)
+  counted.unsaved = 36_000
+  equal(
+    AutopilotPolicy.withBigFiles([counted], receipts: [refusal]).first?.facts["bigCode"], nil,
+    "and so is one whose unsaved files Git counts differently")
+  let aged = gameCopy("checkouts", stale: "month", now: now)
+  equal(
+    AutopilotPolicy.withBigFiles([aged], receipts: [refusal]).first?.facts["bigCode"], "yes",
+    "a copy that only got older keeps them")
+  // A refusal of a copy already marked with one kind, for a new one, marks it with both.
+  let known = gameCopy("checkouts", big: ["bigCode"], now: now)
+  let again2 = AutopilotReceipt.refused(
+    known, authority: "rule:x", bigFiles: [checkoutsFolder(now), recordingsFolder(now)])
+  let both3 = AutopilotPolicy.withBigFiles([gameCopy("checkouts", now: now)], receipts: [again2])
+  equal(both3.first?.facts["bigMedia"], "yes", "the new kind is marked at the next look")
+  // A lesson that let only videos go doesn't burn a folder that is videos and code.
+  let code = AutopilotBigFiles(
+    path: "prototype", bytes: 600_000_000, files: 2, kind: "videos and Swift files", changed: now,
+    risks: ["bigCode", "bigMedia"])
+  var media = gameCopy("prototype", big: ["bigMedia"], now: now)
+  checkFalse(
+    AutopilotWorktrees.dropsBigFiles(media, authority: "rule:x", files: [code]),
+    "not while the copy is known only for videos")
+  media.facts["bigCode"] = "yes"
+  check(AutopilotWorktrees.dropsBigFiles(media, authority: "rule:x", files: [code]), "but once both are")
 
   // Retire drops them only for every kind the copy was known to hold, under a lesson.
   let both2 = [checkoutsFolder(now), recordingsFolder(now)]
@@ -378,10 +423,7 @@ private final class BigFilesWorld: @unchecked Sendable {
         let found: [AutopilotBigFiles] = self.lock.withLock { self.big[item.id] ?? [] }
         let drops: Bool = AutopilotWorktrees.dropsBigFiles(item, authority: authority, files: found)
         if !found.isEmpty && !drops {
-          var refused = AutopilotReceipt.refused(
-            item, authority: authority, AutopilotWorktrees.bigFilesRefusal)
-          refused.bigFiles = found
-          return refused
+          return AutopilotReceipt.refused(item, authority: authority, bigFiles: found)
         }
         self.burns.add(item.id)
         if !found.isEmpty { self.dropped.add(item.id) }
