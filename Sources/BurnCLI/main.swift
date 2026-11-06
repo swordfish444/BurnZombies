@@ -45,6 +45,9 @@ do {
     print("BurnZombies \(BuildIdentity.version) (build \(BuildIdentity.build))")
   case "doctor":
     try await Doctor.run()
+  case "--finish-update":
+    guard args.count == 2, args[1].hasPrefix("/") else { fail("Pass the private update plan.") }
+    try await AppUpdateHelper.run(URL(fileURLWithPath: args[1]))
   case "--worktree-scan-worker":
     exit(WorktreeScanWorker.run(arguments: Array(args.dropFirst())))
   case "worktrees":
@@ -103,9 +106,13 @@ do {
     else { fail("Use stop-observer with the exact canonical BurnZombies.app path.") }
     try await stopObserver(at: URL(fileURLWithPath: WorkspaceSafety.canonical(args[1])))
   case "start-observer":
+    guard args.count == 1 || args == ["start-observer", "--show-settings"] else {
+      fail("Use start-observer or start-observer --show-settings.")
+    }
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-    let app = executable.deletingLastPathComponent().deletingLastPathComponent()
+    let containingApp = executable.deletingLastPathComponent().deletingLastPathComponent()
       .deletingLastPathComponent()
+    let app = URL(fileURLWithPath: WorkspaceSafety.canonical(containingApp.path))
     guard app.pathExtension == "app" else { fail("Start observer from the installed app bundle.") }
     // LaunchServices lays this process's environment over launchd's, and
     // OpenConfiguration.environment only adds to it. Started by an agent, this process carries
@@ -116,12 +123,17 @@ do {
     }
     try await stopObserver(at: app)
     let configuration = NSWorkspace.OpenConfiguration()
-    configuration.activates = false
-    configuration.hides = true
-    let _: NSRunningApplication = try await withCheckedThrowingContinuation { continuation in
+    configuration.environment = launch
+    configuration.allowsRunningApplicationSubstitution = false
+    configuration.activates = args.contains("--show-settings")
+    configuration.hides = !args.contains("--show-settings")
+    if args.contains("--show-settings") { configuration.arguments = ["--show-settings"] }
+    let launched: NSRunningApplication = try await withCheckedThrowingContinuation { continuation in
       NSWorkspace.shared.openApplication(at: app, configuration: configuration) {
         application, error in
-        if let application {
+        if let application,
+          application.bundleURL.map({ WorkspaceSafety.canonical($0.path) }) == app.path
+        {
           continuation.resume(returning: application)
         } else {
           continuation.resume(
@@ -132,6 +144,7 @@ do {
     let readyDeadline = Date().addingTimeInterval(20)
     var ready = false
     while Date() < readyDeadline {
+      guard !launched.isTerminated else { fail("The app exited before its observer became ready.") }
       if AgentConnection.isAvailable(),
         let reply = try? await AgentConnection.callAsync(AgentRequest("access_status")),
         let value = try? JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any],
@@ -175,7 +188,8 @@ do {
       // A deep hunt with a spending limit in US dollars: 5 unless given, 15 at most.
       request.tool = "command"
       request.command = .deepHunt(
-        limitUSD: args.count > 2 ? Double(args[2]) ?? HuntOptions.defaultLimit : HuntOptions.defaultLimit)
+        limitUSD: args.count > 2
+          ? Double(args[2]) ?? HuntOptions.defaultLimit : HuntOptions.defaultLimit)
     } else if request.tool == "stop" {
       request.tool = "command"
       request.command = .stopHunt
@@ -203,7 +217,8 @@ do {
     // reviews default to 180 seconds.
     var seconds: Int32 = 180
     var rest = Array(args.dropFirst())
-    if rest.count >= 2, rest[0] == "--seconds", let value = Int32(rest[1]), (1...3600).contains(value)
+    if rest.count >= 2, rest[0] == "--seconds", let value = Int32(rest[1]),
+      (1...3600).contains(value)
     {
       seconds = value
       rest.removeFirst(2)

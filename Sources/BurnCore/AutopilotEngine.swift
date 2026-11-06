@@ -137,6 +137,15 @@ public actor Autopilot {
   /// Items burning right now, by id, with the authority each burns under.
   var burning: [String: String] = [:]
   var ticking = false
+  /// Transient during a user-requested app update. Never changes the owner's saved rules.
+  var updateSuspended = false
+  public func suspendForAppUpdate(_ suspended: Bool) { updateSuspended = suspended }
+  public func finishActionsForAppUpdate() async throws {
+    while ticking || !burning.isEmpty || !undoing.isEmpty {
+      try Task.checkCancellation()
+      try await Task.sleep(nanoseconds: 50_000_000)
+    }
+  }
   /// Tells being undone: restores wait on Git, and a second Undo meanwhile would restore again.
   var undoing = Set<String>()
   /// Where `hunt-state.json` lives, beside the rest of BurnZombies' state.
@@ -188,7 +197,7 @@ public actor Autopilot {
     -> AutopilotSnapshot
   {
     // A long burn pass must not overlap the next tick; the caller gets the current view.
-    guard !ticking else { return snapshot(now: now) }
+    guard !ticking, !updateSuspended else { return snapshot(now: now) }
     ticking = true
     defer { ticking = false }
     try? store.updateSweep {
@@ -403,6 +412,10 @@ public actor Autopilot {
   }
 
   func execute(_ item: AutopilotItem, authority: String, why: String) async -> AutopilotReceipt {
+    guard !updateSuspended else {
+      return .refused(
+        item, authority: authority, "BurnZombies is updating. Your rules and decisions stay saved.")
+    }
     // A damaged policy must never become empty authority, including the operator path.
     do {
       _ = try store.memory()
@@ -671,6 +684,10 @@ public actor Autopilot {
   public func apply(_ command: AutopilotCommand, now: Date = Date()) async throws
     -> AutopilotSnapshot
   {
+    guard !updateSuspended else {
+      throw StoreError.message(
+        "BurnZombies is finishing an app update. Try again after it restarts.")
+    }
     switch command {
     case .answer(let id, let answer, let shown):
       try store.updateMemory { memory in

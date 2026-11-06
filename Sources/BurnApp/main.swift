@@ -897,7 +897,9 @@ import UserNotifications
       [.unkeep(itemID: e.id)], local: { AutopilotLocal.unkeep(&$0, entry: e) }, finished: finished)
   }
   func restore(_ r: AutopilotReceipt) {
-    sendAutopilot(.restore(receiptID: r.id)) { AutopilotLocal.restore(&$0, receipt: r, now: Date()) }
+    sendAutopilot(.restore(receiptID: r.id)) {
+      AutopilotLocal.restore(&$0, receipt: r, now: Date())
+    }
   }
   func forgetRule(_ r: AutopilotRule) {
     sendAutopilot(.forgetRule(ruleID: r.id)) { AutopilotLocal.forget(&$0, rule: r) }
@@ -1038,6 +1040,29 @@ import UserNotifications
         message = "Could not save state: \(error.localizedDescription)"
       }
       NSApp.terminate(nil)
+    }
+  }
+  lazy var appUpdates = AppUpdateSettingsModel { [weak self] plan in
+    guard let self else { throw StoreError.message("The app is closing.") }
+    let stopped = self.observationStopped
+    self.observationStopped = true
+    self.timer?.invalidate()
+    do {
+      try await self.reviewer?.prepareForAppUpdate()
+      try await self.autopilotRuntime?.coordinator.prepareForAppUpdate()
+      try await self.monitor?.prepareForAppUpdate()
+      var request = plan
+      request.reopenSettings = NSApp.isActive
+      try request.save()
+      try await AppUpdateHandoff.launch(request)
+      NSApp.terminate(nil)
+    } catch {
+      await self.monitor?.resumeAfterAppUpdateFailure()
+      await self.autopilotRuntime?.coordinator.resumeAfterAppUpdateFailure()
+      await self.reviewer?.resumeAfterAppUpdateFailure()
+      self.observationStopped = stopped
+      if !stopped { self.refresh() }
+      throw error
     }
   }
 }
@@ -1321,6 +1346,8 @@ struct Dashboard: View {
   }
   var settings: some View {
     Group {
+      AboutSettingsView(updates: model.appUpdates).disabled(model.demo)
+      Divider()
       FullDiskAccessView(model: model)
       if model.autopilotAvailable {
         AutopilotSettingsView(model: model)
@@ -1451,6 +1478,10 @@ struct Dashboard: View {
     NSWorkspace.shared.notificationCenter.addObserver(
       self, selector: #selector(waking), name: NSWorkspace.didWakeNotification, object: nil)
     if CommandLine.arguments.contains("--show-worktrees") { showWorktrees() }
+    if CommandLine.arguments.contains("--show-settings") {
+      model.tab = "Settings"
+      showAudit()
+    }
     if CommandLine.arguments.contains("--show-findings") { showFindings() }
     if CommandLine.arguments.contains("--show-advanced-findings") { showAdvancedFindings() }
     if CommandLine.arguments.contains("--show-teach") { showTeach() }
@@ -1772,6 +1803,20 @@ struct Dashboard: View {
 MainActor.assumeIsolated {
   let app = NSApplication.shared
   #if DEBUG
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--about-proof" {
+      app.setActivationPolicy(.prohibited)
+      Task { @MainActor in
+        do {
+          try await aboutSettingsProof(output: CommandLine.arguments[2])
+          exit(0)
+        } catch {
+          print("FAIL \(error.localizedDescription)")
+          exit(1)
+        }
+      }
+      app.run()
+      exit(1)
+    }
     if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--observer-schedule-proof" {
       app.setActivationPolicy(.prohibited)
       Task { @MainActor in

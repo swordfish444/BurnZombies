@@ -71,6 +71,10 @@ int bz_capture_tool(char *const argv[], char *const env[], int output, int milli
     if (milliseconds > 8000 || max_bytes > 1048576) return 64;
     return capture_group(argv, env, output, milliseconds, max_bytes, NULL, NULL, NULL, 0);
 }
+int bz_capture_update_tool(char *const argv[], char *const env[], int output, int milliseconds, uint64_t max_bytes) {
+    if (milliseconds > 90000 || max_bytes > 4194304) return 64;
+    return capture_group(argv, env, output, milliseconds, max_bytes, NULL, NULL, NULL, 0);
+}
 int bz_capture_worktree_worker(char *const argv[], char *const env[], int output,
                               int (*progress)(void *, uint64_t), void *context, int *unreaped) {
     if (!progress || !context) return 64;

@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix="bz-install-") as temp, ExitStack() as s
 from pathlib import Path
 args=sys.argv[1:]
 url=next(a for a in args if a.startswith('https://'))
-assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.15.1/')
+assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.16.0/')
 name=url.rsplit('/',1)[1]
 assert name in ('SHA256SUMS','BurnZombies-macOS-universal.tar.gz')
 shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1])

@@ -1,11 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Quick by default: the build, core safety and Autopilot policy, well under a minute.
-# The full suite runs only on request: --full (several minutes; use caffeinate -i -m).
+# All checks run locally. Quick by default; --full adds lifecycle and app proofs.
+test_full=false
 if [[ $# -eq 0 ]]; then
   set -- --quick
 elif [[ "$1" == --full ]]; then
+  test_full=true
   shift
   set -- --integration "$@"
 fi
@@ -18,5 +19,8 @@ git status --porcelain=v1
 shasum -a 256 .build/debug/BurnProof
 test_result=0
 .build/debug/BurnProof "$@" || test_result=$?
+if [[ "$test_result" -eq 0 && "$test_full" == true ]]; then
+  scripts/test-app.sh || test_result=$?
+fi
 printf 'EXIT %s\n' "$test_result"
 exit "$test_result"

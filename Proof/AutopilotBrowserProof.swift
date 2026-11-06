@@ -36,7 +36,8 @@ private func strandedChrome(_ chrome: String, _ arguments: [String], pipe: Bool,
   let shell = Process()
   shell.executableURL = URL(fileURLWithPath: "/bin/sh")
   let redirects = pipe ? "3<&0 4>&1 </dev/null >/dev/null 2>&1" : "</dev/null >/dev/null 2>&1"
-  shell.arguments = ["-c", "\"$@\" \(redirects) & echo $! > '\(pidFile.path)'", "sh", chrome] + arguments
+  shell.arguments =
+    ["-c", "\"$@\" \(redirects) & echo $! > '\(pidFile.path)'", "sh", chrome] + arguments
   let toBrowser = Pipe()
   let fromBrowser = Pipe()
   if pipe {
@@ -56,7 +57,9 @@ private func strandedChrome(_ chrome: String, _ arguments: [String], pipe: Bool,
 }
 
 /// Sends one DevTools command over a browser's pipe and waits for its reply, as Playwright does.
-private func devtools(_ ends: [FileHandle], _ id: Int, _ method: String, _ params: [String: Any] = [:])
+private func devtools(
+  _ ends: [FileHandle], _ id: Int, _ method: String, _ params: [String: Any] = [:]
+)
   -> [String: Any]?
 {
   guard ends.count == 2,
@@ -117,7 +120,9 @@ func autopilotBrowserProof() async throws {
     accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
   var browsers: [Int32] = []
   defer {
-    for pid in browsers { for helper in family(of: pid) + [pid] where running(helper) { kill(helper, SIGKILL) } }
+    for pid in browsers {
+      for helper in family(of: pid) + [pid] where running(helper) { kill(helper, SIGKILL) }
+    }
   }
   let quiet = [
     "--headless", "--no-first-run", "--no-default-browser-check", "--use-mock-keychain",
@@ -136,12 +141,15 @@ func autopilotBrowserProof() async throws {
   let pipeProfile = temp.appendingPathComponent("playwright_chromiumdev_profile-bzproof1")
   let (piped, pipeEnds) = try strandedChrome(
     chrome,
-    quiet + ["--user-data-dir=" + pipeProfile.path, "--remote-debugging-pipe", "--no-startup-window"],
+    quiet + [
+      "--user-data-dir=" + pipeProfile.path, "--remote-debugging-pipe", "--no-startup-window",
+    ],
     pipe: true, in: root)
   browsers.append(piped)
   // Playwright's own context options; with them Chrome keeps running once the pipe closes.
-  let context = (devtools(pipeEnds, 1, "Target.createBrowserContext", ["disposeOnDetach": true])?[
-    "result"] as? [String: Any])?["browserContextId"] as? String
+  let context =
+    (devtools(pipeEnds, 1, "Target.createBrowserContext", ["disposeOnDetach": true])?[
+      "result"] as? [String: Any])?["browserContextId"] as? String
   check(context != nil, "Chrome answers over its pipe")
   check(
     devtools(
@@ -168,7 +176,8 @@ func autopilotBrowserProof() async throws {
   check(pipeItem.name.hasPrefix("Google Chrome (robot)"), pipeItem.name)
   check(pipeItem.detail.contains("helper"), "its helpers ride with it: " + pipeItem.detail)
   checkFalse(
-    items.contains { family(of: piped).contains($0.pid ?? -1) }, "helpers aren't items of their own")
+    items.contains { family(of: piped).contains($0.pid ?? -1) }, "helpers aren't items of their own"
+  )
   let decision = AutopilotPolicy.decide(pipeItem, memory: AutopilotMemory())
   equal(decision.authority, "starter:starter-robot-browsers")
 
@@ -198,18 +207,24 @@ func autopilotBrowserProof() async throws {
     failTest("debugging port read")
     return
   }
-  let client = socket(AF_INET, SOCK_STREAM, 0)
-  var address = sockaddr_in()
-  address.sin_family = sa_family_t(AF_INET)
-  address.sin_addr.s_addr = inet_addr("127.0.0.1")
-  address.sin_port = port.bigEndian
-  let connected = withUnsafePointer(to: &address) {
-    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-      connect(client, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-    }
+  // A TCP connect can finish before Chrome has accepted it. Use the real DevTools
+  // protocol and wait for native visibility instead of assuming half a second is enough.
+  let browserPath = try String(contentsOf: activePort, encoding: .utf8).split(separator: "\n")
+  guard browserPath.count >= 2,
+    let endpoint = URL(string: "ws://127.0.0.1:\(port)\(browserPath[1])")
+  else { throw StoreError.message("Chrome's fixture DevTools endpoint is unavailable.") }
+  let session = URLSession(configuration: .ephemeral)
+  let client = session.webSocketTask(with: endpoint)
+  defer {
+    client.cancel(with: .goingAway, reason: nil)
+    session.invalidateAndCancel()
   }
-  equal(connected, 0, "a client connects to the debugging port")
-  usleep(500_000)
+  client.resume()
+  try await client.send(.string(#"{"id":1,"method":"Browser.getVersion"}"#))
+  _ = try await client.receive()
+  check(
+    waitFor(10) { Native().clients(ported).map { $0 > 0 } == true },
+    "the accepted DevTools client is visible to the native socket probe")
   _ = await monitor.refresh()
   items = AutopilotProcesses.items(
     await monitor.autopilotRecords(), threads: [], protectedPIDs: own, now: later)
@@ -230,9 +245,17 @@ func autopilotBrowserProof() async throws {
   } else {
     failTest("the port browser is in the catalog")
   }
-  close(client)
+  client.cancel(with: .normalClosure, reason: nil)
+  session.invalidateAndCancel()
+  var clearPasses = 0
   check(
-    waitFor(5) { Native().clients(ported) == 0 }, "the client is gone")
+    waitFor(10) {
+      // A socket or helper can disappear during a kernel fd read. Require three
+      // complete snapshots of the same real family before testing the idle policy.
+      let clear = ([ported] + family(of: ported)).allSatisfy { Native().clients($0) == 0 }
+      clearPasses = clear ? clearPasses + 1 : 0
+      return clearPasses >= 3
+    }, "the DevTools client is gone and the browser family has known empty listening sockets")
   _ = await monitor.refresh()
   items = AutopilotProcesses.items(
     await monitor.autopilotRecords(), threads: [], protectedPIDs: own, now: later)
@@ -255,13 +278,15 @@ func autopilotBrowserProof() async throws {
   // 3. A browser something still runs keeps its profile; the two left behind are cleared.
   let liveProfile = temp.appendingPathComponent("playwright_chromiumdev_profile-bzproof3")
   let (live, liveEnds) = try strandedChrome(
-    chrome, quiet + ["--user-data-dir=" + liveProfile.path, "--remote-debugging-pipe", "about:blank"],
+    chrome,
+    quiet + ["--user-data-dir=" + liveProfile.path, "--remote-debugging-pipe", "about:blank"],
     pipe: true, in: root)
   browsers.append(live)
   defer { for end in liveEnds { try? end.close() } }
   check(
     waitFor(15) {
-      FileManager.default.fileExists(atPath: liveProfile.appendingPathComponent("SingletonLock").path)
+      FileManager.default.fileExists(
+        atPath: liveProfile.appendingPathComponent("SingletonLock").path)
         || (try? FileManager.default.destinationOfSymbolicLink(
           atPath: liveProfile.appendingPathComponent("SingletonLock").path)) != nil
     }, "the running browser locked its profile")
@@ -280,9 +305,22 @@ func autopilotBrowserProof() async throws {
   let receipt = AutopilotBrowserTrail.reclaim(
     trail, authority: "starter:starter-browser-trail", folder: temp.path,
     now: later.addingTimeInterval(3600))
-  equal(receipt.outcome, "burned", receipt.detail)
-  checkFalse(FileManager.default.fileExists(atPath: pipeProfile.path), "pipe profile cleared")
-  checkFalse(FileManager.default.fileExists(atPath: portProfile.path), "port profile cleared")
+  if receipt.outcome == "refused",
+    receipt.detail == "I couldn't tell if something is using that folder, so I left it alone.",
+    WorktreeConsumerSnapshot(roots: [temp.path]).gap != nil
+  {
+    // macOS can withhold machine-wide open-file visibility. The native production
+    // path must preserve both folders in that case, even in an isolated fixture.
+    check(
+      FileManager.default.fileExists(atPath: pipeProfile.path), "unchecked pipe profile preserved")
+    check(
+      FileManager.default.fileExists(atPath: portProfile.path), "unchecked port profile preserved")
+    print("PASS native folder-use visibility unknown: both fixture profiles preserved")
+  } else {
+    equal(receipt.outcome, "burned", receipt.detail)
+    checkFalse(FileManager.default.fileExists(atPath: pipeProfile.path), "pipe profile cleared")
+    checkFalse(FileManager.default.fileExists(atPath: portProfile.path), "port profile cleared")
+  }
   check(FileManager.default.fileExists(atPath: liveProfile.path), "the running browser's stays")
   check(running(live), "and the running browser with it")
 

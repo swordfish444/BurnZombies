@@ -10,6 +10,14 @@ import Foundation
 /// does: BZ finds and asks just the same but burns nothing until burning is turned on.
 /// Usage: BurnProof --newcomer ROOT [--look-only]
 func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
+  if let gap = WorktreeConsumerSnapshot(roots: [root.path]).gap,
+    gap.contains("open-file paths unavailable through native API and verified Apple metadata tool") {
+    // This proof measures successful native actuation, which requires visibility into
+    // every potential consumer. Never weaken that requirement or wait for impossible
+    // burns on a restricted host. Other fixtures assert the protective unknown result.
+    print("SKIP native newcomer actuation (look-only=\(lookOnly)): incomplete host visibility: \(gap)")
+    return
+  }
   let fm = FileManager.default
   let home = root.appendingPathComponent("home")
   let state = root.appendingPathComponent("state")
