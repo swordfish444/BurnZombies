@@ -597,6 +597,10 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         startAtLoginProof
       ),
       (
+        "recovery key in a private file: made once, reused, out of the Keychain and Time Machine, unsafe files refused",
+        recoveryKeyFileProof
+      ),
+      (
         "sweeps and reviews start outside the installing agent's session",
         agentSessionEnvironmentProof
       ),
