@@ -73,4 +73,4 @@ jobs:
         run: |
           python3 scripts/test-install-control.py
           COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/BurnZombies-test.tar.gz" -C dist BurnZombies.app
-          python3 scripts/test-install.py "$RUNNER_TEMP/BurnZombies-test.tar.gz"
+          python3 scripts/test-install.py "$RUNNER_TEMP/BurnZombies-test.tar.gz" --fixture-signer

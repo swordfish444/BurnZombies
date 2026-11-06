@@ -120,7 +120,7 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
     plan = root/'focused-plan.json'
     plan.write_text(json.dumps({'executable':str(fake/'codex'),'model':'example-model','effort':'low',
         'instructions':'Focused fixture instructions','prompt':'Review supplied evidence.',
-        'overrides':['features.hooks=false']}))
+        'overrides':['features.hooks=false','features.view_image=true']}))
     focused = subprocess.run([str(cli),'review-codex',str(plan)],
         env=dict(env,BZ_EXPECT_FOCUSED='1'),capture_output=True,text=True,timeout=15)
     assert focused.returncode==0, focused.stdout+focused.stderr

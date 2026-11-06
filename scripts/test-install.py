@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Exercise real archive/signature/install handling; stub only download; never touch live harness settings."""
 import hashlib
+import argparse
+from contextlib import ExitStack
 import io
 import json
 import os
@@ -10,13 +12,34 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from installer_signing_fixture import production_pin, signing_fixture
 
 repo = Path(__file__).resolve().parents[1]
-archive = Path(sys.argv[1]).resolve()
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("archive", type=Path)
+parser.add_argument("--fixture-signer", action="store_true",
+                    help="Re-sign a private debug-app copy with a disposable test identity")
+arguments = parser.parse_args()
+archive = arguments.archive.resolve()
 asset = "BurnZombies-macOS-universal.tar.gz"
-with tempfile.TemporaryDirectory(prefix="bz-install-") as temp:
+production_pin(repo / "install.sh")
+with tempfile.TemporaryDirectory(prefix="bz-install-") as temp, ExitStack() as stack:
     root = Path(temp); remote = root / "remote"; remote.mkdir()
     shutil.copy2(archive, remote / asset)
+    installer = repo / "install.sh"
+    if arguments.fixture_signer:
+        signer = stack.enter_context(signing_fixture(root / "signing"))
+        package = root / "package"; package.mkdir()
+        with tarfile.open(archive) as source:
+            for entry in source.getmembers():
+                path = Path(entry.name)
+                assert path.parts and path.parts[0] == "BurnZombies.app" and ".." not in path.parts
+                assert not path.is_absolute() and (entry.isfile() or entry.isdir())
+            source.extractall(package)
+        signer.sign(package / "BurnZombies.app")
+        with tarfile.open(remote / asset, "w:gz") as output:
+            output.add(package / "BurnZombies.app", arcname="BurnZombies.app")
+        installer = signer.installer(installer, root / "install.sh")
     def checksum():
         digest = hashlib.sha256((remote / asset).read_bytes()).hexdigest()
         (remote / "SHA256SUMS").write_text(f"{digest}  {asset}\n")
@@ -43,7 +66,7 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
                BURNZOMBIES_HOME=str(root / "observer-state"), BURNZOMBIES_SKILL_HOME=str(root / "skill-home"),
                BURNZOMBIES_INSTALL_DIR=str(destination))
     def install(client, success=True, observe=False):
-        result = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--mcp", client, "--no-open"]
+        result = subprocess.run(["/bin/bash", str(installer), "--mcp", client, "--no-open"]
                                 + (["--observe-only"] if observe else []),
                                 env=env, capture_output=True, text=True, timeout=60)
         assert (result.returncode == 0) == success, result.stdout + result.stderr
@@ -71,7 +94,7 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     # Look-only holds every burn from the first minute, with or without AI setup, in a few lines.
     for client in ["none", "codex"]:
         state = root / f"look-only-{client}"
-        looking = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--mcp", client, "--no-open", "--look-only"],
+        looking = subprocess.run(["/bin/bash", str(installer), "--mcp", client, "--no-open", "--look-only"],
                                  env=dict(env, BURNZOMBIES_HOME=str(state)), capture_output=True, text=True, timeout=60)
         assert looking.returncode == 0, looking.stdout + looking.stderr
         assert "Look-only is on" in looking.stdout and len(looking.stdout.splitlines()) <= 7, looking.stdout
@@ -80,7 +103,7 @@ shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1
     # Without Claude Code or Codex the default install still succeeds, with AI judging off.
     bare = dict(env, BURNZOMBIES_HOME=str(root / "bare-state"), BURNZOMBIES_INSTALL_DIR=str(root / "Bare Applications"))
     (stubs / "codex").unlink()
-    plain = subprocess.run(["/bin/bash", str(repo / "install.sh"), "--no-open"], env=bare,
+    plain = subprocess.run(["/bin/bash", str(installer), "--no-open"], env=bare,
                            capture_output=True, text=True, timeout=60)
     assert plain.returncode == 0, plain.stdout + plain.stderr
     assert 'No Claude Code or Codex found' in plain.stdout, plain.stdout

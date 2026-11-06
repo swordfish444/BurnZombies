@@ -10,7 +10,9 @@ enum CodexReview {
     // Replace the entire optional MCP table before configuration validation;
     // disabled legacy entries can still use transports unsupported by this CLI.
     // The sole per-review server is then added by the plan. Live config is untouched.
-    let config = ["mcp_servers={}"] + plan.overrides
+    // Cleanup reasoning uses native text evidence. Enforce this after plan overrides so
+    // neither review path can expose unrelated local images to the model.
+    let config = ["mcp_servers={}"] + plan.overrides + ["features.view_image=false"]
     let process = Process(), input = Pipe(), output = Pipe()
     process.executableURL = URL(fileURLWithPath: plan.executable)
     process.arguments = ["app-server", "--stdio"] + config.flatMap { ["-c", $0] }

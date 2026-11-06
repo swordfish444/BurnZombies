@@ -633,13 +633,13 @@ public final class DiskDiscovery: @unchecked Sendable {
         "retention",
       ]
       let projected = object.filter { names.contains($0.key) }
-      guard !projected.isEmpty,
-        let bytes = try? JSONSerialization.data(withJSONObject: projected, options: [.sortedKeys]),
+      guard !projected.isEmpty, let safe = EvidenceRedaction.json(projected),
+        let bytes = try? JSONSerialization.data(withJSONObject: safe, options: [.sortedKeys]),
         let text = String(data: bytes, encoding: .utf8)
       else { return nil }
-      return redact(text)
+      return String(text.prefix(1600))
     }
-    return redact(value)
+    return EvidenceRedaction.text(value)
   }
   public func readEvidence(_ id: String, relativePath: String, allowed: [String]? = nil) throws
     -> [String: String]
@@ -678,17 +678,6 @@ public final class DiskDiscovery: @unchecked Sendable {
       )
     }
     return [relativePath: text]
-  }
-  private static func redact(_ value: String) -> String {
-    let lines = value.split(separator: "\n").filter {
-      let text = $0.lowercased()
-      return ![
-        "password", "secret", "token", "api_key", "apikey", "credential", "authorization",
-        "private key", "sk-", "ghp_", "github_pat_", "akia", "-----begin",
-      ].contains(where: text.contains)
-        && text.range(of: "://[^/ ]+@", options: .regularExpression) == nil
-    }
-    return String(lines.joined(separator: "\n").prefix(1600))
   }
   public func recommend(
     _ id: String, disposition: String, title: String, summary: String, nextStep: String,
