@@ -149,7 +149,7 @@ Native code catalogs and applies rules without any model. With Claude Code or Co
 - **Failures** back off 15 → 30 → 60 → 120 minutes (at least an hour after a login or usage-limit problem). The loop never stops for good, and your rules keep working while the AI is unavailable.
 - **Cost.** Roughly $0.30–$1.20 a sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Usage & estimated cost** shows what sweeps used.
 
-Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). **Settings → Autopilot** turns Autopilot, AI included, off.
+Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). The switch beside **Autopilot on** in the menu, or **Settings → Autopilot**, turns Autopilot, AI included, off.
 
 ## Undo
 
@@ -165,7 +165,7 @@ Uninstalling leaves restore points in place; [Uninstall](INSTALL.md#uninstall) s
 
 - Exact identity check (boot, PID, start time, path) immediately before every signal; SIGTERM only.
 - Something the app refused waits 6 hours before it is tried again, unless it or the answer that allows it changes. AI sweeps wait too, so they don't repeat checks the app already refused. If BZ couldn't finish checking whether a program is using it, the next look tries once more first.
-- A refusal says why in plain words. When a check failed rather than refused, its receipt and the burn log also name the step and what failed (a Git command and its status or time limit, the backup's file limit, free space, a file that changed), never with a path or a name.
+- A refusal says why in plain words. A junk folder that has to be backed up first and can't be says what stopped it: a project, a pipe or hard links inside it, or too many files. When a check failed rather than refused, its receipt and the burn log also name the step and what failed (a Git command and its status or time limit, the backup's file limit, free space, a file that changed), never with a path or a name.
 - One burn per item at a time: while a copy is being backed up and removed, a second burn of it, from the AI or from **Burn now**, is turned away.
 - Old copies are only removed after their restore point verifies; submodules with unsaved work, locked copies, in-progress merges/rebases and copies a program is using are refused. BZ's own measuring of junk folders steps out of whatever is burning, so it never counts as that program.
 - Unsaved files too big for a restore point are deleted only under a lesson from your Yes to a card that showed that kind of them, or BZ's own call on a kind you said yes to. **Burn now**, the AI and the starter rules never delete them. A copy holding them waits instead of being tried every 6 hours.

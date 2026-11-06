@@ -15,6 +15,7 @@ func autopilotDiskProof() async throws {
   try adkThreadsProof(base: base + "/threads", now: now)
   try adkSizeProof(base: base + "/sizes")
   try adkJunkProof(base: base + "/junk", now: now)
+  try adkBackupReasonProof(base: base + "/reasons")
   try adkCopyAgeProof(base: base + "/age", now: now)
   try adkWalkProof(base: base + "/walk", now: now)
   try await adkJunkCacheProof(base: base + "/cache", now: now)
@@ -699,6 +700,96 @@ private func adkJunkProof(base: String, now: Date) throws {
   check(
     adkNear(lastChange, staleDate),
     "clearing junk counted as using the copy: \(String(describing: lastChange))")
+}
+
+/// A junk folder whose backup fails says why, in words about a folder, and its receipt keeps what
+/// failed. Before, every such refusal read "I couldn't preserve this folder's unique contents",
+/// whatever stopped the backup. Each folder here is generic build output, which nothing proves
+/// rebuildable, so its contents are backed up before it goes.
+private func adkBackupReasonProof(base: String) throws {
+  let fm = FileManager.default
+  let home = base + "/home"
+  let repo = home + "/git/shop"
+  try adkRepository(repo)
+  try adkWrite("src\n", to: repo + "/src.txt")
+  try adkWrite("dist/\nbuild/\n", to: repo + "/.gitignore")
+  try adkGit(repo, ["add", "."])
+  try adkGit(repo, ["commit", "-m", "fixture"])
+  let state = URL(fileURLWithPath: home).appendingPathComponent("proof-state")
+  func refusal(_ path: String, _ label: String, reads detail: String, after failure: String) {
+    let item = AutopilotItem(
+      id: "disk:" + AutopilotItem.hash(path), kind: .disk,
+      name: (path as NSString).lastPathComponent + " in shop", path: path, bytes: 200_000_000,
+      facts: ["folder": "build-output", "home": "repo", "stale": "older", "size": "medium"])
+    let receipt = AutopilotDisk.reclaim(
+      item, authority: "starter:starter-rebuildable-junk", home: home, inUse: { _ in 0 },
+      root: state, recoveryKey: SymmetricKey(data: Data(repeating: 0x74, count: 32)))
+    equal(receipt.outcome, "refused", label + ": " + receipt.detail)
+    equal(receipt.detail, detail, label)
+    equal(receipt.cause, "backing it up: " + failure, label + ": the receipt keeps what failed")
+    equal(receipt.bytes, 0, label + ": a refusal frees nothing")
+    check(fm.fileExists(atPath: path + "/app.js"), label + ": the folder was touched")
+    checkFalse(
+      (receipt.cause ?? "").contains(path) || (receipt.cause ?? "").contains("shop"),
+      label + ": the cause names no folder")
+  }
+
+  // A project inside the output, as when a build vendors a checkout.
+  let vendored = repo + "/dist"
+  try adkWrite("x\n", to: vendored + "/app.js")
+  try adkRepository(vendored + "/vendor/lib")
+  refusal(
+    vendored, "a project inside",
+    reads:
+      "There is another project folder inside that folder that I can't back up, so I left it alone.",
+    after: "Nested repository is protected.")
+  check(fm.fileExists(atPath: vendored + "/vendor/lib/.git"), "the project inside was touched")
+
+  // A pipe a dev server left in its output.
+  let piped = repo + "/build"
+  try adkWrite("x\n", to: piped + "/app.js")
+  equal(mkfifo(piped + "/dev.pipe", 0o600), 0, "made the pipe")
+  refusal(
+    piped, "a pipe",
+    reads:
+      "That folder holds a special file, like a socket or a pipe, that I can't back up, so I left it alone.",
+    after: "Links or special files require supported recovery.")
+
+  // A file with a second name outside the folder, as pnpm links a workspace's own packages in.
+  let linked = repo + "/packages/web/dist"
+  try adkWrite("x\n", to: linked + "/app.js")
+  try adkWrite("shared\n", to: repo + "/packages/web/src/shared.js")
+  equal(link(repo + "/packages/web/src/shared.js", linked + "/shared.js"), 0, "made the hard link")
+  refusal(
+    linked, "a hard link",
+    reads: "Some files in that folder are hard links I can't back up, so I left it alone.",
+    after: "Hardlinked files require owner handling.")
+
+  // What can't be made cheaply here (100,000 files, a full disk) is checked by its words alone.
+  func folder(_ error: Error) -> String { AutopilotWorktrees.plainReason(error, about: .folder) }
+  equal(
+    folder(StoreError.message("Checkout inspection limit reached; coverage incomplete.")),
+    "That folder has too many files for me to back up, so I left it alone.")
+  equal(
+    folder(StoreError.message("Checkout inspection ran out of time; coverage incomplete.")),
+    "Backing up that folder took too long, so I left it alone.", "a busy Mac isn't a big folder")
+  equal(
+    folder(StoreError.message("File contents changed after recovery; nothing removed.")),
+    "That folder changed while I was backing it up, so I left it alone.")
+  equal(
+    folder(NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))),
+    "There isn't enough free space to back up that folder first, so I left it alone.")
+  equal(
+    folder(CancellationError()),
+    "I stopped before I finished backing up that folder, so I left it alone.")
+  equal(
+    folder(StoreError.message("Something nobody planned for.")),
+    "I couldn't preserve this folder's unique contents, so I left it alone.",
+    "anything else keeps the general reason; the cause says what failed")
+  equal(
+    AutopilotWorktrees.plainReason(StoreError.message("Hardlinked files require owner handling.")),
+    "Some files in it are hard links I can't back up, so I left it alone.",
+    "a copy's words stay about a copy")
 }
 
 /// An old commit alone never makes a copy old. The inventory can't walk a copy that holds another

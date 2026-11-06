@@ -60,7 +60,7 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
 
 ## Cost
 
-Claude Code uses Sonnet by default; Codex uses its own default. Roughly $0.30–$1.20 per AI sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. Model: Settings → Review intelligence. AI off: `"$bz" setup --observe-only` (back on: `--with-ai`); the Settings → Autopilot switch pauses all of Autopilot. Spend: Settings → Usage & estimated cost.
+Claude Code uses Sonnet by default; Codex uses its own default. Roughly $0.30–$1.20 per AI sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. Model: Settings → Review intelligence. AI off: `"$bz" setup --observe-only` (back on: `--with-ai`); the Autopilot switch in the menu (or Settings → Autopilot) pauses all of Autopilot; it's on from install. Spend: Settings → Usage & estimated cost.
 
 ## Full Disk Access (optional, human only)
 

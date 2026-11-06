@@ -333,18 +333,42 @@ public enum AutopilotWorktrees {
     static let restorePoint = "saving its restore point"
   }
 
-  /// Why the backup walk, the backup or Git stopped a retire, in the owner's words. What has no
-  /// plain words gets the general reason; the receipt's cause says what stopped it.
-  public static func plainReason(_ error: Error) -> String {
-    let stopped = "I stopped before I finished checking it, so I left it alone."
+  /// Who a plain reason is about: an old copy, which retire backs up, or a junk folder, whose
+  /// contents are backed up first when nothing proves it rebuilds.
+  public enum Subject: Sendable { case copy, folder }
+
+  /// Why the backup walk, the backup or Git stopped a retire or a junk folder's burn, in the owner's
+  /// words about `subject`. What has no plain words gets the general reason; the receipt's cause
+  /// says what stopped it.
+  public static func plainReason(_ error: Error, about subject: Subject = .copy) -> String {
+    let words = plainWords(error)
+    switch subject {
+    case .copy: return words.copy
+    case .folder: return words.folder
+    }
+  }
+
+  /// One reason in the owner's words, about an old copy and about a junk folder.
+  private struct Words {
+    var copy: String
+    var folder: String
+  }
+
+  private static func plainWords(_ error: Error) -> Words {
     if Task.isCancelled || error is CancellationError { return stopped }
     if let git = error as? WorktreeGit.Failure {
       // The bounded runner's own codes: out of time, more output than it reads, stopped.
       switch git.status {
-      case 124: return "Git took too long to answer about it, so I left it alone."
+      case 124:
+        return Words(
+          copy: "Git took too long to answer about it, so I left it alone.",
+          folder: "Git took too long to answer about that folder, so I left it alone.")
       case 125: return tooManyFiles
       case 130: return stopped
-      default: return "Git gave an error when I checked it, so I left it alone."
+      default:
+        return Words(
+          copy: "Git gave an error when I checked it, so I left it alone.",
+          folder: "Git gave an error when I checked that folder, so I left it alone.")
       }
     }
     guard case StoreError.message(let message) = error else {
@@ -354,38 +378,82 @@ public enum AutopilotWorktrees {
       {
         return noRoom
       }
-      return uncheckable
+      return general
     }
     if message == "Checkout inspection was cancelled; coverage incomplete." { return stopped }
-    return plainReasons[message] ?? uncheckable
+    return plainReasons[message] ?? general
   }
 
-  private static let tooManyFiles = "It has too many files for me to back up, so I left it alone."
-  private static let noRoom =
-    "There isn't enough free space to back it up first, so I left it alone."
+  /// When nothing plainer can be said: a copy couldn't be checked, or a folder's contents couldn't
+  /// be backed up.
+  private static let general = Words(
+    copy: uncheckable,
+    folder: "I couldn't preserve this folder's unique contents, so I left it alone.")
+  private static let stopped = Words(
+    copy: "I stopped before I finished checking it, so I left it alone.",
+    folder: "I stopped before I finished backing up that folder, so I left it alone.")
+  private static let tooManyFiles = Words(
+    copy: "It has too many files for me to back up, so I left it alone.",
+    folder: "That folder has too many files for me to back up, so I left it alone.")
+  private static let noRoom = Words(
+    copy: "There isn't enough free space to back it up first, so I left it alone.",
+    folder: "There isn't enough free space to back up that folder first, so I left it alone.")
 
   /// The walk's and the backup's own reasons (`WorktreeInspection.files`, `PrivateRecovery`), word
   /// for word, with what the owner reads instead.
-  private static let plainReasons: [String: String] = {
-    let changed = "It changed while I was backing it up, so I left it alone."
-    let unseen = "I could not look inside every folder, so I left it alone."
-    let permissions =
-      "Some files in it have special permissions I can't back up, so I left it alone."
-    let extra = "Some files in it carry extra macOS data I can't back up, so I left it alone."
-    let names = "Git listed file names I can't read, so I left it alone."
-    var reasons: [String: String] = [
-      "Nested repository is protected.": nestedProject,
-      "Nested bare repository is protected.": nestedProject,
+  private static let plainReasons: [String: Words] = {
+    let nested = Words(
+      copy: nestedProject,
+      folder:
+        "There is another project folder inside that folder that I can't back up, so I left it alone."
+    )
+    let changed = Words(
+      copy: "It changed while I was backing it up, so I left it alone.",
+      folder: "That folder changed while I was backing it up, so I left it alone.")
+    let unseen = Words(
+      copy: "I could not look inside every folder, so I left it alone.",
+      folder: "I couldn't see everything inside that folder, so I left it alone.")
+    let permissions = Words(
+      copy: "Some files in it have special permissions I can't back up, so I left it alone.",
+      folder:
+        "Some files in that folder have special permissions I can't back up, so I left it alone.")
+    let extra = Words(
+      copy: "Some files in it carry extra macOS data I can't back up, so I left it alone.",
+      folder:
+        "Some files in that folder carry extra macOS data I can't back up, so I left it alone.")
+    let names = Words(
+      copy: "Git listed file names I can't read, so I left it alone.",
+      folder: "Git listed file names in that folder I can't read, so I left it alone.")
+    var reasons: [String: Words] = [
+      "Nested repository is protected.": nested,
+      "Nested bare repository is protected.": nested,
       "Checkout inspection limit reached; coverage incomplete.": tooManyFiles,
-      "Checkout inspection ran out of time; coverage incomplete.":
-        "Backing it up took too long, so I left it alone.",
+      "Checkout inspection ran out of time; coverage incomplete.": Words(
+        copy: "Backing it up took too long, so I left it alone.",
+        folder: "Backing up that folder took too long, so I left it alone."),
       "Recovery metadata exceeds its bound; nothing removed.": tooManyFiles,
-      "Links or special files require supported recovery.":
-        "It holds a special file, like a socket or a pipe, that I can't back up, so I left it alone.",
-      "File identity, ownership or same-volume coverage unavailable.":
-        "Some files in it belong to another user or sit on another disk, so I left it alone.",
-      "Native file flags or online-only content require owner recovery.":
-        "Some files in it are locked, hidden, compressed or only in iCloud, which I can't back up, so I left it alone.",
+      "Links or special files require supported recovery.": Words(
+        copy:
+          "It holds a special file, like a socket or a pipe, that I can't back up, so I left it alone.",
+        folder:
+          "That folder holds a special file, like a socket or a pipe, that I can't back up, so I left it alone."
+      ),
+      // Retire keeps a file that has other names by its contents. A junk folder's backup doesn't,
+      // and pnpm links a workspace's own packages into its install that way.
+      "Hardlinked files require owner handling.": Words(
+        copy: "Some files in it are hard links I can't back up, so I left it alone.",
+        folder: "Some files in that folder are hard links I can't back up, so I left it alone."),
+      "File identity, ownership or same-volume coverage unavailable.": Words(
+        copy: "Some files in it belong to another user or sit on another disk, so I left it alone.",
+        folder:
+          "Some files in that folder belong to another user or sit on another disk, so I left it alone."
+      ),
+      "Native file flags or online-only content require owner recovery.": Words(
+        copy:
+          "Some files in it are locked, hidden, compressed or only in iCloud, which I can't back up, so I left it alone.",
+        folder:
+          "Some files in that folder are locked, hidden, compressed or only in iCloud, which I can't back up, so I left it alone."
+      ),
       "Special permission bits require owner handling.": permissions,
       "Extended ACLs require owner recovery.": permissions,
       "ACL visibility is unavailable.": permissions,
