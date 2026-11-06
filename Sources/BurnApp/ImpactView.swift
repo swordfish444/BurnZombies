@@ -463,7 +463,7 @@ struct MiniImpactView: View {
       HStack(spacing: 12) {
         VStack(alignment: .leading, spacing: 4) {
           Text("Let BZ use its backup key.").font(.system(size: 13, weight: .semibold))
-          Text(asking ? "macOS is asking you now." : "Pick Always Allow when macOS asks.")
+          Text(asking ? "macOS is asking you now." : "Enter your password when macOS asks.")
             .font(.system(size: 11)).foregroundStyle(BurnTheme.muted)
         }.lineLimit(1).minimumScaleFactor(0.8)
         Spacer(minLength: 0)

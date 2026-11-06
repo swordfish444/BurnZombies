@@ -48,7 +48,7 @@ private final class RKKeychain: @unchecked Sendable {
     while !answered { condition.wait() }
     return rkKey
   }
-  /// The owner answers macOS's question with Always Allow.
+  /// The owner answers macOS's question and allows it.
   func answer() {
     condition.withLock {
       answered = true
@@ -118,7 +118,7 @@ private func recoveryKeyGateProof() throws {
   check(asked.wait != nil, "after a Deny old copies still wait")
   equal(asked.wait?.asking, false, "and the question is no longer up")
 
-  // While macOS's question is up, the wait says so; Always Allow ends it.
+  // While macOS's question is up, the wait says so; allowing it ends the wait.
   locked.allows = true
   locked.interactiveBlocks = true
   let allowing = Thread { try? asked.allow() }
@@ -128,7 +128,7 @@ private func recoveryKeyGateProof() throws {
   locked.answer()
   rkWaitUntil(2) { asked.wait == nil }
   isNil(asked.wait)
-  equal(rkBytes(try asked.forBurn()), rkBytes(rkKey), "after Always Allow, burns read the key")
+  equal(rkBytes(try asked.forBurn()), rkBytes(rkKey), "once allowed, burns read the key")
 
   // Undo reads with a question allowed too, and its key ends a wait.
   let undo = RKKeychain(quietBlocks: false)
@@ -215,7 +215,7 @@ private func recoveryKeyEngineProof() async throws {
   checkFalse(ok, "the socket can't send Allow: \(reply)")
   equal(keychain.interactive, 0, "no question was shown for the socket")
 
-  // The owner clicks Allow and chooses Always Allow: what waited burns at once.
+  // The owner clicks Allow and allows it in macOS's dialog: what waited burns at once.
   snapshot = try await engine.apply(.allowRecoveryKey)
   isNil(snapshot.recoveryKey)
   equal(keychain.interactive, 1, "Allow read the key with the question allowed")

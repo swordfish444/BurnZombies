@@ -22,9 +22,9 @@ public final class AutopilotRecoveryKey: @unchecked Sendable {
   /// What a copy says when its key can't be read without asking.
   public static let refusal =
     "I need your OK to use my backup key, so I left it alone. Click Allow in BZ's menu."
-  /// What the owner hears when macOS didn't hand the key over after Allow.
+  /// What the owner hears when Allow still didn't bring the key back.
   public static let notAllowed =
-    "macOS didn't let me use my backup key, so old copies still wait. Click Allow again and choose Always Allow."
+    "I still couldn't get my backup key, so old copies still wait. Click Allow to try again."
   public struct Waiting: LocalizedError {
     public var errorDescription: String? { AutopilotRecoveryKey.refusal }
   }

@@ -1,6 +1,6 @@
 # The backup key never stalls Autopilot
 
-Status: asked for after build 62's first burn pass waited on a keychain question (2026-11-06). Built on main after build 64.
+Status: asked for after build 62's first burn pass waited on a keychain question (2026-11-06). Started on main after build 64, then rebuilt on #75 (build 67). #75 moved the key into a private file, so only its one-time move out of the Keychain, and any later Keychain read, still needs this.
 
 ## What happened
 
@@ -12,6 +12,8 @@ Status: asked for after build 62's first burn pass waited on a keychain question
   - Security's legacy `SecItemCopyMatching` path ignores it.
   - An item read there asks with prompt credentials unless the process has turned keychain interaction off with `SecKeychainSetUserInteractionAllowed(false)`. Then it uses empty credentials and fails instead of asking (`Globals::itemCredentials` in Security's `libsecurity_keychain`).
 
+Since #75 the key lives in `recovery-key/<namespace>.key` in BZ's data folder. The first load on a new build still reads the old Keychain item to move it, and that read hits the same prompt for every build with a new code hash. If the first load comes from the burn pass, it stalls the pass exactly as build 62 did. That's the case this fixes.
+
 ## Goals
 
 1. No burn BZ makes waits on a keychain question. The key is read with interaction off in a way the file keychain obeys, and no read is waited on longer than a fixed bound.
@@ -21,17 +23,18 @@ Status: asked for after build 62's first burn pass waited on a keychain question
 
 ## Non-goals
 
-- No change to the key, its keychain item, its access list or the archive format. BZ never edits the item. macOS updates the access list itself when the owner chooses Always Allow in its own dialog.
+- No change to the key, its file, its old keychain item, its access list or the archive format. BZ never edits the item.
 - No change to the Worktrees window, whose owner actions already read the key interactively.
 - No notification. The ask lives in the menu, next to the questions.
 
 ## 1. Reading the key without a question
 
-`WorktreeRecoveryKey.load`:
+`WorktreeRecoveryKey.keychainKey`, the move's read:
 
-- Every read, and the add that creates a missing key, holds one process-wide lock.
-- With `allowInteraction: false`, the call turns keychain interaction off for exactly its own duration (`SecKeychainSetUserInteractionAllowed(false)`), then puts the previous setting back. `kSecUseAuthenticationUIFail` stays for data-protection items.
+- Every Keychain read holds one process-wide lock.
+- With `allowInteraction: false`, the read turns keychain interaction off for exactly its own duration (`SecKeychainSetUserInteractionAllowed(false)`), then puts the previous setting back. `kSecUseAuthenticationUIFail` stays for data-protection items.
 - The setting is process-wide, so the lock keeps a quiet read from overlapping a read that is allowed to ask.
+- A denied read returns its denial, not "not found": Security's legacy `SecItemCopyMatching` counts the item before reading its secret and keeps the first error. But a search may skip a locked keychain when it may not ask to unlock it, or when the owner cancels the unlock dialog. So "not found" only counts while the default keychain is unlocked. Otherwise the read throws, and no new key is made that would orphan the recovery copies sealed with the old one.
 
 Callers that relied on the default now really get no question. The owner's own actions read interactively on purpose: the Worktrees window (already), and Undo/Restore of an Autopilot burn (section 3).
 
@@ -60,7 +63,7 @@ The app has one (`.shared`); proofs build their own with a fake reader and a sho
 
 - The snapshot carries `recoveryKey` (since, asking). The CLI and AI summary add a note while it is set.
 - The menu-bar popover shows a card in the slot under the totals. Look-only comes first, then this card, then Full Disk Access.
-  - Card: "Let BZ use its backup key" / "Old copies wait for it. Choose Always Allow." with an Allow button.
+  - Card: "N GB WAITS FOR YOUR OK" / "Let BZ use its backup key." / "Enter your password when macOS asks." with an Allow button.
   - While macOS asks: "macOS is asking you now." The button is off.
 - The Details window's Autopilot section shows an orange "Allow BZ's backup key" button above the questions button.
 - After Allow, the footer says "Thanks. Old copies can burn again." If it fails, the footer gives the reason.

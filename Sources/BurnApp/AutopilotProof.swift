@@ -404,7 +404,7 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   let miniKey = try render(
     MiniImpactView(model: keyWait), size: MiniImpactView.size, name: "mini-key",
     directory: directory)
-  try require(miniKey, ["backup key", "Always Allow", "Allow"], in: "mini-key")
+  try require(miniKey, ["backup key", "password", "Allow"], in: "mini-key")
   let menuKey = try render(
     ZStack {
       AutopilotTheme.window
