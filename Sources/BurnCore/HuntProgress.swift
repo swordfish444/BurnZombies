@@ -13,9 +13,27 @@ public struct HuntLogEntry: Codable, Sendable, Identifiable {
   }
 }
 
+/// One area an Autopilot hunt works through: programs, old copies or junk folders. Every number
+/// is a count of real things: what BZ looked at, what the AI judged and what burned.
+public struct HuntLane: Codable, Sendable, Equatable, Identifiable {
+  /// An `AutopilotKind` raw value: `process`, `worktree` or `disk`.
+  public var kind: String
+  /// What BZ looked at on its own: programs running, copies and junk folders found.
+  public var seen = 0
+  /// What was waiting for the AI's judgment when the hunt began.
+  public var toJudge = 0
+  /// What the AI judged during this hunt, those or others.
+  public var judged = 0
+  public var burned = 0
+  public var bytes: UInt64 = 0
+  public var id: String { kind }
+  public init(kind: String) { self.kind = kind }
+}
+
 /// Presentation evidence only. This file never authorizes a scan or cleanup.
 public struct HuntSnapshot: Codable, Sendable, Identifiable {
   public var id = UUID()
+  /// `hunting`, `completed`, `stopped` (by the owner or the spending limit) or `paused`.
   public var phase = "hunting"
   public var startedAt: Date
   public var finishedAt: Date?
@@ -33,10 +51,41 @@ public struct HuntSnapshot: Codable, Sendable, Identifiable {
   public var receiptEvidenceAvailable: Bool?
   public var discoveredWorktrees: Int?
   public var worktreeStates: [String: Int]?
+  /// A deep hunt: the owner started it by hand, the AI reads everything and it stops at
+  /// `limitUSD`.
+  public var deep: Bool?
+  /// Autopilot hunts only: programs, old copies and junk folders, in that order.
+  public var lanes: [HuntLane]?
+  /// What the hunt is looking at right now: a program, copy or folder name, never a command line.
+  public var focus: String?
+  /// What the AI cost so far, estimated from its tokens until the run reports its own total.
+  public var spentUSD: Double?
+  public var limitUSD: Double?
+  public var tokens: Int?
+  /// Why a hunt ended early: `stopped` (the owner pressed Stop) or `limit` (it reached the
+  /// spending limit). What it burned stays burned either way.
+  public var stopReason: String?
   public var isRunning: Bool { phase == "hunting" }
+  /// Autopilot hunts count their own receipts as they burn.
+  public var isAutopilot: Bool { lane == "autopilot" }
   public init(startedAt: Date = Date()) { self.startedAt = startedAt }
-  public mutating func append(_ kind: String, _ message: String, date: Date = Date()) {
-    log.append(.init(date: date, kind: kind, message: message))
+  /// Changes one lane, adding it when the hunt has none of that kind yet.
+  public mutating func update(lane kind: String, _ change: (inout HuntLane) -> Void) {
+    var all = lanes ?? []
+    if let i = all.firstIndex(where: { $0.kind == kind }) {
+      change(&all[i])
+    } else {
+      var lane = HuntLane(kind: kind)
+      change(&lane)
+      all.append(lane)
+    }
+    lanes = all
+  }
+  /// `id` names a line that must appear only once, such as a burn's receipt.
+  public mutating func append(
+    _ kind: String, _ message: String, date: Date = Date(), id: String? = nil
+  ) {
+    log.append(.init(id: id ?? UUID().uuidString, date: date, kind: kind, message: message))
     log = Array(log.suffix(128))
   }
   public mutating func include(_ progress: ReviewProgress) {
@@ -73,7 +122,9 @@ public struct HuntSnapshot: Codable, Sendable, Identifiable {
     if let progress = try? ReviewProgress.load(store), progress.attempt == value.activeAttempt {
       value.include(progress)
     }
-    if let catalog = try? store.load() {
+    if value.isAutopilot {
+      value.receiptEvidenceAvailable = true
+    } else if let catalog = try? store.load() {
       value.includeReceipts(catalog)
     } else {
       value.receiptEvidenceAvailable = false
@@ -85,6 +136,12 @@ public struct HuntSnapshot: Codable, Sendable, Identifiable {
     return value
   }
   public mutating func includeReceipts(_ catalog: Catalog) {
+    // Autopilot burns are counted from its own receipts as they happen; the monitor's evidence
+    // would count its programs twice and its copies not at all.
+    if isAutopilot {
+      receiptEvidenceAvailable = true
+      return
+    }
     let nativeWorktrees = (catalog.worktreeEvidence ?? []).count
     let nativeDisk = (catalog.diskCandidates ?? []).count + (catalog.diskDiscovery ?? []).count
     if isRunning, nativeWorktrees + nativeDisk > 0,

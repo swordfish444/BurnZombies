@@ -108,6 +108,12 @@ extension AutopilotSources {
             : " \(places.count) old copies are in " + ProtectedLocations.list(names) + "."
         }
         return [note + " Turn on Full Disk Access to cover them too. Everything else is covered."]
+      },
+      processCount: {
+        let uid = getuid()
+        return await monitor.autopilotRecords().values.filter {
+          $0.missingSince == nil && $0.latest.uid == uid
+        }.count
       })
   }
 

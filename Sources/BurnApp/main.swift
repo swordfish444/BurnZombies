@@ -43,6 +43,13 @@ import UserNotifications
   @Published var machineReview = MachineReviewState()
   @Published var machineReviewEnabled = false
   @Published var harnessConfigured = false
+  /// The harness Settings chose. A deep hunt needs Claude Code: it streams and stops at a limit.
+  @Published private(set) var harness: String?
+  static let deepLimitKey = "deepHuntLimitUSD"
+  /// The deep hunt's spending limit in US dollars, kept for next time.
+  @Published var deepLimitUSD = HuntOptions.defaultLimit {
+    didSet { accessPreferences?.set(deepLimitUSD, forKey: Self.deepLimitKey) }
+  }
   @Published var huntSnapshot: HuntSnapshot?
   @Published private(set) var huntLaunching = false
   var huntRunning: Bool {
@@ -154,7 +161,7 @@ import UserNotifications
         ? "Hunting now. Look-only: I'll judge and ask, but burn nothing."
         : "Hunting now. I'll burn what's safe and ask if I'm unsure."
       openHunt?()
-      Task { autopilot = await runtime.tick(manual: true) }
+      launchHunt(runtime, HuntOptions())
       return
     }
     guard accessReady else {
@@ -174,11 +181,71 @@ import UserNotifications
     huntLaunching = true
     runHunt(manual: true)
   }
+  /// Deep hunts need Claude Code: it streams what it does and stops itself at a spending limit.
+  var deepHuntAvailable: Bool { harness == "claude" && (demo || autopilotRuntime != nil) }
+
+  /// A deep hunt: the AI reads everything, small programs too, and burns as it goes until it has
+  /// spent the limit or the owner stops it.
+  func requestDeepHunt() {
+    guard let runtime = autopilotRuntime else {
+      message = "Deep hunts need Autopilot."
+      return
+    }
+    guard harness == "claude" else {
+      message = AutopilotCoordinator.deepNeedsClaude
+      return
+    }
+    guard !huntRunning else {
+      openHunt?()
+      return
+    }
+    message =
+      "Deep hunt started. It stops at \(HuntOptions.dollars(deepLimitUSD)) and burns as it goes."
+    openHunt?()
+    launchHunt(runtime, HuntOptions(deep: true, limitUSD: deepLimitUSD))
+  }
+
+  /// "Keep hunting": a deep hunt that stopped goes on with what is left under the limit. Returns
+  /// false when nothing is left, so the window can say to raise the limit.
+  @discardableResult func keepHunting() -> Bool {
+    guard let runtime = autopilotRuntime, let hunt = huntSnapshot, hunt.deep == true,
+      hunt.phase == "stopped"
+    else {
+      requestDeepHunt()
+      return true
+    }
+    let left = deepLimitUSD - (hunt.spentUSD ?? 0)
+    guard left >= HuntOptions.smallestRun else { return false }
+    message = "Hunting again from where it stopped."
+    launchHunt(runtime, HuntOptions(deep: true, limitUSD: left, continuing: true))
+    return true
+  }
+
+  /// Ends the hunt under way. What it burned stays burned.
+  func stopHunt() {
+    guard let runtime = autopilotRuntime else { return }
+    Task {
+      await runtime.stop()
+      await receiveReviewState()
+    }
+  }
+
+  private func launchHunt(_ runtime: AutopilotRuntime, _ options: HuntOptions) {
+    huntLaunching = true
+    startHuntProgressTimer()
+    Task {
+      autopilot = await runtime.tick(manual: true, options: options)
+      huntLaunching = false
+      await receiveReviewState()
+    }
+  }
+
   func reloadReviewConfiguration() {
     guard !demo else { return }
     do {
       let config = try MachineReviewConfiguration.load(root: Store.defaultRoot)
       harnessConfigured = config != nil
+      harness = config?.harness
       machineReviewEnabled = config?.enabled ?? false
     } catch { message = error.localizedDescription }
   }
@@ -245,6 +312,23 @@ import UserNotifications
     Task {
       await receiveReviewState(includeHunt: huntProgressVisible)
       huntPollBusy = false
+    }
+    if huntProgressVisible { refreshAutopilotForHunt() }
+  }
+  private var autopilotRefreshBusy = false
+  private var autopilotRefreshed = Date.distantPast
+  /// The Hunt window's questions come from the engine: what the AI asks shows while it hunts. Apart
+  /// from the feed's poll, so a busy engine never holds the feed up.
+  private func refreshAutopilotForHunt() {
+    guard let runtime = autopilotRuntime, !autopilotRefreshBusy,
+      Date().timeIntervalSince(autopilotRefreshed) >= 2
+    else { return }
+    autopilotRefreshBusy = true
+    Task {
+      let next = await runtime.engine.snapshot()
+      if next != autopilot { autopilot = next }
+      autopilotRefreshed = Date()
+      autopilotRefreshBusy = false
     }
   }
   @Published var working = false {
@@ -313,12 +397,18 @@ import UserNotifications
     self.huntAction = huntAction
     accessBannerDismissed =
       self.accessPreferences?.bool(forKey: Self.accessBannerDismissedKey) ?? false
+    if let saved = self.accessPreferences?.double(forKey: Self.deepLimitKey),
+      HuntOptions.limits.contains(saved)
+    {
+      deepLimitUSD = saved
+    }
     if demo {
       state = Demo.state()
       state.fullDiskAccess = .init(state: .granted, detail: "Preview access state.")
       autopilot = Demo.autopilot()
       pressure = "Low"
       harnessConfigured = true
+      harness = "claude"
       machineReviewEnabled = true
       restoringAccessPresentation = false
       restoreAccessVerificationAfterRelaunch()
@@ -1448,7 +1538,7 @@ struct Dashboard: View {
     popover?.performClose(nil)
     if huntWindow == nil {
       let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 948, height: 780),
+        contentRect: NSRect(x: 0, y: 0, width: 948, height: 860),
         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
         backing: .buffered, defer: false)
       window.title = "BurnZombies — Hunt Zombies"
@@ -1456,7 +1546,7 @@ struct Dashboard: View {
       window.titleVisibility = .hidden
       window.isReleasedWhenClosed = false
       window.delegate = self
-      window.contentMinSize = NSSize(width: 800, height: 740)
+      window.contentMinSize = NSSize(width: 800, height: 760)
       let hosting = NSHostingView(rootView: HuntView(model: model))
       hosting.sizingOptions = []
       window.contentView = hosting

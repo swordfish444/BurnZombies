@@ -148,7 +148,8 @@ do {
       )
     }
   case "autopilot":
-    // `burnzombies autopilot [snapshot|catalog|inspect ID|burn ID...|sweep|eval [--json]|look-only]`,
+    // `burnzombies autopilot [snapshot|catalog|inspect ID|burn ID...|sweep|deep [LIMIT]|stop|eval
+    // [--json]|look-only]`,
     // or one AutopilotRequest JSON object on stdin with `burnzombies autopilot -`. Every one but
     // look-only is answered by the running app; none starts a tick.
     if args.count == 2, args[1] == "look-only" {
@@ -170,6 +171,14 @@ do {
     } else if request.tool == "sweep" {
       request.tool = "command"
       request.command = .sweepNow
+    } else if request.tool == "deep" {
+      // A deep hunt with a spending limit in US dollars (5 unless given).
+      request.tool = "command"
+      request.command = .deepHunt(
+        limitUSD: args.count > 2 ? Double(args[2]) ?? HuntOptions.defaultLimit : HuntOptions.defaultLimit)
+    } else if request.tool == "stop" {
+      request.tool = "command"
+      request.command = .stopHunt
     }
     let body = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
     let raw = try await AgentConnection.callAsync(AgentRequest("autopilot", payload: body))
@@ -190,10 +199,11 @@ do {
     }
     try CodexReview.run(URL(fileURLWithPath: args[1]), probeOnly: args.count == 3)
   case "review-worker":
-    // Optional `--seconds N` (1...900) precedes `--`; reviews default to 180 seconds.
+    // Optional `--seconds N` (1...3600: a deep hunt may take up to 45 minutes) precedes `--`;
+    // reviews default to 180 seconds.
     var seconds: Int32 = 180
     var rest = Array(args.dropFirst())
-    if rest.count >= 2, rest[0] == "--seconds", let value = Int32(rest[1]), (1...900).contains(value)
+    if rest.count >= 2, rest[0] == "--seconds", let value = Int32(rest[1]), (1...3600).contains(value)
     {
       seconds = value
       rest.removeFirst(2)
