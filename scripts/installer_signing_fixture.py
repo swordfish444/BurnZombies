@@ -17,7 +17,7 @@ def keychains():
 
 class SigningFixture:
     def __init__(self, root):
-        self.root = Path(root)
+        self.root = Path(root).resolve()
         self.root.mkdir(mode=0o700)
         self.keychain = self.root / "fixture.keychain-db"
         self.password = secrets.token_hex(16)
@@ -63,12 +63,27 @@ subjectKeyIdentifier=hash
         assert self.fingerprint.encode() in identities, identities.decode(errors="replace")
 
     def sign(self, app):
-        for binary in sorted((Path(app) / "Contents/MacOS").iterdir()):
-            if binary.is_file():
-                self.run("codesign", "--force", "--sign", self.fingerprint,
-                         "--keychain", str(self.keychain), "--timestamp=none", str(binary))
-        self.run("codesign", "--force", "--sign", self.fingerprint,
-                 "--keychain", str(self.keychain), "--timestamp=none", str(app))
+        # --keychain restricts identity lookup, but codesign still resolves the chain
+        # through the user search list. Add only this fixture for the signing operation.
+        owned = str(self.keychain)
+        before = keychains()
+        added = owned not in before
+        try:
+            if added:
+                self.run("security", "list-keychains", "-d", "user", "-s", *before, owned)
+            assert owned in keychains()
+            for binary in sorted((Path(app) / "Contents/MacOS").iterdir()):
+                if binary.is_file():
+                    self.run("codesign", "--force", "--sign", self.fingerprint,
+                             "--keychain", owned, "--timestamp=none", str(binary))
+            self.run("codesign", "--force", "--sign", self.fingerprint,
+                     "--keychain", owned, "--timestamp=none", str(app))
+        finally:
+            if added:
+                # Read again and remove only ours, preserving concurrent unrelated changes.
+                remaining = [path for path in keychains() if path != owned]
+                self.run("security", "list-keychains", "-d", "user", "-s", *remaining)
+                assert keychains() == remaining
 
     def installer(self, source, destination):
         """Change one literal anchor in a private test copy; production has no override."""

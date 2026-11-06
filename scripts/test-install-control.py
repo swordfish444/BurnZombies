@@ -15,13 +15,20 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from installer_signing_fixture import production_pin, signing_fixture
+from installer_signing_fixture import keychains, production_pin, signing_fixture
 
 repo = Path(__file__).resolve().parents[1]
 production_pin(repo / "install.sh")
 with tempfile.TemporaryDirectory(prefix="bz-install-control-") as temporary, \
         signing_fixture(Path(temporary) / "signing") as signer:
     root = Path(temporary)
+    before_failure = keychains()
+    try:
+        signer.sign(root / "missing.app")
+        raise AssertionError("Missing app unexpectedly signed")
+    except FileNotFoundError:
+        pass
+    assert keychains() == before_failure, "Signing failure must restore the search list"
     app = root / "package/BurnZombies.app"
     macos = app / "Contents/MacOS"
     macos.mkdir(parents=True)
