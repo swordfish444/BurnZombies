@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
 version="0.14.1"
+release_certificate="F6EE40DDEBB01F056DE8FC7910091F4FAC3D7B49"
 client="auto"
 launch=true
 look_only=false
@@ -68,7 +69,9 @@ if LC_ALL=C grep -Ev '^BurnZombies\.app(/[^[:cntrl:]]*)?/?$' "$work/entries" >/d
   echo 'Unexpected archive paths. Nothing installed.' >&2; exit 1
 fi
 tar -xzf "$work/$asset" -C "$work"
-codesign --verify --deep --strict "$work/BurnZombies.app"
+# A valid signature alone also accepts ad-hoc code. Apple's certificate requirement
+# authenticates the release identity across every universal architecture, before code runs.
+codesign --verify --deep --strict -R "=certificate leaf = H\"$release_certificate\"" "$work/BurnZombies.app"
 identity="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$work/BurnZombies.app/Contents/Info.plist")"
 [[ "$identity" == io.burnzombies.app ]] || { echo 'Unexpected app identity.' >&2; exit 1; }
 

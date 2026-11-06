@@ -4,6 +4,8 @@ import json,sys,os
 assert sys.argv[1] == 'app-server'
 assert 'mcp_servers={}' in sys.argv
 assert 'features.hooks=false' in sys.argv
+image_settings = [arg for arg in sys.argv if arg.startswith('features.view_image=')]
+assert image_settings and image_settings[-1] == 'features.view_image=false', 'Local image access must remain disabled after plan overrides'
 model=''; effort='default'
 for arg in sys.argv:
     if arg.startswith('model_reasoning_effort='): effort=json.loads(arg.split('=',1)[1])

@@ -76,6 +76,106 @@ func securityBoundaryProof() async throws {
   checkFalse(
     evidence["package.json"]?.contains("synthetic-private-value") == true,
     "unrelated JSON fields never cross the boundary")
+  let before = "Project: useful-project\nBuild: pnpm build"
+  let after = "Tests: pnpm test\nGenerated output: dist"
+  let privateBody = Data(repeating: 0x47, count: 48).base64EncodedString()
+  let privateValue = "synthetic-multiline-value"
+  let blocks = [
+    "-----BEGIN PRIVATE KEY-----\n\(privateBody)\n-----END PRIVATE KEY-----",
+    "-----begin rsa private key-----\r\n\(privateBody)\r\n-----end rsa private key-----",
+    "-----BEGIN OPENSSH PRIVATE KEY-----\n\(privateBody)\n-----END OPENSSH PRIVATE KEY-----",
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----\n\(privateBody)\n-----END PGP PRIVATE KEY BLOCK-----",
+    "api_key: |\n  \(privateValue)\n  \(privateBody)",
+    "credentials: !!str >-\n  \(privateValue)\n  \(privateBody)",
+    "PRIVATE_KEY = \"\"\"\n\(privateValue)\n\(privateBody)\n\"\"\"",
+    "access_token = \"first\\\"part\n\(privateValue)\n\(privateBody)\nlast\"",
+    "API_KEY=$(cat <<'VALUE_END'\n\(privateValue)\n\(privateBody)\nVALUE_END\n)",
+    "API_KEY=$(cat <<'VALUE_END'\r\n\(privateValue)\r\n\(privateBody)\r\nVALUE_END\r\n)",
+    "API_KEY=$(cat <<-VALUE_END\n\t\(privateValue)\n\t\(privateBody)\n\tVALUE_END\n)",
+    "const apiKey = `\n\(privateValue)\n\(privateBody)\n`;",
+    "api_key: str = \"\"\"\n\(privateValue)\n\(privateBody)\n\"\"\"",
+    "api_key_value = r\"\"\"\n\(privateValue)\n\(privateBody)\n\"\"\"",
+    "- api_key: |\n    \(privateValue)\n    \(privateBody)\n  producer: make build",
+    "api_key: &main |\n  \(privateValue)\n  \(privateBody)",
+    "api_key: [\n  {nested: [\"\(privateValue)\",\n  \"\(privateBody)\"]}\n]",
+    "API_KEY=first\\\n\(privateValue)\\\n\(privateBody)",
+    "API_KEY=$(\nprintf '\(privateValue)\n\(privateBody)'\n)",
+  ]
+  let readme = URL(fileURLWithPath: project + "/README.md")
+  for (index, block) in blocks.enumerated() {
+    try Data((before + "\n" + block + "\n" + after).utf8).write(to: readme)
+    let excerpt = AutopilotEvidence.read(item, relativePath: "README.md")["README.md"] ?? ""
+    check(
+      excerpt.contains(before) && excerpt.contains(after),
+      "build/test evidence survives block \(index)")
+    checkFalse(
+      excerpt.contains(privateValue) || excerpt.contains(privateBody),
+      "block \(index) remains private")
+    let automatic = AutopilotInspector.inspect(item)["projectEvidence"] ?? ""
+    check(
+      automatic.contains("pnpm build") && automatic.contains("pnpm test"),
+      "automatic producer context survives")
+    checkFalse(
+      automatic.contains(privateValue) || automatic.contains(privateBody),
+      "automatic inspection hides block \(index)")
+    if block.contains("producer: make build") {
+      check(excerpt.contains("producer: make build"), "YAML sibling producer evidence survives")
+    }
+  }
+  for inline in [
+    "API_KEY='${localValue}' # Example only: <<EOF",
+    "API_KEY=$(printf '<<EOF')",
+    "API_KEY=localValue # Example only: <<EOF",
+    "API_KEY=localValue # Example only: \\",
+    "API_KEY='localValue'",
+  ] {
+    try Data((before + "\n" + inline + "\n" + after).utf8).write(to: readme)
+    let excerpt = AutopilotEvidence.read(item, relativePath: "README.md")["README.md"] ?? ""
+    check(
+      excerpt.contains(before) && excerpt.contains(after),
+      "inline values and commented heredoc examples preserve following evidence")
+  }
+  // An escaped triple quote inside the value is not its terminator.
+  try Data(
+    (before + "\nPRIVATE_KEY = \"\"\"\n\\\"\"\"\n" + privateValue + "\n\"\"\"\n" + after).utf8
+  )
+  .write(to: readme)
+  let escaped = AutopilotEvidence.read(item, relativePath: "README.md")["README.md"] ?? ""
+  checkFalse(escaped.contains(privateValue), "escaped delimiter never exposes the following value")
+  check(
+    escaped.contains(before) && escaped.contains(after),
+    "quoted block preserves surrounding workflow")
+
+  // A tokenizer description is not a credential assignment. Its useful body was available
+  // before this patch and must remain available.
+  try Data(("tokenizer = \"\"\"\n" + before + "\n" + after + "\n\"\"\"").utf8).write(to: readme)
+  let tokenizer = AutopilotEvidence.read(item, relativePath: "README.md")["README.md"] ?? ""
+  check(
+    tokenizer.contains(before) && tokenizer.contains(after),
+    "ordinary multiline producer descriptions survive")
+  let manifest: [String: Any] = [
+    "name": "useful-project",
+    "scripts": [
+      "build": "tsc", "test": "vitest", "optional": "",
+      "sign": blocks[0], "private_key": privateValue,
+    ],
+    "inputs": [], "outputs": [:], "complete": true,
+  ]
+  try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted])
+    .write(to: URL(fileURLWithPath: project + "/package.json"))
+  let safeJSON = AutopilotEvidence.read(item, relativePath: "package.json")["package.json"] ?? ""
+  let safeObject = try JSONSerialization.jsonObject(with: Data(safeJSON.utf8)) as! [String: Any]
+  let scripts = safeObject["scripts"] as! [String: Any]
+  equal(safeObject["name"] as? String, "useful-project")
+  equal(scripts["build"] as? String, "tsc")
+  equal(scripts["test"] as? String, "vitest")
+  equal(scripts["optional"] as? String, "", "empty legitimate values remain meaningful")
+  equal((safeObject["inputs"] as? [Any])?.count, 0)
+  equal((safeObject["outputs"] as? [String: Any])?.count, 0)
+  checkFalse(
+    safeJSON.contains(privateValue) || safeJSON.contains(privateBody),
+    "decoded JSON values stay private")
+  check(scripts["sign"] as? String == "[redacted]", "redaction does not imply the script is absent")
   for path in [
     ".env", "../package.json", "/etc/passwd", "outside/package.json", "a/../../package.json",
     "package.json\0",

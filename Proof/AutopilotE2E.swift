@@ -163,7 +163,13 @@ func autopilotEndToEndProof(root: URL, harness: String, executable: String) asyn
   check(!memory.judgments.isEmpty, "the AI recorded verdicts")
   check(snapshot.questions.count <= 3, "at most three open questions")
   check(snapshot.questions.allSatisfy { $0.question.hasSuffix("?") }, "questions are questions")
-  check(output.contains("\"is_error\":false"), "harness reported success")
+  if harness == "codex" {
+    // The adapter returns only after a successful typed turn/completed event. Also require
+    // actual native tool use; Claude's is_error envelope is not part of Codex's protocol.
+    check(output.contains("\"type\":\"bz.tool\""), "Codex used native MCP tools")
+  } else {
+    check(output.contains("\"is_error\":false"), "harness reported success")
+  }
   for receipt in snapshot.receipts where receipt.outcome == "burned" {
     if let restore = receipt.restore {
       check(restore.path.hasPrefix(fixtures.path), "only fixture copies retired")
