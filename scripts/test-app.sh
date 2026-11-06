@@ -5,13 +5,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 proof_artifacts="$(mktemp -d /tmp/bz-local-proof.XXXXXX)"
 printf 'Local proof artifacts: %s\n' "$proof_artifacts"
+proof_failures=0
 
 step() {
   printf 'Local check: %s\n' "$*"
-  "$@"
+  if ! "$@"; then
+    printf 'FAIL local check: %s\n' "$*"
+    proof_failures=$((proof_failures + 1))
+  fi
 }
 
-step scripts/build-app.sh --debug
+scripts/build-app.sh --debug
 step .build/debug/BurnProof --worktree-native
 step .build/debug/BurnProof --worktree-refresh-native
 step .build/debug/BurnZombiesApp --worktree-view-proof "$proof_artifacts/worktrees"
@@ -29,13 +33,8 @@ step .build/debug/BurnZombiesApp --settings-proof "$proof_artifacts/settings.png
 step .build/debug/BurnProof --app-updates
 step .build/debug/BurnZombiesApp --about-proof "$proof_artifacts/about"
 step .build/debug/BurnZombiesApp --access-banner-proof "$proof_artifacts/access-banner"
-step .build/debug/BurnProof --security-boundaries
-step .build/debug/BurnProof --autopilot-policy
-step .build/debug/BurnProof --autopilot-process
-step .build/debug/BurnProof --autopilot-worktrees
-step .build/debug/BurnProof --autopilot-disk
-step .build/debug/BurnProof --autopilot-sweep
-step .build/debug/BurnProof --autopilot-look-only
+# scripts/test.sh --full already covers security boundaries and every Autopilot
+# native policy/process/worktree/disk/sweep/look-only group in its integration run.
 step .build/debug/BurnZombiesApp --autopilot-proof "$proof_artifacts/autopilot"
 step .build/debug/BurnZombiesApp --impact-proof "$proof_artifacts/impact"
 step .build/debug/BurnZombiesApp --mini-proof "$proof_artifacts/mini"
@@ -44,4 +43,5 @@ step .build/debug/BurnZombiesApp --hunt-scene-proof "$proof_artifacts/hunt-scene
 step python3 scripts/test-install-control.py
 step env COPYFILE_DISABLE=1 tar -czf "$proof_artifacts/BurnZombies-test.tar.gz" -C dist BurnZombies.app
 step python3 scripts/test-install.py "$proof_artifacts/BurnZombies-test.tar.gz" --fixture-signer
-printf 'PASS local app/IPC/UI/installer proofs; artifacts: %s\n' "$proof_artifacts"
+printf 'Local app/IPC/UI/installer failures: %s; artifacts: %s\n' "$proof_failures" "$proof_artifacts"
+[[ "$proof_failures" -eq 0 ]]

@@ -238,9 +238,17 @@ func protectedLocationsProof() async throws {
   let covered = try await later.request(.init("scan"), caller: "fixture")
   let copy = covered.records.first { $0.path == documents + "/GitHub/project-copy" }
   isNil(copy?.protectedPlace)
-  check(
-    copy.map { !$0.revision.isEmpty && $0.gaps.isEmpty } == true,
-    "with access, Documents is inspected: " + (copy?.gaps ?? ["no row"]).joined(separator: " "))
+  check(copy.map { !$0.revision.isEmpty } == true, "with access, Documents is inspected")
+  if copy?.gaps == ["Complete same-user cwd/file-handle visibility is unavailable."],
+    WorktreeConsumerSnapshot(roots: [documents]).gap != nil {
+    // Access to this fixture folder does not grant visibility into every process.
+    // Modern macOS may still withhold a system service's file handles.
+    equal(copy?.consumer, "unknown", "incomplete native visibility cannot certify an unused copy")
+    print("PASS protected folder inspected; incomplete native consumer visibility remains unknown")
+  } else {
+    check(copy?.gaps.isEmpty == true,
+      "with access, Documents has complete evidence: " + (copy?.gaps ?? ["no row"]).joined(separator: " "))
+  }
   check(
     covered.records.contains { $0.path == home + "/.codex/worktrees/a1/notes" && $0.protectedPlace == nil },
     "with access, a copy whose project is in Documents is checked")

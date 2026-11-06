@@ -306,7 +306,8 @@ func autopilotBrowserProof() async throws {
     trail, authority: "starter:starter-browser-trail", folder: temp.path,
     now: later.addingTimeInterval(3600))
   if receipt.outcome == "refused",
-    receipt.detail == "I couldn't tell if something is using that folder, so I left it alone."
+    receipt.detail == "I couldn't tell if something is using that folder, so I left it alone.",
+    WorktreeConsumerSnapshot(roots: [temp.path]).gap != nil
   {
     // macOS can withhold machine-wide open-file visibility. The native production
     // path must preserve both folders in that case, even in an isolated fixture.

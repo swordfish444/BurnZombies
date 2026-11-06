@@ -4,10 +4,15 @@ import Foundation
 
 func nativeWorktreeRefreshProof() async throws {
   let initialFailures = failures
-  try await nativeWorktreeRediscoveryProof()
   try worktreeDiscoveryFairnessProof()
   try await ownerManagedRefreshProof()
   try await consumerRetryProof()
+  if let gap = WorktreeConsumerSnapshot().gap,
+    gap.contains("open-file paths unavailable through native API and verified Apple metadata tool") {
+    print("SKIP native complete-visibility refresh benchmark: incomplete host visibility: \(gap); deterministic discovery, fairness and retry proofs completed")
+    return
+  }
+  try await nativeWorktreeRediscoveryProof()
   let base = URL(fileURLWithPath: "/private/tmp/bz-refresh-native-" + UUID().uuidString)
   let repository = base.appendingPathComponent("repository")
   let root = base.appendingPathComponent("state")

@@ -142,6 +142,11 @@ func worktreeVisibilityProof() throws {
 /// A busy Mac starts and ends programs all the time. One caught exiting can't be read for a
 /// moment yet isn't gone; it holds nothing, so the snapshot of who uses a folder stays complete.
 func exitingProgramsProof() throws {
+  if let gap = WorktreeConsumerSnapshot().gap,
+    gap.contains("open-file paths unavailable through native API and verified Apple metadata tool") {
+    print("SKIP complete-machine exiting-program snapshot: incomplete host visibility: \(gap)")
+    return
+  }
   let before = failures
   var loops: [Process] = []
   defer {

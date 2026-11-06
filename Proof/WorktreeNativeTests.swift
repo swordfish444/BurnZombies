@@ -120,6 +120,14 @@ func worktreeNativeProof(descriptorOnly: Bool = false, dense: Bool = false) asyn
   close(aliasFD)
   if descriptorOnly { return }
 
+  let consumers = WorktreeConsumerSnapshot(roots: [base.path])
+  if let gap = consumers.gap,
+    gap.contains("open-file paths unavailable through native API and verified Apple metadata tool") {
+    equal(consumers.state(base.path), -1, "incomplete native visibility cannot certify an unused fixture")
+    print("SKIP native positive retirement/restoration: incomplete host visibility: \(gap); safe-unknown state verified")
+    return
+  }
+
   let repository = base.appendingPathComponent("repository")
   let checkout = base.appendingPathComponent("finished")
   try fm.createDirectory(at: repository, withIntermediateDirectories: false)

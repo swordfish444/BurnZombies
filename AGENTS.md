@@ -5,9 +5,10 @@
 Build, test and validate on the local Mac. Do not create, enable, trigger, wait for or require GitHub Actions workflows for this repository. GitHub is for source, PRs and release assets; hosted runners are not part of the development or release loop.
 
 - Run `scripts/test.sh` for routine changes and the affected targeted proofs.
-- Before a release, run `caffeinate -i -m scripts/test.sh --full` locally. This includes the native lifecycle, worktree, transport, MCP, Settings, updater, Autopilot, UI and installer proofs. `scripts/test-app.sh` runs the app/IPC/UI/installer portion independently when only that portion needs rechecking.
+- Use `caffeinate -i -m scripts/test.sh --full` locally for broad lifecycle/security changes or releases that need full coverage. This includes the native lifecycle, worktree, transport, MCP, Settings, updater, Autopilot, UI and installer proofs. For narrow changes, use affected checks and reuse valid coverage; do not rerun the full suite for documentation, workflow removal or unrelated metadata edits. `scripts/test-app.sh` runs the app/IPC/UI/installer portion independently when only that portion needs rechecking.
 - After packaging, run `python3 scripts/test-install.py dist/release/BurnZombies-macOS-universal.tar.gz` and `python3 scripts/test-app-update.py dist/BurnZombies.app` locally against the signed release.
 - Reuse valid evidence for unchanged code. Repeat checks only for affected changes, failed checks or unresolved risks. Record the tested commit, macOS/architecture, results and limitations in the PR. Never run cleanup against real work or take focus for UI fixtures.
+- Report native capability skips explicitly. Missing macOS process/file-handle visibility is unknown, not proof of successful cleanup; preserve the production refusal and test its safe hold. Do not weaken cleanup safeguards to make a fixture pass.
 
 ## Releases
 

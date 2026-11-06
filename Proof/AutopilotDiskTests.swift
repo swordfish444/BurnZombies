@@ -1060,8 +1060,15 @@ private func adkOwnWalkProof(base: String, now: Date) async throws {
     refused.detail, "Something is using it right now.",
     "BZ's own walk in a copy counts as something using it")
   let burned = sources.retireWorktree(copyItem, "operator")
-  equal(burned.outcome, "burned", "the burn steps the walk out of the copy first: \(burned.detail)")
-  checkFalse(fm.fileExists(atPath: retired.path), "the copy is gone")
+  if burned.outcome == "refused",
+    burned.detail == "I could not check whether something is using it, so I left it alone.",
+    WorktreeConsumerSnapshot(roots: [retired.path]).gap != nil {
+    check(fm.fileExists(atPath: retired.path), "incomplete native visibility preserves the copy")
+    print("PASS native copy cleanup held for incomplete consumer visibility")
+  } else {
+    equal(burned.outcome, "burned", "the burn steps the walk out of the copy first: \(burned.detail)")
+    checkFalse(fm.fileExists(atPath: retired.path), "the copy is gone")
+  }
 
   // It went on to the next copy, whose junk is to go.
   let next = await reach(junkOf(cleared))
@@ -1071,9 +1078,16 @@ private func adkOwnWalkProof(base: String, now: Date) async throws {
     kept.detail, "Something is using that folder right now, so I left it alone.",
     "BZ's own walk in a junk folder counts as something using it")
   let reclaimed = sources.reclaimDisk(junkItem, "operator")
-  equal(
-    reclaimed.outcome, "burned", "the burn steps the walk out of the folder: \(reclaimed.detail)")
-  checkFalse(fm.fileExists(atPath: junkOf(cleared)), "the junk is gone")
+  if reclaimed.outcome == "refused",
+    reclaimed.detail == "I couldn't tell if something is using that folder, so I left it alone.",
+    WorktreeConsumerSnapshot(roots: [junkOf(cleared)]).gap != nil {
+    check(fm.fileExists(atPath: junkOf(cleared)), "incomplete native visibility preserves the junk")
+    print("PASS native junk cleanup held for incomplete consumer visibility")
+  } else {
+    equal(
+      reclaimed.outcome, "burned", "the burn steps the walk out of the folder: \(reclaimed.detail)")
+    checkFalse(fm.fileExists(atPath: junkOf(cleared)), "the junk is gone")
+  }
   released.add("measure at full speed")
 
   // A walk that starts while a copy burns doesn't go in; once the burn is over, it does.
@@ -1101,7 +1115,8 @@ private func adkOwnWalkProof(base: String, now: Date) async throws {
   }
   check(listed(after, held), "a copy left for a burn that didn't happen is walked again")
   checkFalse(
-    listed(after, retired) || listed(after, cleared),
+    (burned.outcome == "burned" && listed(after, retired))
+      || (reclaimed.outcome == "burned" && listed(after, cleared)),
     "what burned is not listed: \(after.map(\.name))")
   await monitor.shutdownWorktrees()
 }

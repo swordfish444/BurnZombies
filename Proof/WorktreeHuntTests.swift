@@ -60,10 +60,15 @@ func worktreeHuntRefreshProof() async throws {
   hunt.includeMonitorReceipts(pending)
   equal(hunt.receiptEvidenceAvailable, false, "Unknown worktree coverage appeared verified")
   await monitor.shutdownWorktrees()
-  try await sharedWorktreeHuntRefreshProof(base: base)
+  if let gap = WorktreeConsumerSnapshot(roots: [base.path]).gap,
+    gap.contains("open-file paths unavailable through native API and verified Apple metadata tool") {
+    print("SKIP shared native Hunt readiness: incomplete host visibility: \(gap)")
+  } else {
+    try await sharedWorktreeHuntRefreshProof(base: base)
+  }
   if previousFailures == failures {
     print(
-      "PASS Hunt refresh bypasses six-hour cadence, publishes new evidence, shares native scans and bounds readiness without model polling"
+      "PASS Hunt refresh bypasses six-hour cadence, publishes new evidence and bounds readiness without model polling; native capability skips are reported above"
     )
   }
 }
