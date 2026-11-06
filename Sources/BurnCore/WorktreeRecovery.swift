@@ -3,14 +3,93 @@ import Darwin
 import Foundation
 import Security
 
+/// The key that encrypts recovery copies. It lives in a private file in BurnZombies' data folder,
+/// not the Keychain. BurnZombies has no Team ID, so the Keychain tied the item to each build's code
+/// hash, and every update asked for the login password again. The file is readable only by this
+/// user and stays out of Time Machine backups, as the Keychain item stayed on this Mac. The first
+/// load moves a key that an earlier build kept in the Keychain, byte for byte, so every existing
+/// recovery copy still opens; that read is the last Keychain prompt.
 public enum WorktreeRecoveryKey {
   public static func load(
     create: Bool = true, namespace: String = "BurnZombies.WorktreeRecovery",
-    allowInteraction: Bool = false
+    allowInteraction: Bool = false, root: URL = Store.defaultRoot
   ) throws -> SymmetricKey {
-    guard namespace.hasPrefix("BurnZombies.WorktreeRecovery"), namespace.count <= 120 else {
+    guard namespace.hasPrefix("BurnZombies.WorktreeRecovery"), namespace.count <= 120,
+      namespace.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") })
+    else {
       throw StoreError.message("Invalid recovery-key namespace.")
     }
+    let directory = root.appendingPathComponent("recovery-key", isDirectory: true)
+    let url = directory.appendingPathComponent(namespace + ".key")
+    if let data = try readFile(url) { return SymmetricKey(data: data) }
+    if let data = try keychainKey(namespace, allowInteraction: allowInteraction) {
+      return SymmetricKey(data: try keep(data, at: url, in: directory))
+    }
+    guard create else {
+      throw StoreError.message(
+        "Recovery key unavailable. Preserve the checkout; nothing was replaced.")
+    }
+    let data = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+    return SymmetricKey(data: try keep(data, at: url, in: directory))
+  }
+
+  /// The key file's 32 bytes, or nil when there is no file. Anything else there is refused, never
+  /// replaced: existing recovery copies may depend on it.
+  static func readFile(_ url: URL) throws -> Data? {
+    let fd = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    if fd < 0 {
+      if errno == ENOENT { return nil }
+      throw StoreError.message("The recovery key file is unsafe or unreadable; nothing was replaced.")
+    }
+    defer { close(fd) }
+    var s = stat()
+    guard fstat(fd, &s) == 0, s.st_uid == getuid(), s.st_mode & S_IFMT == S_IFREG,
+      s.st_mode & 0o077 == 0, s.st_size == 32,
+      let data = try FileHandle(fileDescriptor: fd, closeOnDealloc: false).read(upToCount: 33),
+      data.count == 32
+    else {
+      throw StoreError.message("The recovery key file is unsafe; nothing was replaced.")
+    }
+    return data
+  }
+
+  /// Writes the key file once. link() never replaces a file, so when two processes race, the
+  /// first key written wins and both use it.
+  static func keep(_ data: Data, at url: URL, in directory: URL) throws -> Data {
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    var s = stat()
+    guard lstat(directory.path, &s) == 0, s.st_uid == getuid(), s.st_mode & S_IFMT == S_IFDIR,
+      chmod(directory.path, 0o700) == 0
+    else {
+      throw StoreError.message("The recovery key folder must be a private real directory.")
+    }
+    var folder = directory
+    var backup = URLResourceValues()
+    backup.isExcludedFromBackup = true
+    try folder.setResourceValues(backup)
+    let temp = directory.appendingPathComponent(".key-" + UUID().uuidString)
+    let fd = Darwin.open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+    guard fd >= 0 else { throw StoreError.message("Cannot store the recovery key; nothing removed.") }
+    defer { unlink(temp.path) }
+    let written: Bool
+    do {
+      defer { close(fd) }
+      try FileHandle(fileDescriptor: fd, closeOnDealloc: false).write(contentsOf: data)
+      written = fsync(fd) == 0
+    }
+    guard written else { throw StoreError.message("Cannot store the recovery key; nothing removed.") }
+    if link(temp.path, url.path) != 0 {
+      guard errno == EEXIST, let first = try readFile(url) else {
+        throw StoreError.message("Cannot store the recovery key; nothing removed.")
+      }
+      return first
+    }
+    return data
+  }
+
+  /// The key an earlier build kept in the Keychain, or nil when there is none.
+  static func keychainKey(_ namespace: String, allowInteraction: Bool) throws -> Data? {
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: namespace, kSecAttrAccount as String: "archive-key-v1",
@@ -20,24 +99,13 @@ public enum WorktreeRecoveryKey {
     ]
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
-    if status == errSecSuccess, let data = result as? Data, data.count == 32 {
-      return SymmetricKey(data: data)
-    }
-    guard status == errSecItemNotFound && create else {
+    if status == errSecItemNotFound { return nil }
+    guard status == errSecSuccess, let data = result as? Data, data.count == 32 else {
       throw StoreError.message(
         "Recovery key unavailable in Keychain. Preserve the checkout; unlock Keychain and retry explicitly."
       )
     }
-    let data = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
-    var item = query
-    item.removeValue(forKey: kSecReturnData as String)
-    item.removeValue(forKey: kSecMatchLimit as String)
-    item[kSecValueData as String] = data
-    item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else {
-      throw StoreError.message("Cannot store the worktree recovery key; nothing removed.")
-    }
-    return SymmetricKey(data: data)
+    return data
   }
 }
 
