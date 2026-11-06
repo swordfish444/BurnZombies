@@ -107,11 +107,11 @@ private func rowsOnlyIn(_ card: AutopilotCard) -> [AutopilotCardRow] {
   return card.rows.filter { !said.has($0.title) }
 }
 
-/// Where OCR finds a line that reads exactly `phrase` in a saved render, as a share of its width and
-/// height from the top left; nil when it finds none. For checks that something stays put.
-private func spot(of phrase: String, in name: String, directory: URL) throws -> CGPoint? {
+/// What OCR reads in a saved render, line by line, each with where it sits in points from the top
+/// left. For checks on where things are.
+private func lines(in name: String, directory: URL, size: NSSize) throws -> [(text: String, frame: CGRect)] {
   let png = try Data(contentsOf: directory.appendingPathComponent(name + ".png"))
-  let wanted = Reading.normalize(phrase)
+  var found: [(text: String, frame: CGRect)] = []
   for corrected in [true, false] {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
@@ -119,12 +119,62 @@ private func spot(of phrase: String, in name: String, directory: URL) throws -> 
     request.usesLanguageCorrection = corrected
     try VNImageRequestHandler(data: png, options: [:]).perform([request])
     for result in request.results ?? [] {
-      guard let line = result.topCandidates(1).first?.string, Reading.normalize(line) == wanted
-      else { continue }
-      return CGPoint(x: result.boundingBox.midX, y: 1 - result.boundingBox.midY)
+      guard let text = result.topCandidates(1).first?.string else { continue }
+      let box: CGRect = result.boundingBox
+      let frame = CGRect(
+        x: box.minX * size.width, y: (1 - box.maxY) * size.height, width: box.width * size.width,
+        height: box.height * size.height)
+      found.append((text, frame))
     }
   }
-  return nil
+  return found
+}
+
+/// Where the line that reads exactly `phrase` sits.
+private func place(_ phrase: String, among lines: [(text: String, frame: CGRect)], in name: String)
+  throws -> CGRect
+{
+  let wanted = Reading.normalize(phrase)
+  guard let line = lines.first(where: { Reading.normalize($0.text) == wanted }) else {
+    throw StoreError.message("OCR found no line reading \(phrase) in \(name)")
+  }
+  return line.frame
+}
+
+/// How far a link's middle is from the chip above it and from the top of the buttons below it, in
+/// points. A chip's words sit in the middle of a capsule about 26 pt tall, and a button's title in
+/// the middle of a button 56 pt tall, so their edges are found from where their words are.
+private func gaps(around link: CGRect, among lines: [(text: String, frame: CGRect)], in name: String)
+  throws -> (above: CGFloat, below: CGFloat)
+{
+  let over = lines.filter { $0.frame.maxY < link.minY }.max { $0.frame.maxY < $1.frame.maxY }
+  let under = lines.filter { $0.frame.minY > link.maxY }.min { $0.frame.minY < $1.frame.minY }
+  guard let over, let under else {
+    throw StoreError.message("\(name): OCR read nothing above or below \(link)")
+  }
+  let chipBottom: CGFloat = over.frame.midY + 13
+  let buttonsTop: CGFloat = under.frame.midY - 28
+  return (link.midY - chipBottom, buttonsTop - link.midY)
+}
+
+/// How many orange pixels a saved render has in `band`, in points from the top left.
+private func orangePixels(in name: String, directory: URL, size: NSSize, band: CGRect) throws -> Int {
+  let png = try Data(contentsOf: directory.appendingPathComponent(name + ".png"))
+  guard let bitmap = NSBitmapImageRep(data: png) else {
+    throw StoreError.message("\(name).png can't be read")
+  }
+  let scale: CGFloat = CGFloat(bitmap.pixelsWide) / size.width
+  let rows = max(0, Int(band.minY * scale))..<min(bitmap.pixelsHigh, Int(band.maxY * scale))
+  let columns = max(0, Int(band.minX * scale))..<min(bitmap.pixelsWide, Int(band.maxX * scale))
+  var count = 0
+  for y in rows {
+    for x in columns {
+      guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+      let red: CGFloat = color.redComponent
+      if red > 0.4 && red - color.greenComponent > 0.25 && red - color.blueComponent > 0.3 { count += 1 }
+    }
+  }
+  return count
 }
 
 @MainActor private func render<V: View>(
@@ -609,13 +659,16 @@ private func spot(of phrase: String, in name: String, directory: URL) throws -> 
     try require(
       kindView,
       [
-        AutopilotText.tellHeadline(kindTell), AutopilotText.tellSize(kindTell),
-        AutopilotText.tellCantComeBack(kindTell.kind) ?? "", "Good call", "I'd have said no",
-        "You'd have said yes",
+        AutopilotText.tellHeadline(kindTell), AutopilotText.tellSize(kindTell), "Good call",
+        "I'd have said no", "You'd have said yes",
       ], in: name)
     try check(
       kindView.hasWords(of: AutopilotText.tellWhy(kindTell)),
       "\(name) is missing the reason. OCR saw: \(kindView.raw)")
+    // A long sentence: OCR sometimes reads "I'll" as "Ill", so its longer words are what count.
+    try check(
+      kindView.hasWords(of: AutopilotText.tellCantComeBack(kindTell.kind) ?? ""),
+      "\(name) is missing what can't come back. OCR saw: \(kindView.raw)")
     try check(
       !kindView.has("Undo") && !kindView.has("Bringing them back"),
       "\(name) offers no Undo and never says it brings anything back. OCR saw: \(kindView.raw)")
@@ -1439,20 +1492,6 @@ private func spot(of phrase: String, in name: String, directory: URL) throws -> 
     list.hasWords(of: first.title), "teach-details lost \"\(first.title)\". OCR saw: \(list.raw)")
   try check(!list.has("View details"), "teach-details still says View details. OCR saw: \(list.raw)")
   hint(list, "teach-details", [first.size] + first.tags.map(\.text))
-  // Hide details is right where View details was, so the owner never hunts for it.
-  guard let shut = try spot(of: "View details", in: "teach", directory: directory) else {
-    throw StoreError.message("OCR found no line reading View details in teach")
-  }
-  guard let shown = try spot(of: "Hide details", in: "teach-details", directory: directory) else {
-    throw StoreError.message("OCR found no line reading Hide details in teach-details")
-  }
-  let moved = CGSize(
-    width: abs(shut.x - shown.x) * TeachView.size.width,
-    height: abs(shut.y - shown.y) * TeachView.size.height)
-  try check(
-    moved.width < 8 && moved.height < 3,
-    "Hide details is not where View details was: it moved \(Int(moved.width)) pt across and \(Int(moved.height)) pt down")
-
   var opened = open
   opened.opened = first.id
   let page = try render(
@@ -1486,6 +1525,32 @@ private func spot(of phrase: String, in name: String, directory: URL) throws -> 
     directory: directory)
   try check(tipped.hasWords(of: tip.text), "teach-tip lost the tip. OCR saw: \(tipped.raw)")
   hint(tipped, "teach-tip", ["TIP"])
+  // A tip just changes: no timer line runs under it.
+  let opening: String = Reading.normalize(tip.text).split(separator: " ").prefix(3).joined(separator: " ")
+  let tipLines = try lines(in: "teach-tip", directory: directory, size: TeachView.size)
+  guard let tipLine = tipLines.first(where: { Reading.normalize($0.text).contains(opening) }) else {
+    throw StoreError.message("OCR found no line starting \"\(opening)\" in teach-tip")
+  }
+  let under = CGRect(
+    x: tipLine.frame.minX + 60, y: tipLine.frame.maxY + 1,
+    width: max(0, tipLine.frame.width - 60), height: 8)
+  let timer = try orangePixels(in: "teach-tip", directory: directory, size: TeachView.size, band: under)
+  try check(timer == 0, "teach-tip draws a timer line under the tip (\(timer) orange pixels)")
+
+  // Closed, View details sits midway between the chips and the buttons; open, Hide details waits
+  // right above the buttons.
+  let closedLines = try lines(in: "teach", directory: directory, size: TeachView.size)
+  let link = try place("View details", among: closedLines, in: "teach")
+  let around = try gaps(around: link, among: closedLines, in: "teach")
+  try check(
+    around.below >= 30 && abs(around.above - around.below) <= 10,
+    "View details should sit midway between the chips and the buttons: \(Int(around.above)) pt below the chips, \(Int(around.below)) pt above the buttons")
+  let openLines = try lines(in: "teach-details", directory: directory, size: TeachView.size)
+  let hide = try place("Hide details", among: openLines, in: "teach-details")
+  let docked = try gaps(around: hide, among: openLines, in: "teach-details")
+  try check(
+    docked.below <= 24,
+    "Hide details should wait right above the buttons: it is \(Int(docked.below)) pt above them")
 
   let thanks = TeachView.Confirmation(
     text: "Got it!", symbol: "flame.fill",
