@@ -939,7 +939,10 @@ private func adkJunkCacheProof(base: String, now: Date) async throws {
   let state = URL(fileURLWithPath: base + "/state")
   let monitor = try Monitor(
     legacyAuthority: true, discoveryHome: nil, root: state, accessCheck: fixtureAccess)
-  let sources = AutopilotSources.live(monitor: monitor, root: state, home: home)
+  // A fixture key: a proof never reads, or makes, the Mac's real backup key.
+  let sources = AutopilotSources.live(
+    monitor: monitor, root: state, home: home,
+    recoveryKey: SymmetricKey(data: Data(repeating: 0x77, count: 32)))
   /// Asks for the list as each Autopilot tick does, until `done` holds or `seconds` pass.
   func ask(
     _ records: [WorktreeRecord], seconds: TimeInterval = 10, until done: ([AutopilotItem]) -> Bool

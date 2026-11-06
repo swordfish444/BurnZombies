@@ -397,6 +397,35 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   try check(!miniAsking.has(tellPrompt), "Questions come first in the popover's prompt")
   print("PASS autopilot UI menu prompts: quick questions first, then what BZ burned on its own")
 
+  // The backup key: while old copies wait for the owner's OK, the popover and the menu ask, once,
+  // ahead of any question, and say when macOS's own dialog is up.
+  let keyWait = AppModel(demo: true)
+  keyWait.autopilot.recoveryKey = AutopilotKeyWait(since: Date())
+  let miniKey = try render(
+    MiniImpactView(model: keyWait), size: MiniImpactView.size, name: "mini-key",
+    directory: directory)
+  try require(miniKey, ["backup key", "Always Allow", "Allow"], in: "mini-key")
+  let menuKey = try render(
+    ZStack {
+      AutopilotTheme.window
+      Dashboard(
+        model: keyWait, reviewerSettings: ReviewSettingsModel(root: scratch, catalog: []),
+        huntSettings: HuntSettingsModel(root: scratch))
+    }.frame(width: 440, height: 660).environment(\.colorScheme, .dark),
+    size: NSSize(width: 440, height: 660), name: "menu-key", directory: directory)
+  try require(menuKey, ["backup key", "quick question"], in: "menu-key")
+  keyWait.autopilot.recoveryKey?.asking = true
+  let miniKeyAsking = try render(
+    MiniImpactView(model: keyWait), size: MiniImpactView.size, name: "mini-key-asking",
+    directory: directory)
+  try require(miniKeyAsking, ["macOS is asking you now"], in: "mini-key-asking")
+  keyWait.autopilot.recoveryKey = nil
+  let miniKeyDone = try render(
+    MiniImpactView(model: keyWait), size: MiniImpactView.size, name: "mini-key-done",
+    directory: directory)
+  try check(!miniKeyDone.has("backup key"), "Once the key reads, the popover stops asking")
+  print("PASS autopilot UI backup key: the popover and the menu ask until the key is allowed")
+
   // Teach BZ: what BZ did on its own first, then one big question at a time.
   // The question card as the owner sees it once no tell waits: the headline, what it frees, the
   // safe line and the chips. Which things it is about waits behind View details.

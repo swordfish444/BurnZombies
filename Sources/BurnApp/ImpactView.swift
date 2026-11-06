@@ -370,6 +370,8 @@ struct MiniImpactView: View {
         // Look-only comes first: nothing else on the panel says burning waits for a tap.
         if lookOnly {
           lookOnlyCard
+        } else if model.autopilotAvailable, model.autopilot.recoveryKey != nil {
+          keyCard
         } else if model.showsAccessBanner {
           accessCard
         } else {
@@ -443,6 +445,46 @@ struct MiniImpactView: View {
       .overlay(
         RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.55)).allowsHitTesting(
           false))
+  }
+  /// What waits for the backup key: old copies BZ would burn now.
+  var waitingForKey: UInt64 {
+    model.autopilot.entries.filter { $0.item.kind == .worktree && $0.status == .burn }
+      .reduce(0) { $0 + $1.item.bytes }
+  }
+  /// Old copies wait for the owner's OK to use the backup key: one tap, and macOS asks.
+  var keyCard: some View {
+    let asking: Bool = model.autopilot.recoveryKey?.asking == true
+    let waiting: UInt64 = waitingForKey
+    let header: String =
+      waiting > 0 ? "\(ImpactNumbers.bytes(waiting)) WAITS FOR YOUR OK" : "OLD COPIES WAIT FOR YOUR OK"
+    return VStack(alignment: .leading, spacing: 8) {
+      Text(header).font(.system(size: 10.5, weight: .bold)).tracking(0.3)
+        .foregroundStyle(BurnTheme.orange).lineLimit(1).minimumScaleFactor(0.8)
+      HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Let BZ use its backup key.").font(.system(size: 13, weight: .semibold))
+          Text(asking ? "macOS is asking you now." : "Pick Always Allow when macOS asks.")
+            .font(.system(size: 11)).foregroundStyle(BurnTheme.muted)
+        }.lineLimit(1).minimumScaleFactor(0.8)
+        Spacer(minLength: 0)
+        Button {
+          model.allowRecoveryKey()
+        } label: {
+          Text("Allow").font(.system(size: 12.5, weight: .bold))
+            .foregroundStyle(Color.black.opacity(0.86)).padding(.horizontal, 14).frame(height: 32)
+            .background(
+              BurnTheme.orange.opacity(asking ? 0.45 : 1), in: RoundedRectangle(cornerRadius: 9))
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+        }.clickPointer().disabled(asking)
+          .help("macOS asks whether BZ may use its backup key, so it can back up old copies")
+          .accessibilityIdentifier("allow-recovery-key")
+      }
+    }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14)
+      .frame(height: 84)
+      .background(BurnTheme.orange.opacity(0.085), in: RoundedRectangle(cornerRadius: 7))
+      .overlay(
+        RoundedRectangle(cornerRadius: 7).stroke(BurnTheme.orange.opacity(0.75))
+          .allowsHitTesting(false))
   }
   var lookOnlyCard: some View {
     VStack(alignment: .leading, spacing: 8) {
