@@ -15,10 +15,13 @@ public enum WorktreeRecoveryKey {
   static let lock = NSLock()
 
   /// `allowInteraction: false` means no Keychain question: the move of an earlier build's key then
-  /// fails at once instead of waiting on macOS's dialog (`keychainKey`).
+  /// fails at once instead of waiting on macOS's dialog (`keychainKey`). `keychain` says whether a
+  /// missing file may be filled from the Keychain at all. By default only the installed app's own
+  /// data folder does that: a test or a sandbox (another root, or BURNZOMBIES_HOME) gets a key of
+  /// its own and never reads, or prompts for, the user's item.
   public static func load(
     create: Bool = true, namespace: String = "BurnZombies.WorktreeRecovery",
-    allowInteraction: Bool = false, root: URL = Store.defaultRoot
+    allowInteraction: Bool = false, root: URL = Store.defaultRoot, keychain: Bool? = nil
   ) throws -> SymmetricKey {
     guard namespace.hasPrefix("BurnZombies.WorktreeRecovery"), namespace.count <= 120,
       namespace.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") })
@@ -28,7 +31,9 @@ public enum WorktreeRecoveryKey {
     let directory = root.appendingPathComponent("recovery-key", isDirectory: true)
     let url = directory.appendingPathComponent(namespace + ".key")
     if let data = try readFile(url) { return SymmetricKey(data: data) }
-    if let data = try keychainKey(namespace, allowInteraction: allowInteraction) {
+    if keychain ?? isInstalledRoot(root),
+      let data = try keychainKey(namespace, allowInteraction: allowInteraction)
+    {
       return SymmetricKey(data: try keep(data, at: url, in: directory))
     }
     guard create else {
@@ -37,6 +42,14 @@ public enum WorktreeRecoveryKey {
     }
     let data = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
     return SymmetricKey(data: try keep(data, at: url, in: directory))
+  }
+
+  /// Whether `root` is the installed app's data folder, ~/Library/Application Support/BurnZombies.
+  static func isInstalledRoot(_ root: URL) -> Bool {
+    let installed = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("BurnZombies", isDirectory: true)
+    return root.resolvingSymlinksInPath().standardizedFileURL.path
+      == installed.resolvingSymlinksInPath().standardizedFileURL.path
   }
 
   /// The key file's 32 bytes, or nil when there is no file. Anything else there is refused, never
