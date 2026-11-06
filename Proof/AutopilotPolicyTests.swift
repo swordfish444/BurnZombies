@@ -32,6 +32,13 @@ func autopilotPolicyProof() throws {
   let rebuildable = junk("c", ["folder": "node_modules", "home": "stale-worktree", "stale": "month"])
   var memory = AutopilotMemory()
 
+  // A fresh install starts with Autopilot on and burning; look-only is only ever asked for.
+  let fresh = URL(fileURLWithPath: "/private/tmp/bz-fresh-" + UUID().uuidString.prefix(8))
+  defer { try? FileManager.default.removeItem(at: fresh) }
+  let firstSweep = try AutopilotStore(root: fresh).sweep()
+  check(firstSweep.enabled, "a fresh install starts with Autopilot on")
+  equal(firstSweep.lookOnly, nil, "a fresh install burns: look-only is opt-in")
+
   // Starter rules authorize the safe floor and switch off cleanly.
   equal(AutopilotPolicy.decide(orphan, memory: memory).status, .burn, "starter S1")
   equal(

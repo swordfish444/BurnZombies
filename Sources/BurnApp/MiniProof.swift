@@ -99,10 +99,10 @@ import Vision
     let visibleLines = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
     let visible = visibleLines.joined(separator: "\n")
     try visible.write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
-    // Match the visible footer labels, allowing OCR to append the chevrons.
-    // "View impact" is help text on the speed card, not rendered footer text.
+    // Match the visible footer labels as whole words: OCR may read a link's mark as a character
+    // beside it. "View impact" is help text on the speed card, not rendered footer text.
     let footerVisible = ["Impact", "Findings", "Burn Log"].allSatisfy { label in
-      visibleLines.contains { $0 == label || $0.hasPrefix(label + " ") }
+      visibleLines.contains { (" " + $0 + " ").contains(" " + label + " ") }
     }
     guard footerVisible,
       visible.contains("Memory pressure"), visible.contains("Disk reclaimed"), visible.contains("Worktrees cleaned") else {
@@ -193,7 +193,101 @@ import Vision
   if catalog == nil {
     try miniPeriodsProof(directory: directory)
     try miniLookOnlyProof(directory: directory)
+    try miniAutopilotSwitchProof(directory: directory)
   }
+}
+
+/// Autopilot's switch sits where the status dot was. It starts on; one click turns Autopilot off
+/// and the row says so, another turns it back on. The popup keeps its size and its footer.
+@MainActor func miniAutopilotSwitchProof(directory: URL) throws {
+  let model = AppModel(demo: true)
+  let view = MiniImpactView(model: model)
+  let host = NSHostingView(rootView: view)
+  host.frame = NSRect(origin: .zero, size: MiniImpactView.size)
+  let surface = NSWindow(contentRect: host.frame, styleMask: .borderless,
+    backing: .buffered, defer: false)
+  surface.contentView = host
+  func settle() {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    host.layoutSubtreeIfNeeded()
+    host.displayIfNeeded()
+  }
+  func render(_ name: String) throws -> [String] {
+    settle()
+    guard !surface.isVisible, !surface.isKeyWindow else {
+      throw StoreError.message("Proof surface must stay offscreen")
+    }
+    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+      pixelsWide: Int(host.bounds.width * 2), pixelsHigh: Int(host.bounds.height * 2),
+      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+      throw StoreError.message("Compact render unavailable")
+    }
+    bitmap.size = host.bounds.size
+    host.cacheDisplay(in: host.bounds, to: bitmap)
+    guard let cgImage = bitmap.cgImage,
+      let png = bitmap.representation(using: .png, properties: [:])
+    else { throw StoreError.message("Compact PNG unavailable") }
+    try png.write(to: directory.appendingPathComponent(name + ".png"))
+    let recognition = VNRecognizeTextRequest()
+    recognition.recognitionLevel = .accurate
+    recognition.recognitionLanguages = ["en-US"]
+    try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([recognition])
+    let lines = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    try lines.joined(separator: "\n").write(
+      to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
+    return lines
+  }
+  func footer(_ lines: [String]) -> Bool {
+    ["Impact", "Findings", "Burn Log"].allSatisfy { label in
+      lines.contains { (" " + $0 + " ").contains(" " + label + " ") }
+    }
+  }
+  // The switch is the first thing on the status row: 30 pt in, 76 pt down.
+  func click() throws {
+    settle()
+    let y: CGFloat = 76
+    let point = NSPoint(x: 30 + AutopilotSwitch.size.width / 2,
+      y: host.isFlipped ? y : MiniImpactView.size.height - y)
+    guard let target = host.hitTest(point) else { throw StoreError.message("No Autopilot switch hit target") }
+    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+      guard let event = NSEvent.mouseEvent(with: type, location: host.convert(point, to: nil),
+        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: surface.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else {
+        throw StoreError.message("Autopilot switch click unavailable")
+      }
+      if type == .leftMouseDown { target.mouseDown(with: event) } else { target.mouseUp(with: event) }
+    }
+    settle()
+  }
+  // A fresh install's Autopilot is on, and the popup shows it on.
+  guard AutopilotSweepState().enabled, AutopilotSweepState().lookOnly == nil,
+    model.autopilot.sweep.enabled else {
+    throw StoreError.message("Autopilot doesn't start on")
+  }
+  let on = try render("autopilot-on").joined(separator: "\n")
+  guard on.contains("Autopilot on"), !on.contains("Autopilot off") else {
+    throw StoreError.message("The popup doesn't say Autopilot is on: \(on)")
+  }
+  try click()
+  guard !model.autopilot.sweep.enabled else {
+    throw StoreError.message("One click on the switch did not turn Autopilot off")
+  }
+  let offLines = try render("autopilot-off")
+  let off = offLines.joined(separator: "\n")
+  guard off.contains("Autopilot off"), !off.contains("Autopilot on"), off.contains("Hunt Zombies"),
+    footer(offLines)
+  else { throw StoreError.message("Autopilot off isn't plain on the popup: \(off)") }
+  try click()
+  guard model.autopilot.sweep.enabled else {
+    throw StoreError.message("A second click did not turn Autopilot back on")
+  }
+  let back = try render("autopilot-back-on").joined(separator: "\n")
+  guard back.contains("Autopilot on"), !back.contains("Autopilot off") else {
+    throw StoreError.message("Turning Autopilot back on left the popup saying off: \(back)")
+  }
+  guard host.frame.size == MiniImpactView.size else { throw StoreError.message("Popover size changed") }
+  print("PASS offscreen compact Autopilot switch: starts on, one click turns it off and the row says so, another turns it back on")
 }
 
 /// A look-only first run: the panel says nothing burns, shows what BZ would burn, and one tap on
