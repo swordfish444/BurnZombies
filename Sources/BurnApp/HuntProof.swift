@@ -100,8 +100,10 @@ import Vision
     let base = name.replacingOccurrences(of: "-small", with: "")
     switch base {
     case "ready":
-      try expect(["Hunt Zombies", "Deep hunt", "Up to $5", "A deep hunt uses more A", "Ready to clear the dead weight", "Needs you"],
-        "the ready header, its deep hunt notice or the empty feed is missing")
+      // No hunt yet: the stats row rests with no numbers, so the page keeps its one layout.
+      try expect(["Hunt Zombies", "Deep hunt", "Up to $5", "A deep hunt uses more A", "Freed so far", "Nothing yet", "Programs", "Old copies",
+        "Junk and caches", "Not looked at yet", "Ready to clear the dead weight", "Needs you"],
+        "the ready header, its deep hunt notice, the stats at rest or the empty feed is missing")
     case "running":
       try expect(["Hunting Zombies", "Live", "Freed so far", "Zombies burned", "Worktrees cleaned", "Processes seen", "842",
         "Active development server preserved"], "actual hunt evidence not displayed")

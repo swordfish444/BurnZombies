@@ -137,21 +137,21 @@ struct HuntNeedsYou: View {
   // MARK: The card
 
   /// One soft card that takes the room the column gives it, up to a calm height: what it says and
-  /// the answers stay together in the middle. With nothing to ask, it is only as tall as its note.
-  @ViewBuilder private var card: some View {
-    if confirmation == nil && current == nil {
-      surface(empty.frame(maxWidth: .infinity).transition(.opacity))
-    } else {
-      surface(
-        ZStack {
-          if let confirmation {
-            note(confirmation).transition(.opacity)
-          } else if let current {
-            face(current).id(current.id).transition(.opacity)
-          }
+  /// the answers stay together in the middle. With nothing to ask, the same card rests with its
+  /// note in the middle and ends with the feed beside it, and the next card takes its place
+  /// without anything moving.
+  private var card: some View {
+    surface(
+      ZStack {
+        if let confirmation {
+          note(confirmation).transition(.opacity)
+        } else if let current {
+          face(current).id(current.id).transition(.opacity)
+        } else {
+          empty.transition(.opacity)
         }
-        .frame(maxWidth: .infinity, maxHeight: 360))
-    }
+      }
+      .frame(maxWidth: .infinity, maxHeight: 360))
   }
 
   private func surface(_ content: some View) -> some View {

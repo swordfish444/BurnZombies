@@ -43,15 +43,17 @@ struct HuntView: View {
           mode: sceneMode, celebrationTitle: celebrationTitle, isVisible: activeVisuals,
           elapsedOverride: sceneTime, height: layout.scene
         ).padding(.top, layout.afterHeader)
-        if let snapshot {
-          Group {
+        Group {
+          if let snapshot {
             if snapshot.isAutopilot || !(snapshot.lanes ?? []).isEmpty {
               HuntStats(snapshot: snapshot, running: model.huntRunning, layout: layout)
             } else {
               HuntTotals(snapshot: snapshot, running: model.huntRunning, layout: layout)
             }
-          }.padding(.top, layout.afterScene)
-        }
+          } else {
+            HuntStatsAtRest(autopilot: autopilot, layout: layout)
+          }
+        }.padding(.top, layout.afterScene)
         columns(layout).padding(.top, layout.afterStats)
         footer.padding(.top, layout.beforeFooter)
       }

@@ -29,6 +29,45 @@ struct HuntStats: View {
   }
 }
 
+/// Before any hunt: the same row at rest, so every state shares one layout. Nothing has been
+/// counted, so it shows no numbers at all: what was freed says nothing yet, and each area that it
+/// hasn't been looked at.
+struct HuntStatsAtRest: View {
+  /// Autopilot hunts have lanes; older hunts their totals.
+  let autopilot: Bool
+  let layout: HuntLayout
+
+  var body: some View {
+    HStack(alignment: .top, spacing: layout.gap) {
+      rest("Freed so far", "Nothing yet").accessibilityIdentifier("hunt-freed")
+      if autopilot {
+        ForEach(HuntStats.kinds, id: \.self) { kind in
+          HuntLaneCard(kind: kind, lane: nil, roomy: layout.roomyLanes).frame(width: layout.unit)
+        }
+      } else {
+        ForEach(["Zombies burned", "Worktrees cleaned", "Processes seen"], id: \.self) { label in
+          rest(label, "—")
+        }
+      }
+    }
+    .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private func rest(_ label: String, _ value: String) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(BurnTheme.muted)
+        .lineLimit(1)
+      Text(value).font(.system(size: 13, weight: .medium)).foregroundStyle(BurnTheme.muted)
+        .frame(height: 25, alignment: .bottomLeading).padding(.top, 7)
+    }
+    .padding(.horizontal, 14).padding(.vertical, 13)
+    .frame(width: layout.unit, alignment: .topLeading)
+    .frame(maxHeight: .infinity, alignment: .topLeading)
+    .background(HuntStyle.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .accessibilityElement(children: .combine)
+  }
+}
+
 /// The payoff: memory and disk together, the one big number on the page. Nothing freed yet reads
 /// quiet rather than as an orange zero, and without receipts it is a dash.
 struct HuntFreedCard: View {
