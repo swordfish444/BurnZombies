@@ -98,6 +98,27 @@ public enum AutopilotPolicy {
     "ai:" + String(format: "%.2f", judgment.confidence)
   }
 
+  /// Why the AI's own verdict can't burn this, in a few words: what makes it wait for the owner.
+  public static func needsOK(_ item: AutopilotItem) -> String {
+    let f = item.facts
+    switch item.kind {
+    case .process:
+      if f["listening"] == "yes" { return "Serving a port" }
+      if f["listening"] != "no" { return "Might serve a port" }
+      if f["thread"] == "live" { return "A chat is still working" }
+      return "Its app may still be around"
+    case .worktree:
+      if let place = f["place"], ownerManagedPlaces.contains(place) {
+        return "Made by " + place.prefix(1).uppercased() + place.dropFirst()
+      }
+      if f["thread"] == "live" { return "A chat is working in it" }
+      if f["inUse"] != "no" { return "Might be in use" }
+      return "Needs your OK"
+    case .disk:
+      return "Not a known junk folder"
+    }
+  }
+
   /// Items the AI may burn on its own judgment. Everything else needs an operator rule.
   public static func aiEligible(_ item: AutopilotItem) -> Bool {
     let f = item.facts

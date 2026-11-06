@@ -666,8 +666,9 @@ public actor AutopilotCoordinator {
     }
     // What the AI authorized but didn't burn burns now, still under this hunt's record.
     let after = await engine.tick(now: now)
+    // After that last look, so the hunt's closing lines come last in its feed.
     await engine.finishHunt(
-      now: now, failure: failure, stopReason: stopReason, questions: after.questions.count,
+      now: Date(), failure: failure, stopReason: stopReason, questions: after.questions.count,
       interval: after.sweep.intervalMinutes)
     aiTask = nil
   }
