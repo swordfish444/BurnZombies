@@ -438,6 +438,8 @@ public actor AutopilotCoordinator {
   public var aiRunning: Bool { aiTask != nil }
 
   public static let deepNeedsClaude = "Deep hunts need Claude Code. Choose it in Settings."
+  /// A run that ends having spent this share of its limit ended for the limit.
+  static let nearLimit = 0.9
   static let chooseAI = "Choose an AI in Settings to judge new things."
 
   /// A native tick when one is due, and an AI sweep when there is something new to judge. A hunt
@@ -617,10 +619,17 @@ public actor AutopilotCoordinator {
     if case .failure(let error) = result { failure = error.localizedDescription }
     let took = Int(now.timeIntervalSince(started))
     // Stopped by the owner or its spending limit: what it did stands, and nothing backs off.
-    let stopReason: String? =
+    var stopReason: String? =
       run?.stopReason
       ?? (failure == AutopilotHarness.limitReached
         ? "limit" : failure == AutopilotHarness.stoppedByOwner ? "stopped" : nil)
+    // Claude tells the AI how much of its limit is left, and near the end it wraps up and reports
+    // success: a run that ends that close to its limit stopped for the limit.
+    if stopReason == nil, failure == nil, let limit = run?.options.limitUSD,
+      let spent = await engine.runSpentUSD(), spent >= limit * Self.nearLimit
+    {
+      stopReason = "limit"
+    }
     var note = "AI sweep finished in \(took) s."
     if let stopReason {
       failure = nil

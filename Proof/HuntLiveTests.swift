@@ -295,9 +295,22 @@ func huntLiveProof() async throws {
   await limited.waitForAI()
   let atLimit = try HuntSnapshot.load(root: coordRoot)
   equal(atLimit.stopReason, "limit")
-  check(atLimit.detail.hasPrefix("Reached your $2 limit."), atLimit.detail)
+  check(atLimit.detail.hasPrefix("Reached your $2 limit"), atLimit.detail)
   sweep = await coordEngine.sweepState()
   equal(sweep.failures, 0, "reaching the limit is not a failure")
+
+  // Near its limit the AI wraps up and Claude reports success: that run ended for the limit too.
+  let wrapped = AutopilotCoordinator(
+    root: coordRoot, engine: coordEngine, configuration: { config },
+    run: { _, _, run in
+      run.events(.result(usd: 1.86, limitReached: false, isError: false))
+      return "{}"
+    })
+  _ = await wrapped.tick(now: Date(), manual: true, options: HuntOptions(deep: true, limitUSD: 2))
+  await wrapped.waitForAI()
+  let nearLimit = try HuntSnapshot.load(root: coordRoot)
+  equal(nearLimit.stopReason, "limit", "93% of the limit spent")
+  equal(nearLimit.detail, "Reached your $2 limit before anything was safe to burn.")
 
   // Keep hunting: the same hunt goes on, with what it spent still counted.
   let again = AutopilotCoordinator(
@@ -310,10 +323,11 @@ func huntLiveProof() async throws {
     now: Date(), manual: true, options: HuntOptions(deep: true, limitUSD: 3, continuing: true))
   await again.waitForAI()
   let resumed = try HuntSnapshot.load(root: coordRoot)
-  equal(resumed.id, atLimit.id, "the same hunt goes on")
+  equal(resumed.id, nearLimit.id, "the same hunt goes on")
   equal(resumed.phase, "completed")
-  equal(resumed.spentUSD, (atLimit.spentUSD ?? 0) + 0.5)
-  equal(resumed.limitUSD, (atLimit.spentUSD ?? 0) + 3)
+  equal(resumed.spentUSD, (nearLimit.spentUSD ?? 0) + 0.5)
+  equal(resumed.limitUSD, (nearLimit.spentUSD ?? 0) + 3)
+  equal(resumed.detail, "Deep hunt complete: nothing was safe to burn. It spent $2.36 of AI.")
   check(resumed.log.contains { $0.message.hasPrefix("Hunting again from where it stopped.") })
 
   // Deep hunts need Claude Code.

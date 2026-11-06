@@ -85,6 +85,11 @@ extension Autopilot {
     return true
   }
 
+  /// What this run of the hunt spent so far: the whole hunt's, less what came before it.
+  public func runSpentUSD() -> Double? {
+    hunt?.spentUSD.map { $0 - huntSpentBefore }
+  }
+
   /// What the AI's streamed run said or spent.
   public func huntEvent(_ event: AutopilotStreamEvent) {
     guard var current = hunt else { return }
@@ -235,21 +240,32 @@ extension Autopilot {
     current.finishedAt = now
     current.stopReason = stopReason
     current.phase = stopReason == nil ? "completed" : "stopped"
-    let freed = AutopilotPolicy.format(current.memoryReclaimed + current.diskReclaimed)
-    let cost =
-      current.deep == true
-      ? current.spentUSD.map { " for " + HuntOptions.dollars($0) + " of AI" } ?? "" : ""
+    let total = current.memoryReclaimed + current.diskReclaimed
+    let freed = AutopilotPolicy.format(total)
+    let spent = current.deep == true ? current.spentUSD.map(HuntOptions.dollars) : nil
+    let cost = spent.map { " for \($0) of AI" } ?? ""
+    let only = spent.map { " It spent \($0) of AI." } ?? ""
     switch stopReason {
     case "limit"?:
+      let limit = HuntOptions.dollars(current.limitUSD ?? 0)
       current.detail =
-        "Reached your \(HuntOptions.dollars(current.limitUSD ?? 0)) limit. Everything burned stays burned: \(freed) freed\(cost)."
+        total > 0
+        ? "Reached your \(limit) limit. Everything burned stays burned: \(freed) freed\(cost)."
+        : "Reached your \(limit) limit before anything was safe to burn."
     case "stopped"?:
-      current.detail = "Stopped. Everything burned stays burned: \(freed) freed\(cost)."
-    default:
       current.detail =
-        current.deep == true
-        ? "Deep hunt complete: \(freed) freed\(cost)."
-        : "Hunt complete. I'll keep sweeping every \(interval) minutes."
+        total > 0
+        ? "Stopped. Everything burned stays burned: \(freed) freed\(cost)."
+        : "Stopped before anything burned." + only
+    default:
+      if current.deep == true {
+        current.detail =
+          total > 0
+          ? "Deep hunt complete: \(freed) freed\(cost)."
+          : "Deep hunt complete: nothing was safe to burn." + only
+      } else {
+        current.detail = "Hunt complete. I'll keep sweeping every \(interval) minutes."
+      }
     }
     current.append(stopReason == nil ? "complete" : "stopped", current.detail, date: now)
     hunt = current
