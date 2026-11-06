@@ -25,17 +25,15 @@ extension Autopilot {
   public func onRequest(_ wake: @escaping @Sendable () -> Void) { self.wake = wake }
 
   /// Counts what the last look saw and what waits for the AI, by kind. Returns how many things
-  /// the AI has to judge. A deep hunt also looks again at what the AI kept before.
+  /// the AI has to judge. A deep hunt's second look at what the AI kept before is extra: it isn't
+  /// counted as waiting, so a hunt that judged everything reads as done.
   @discardableResult public func startLanes() -> Int {
     guard var current = hunt else { return 0 }
     let entries = snapshot().entries
     var total = 0
     for kind in AutopilotKind.allCases {
       let mine = entries.filter { $0.item.kind == kind }
-      var waiting = mine.filter { $0.status == .unsure }.count
-      if current.deep == true {
-        waiting += mine.filter { $0.status == .keep && ($0.authority ?? "").hasPrefix("ai") }.count
-      }
+      let waiting = mine.filter { $0.status == .unsure }.count
       total += waiting
       let looked = seen[kind] ?? mine.count
       current.update(lane: kind.rawValue) {
@@ -48,6 +46,28 @@ extension Autopilot {
     hunt = current
     saveHunt()
     return total
+  }
+
+  /// What a look found, as it finds it: the lane's count, and on the hunt's first look a line.
+  func looked(_ kind: AutopilotKind, _ count: Int) {
+    guard hunt != nil else { return }
+    let first = (hunt?.lanes?.first { $0.kind == kind.rawValue }?.seen ?? 0) == 0
+    hunt?.update(lane: kind.rawValue) { $0.seen = count }
+    if kind == .process { hunt?.processCount = count }
+    guard first, count > 0 else {
+      saveHunt()
+      return
+    }
+    let line: String
+    switch kind {
+    case .process:
+      line = "Looked over \(count.formatted()) running program\(count == 1 ? "" : "s")."
+    case .worktree:
+      line = "Looked over \(count.formatted()) project cop\(count == 1 ? "y" : "ies")."
+    case .disk:
+      line = "Measured \(count.formatted()) junk folder\(count == 1 ? "" : "s")."
+    }
+    noteHunt("scanning", line)
   }
 
   /// Adds a line to the hunt's feed.

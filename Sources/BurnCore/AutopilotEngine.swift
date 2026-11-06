@@ -195,20 +195,27 @@ public actor Autopilot {
       if $0.lastTick == nil { $0.firstTick = now }
       $0.lastTick = now
     }
+    // During a hunt, the window watches this look count up as each part of it finishes.
+    if hunt != nil {
+      hunt?.focus = "Looking over this Mac"
+      saveHunt()
+    }
     let threads = sources.threads()
     let records = await sources.worktreeRecords()
     var items = await sources.processes(threads)
+    let running = await sources.processCount()
+    seen[.process] = running > 0 ? running : items.count
+    looked(.process, seen[.process] ?? 0)
     let (copies, cache) = sources.worktrees(records, threads, delivery)
     delivery = cache
     items += copies.filter { $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? true }
       .map { Self.mentionChat($0, threads: threads, now: now) }
+    seen[.worktree] = records.count
+    looked(.worktree, records.count)
     let junk = sources.disk(records)
     items += junk
-    let running = await sources.processCount()
-    seen = [
-      .process: running > 0 ? running : items.filter { $0.kind == .process }.count,
-      .worktree: records.count, .disk: junk.count,
-    ]
+    seen[.disk] = junk.count
+    looked(.disk, junk.count)
     // A copy retire couldn't back up for big unsaved files carries them as risks of their own.
     items = AutopilotPolicy.withBigFiles(items, receipts: (try? store.receipts()) ?? [])
     // A deep hunt looks at small programs too: a swarm of them frees as much as one big one.

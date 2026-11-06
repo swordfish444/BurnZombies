@@ -149,6 +149,9 @@ func huntLiveProof() async throws {
     hunt?.log.contains { $0.kind == "burn" && $0.message.hasPrefix("Burned vitest.") } == true,
     "the owner's rules burn first, in the feed")
   equal(hunt?.processCount, 2212, "every program counts as looked at")
+  check(
+    hunt?.log.contains { $0.message == "Looked over 2,212 running programs." } == true,
+    "the first look counts up in the feed")
   equal(waiting, 2, "the server and the copy wait for the AI")
   let programs = hunt?.lanes?.first { $0.kind == "process" }
   equal(programs?.seen, 2212)
