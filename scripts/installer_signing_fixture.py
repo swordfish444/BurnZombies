@@ -50,7 +50,8 @@ subjectKeyIdentifier=hash
                  "-config", str(configuration))
         self.run("/usr/bin/openssl", "pkcs12", "-export", "-inkey", str(self.root / "key.pem"),
                  "-in", str(self.root / "cert.pem"), "-out", str(self.root / "identity.p12"),
-                 "-passout", "pass:" + self.password)
+                 "-passout", "pass:" + self.password, "-name", "BurnZombies installer fixture",
+                 "-keypbe", "PBE-SHA1-3DES", "-certpbe", "PBE-SHA1-3DES", "-macalg", "sha1")
         self.run("security", "import", str(self.root / "identity.p12"), "-k", str(self.keychain),
                  "-P", self.password, "-T", "/usr/bin/codesign")
         self.run("security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:",
@@ -58,6 +59,8 @@ subjectKeyIdentifier=hash
         der = self.run("/usr/bin/openssl", "x509", "-in", str(self.root / "cert.pem"),
                        "-outform", "DER").stdout
         self.fingerprint = hashlib.sha1(der).hexdigest().upper()
+        identities = self.run("security", "find-identity", "-p", "codesigning", str(self.keychain)).stdout
+        assert self.fingerprint.encode() in identities, identities.decode(errors="replace")
 
     def sign(self, app):
         for binary in sorted((Path(app) / "Contents/MacOS").iterdir()):
