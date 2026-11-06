@@ -395,7 +395,11 @@ public enum AutopilotDisk {
           return refuse("Something started using that folder, so I left it alone.")
         }
       } catch {
-        return refuse("I couldn't preserve this folder's unique contents, so I left it alone.")
+        // As retire does: the owner reads the reason, and the receipt keeps what failed.
+        var receipt = refuse(
+          "I couldn't preserve this folder's unique contents, so I left it alone.")
+        receipt.cause = AutopilotWorktrees.cause(of: error, at: "backing it up")
+        return receipt
       }
     }
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }

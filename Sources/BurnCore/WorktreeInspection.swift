@@ -4,6 +4,47 @@ import Darwin
 import Foundation
 
 public enum WorktreeGit {
+  /// A Git run that failed or was stopped: its subcommand, the runner's status and the time it
+  /// had. The status is Git's own exit status, or the runner's: 124 at the time limit, 125 past
+  /// 8 MB of output, 130 when stopped, 64, 71 or 72 when Git couldn't run, and 128 plus the signal
+  /// when it was killed. Its message is what Git failures always said.
+  public struct Failure: Error, LocalizedError, Sendable, Equatable {
+    public var command: String
+    public var status: Int32
+    public var seconds: Double
+    public var message: String
+    public init(command: String, status: Int32, seconds: Double, message: String) {
+      self.command = command
+      self.status = status
+      self.seconds = seconds
+      self.message = message
+    }
+    public var errorDescription: String? { message }
+    /// What happened in a few words, never with a path or a name:
+    /// "git status timed out after 60 s".
+    public var summary: String {
+      let named = !command.isEmpty && WorktreeGit.subcommand([command]) == command
+      let name = named ? "git " + command : "git"
+      switch status {
+      case 124: return name + " timed out after \(Int(seconds.rounded())) s"
+      case 125: return name + " printed more than 8 MB"
+      case 130: return name + " was stopped"
+      case 64, 71, 72: return name + " couldn't run (status \(status))"
+      case 129...: return name + " was killed by signal \(status - 128)"
+      default: return name + " exited with status \(status)"
+      }
+    }
+  }
+
+  /// The Git subcommand in `args`: the first word that isn't an option, if it looks like one.
+  static func subcommand(_ args: [String]) -> String? {
+    guard let word = args.first(where: { !$0.hasPrefix("-") }), let first = word.first,
+      first.isLowercase, first.isASCII,
+      word.allSatisfy({ ($0.isLowercase || $0.isNumber || $0 == "-") && $0.isASCII })
+    else { return nil }
+    return word
+  }
+
   private static let stateLock = NSLock()
   private static var unsafeTeardown = false
   /// Git variables a caller may add. None of them widens what the bounded runner may touch.
@@ -34,6 +75,7 @@ public enum WorktreeGit {
         break
       }
     }
+    let rest = Array(args.dropFirst(cursor))
     if args.first != "init" {
       let data = try capture(
         path,
@@ -41,7 +83,7 @@ public enum WorktreeGit {
           "config", "--null", "--name-only", "--get-regexp",
           "^filter\\..*\\.(clean|smudge|process|required)$",
         ],
-        seconds: seconds, emptyConfiguration: true)
+        seconds: seconds, emptyConfiguration: true, command: "config")
       for bytes in data.split(separator: 0) {
         guard let key = String(data: Data(bytes), encoding: .utf8),
           !key.contains("\n"), !key.contains("\r"), key.lowercased().hasPrefix("filter.")
@@ -50,13 +92,14 @@ public enum WorktreeGit {
       }
     }
     return try capture(
-      path, context + overrides + Array(args.dropFirst(cursor)), seconds: seconds,
-      environment: extra)
+      path, context + overrides + rest, seconds: seconds, environment: extra,
+      command: subcommand(rest) ?? "")
   }
 
+  /// `command` names the run in a `Failure`: Git's subcommand, or empty when it can't be told.
   private static func capture(
     _ path: String, _ args: [String], seconds: Double = 15,
-    environment extra: [String: String] = [:], emptyConfiguration: Bool = false
+    environment extra: [String: String] = [:], emptyConfiguration: Bool = false, command: String
   ) throws -> Data {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "bz-worktree-git-" + UUID().uuidString)
@@ -96,8 +139,9 @@ public enum WorktreeGit {
       &unreaped)
     if status == 72 { stateLock.withLock { unsafeTeardown = true } }
     guard status == 0 || (emptyConfiguration && status == 1) else {
-      throw StoreError.message(
-        refusedPrefix
+      throw Failure(
+        command: command, status: status, seconds: seconds,
+        message: refusedPrefix
           + "\(args.first ?? "operation") request (status \(status)); preserve the worktree and inspect its operation history."
       )
     }
@@ -226,8 +270,16 @@ public enum WorktreeInspection {
         return URL(fileURLWithPath: root)
       }() : walk.nextObject() as? URL
     {
-      guard !Task.isCancelled, result.count < limit, ProcessInfo.processInfo.systemUptime < deadline
-      else { throw StoreError.message("Checkout inspection limit reached; coverage incomplete.") }
+      // Each says which limit it was, so a big copy can be told from a busy Mac.
+      guard !Task.isCancelled else {
+        throw StoreError.message("Checkout inspection was cancelled; coverage incomplete.")
+      }
+      guard result.count < limit else {
+        throw StoreError.message("Checkout inspection limit reached; coverage incomplete.")
+      }
+      guard ProcessInfo.processInfo.systemUptime < deadline else {
+        throw StoreError.message("Checkout inspection ran out of time; coverage incomplete.")
+      }
       let relative = url.path == root ? "" : String(url.path.dropFirst(root.count + 1))
       if excluding.contains(relative) {
         var omitted = stat()

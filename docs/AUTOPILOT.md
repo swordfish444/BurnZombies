@@ -165,10 +165,11 @@ Uninstalling leaves restore points in place; [Uninstall](INSTALL.md#uninstall) s
 
 - Exact identity check (boot, PID, start time, path) immediately before every signal; SIGTERM only.
 - Something the app refused waits 6 hours before it is tried again, unless it or the answer that allows it changes. AI sweeps wait too, so they don't repeat checks the app already refused. If BZ couldn't finish checking whether a program is using it, the next look tries once more first.
+- A refusal says why in plain words. When a check failed rather than refused, its receipt and the burn log also name the step and what failed (a Git command and its status or time limit, the backup's file limit, free space, a file that changed), never with a path or a name.
 - One burn per item at a time: while a copy is being backed up and removed, a second burn of it, from the AI or from **Burn now**, is turned away.
 - Old copies are only removed after their restore point verifies; submodules with unsaved work, locked copies, in-progress merges/rebases and copies a program is using are refused. BZ's own measuring of junk folders steps out of whatever is burning, so it never counts as that program.
 - Unsaved files too big for a restore point are deleted only under a lesson from your Yes to a card that showed that kind of them, or BZ's own call on a kind you said yes to. **Burn now**, the AI and the starter rules never delete them. A copy holding them waits instead of being tried every 6 hours.
-- Junk folders must be a known rebuildable kind, untracked by git, outside private areas (iCloud, Mail, Messages, Photos, `.ssh`, Keychains), and unused by any program.
+- Junk folders must be a known rebuildable kind, untracked by git, outside private areas (iCloud, Mail, Messages, Photos, `.ssh`, Keychains), and unused by any program. A `node_modules` counts only when a package manager made it and it holds nothing but packages, the links pnpm makes to them, and the caches tools keep there (`.cache`, `.vite`, `.prisma`).
 - Without Full Disk Access, nothing in a place macOS protects is read, sized, judged or burned, and neither is a copy whose project lives in one.
 - At most 50 programs, 20 copies and 20 junk folders burned per look.
 

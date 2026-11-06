@@ -60,8 +60,9 @@ struct HuntSceneView: View {
       }
     }
     .frame(height: height)
-    .clipShape(RoundedRectangle(cornerRadius: 14))
-    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.white.opacity(0.09)))
+    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.06)))
     .onChange(of: mode) { _, _ in epoch = Date() }
     .onChange(of: isVisible) { _, visible in if visible { epoch = Date() } }
     .onAppear { epoch = Date() }

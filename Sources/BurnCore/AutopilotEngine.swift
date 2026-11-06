@@ -468,11 +468,15 @@ public actor Autopilot {
     }
     if (try? store.append(receipt)) != nil { tally([receipt]) }
     recordBurn(receipt, item: item)
-    let verb = receipt.outcome == "refused" ? "Skipped" : "Burned"
-    try? store.updateSweep {
-      $0.append(
-        "\(verb) \(item.name)" + (receipt.outcome == "refused" ? ": \(receipt.detail)" : "."))
+    var line = (receipt.outcome == "refused" ? "Skipped " : "Burned ") + item.name
+    if receipt.outcome == "refused" {
+      line += ": " + receipt.detail
+      // What failed, so the log says why; the owner's card keeps the plain reason alone.
+      if let cause = receipt.cause { line += " (" + cause + ")" }
+    } else {
+      line += "."
     }
+    try? store.updateSweep { $0.append(line) }
     return receipt
   }
 

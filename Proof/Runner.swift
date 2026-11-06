@@ -199,6 +199,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         print("PASS Live hunt: stream, deep hunt, Stop, limit and Keep hunting")
       }
       do { try await autopilotRecoveryKeyProof() } catch { failTest("Backup key: \(error)") }
+      let beforeCause = failures
+      retireCauseProof()
+      if failures == beforeCause { print("PASS Retire causes") }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
