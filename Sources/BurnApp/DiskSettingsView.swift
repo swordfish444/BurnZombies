@@ -103,7 +103,10 @@ struct DiskSettingsView: View {
     _settings = StateObject(wrappedValue: DiskSettingsModel(root: root))
     self.accessReady = accessReady
   }
-  init(model: DiskSettingsModel) { _settings = StateObject(wrappedValue: model) }
+  init(model: DiskSettingsModel, accessReady: Bool = true) {
+    _settings = StateObject(wrappedValue: model)
+    self.accessReady = accessReady
+  }
   private let orange = Color(red: 1, green: 0.34, blue: 0.12)
   var body: some View {
     DisclosureGroup(isExpanded: $settings.expanded) {
@@ -223,10 +226,9 @@ struct DiskSettingsView: View {
         }.disclosureGroupStyle(ClickDisclosureStyle())
       }.padding(.top, 14)
     } label: {
-      Label("Disk cleanup", systemImage: "externaldrive").font(.callout.weight(.medium))
+      Text("Disk cleanup").font(.callout.weight(.semibold))
     }.disclosureGroupStyle(ClickDisclosureStyle())
-      .padding(14).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-      .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08)))
+      .padding(14).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
       .confirmationDialog(
         "Approve cleanup of this folder?",
         isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }),

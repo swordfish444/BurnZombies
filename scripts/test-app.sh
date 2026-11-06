@@ -30,6 +30,7 @@ step python3 scripts/test-harness-install.py
 step python3 scripts/test-lifecycle-install.py
 step python3 scripts/test-machine-setup.py
 step .build/debug/BurnZombiesApp --settings-proof "$proof_artifacts/settings.png"
+step .build/debug/BurnZombiesApp --settings-layout-proof "$proof_artifacts/settings-layout"
 step .build/debug/BurnProof --app-updates
 step .build/debug/BurnZombiesApp --about-proof "$proof_artifacts/about"
 step .build/debug/BurnZombiesApp --access-banner-proof "$proof_artifacts/access-banner"

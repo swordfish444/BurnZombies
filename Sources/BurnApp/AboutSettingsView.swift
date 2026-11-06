@@ -157,51 +157,42 @@ import SwiftUI
 struct AboutSettingsView: View {
   @ObservedObject var updates: AppUpdateSettingsModel
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack(spacing: 10) {
-        Image(systemName: "flame.fill").font(.title2).foregroundStyle(BurnTheme.orange)
-        VStack(alignment: .leading, spacing: 3) {
-          Text("About BurnZombies").font(.headline)
-          Text("Version \(updates.version) · Build \(updates.build)").font(
-            .callout.monospacedDigit()
-          )
-          .foregroundStyle(.secondary).textSelection(.enabled)
-          .accessibilityIdentifier("about-version")
-        }
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Text("Version \(updates.version) (\(updates.build))")
+          .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+          .textSelection(.enabled).accessibilityIdentifier("about-version")
         Spacer(minLength: 0)
+        actionButtons
       }
-      HStack(alignment: .top, spacing: 8) {
-        if updates.busy {
-          ProgressView().controlSize(.small).padding(.top, 2)
-        } else if updates.phase == .upToDate {
-          Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+      if updates.phase != .idle || updates.result?.state == "installing" {
+        HStack(alignment: .top, spacing: 8) {
+          if updates.busy {
+            ProgressView().controlSize(.mini)
+          }
+          Text(updates.status).font(.caption).fixedSize(horizontal: false, vertical: true)
+            .foregroundStyle(updates.phase == .failed ? Color.orange : Color.secondary)
+            .accessibilityIdentifier("update-status")
+          Spacer(minLength: 0)
+          if updates.updateAvailable && !updates.busy {
+            Button("Check again") { updates.check() }.buttonStyle(.link).clickPointer()
+              .font(.caption).fixedSize().accessibilityIdentifier("update-check")
+          }
+          if let release = updates.release, !updates.busy {
+            Link("Release notes", destination: release.notes).clickPointer().font(.caption)
+              .fixedSize()
+          }
         }
-        Text(updates.status).font(.callout).fixedSize(horizontal: false, vertical: true)
-          .foregroundStyle(updates.phase == .failed ? Color.orange : Color.primary)
-          .accessibilityIdentifier("update-status")
       }
       if updates.phase == .downloading, let fraction = updates.fraction {
         ProgressView(value: fraction).accessibilityLabel("Update download")
       }
-      ViewThatFits(in: .horizontal) {
-        HStack(spacing: 12) {
-          actionButtons
-          releaseNotes
-        }.fixedSize()
-        VStack(alignment: .leading, spacing: 10) {
-          actionButtons
-          releaseNotes
-        }
-      }
-      Text("Checks GitHub only when you ask. Updating restarts BZ and keeps your settings.")
-        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      if let result = updates.result {
-        Text(result.detail).font(.caption).foregroundStyle(
-          result.state == "failed" ? Color.orange : Color.secondary
-        )
+      if let result = updates.result, result.state == "failed" {
+        Text(result.detail).font(.caption).foregroundStyle(Color.orange)
         .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("update-result")
       }
     }
+    .help("Checks GitHub only when you ask. Updating restarts BZ and keeps your settings.")
     .task {
       updates.refreshResult()
       while updates.result?.state == "installing" {
@@ -211,26 +202,21 @@ struct AboutSettingsView: View {
     }
   }
   private var actionButtons: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: 8) {
       if updates.updateAvailable && [.available, .failed].contains(updates.phase) {
         Button("Update and Restart") { updates.update() }
-          .buttonStyle(.borderedProminent).tint(BurnTheme.orange).clickPointer()
+          .buttonStyle(.link).clickPointer()
           .accessibilityIdentifier("update-install")
-      }
-      if !updates.busy {
+      } else if !updates.busy {
         Button("Check for Updates") { updates.check() }.clickPointer()
+          .buttonStyle(.link)
           .accessibilityIdentifier("update-check")
       } else if updates.canCancel {
-        Button("Cancel") { updates.cancel() }.clickPointer().accessibilityIdentifier(
+        Button("Cancel") { updates.cancel() }.buttonStyle(.link).clickPointer().accessibilityIdentifier(
           "update-cancel")
       }
     }
-    .fixedSize()
-  }
-  @ViewBuilder private var releaseNotes: some View {
-    if let release = updates.release {
-      Link("Release notes", destination: release.notes).clickPointer().font(.callout)
-    }
+    .font(.caption).fixedSize()
   }
 }
 
