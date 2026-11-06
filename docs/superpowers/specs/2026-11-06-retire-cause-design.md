@@ -1,30 +1,36 @@
-# Retire says why it couldn't check a copy
+# Retire says what failed
 
-Status: asked for on 2026-11-06. Builds 64 to 68 refused copies with "I could not check it safely, so I left it alone.", and nothing recorded why.
+Status: asked for on 2026-11-06. Builds 64 to 68 refused copies with "I could not check it safely, so I left it alone.", and nothing recorded why. Rebuilt on #81 (build 73).
+
+#81 changed three things:
+- pnpm copies burn;
+- retire's backup keeps hard-linked files by their contents;
+- the backup walk's, the backup's and Git's known reasons read plainly.
+
+This change adds what #81 left out:
+- which step failed and how, recorded where the log and the receipt can show it;
+- an owner's reason that stays plain for every error.
 
 ## What happened
 
-- `AutopilotWorktrees.retire` turns every error that isn't one of its own refusals into that one sentence. The receipt and the burn log keep only the sentence.
+- `AutopilotWorktrees.retire` turned every error that wasn't one of its own refusals into that one sentence. The receipt and the burn log kept only the sentence.
 - On the maintainer's Mac it came up 54 times since 2026-11-03, and 24 times on 2026-11-06 alone. A read-only look at the 14 copies still there found two causes.
-  1. **pnpm's `node_modules` isn't counted as rebuildable (17 of the 24).**
-     - Since #68, a `node_modules` stays out of the backup only when every entry in it is a package.
-     - pnpm links each scoped package (`@types/node`) into `.pnpm`. The check wants a real `package.json` inside a scope folder, so it says no.
-     - It also says no to the caches tools keep there (`.vite`, `.vite-temp`, `.prisma`, `.cache`).
-     - The backup then walks the whole `node_modules` (100,000 to 200,000 entries) and stops at its limit of 100,000.
-     - Junk reclaim runs into the same check: "I couldn't preserve this folder's unique contents".
-     - In 4 of these copies, a submodule's workspace packages are hard-linked into `node_modules/.pnpm`. Their walk would still stop at those hard links with `node_modules` left out.
-  2. **A project inside the copy (7 of the 24).** These are Claude Code session folders that each hold another repository's worktree. The backup's walk refuses a nested `.git`. Refusing is right, but the sentence is wrong: a plain one for this case already exists.
+  1. **pnpm's `node_modules` wasn't counted as rebuildable (17 of the 24).**
+     - The backup walked the whole install, 100,000 to 200,000 entries, and stopped at its limit of 100,000.
+     - Four of these copies also hold a submodule whose workspace packages pnpm hard-links into the install.
+     - #81 fixed both.
+  2. **A project inside the copy (7 of the 24).** These are Claude Code session folders that each hold another repository's worktree. Refusing is right. #81 gave this case its plain reason.
+- After #81, a reason it has no words for reads "What stopped me:", followed by the error's own text. That text can be Foundation's description, which names files. Nothing records which step failed, or which Git command.
 
 ## Goals
 
-1. Every refusal that comes from an error records a short cause: the step, and what failed. That can be a Git command and its status or time limit, the walk's limit, free space, or a file that changed. It never holds a path or a name.
-2. The reason the owner sees stays plain. A known backup stop that has a plain reason gets it.
-3. pnpm's `node_modules` counts as rebuildable.
-4. A proof for each.
+1. Every refusal that comes from an error records a short cause: the step, and what failed. It never holds a path or a name. Examples: a Git command and its status or time limit, the walk's limit, free space, a file that changed.
+2. The reason the owner reads stays plain. No error's own text reaches it.
+3. A proof for each.
 
 ## Non-goals
 
-- Hard-linked files still keep a copy: that rail stays. Their refusal now names them.
+- No change to #81's rules for pnpm installs or hard links.
 - No change to which Git commands run, to their limits, or to the backup format.
 - No UI change. The owner's card keeps showing the plain reason.
 
@@ -35,7 +41,6 @@ Status: asked for on 2026-11-06. Builds 64 to 68 refused copies with "I could no
   - "backing it up: Nested repository is protected.".
 - The steps are fixed words:
   - reading its Git folder;
-  - checking Git's state;
   - checking where its work is saved;
   - checking its changes;
   - checking its submodules;
@@ -43,7 +48,10 @@ Status: asked for on 2026-11-06. Builds 64 to 68 refused copies with "I could no
   - backing it up;
   - saving its commit;
   - checking the backup;
+  - saving its restore point;
   - checking it once more.
+
+  A Git-state check that can't read a file gives "checking Git's state:" followed by the system's error text.
 - What failed:
   - **A Git run:** a new `WorktreeGit.Failure` carries the subcommand, the runner's status and its time limit. The runner's statuses read as follows.
     - 124 → "timed out after N s".
@@ -54,8 +62,8 @@ Status: asked for on 2026-11-06. Builds 64 to 68 refused copies with "I could no
     - Anything else → "exited with status N".
 
     Its message (`localizedDescription`) stays exactly what it was.
-  - **A walk or backup stop:** its fixed message, such as "Hardlinked files require owner handling.".
-  - **Anything else:** the error's domain and code. `localizedDescription` is never used, because Foundation's can hold a path.
+  - **A walk or backup stop:** its fixed message, such as "Links or special files require supported recovery.".
+  - **Anything else:** the error's domain and code. `localizedDescription` is never used.
   - A message holding a "/" or a quote is left out.
 - The cause shows in two places:
   - the receipt, in `receipts.json`, MCP and the CLI;
@@ -63,40 +71,32 @@ Status: asked for on 2026-11-06. Builds 64 to 68 refused copies with "I could no
 - The Hunt's live log and the owner's card keep the reason alone.
 - Junk reclaim's catch-all records a cause the same way. Its sentence doesn't change.
 
-## 2. Plain reasons for known stops
+## 2. The owner's reason
 
-| Stop | Reason |
-|---|---|
-| A nested repository, or a nested bare one | "There is another project folder inside it that I can't back up, so I left it alone." (exists) |
-| More than 100,000 files and folders | "It has too many files for me to back up, so I left it alone." |
-| The walk ran past its 120 s | "Backing it up took too long, so I left it alone." |
-| Not enough free space | "There isn't enough free space to back it up, so I left it alone." |
-| A file changed during the backup | "It changed while I was backing it up, so I left it alone." (exists) |
-| Anything else | "I could not check it safely, so I left it alone." (as now) |
+- `plainReason` (from #81) keeps its table of the walk's and the backup's messages.
+- Git failures are told by the runner's status from `WorktreeGit.Failure`, not by parsing the message.
+- Two more walk messages have words:
 
-The walk's single "limit reached" error splits in three: too many entries, out of time, and cancelled. That way the cause tells a big copy from a busy Mac. The message for too many entries stays as it was.
+  | Stop | Reason |
+  |---|---|
+  | The walk ran past its 120 s | "Backing it up took too long, so I left it alone." |
+  | The walk was cancelled | "I stopped before I finished checking it, so I left it alone." |
 
-## 3. pnpm's `node_modules`
+  The walk's single "limit reached" error splits in three: too many entries, out of time, and cancelled. That way a busy Mac isn't reported as a big copy. The message for too many entries stays as it was.
+- Anything else reads "I could not check it safely, so I left it alone." That replaces "What stopped me:" and the error's text. The cause carries what failed instead.
 
-`AutopilotDisk.regenerable` for `node_modules` still needs a package manager's metadata file and at most 10,000 entries. Two more kinds of entry count:
+## 3. Proof
 
-- **A link inside a scope folder** counts like a link at the top. pnpm links each package there.
-- **A folder or regular file whose name starts with a dot.** npm forbids package names that start with a dot, so such an entry is the package manager's own state or a tool's cache (`.cache`, `.vite`, `.prisma`). The tools make it again.
-
-Nothing else changes: a folder must still hold a real `package.json`, and any other kind of entry still says no.
-
-## 4. Proof
-
-- **`BurnProof --autopilot-worktrees`** (real Git, sacrificial repositories):
-  - A copy holding another repository is refused with the nested-project reason. Its cause names the backup step and the nested repository. Neither one holds the copy's path or name, and the copy is untouched.
-  - A copy whose index is broken makes `git status` fail. It is refused with the general reason, and its cause is "checking its changes: git status exited with status 128". The copy is untouched.
-  - A copy with a pnpm-shaped `node_modules` retires, and the archive doesn't hold `node_modules`. That folder has `.modules.yaml`, a `.pnpm` folder with a file hard-linked from a store outside the copy, `@scope/pkg` links, `.vite` and `.prisma`. Before the fix, the hard link stopped it.
 - **`BurnProof --quick`** (no Git):
   - `WorktreeGit.Failure` reads right for each status.
-  - Causes are filtered: a message with a path is left out, and unknown errors show only their domain and code.
-  - `regenerable` says yes to the pnpm layout, and no in these cases:
-    - a scope folder holding a real folder without a `package.json`;
-    - a top-level folder without one;
-    - a dot entry that is a FIFO;
-    - no metadata file.
+  - Causes are filtered: a message with a path or a quoted name is left out, and Foundation's errors give only their domain and code.
+  - Plain reasons for the walk's three limits, a changed file, Git's statuses, Foundation's errors and free space.
+- **`BurnProof --autopilot-worktrees`** (real Git, sacrificial repositories):
+  - `WorktreeGit.run` throws a `Failure` naming the subcommand, even after options such as `--literal-pathspecs`.
+  - #81's plain refusals now carry causes, and none holds the copy's path or name:
+    - a project inside → "backing it up: Nested repository is protected.";
+    - a pipe → "backing it up: Links or special files require supported recovery.";
+    - a damaged HEAD → "reading its Git folder: git config exited with status 128".
+  - A broken index → "checking its changes: git status exited with status 128". The copy is untouched.
+  - A locked copy keeps its own reason and has no cause.
 - **`BurnProof --autopilot-sweep`**: the burn log line for a refusal with a cause ends with it. Without a cause, it reads as before.

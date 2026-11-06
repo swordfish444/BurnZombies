@@ -1002,19 +1002,149 @@ private func apSubmoduleProof(_ world: APWorld) throws {
   equal(head, receipt.restore?.head, "restored at the saved commit")
 }
 
-// MARK: Why a copy was left
+// MARK: What the backup walks
 
-/// A refusal that came from an error says which step stopped it and how; the owner reads a plain
-/// reason. Neither holds the copy's path or name. The checks' own refusals need no cause.
+/// pnpm links packages into an install, scoped ones too, and tools keep their output beside them
+/// (Prisma's client, Vite's caches). The package manager rebuilds all of it, so a copy's install
+/// isn't backed up. pnpm also hard-links a workspace package it injects to the package's own
+/// files; the backup keeps those like any other file. On a real Mac eight copies were refused for
+/// good instead: their installs were walked file by file, until the walk passed 100,000 files or
+/// met the hard links.
+private func apPnpmRetire(_ world: APWorld) throws {
+  let fm = FileManager.default
+  let copy = try world.addWorktree("pnpm", branch: "feature-pnpm")
+  try apGit(copy, ["submodule", "update", "--init"])
+  func install(_ modules: String) throws {
+    try apWrite(modules + "/.modules.yaml", "layoutVersion: 5\n")
+    let store = modules + "/.pnpm"
+    try apWrite(store + "/left-pad@1.3.0/node_modules/left-pad/package.json", "{}\n")
+    try apWrite(store + "/@proof+util@2.0.0/node_modules/@proof/util/package.json", "{}\n")
+    try fm.createSymbolicLink(
+      atPath: modules + "/left-pad", withDestinationPath: ".pnpm/left-pad@1.3.0/node_modules/left-pad")
+    try fm.createDirectory(atPath: modules + "/@proof", withIntermediateDirectories: false)
+    try fm.createSymbolicLink(
+      atPath: modules + "/@proof/util",
+      withDestinationPath: "../.pnpm/@proof+util@2.0.0/node_modules/@proof/util")
+    try apWrite(modules + "/.prisma/client/index.js", "module.exports = {}\n")
+    try apWrite(modules + "/.vite/deps/_metadata.json", "{}\n")
+    try apWrite(modules + "/.vite-temp/vite.config.ts.timestamp-1.mjs", "export default {}\n")
+    try apWrite(modules + "/.cache/babel-loader/1.json", "{}\n")
+  }
+  let modules = copy + "/node_modules"
+  try install(modules)
+  // The workspace package in the submodule, injected: the install's copy of each of its files is
+  // a hard link to the package's own.
+  let injected = modules + "/.pnpm/lib@file+libs+lib/node_modules/lib"
+  try fm.createDirectory(atPath: injected, withIntermediateDirectories: true)
+  try fm.linkItem(atPath: copy + "/libs/lib/lib.txt", toPath: injected + "/lib.txt")
+  try fm.createSymbolicLink(
+    atPath: modules + "/lib", withDestinationPath: ".pnpm/lib@file+libs+lib/node_modules/lib")
+  check(AutopilotDisk.regenerable(modules), "a pnpm install with links and tool caches is rebuilt")
+
+  // Anything else in an install still keeps it from counting as rebuilt.
+  for (index, (label, extra)) in [
+    ("a scoped folder that is no package", "/@proof/notes/todo.txt"),
+    ("a dot folder no tool is known for", "/.notes/todo.txt"),
+  ].enumerated() {
+    let other = world.path("pnpm-install-\(index)")
+    try install(other + "/node_modules")
+    try apWrite(other + "/node_modules" + extra, "mine\n")
+    checkFalse(AutopilotDisk.regenerable(other + "/node_modules"), label + " isn't rebuilt")
+  }
+
+  var cache: [String: AutopilotDelivery] = [:]
+  let item = try apItem(copy, world, cache: &cache)
+  let receipt = apRetire(item, authority: "operator", root: world.state, inUse: { _ in 0 })
+  equal(receipt.outcome, "burned", "a pnpm copy with an injected package: " + receipt.detail)
+  checkFalse(apExists(copy), "the copy is gone")
+  guard receipt.restore != nil else {
+    failTest("the pnpm copy left no way to restore it")
+    return
+  }
+  try apRestore(receipt)
+  equal(apRead(copy + "/libs/lib/lib.txt"), "lib\n", "the injected package's file is back")
+  checkFalse(apExists(copy + "/node_modules"), "the install wasn't kept: pnpm rebuilds it")
+}
+
+/// A file hard-linked to one outside the copy is backed up like any other. Removing the copy
+/// deletes only its own name for the data, so the other file is untouched.
+private func apHardLinkRetire(_ world: APWorld) throws {
+  let copy = try world.addWorktree("hardlinked", branch: "feature-hardlinked")
+  let outside = world.path("hardlinked-elsewhere.txt")
+  try apWrite(outside, "shared\n")
+  try FileManager.default.linkItem(atPath: outside, toPath: copy + "/linked.txt")
+  var cache: [String: AutopilotDelivery] = [:]
+  let receipt = apRetire(
+    try apItem(copy, world, cache: &cache), authority: "operator", root: world.state,
+    inUse: { _ in 0 })
+  equal(receipt.outcome, "burned", "a hard-linked file doesn't keep a copy: " + receipt.detail)
+  checkFalse(apExists(copy), "the copy is gone")
+  equal(apRead(outside), "shared\n", "the file outside is untouched")
+  var info = stat()
+  equal(lstat(outside, &info), 0)
+  equal(info.st_nlink, 1, "only the copy's own name for it went")
+  guard receipt.restore != nil else {
+    failTest("the hard-linked copy left no way to restore it")
+    return
+  }
+  try apRestore(receipt)
+  equal(apRead(copy + "/linked.txt"), "shared\n", "the linked file is back")
+}
+
+/// What keeps a copy is said plainly, even when the backup walk or Git is what stopped.
+private func apPlainRefusals(_ world: APWorld) throws {
+  var cache: [String: AutopilotDelivery] = [:]
+  // A project inside the copy, as when one session's checkout holds another's.
+  let holder = try world.addWorktree("holder", branch: "feature-holder")
+  try apGit(holder, ["init", "-q", "inner"])
+  let nested = try apExpectRefusal(world, try apItem(holder, world, cache: &cache), "project inside")
+  equal(
+    nested.detail,
+    "There is another project folder inside it that I can't back up, so I left it alone.")
+  equal(nested.cause, "backing it up: Nested repository is protected.")
+  apCleanCause(nested.cause, holder, "project inside")
+  check(apExists(holder + "/inner/.git"), "the project inside is still there")
+
+  // A pipe a dev server left behind.
+  let piped = try world.addWorktree("piped", branch: "feature-piped")
+  equal(mkfifo(piped + "/dev.pipe", 0o600), 0, "made the pipe")
+  let pipe = try apExpectRefusal(world, try apItem(piped, world, cache: &cache), "a pipe")
+  equal(
+    pipe.detail,
+    "It holds a special file, like a socket or a pipe, that I can't back up, so I left it alone.")
+  equal(pipe.cause, "backing it up: Links or special files require supported recovery.")
+
+  // Git can't read the copy: its HEAD is damaged.
+  let broken = try world.addWorktree("broken", branch: "feature-broken")
+  let item = try apItem(broken, world, cache: &cache)
+  let admin = try apLine(broken, ["rev-parse", "--absolute-git-dir"])
+  let head = try String(contentsOfFile: admin + "/HEAD", encoding: .utf8)
+  try apWrite(admin + "/HEAD", "damaged\n")
+  let damaged = apRetire(item, authority: "operator", root: world.state, inUse: { _ in 0 })
+  try apWrite(admin + "/HEAD", head)
+  equal(damaged.outcome, "refused", "a copy Git can't read: " + damaged.detail)
+  equal(damaged.detail, "Git gave an error when I checked it, so I left it alone.")
+  equal(
+    damaged.cause, "reading its Git folder: git config exited with status 128",
+    "the receipt says which step and which Git command failed")
+  apCleanCause(damaged.cause, broken, "a copy Git can't read")
+  try apAssertUntouched(world, item, "a copy Git can't read")
+}
+
+/// A cause never names the copy: not its folder, not its name.
+private func apCleanCause(_ cause: String?, _ path: String, _ label: String) {
+  let text = cause ?? ""
+  checkFalse(text.isEmpty, label + ": no cause was recorded")
+  checkFalse(text.contains(path), label + ": the cause names the copy's folder: " + text)
+  checkFalse(
+    text.contains((path as NSString).lastPathComponent), label + ": the cause names the copy: "
+      + text)
+}
+
+/// A refusal that came from an error says which step stopped it and how, in the receipt and the
+/// burn log; the owner reads a plain reason. The checks' own refusals need no cause.
 private func apCauseProof(_ world: APWorld) throws {
   var cache: [String: AutopilotDelivery] = [:]
-  func clean(_ cause: String?, _ path: String, _ label: String) {
-    let text = cause ?? ""
-    checkFalse(text.contains(path), label + ": the cause names the copy's folder: " + text)
-    checkFalse(
-      text.contains((path as NSString).lastPathComponent), label + ": the cause names the copy: "
-        + text)
-  }
 
   // Git's own failures say which command failed and how.
   do {
@@ -1038,74 +1168,26 @@ private func apCauseProof(_ world: APWorld) throws {
     equal(failure.status, 1)
   }
 
-  // A project inside the copy, as a session folder holding another repository's copy.
-  let nesting = try world.addWorktree("holds-a-project", branch: "feature-holds-a-project")
-  try apGit(nesting, ["init", "--initial-branch=main", "inner"])
-  try apWrite(nesting + "/inner/notes.txt", "inner work\n")
-  let nested = try apExpectRefusal(
-    world, try apItem(nesting, world, cache: &cache), "a project inside")
-  equal(
-    nested.detail,
-    "There is another project folder inside it that I can't back up, so I left it alone.")
-  equal(nested.cause, "backing it up: Nested repository is protected.")
-  clean(nested.cause, nesting, "a project inside")
-  equal(apRead(nesting + "/inner/notes.txt"), "inner work\n", "the project inside is untouched")
-
-  // Git can't read the index, so it can't say what changed.
+  // Git can read the copy but not its index, so it can't say what changed: a later step.
   let broken = try world.addWorktree("broken-index", branch: "feature-broken-index")
   let brokenItem = try apItem(broken, world, cache: &cache)
   let index = try apLine(broken, ["rev-parse", "--path-format=absolute", "--git-path", "index"])
   let saved = try Data(contentsOf: URL(fileURLWithPath: index))
   try Data("not an index".utf8).write(to: URL(fileURLWithPath: index))
   let failed = try apExpectRefusal(world, brokenItem, "a broken index")
-  equal(failed.detail, "I could not check it safely, so I left it alone.")
-  equal(failed.cause, "checking its changes: git status exited with status 128")
-  clean(failed.cause, broken, "a broken index")
   try saved.write(to: URL(fileURLWithPath: index))
+  equal(failed.detail, "Git gave an error when I checked it, so I left it alone.")
+  equal(failed.cause, "checking its changes: git status exited with status 128")
+  apCleanCause(failed.cause, broken, "a broken index")
 
   // A check's own refusal already says it all.
   let locked = try world.addWorktree("locked-late", branch: "feature-locked-late")
   let lockedItem = try apItem(locked, world, cache: &cache)
   try apGit(world.main, ["worktree", "lock", "--reason", "proof", locked])
   let held = try apExpectRefusal(world, lockedItem, "locked after cataloging")
+  try apGit(world.main, ["worktree", "unlock", locked])
   equal(held.detail, "It is locked, so I left it alone.")
   isNil(held.cause)
-  try apGit(world.main, ["worktree", "unlock", locked])
-}
-
-/// pnpm links each package in `node_modules` into `.pnpm`, scoped ones too, hard-links files from
-/// its store, and tools keep their caches beside them (`.vite`, `.prisma`). That `node_modules` is
-/// rebuildable, so the copy retires without backing it up, and the store keeps its file.
-private func apPnpmRetire(_ world: APWorld) throws {
-  let fm = FileManager.default
-  let copy = try world.addWorktree("pnpm-install", branch: "feature-pnpm-install")
-  let modules = copy + "/node_modules"
-  try apWrite(modules + "/.modules.yaml", "layoutVersion: 5\n")
-  let package = modules + "/.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg"
-  try apWrite(package + "/package.json", "{}\n")
-  let store = world.path("pnpm-store/index.js")
-  try apWrite(store, "module.exports = 1\n")
-  try fm.linkItem(atPath: store, toPath: package + "/index.js")
-  try fm.createDirectory(atPath: modules + "/@scope", withIntermediateDirectories: true)
-  try fm.createSymbolicLink(
-    atPath: modules + "/@scope/pkg",
-    withDestinationPath: "../.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg")
-  try apWrite(modules + "/.vite/deps/chunk.js", "cached\n")
-  try apWrite(modules + "/.prisma/client/index.js", "generated\n")
-  check(AutopilotDisk.regenerable(modules), "pnpm's node_modules is rebuildable")
-
-  var cache: [String: AutopilotDelivery] = [:]
-  let item = try apItem(copy, world, cache: &cache)
-  let receipt = apRetire(item, authority: "operator", root: world.state, inUse: { _ in 0 })
-  equal(
-    receipt.outcome, "burned",
-    "a copy with pnpm's node_modules retires: \(receipt.detail) \(receipt.cause ?? "")")
-  checkFalse(apExists(copy), "the copy is gone")
-  equal(apRead(store), "module.exports = 1\n", "the store keeps its file")
-  guard receipt.outcome == "burned" else { return }
-  try apRestore(receipt)
-  equal(apRead(copy + "/tracked.txt"), "original\n", "the copy is back")
-  checkFalse(apExists(modules), "node_modules wasn't backed up")
 }
 
 // MARK: Copies the inventory couldn't walk
@@ -1398,8 +1480,10 @@ func autopilotWorktreeProof() async throws {
   try apBlockedKeyRetire(world)
   try apUnwalkedAgeProof(world)
   try apSubmoduleProof(world)
-  try apCauseProof(world)
   try apPnpmRetire(world)
+  try apHardLinkRetire(world)
+  try apPlainRefusals(world)
+  try apCauseProof(world)
   try await apRestartProof(world)
 
   let leftovers = (try? fm.contentsOfDirectory(atPath: world.state.path)) ?? []

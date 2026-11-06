@@ -6,14 +6,6 @@ import Foundation
 /// Raw local changes never enter Git objects. Every retained byte is authenticated, compressed
 /// and encrypted with the existing device recovery key, then restored and verified before use.
 public enum PrivateRecovery {
-  /// What a backup says when it stops at something a burn can tell the owner plainly.
-  static let noRoom =
-    "Insufficient private recovery capacity; preserve the original without truncation."
-  static let sourceGone = "Recovery source unavailable; nothing removed."
-  static let sourceChanged = "Recovery source changed; nothing removed."
-  static let sourceMoved = "Recovery source changed."
-  static let contentsChanged = "Contents changed after recovery; nothing removed."
-  static let fileChanged = "File contents changed after recovery; nothing removed."
   public struct Reference: Codable, Sendable, Equatable {
     public var directory: String
     public var id: String
@@ -30,13 +22,16 @@ public enum PrivateRecovery {
     var repository: String?
     var head: String?
     var committed: Set<String>?
+    /// Files with other names were kept by their contents; the check walks the same way.
+    var hardLinks: Bool?
   }
   /// `excluding` names proven generated folders; `leavingOut`, big unsaved files and folders the
-  /// owner let go, which nothing keeps.
+  /// owner let go, which nothing keeps. With `hardLinks`, a file that has other names is kept by
+  /// its contents and comes back as a file of its own.
   public static func capture(
     _ path: String, root: URL, excluding: Set<String> = [], leavingOut: Set<String> = [],
     gitPointers: Set<String> = [], repository: String? = nil, head: String? = nil,
-    key: SymmetricKey? = nil
+    key: SymmetricKey? = nil, hardLinks: Bool = false
   ) throws -> Reference {
     let key = try key ?? WorktreeRecoveryKey.load()
     let storeRoot = try Store(root: root.appendingPathComponent("private-recovery")).root
@@ -50,7 +45,7 @@ public enum PrivateRecovery {
     defer { if !complete { try? FileManager.default.removeItem(at: directory) } }
     let original = try WorktreeInspection.files(
       path, seconds: 120, permitLinks: true, excluding: excluding, leavingOut: leavingOut,
-      ignoringGitPointers: gitPointers
+      ignoringGitPointers: gitPointers, hardLinks: hardLinks
     ).0
     guard
       let free = try FileManager.default.attributesOfFileSystem(forPath: base.path)[.systemFreeSize]
@@ -86,10 +81,15 @@ public enum PrivateRecovery {
     for i in files.indices where files[i].kind == "file" {
       if committed.contains(files[i].path) { continue }
       uniqueBytes += UInt64(max(0, files[i].size))
-      guard free.uint64Value > uniqueBytes + 67_108_864 else { throw StoreError.message(noRoom) }
+      guard free.uint64Value > uniqueBytes + 67_108_864 else {
+        throw StoreError.message(
+          "Insufficient private recovery capacity; preserve the original without truncation.")
+      }
       let file = URL(fileURLWithPath: path).appendingPathComponent(files[i].path)
       let fd = open(file.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
-      guard fd >= 0 else { throw StoreError.message(sourceGone) }
+      guard fd >= 0 else {
+        throw StoreError.message("Recovery source unavailable; nothing removed.")
+      }
       let input = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
       defer { try? input.close() }
       var before = stat()
@@ -97,7 +97,7 @@ public enum PrivateRecovery {
       guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
         before.st_ino == files[i].inode, before.st_size == files[i].size
       else {
-        throw StoreError.message(sourceChanged)
+        throw StoreError.message("Recovery source changed; nothing removed.")
       }
       var hash = SHA256()
       var size: Int64 = 0
@@ -120,7 +120,7 @@ public enum PrivateRecovery {
         before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
         before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec
       else {
-        throw StoreError.message(sourceChanged)
+        throw StoreError.message("Recovery source changed; nothing removed.")
       }
       files[i].blocks = blocks
       files[i].digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
@@ -128,7 +128,8 @@ public enum PrivateRecovery {
     let manifest = try JSONEncoder().encode(
       Manifest(
         files: files, excluded: excluding, left: leavingOut.isEmpty ? nil : leavingOut,
-        gitPointers: gitPointers, repository: repository, head: head, committed: committed))
+        gitPointers: gitPointers, repository: repository, head: head, committed: committed,
+        hardLinks: hardLinks ? true : nil))
     guard manifest.count <= 32 << 20 else {
       throw StoreError.message("Recovery metadata exceeds its bound; nothing removed.")
     }
@@ -172,15 +173,16 @@ public enum PrivateRecovery {
     guard
       try WorktreeInspection.files(
         reference.source, seconds: 120, permitLinks: true, excluding: saved.excluded,
-        leavingOut: saved.left ?? [], ignoringGitPointers: saved.gitPointers ?? []
+        leavingOut: saved.left ?? [], ignoringGitPointers: saved.gitPointers ?? [],
+        hardLinks: saved.hardLinks ?? false
       ).0 == metadata
     else {
-      throw StoreError.message(contentsChanged)
+      throw StoreError.message("Contents changed after recovery; nothing removed.")
     }
     for file in saved.files
     where file.kind == "file" && !(saved.committed ?? []).contains(file.path) {
       let fd = open(reference.source + "/" + file.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-      guard fd >= 0 else { throw StoreError.message(sourceMoved) }
+      guard fd >= 0 else { throw StoreError.message("Recovery source changed.") }
       let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
       defer { try? handle.close() }
       var hash = SHA256()
@@ -188,7 +190,7 @@ public enum PrivateRecovery {
         hash.update(data: bytes)
       }
       guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == file.digest else {
-        throw StoreError.message(fileChanged)
+        throw StoreError.message("File contents changed after recovery; nothing removed.")
       }
     }
   }

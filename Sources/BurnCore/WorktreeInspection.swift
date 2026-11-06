@@ -51,6 +51,9 @@ public enum WorktreeGit {
   private static let permittedEnvironment: Set<String> = [
     "GIT_INDEX_FILE", "GIT_LITERAL_PATHSPECS",
   ]
+  /// How the runner's refusal starts; "(status N)" follows: Git's own exit status, or 124 out of
+  /// time, 125 more output than it reads, 130 stopped.
+  static let refusedPrefix = "Git refused or exceeded the bounded "
   public static func run(
     _ path: String, _ args: [String], seconds: Double = 15,
     environment extra: [String: String] = [:]
@@ -138,8 +141,8 @@ public enum WorktreeGit {
     guard status == 0 || (emptyConfiguration && status == 1) else {
       throw Failure(
         command: command, status: status, seconds: seconds,
-        message:
-          "Git refused or exceeded the bounded \(args.first ?? "operation") request (status \(status)); preserve the worktree and inspect its operation history."
+        message: refusedPrefix
+          + "\(args.first ?? "operation") request (status \(status)); preserve the worktree and inspect its operation history."
       )
     }
     try output.seek(toOffset: 0)
@@ -217,14 +220,6 @@ public struct WorktreeFile: Codable, Equatable, Sendable {
 public enum WorktreeInspection {
   /// The gap a copy gets when the consumer check can't see every program.
   static let consumerGap = "Complete same-user cwd/file-handle visibility is unavailable."
-  /// What the file walk says when it stops at something a burn can tell the owner plainly.
-  static let nestedRepository = "Nested repository is protected."
-  static let nestedBareRepository = "Nested bare repository is protected."
-  static let tooManyEntries = "Checkout inspection limit reached; coverage incomplete."
-  static let outOfTime = "Checkout inspection ran out of time; coverage incomplete."
-  static let cancelled = "Checkout inspection was cancelled; coverage incomplete."
-  static let generatedChanged = "Generated folder changed during recovery."
-  static let leftOutChanged = "A big file the owner let go changed during recovery."
   public static func identity(_ path: String) throws -> WorktreeIdentity {
     guard path == WorkspaceSafety.canonical(path) else {
       throw StoreError.message("Worktree path resolves elsewhere.")
@@ -244,11 +239,12 @@ public enum WorktreeInspection {
       commonInode: cs.st_ino, administrationInode: ads.st_ino)
   }
   /// `excluding` names generated folders, which must stay folders; `leavingOut`, big unsaved files
-  /// and folders the owner let go, each a regular file or a folder.
+  /// and folders the owner let go, each a regular file or a folder. With `hardLinks`, a file that
+  /// has other names is taken like any other: its contents are what a backup keeps.
   public static func files(
     _ root: String, seconds: Double = 15, limit: Int = 100_000, permitLinks: Bool = false,
     excluding: Set<String> = [], leavingOut: Set<String> = [],
-    ignoringGitPointers: Set<String> = []
+    ignoringGitPointers: Set<String> = [], hardLinks: Bool = false
   ) throws -> ([WorktreeFile], UInt64) {
     let rootInfo = try WorkspaceSafety.statAt(root)
     guard rootInfo.st_mode & S_IFMT == S_IFDIR else {
@@ -275,16 +271,20 @@ public enum WorktreeInspection {
       }() : walk.nextObject() as? URL
     {
       // Each says which limit it was, so a big copy can be told from a busy Mac.
-      guard !Task.isCancelled else { throw StoreError.message(cancelled) }
-      guard result.count < limit else { throw StoreError.message(tooManyEntries) }
+      guard !Task.isCancelled else {
+        throw StoreError.message("Checkout inspection was cancelled; coverage incomplete.")
+      }
+      guard result.count < limit else {
+        throw StoreError.message("Checkout inspection limit reached; coverage incomplete.")
+      }
       guard ProcessInfo.processInfo.systemUptime < deadline else {
-        throw StoreError.message(outOfTime)
+        throw StoreError.message("Checkout inspection ran out of time; coverage incomplete.")
       }
       let relative = url.path == root ? "" : String(url.path.dropFirst(root.count + 1))
       if excluding.contains(relative) {
         var omitted = stat()
         guard lstat(url.path, &omitted) == 0, omitted.st_mode & S_IFMT == S_IFDIR else {
-          throw StoreError.message(generatedChanged)
+          throw StoreError.message("Generated folder changed during recovery.")
         }
         walk.skipDescendants()
         continue
@@ -293,10 +293,12 @@ public enum WorktreeInspection {
         // A folder is passed over whole. A file is passed over without a skip: on macOS 27 a skip
         // asked for at a file lands on the next folder in the listing.
         var left = stat()
-        guard lstat(url.path, &left) == 0 else { throw StoreError.message(leftOutChanged) }
+        guard lstat(url.path, &left) == 0 else {
+          throw StoreError.message("A big file the owner let go changed during recovery.")
+        }
         let type = left.st_mode & S_IFMT
         guard type == S_IFDIR || type == S_IFREG else {
-          throw StoreError.message(leftOutChanged)
+          throw StoreError.message("A big file the owner let go changed during recovery.")
         }
         if type == S_IFDIR { walk.skipDescendants() }
         continue
@@ -319,7 +321,7 @@ public enum WorktreeInspection {
         continue
       }
       guard url.lastPathComponent.lowercased() != ".git" else {
-        throw StoreError.message(nestedRepository)
+        throw StoreError.message("Nested repository is protected.")
       }
       var s = stat()
       guard lstat(url.path, &s) == 0, s.st_uid == getuid(), s.st_dev == rootInfo.st_dev else {
@@ -333,7 +335,7 @@ public enum WorktreeInspection {
         && FileManager.default.fileExists(atPath: url.path + "/objects")
         && FileManager.default.fileExists(atPath: url.path + "/config")
       {
-        throw StoreError.message(nestedBareRepository)
+        throw StoreError.message("Nested bare repository is protected.")
       }
       guard s.st_mode & 0o7000 == 0 else {
         throw StoreError.message("Special permission bits require owner handling.")
@@ -380,7 +382,7 @@ public enum WorktreeInspection {
       let kind: String
       var target: String?
       if type == S_IFREG {
-        guard s.st_nlink == 1 else {
+        guard s.st_nlink == 1 || hardLinks else {
           throw StoreError.message("Hardlinked files require owner handling.")
         }
         kind = "file"

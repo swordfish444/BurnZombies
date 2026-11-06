@@ -71,7 +71,7 @@ if sys.argv[1]=='start-observer' and os.environ.get('BZ_CONTROL_FAIL')=='start':
 from pathlib import Path
 args=sys.argv[1:]
 url=next(v for v in args if v.startswith('https://'))
-assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.15.0/')
+assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.15.1/')
 shutil.copyfile(Path(os.environ['BZ_CONTROL_REMOTE'])/url.rsplit('/',1)[1],args[args.index('-o')+1])
 ''')
     curl.chmod(0o755)

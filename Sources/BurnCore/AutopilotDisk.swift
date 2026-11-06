@@ -538,31 +538,27 @@ public enum AutopilotDisk {
         ".package-lock.json", ".modules.yaml", ".yarn-integrity", ".yarn-state.yml",
         ".pnpm-workspace-state-v1.json",
       ]
+      // Beside the packages: the package manager's store and commands, Prisma's generated client,
+      // and caches tools keep in an install.
+      let generated: Set<String> = [".bin", ".pnpm", ".prisma", ".vite", ".vite-temp", ".cache"]
       guard metadata.contains(where: regular),
         let entries = try? FileManager.default.contentsOfDirectory(atPath: path),
         entries.count <= 10_000
       else { return false }
+      // pnpm links packages in, scoped ones too. Removing a link never touches what it points to.
       func linked(_ relative: String) -> Bool {
         var info = stat()
         return lstat(path + "/" + relative, &info) == 0 && info.st_mode & S_IFMT == S_IFLNK
       }
       return entries.allSatisfy { name in
-        if metadata.contains(name) || name == ".bin" || name == ".pnpm" { return true }
+        if metadata.contains(name) || generated.contains(name) || linked(name) { return true }
         var info = stat()
-        guard lstat(path + "/" + name, &info) == 0 else { return false }
-        let type = info.st_mode & S_IFMT
-        if type == S_IFLNK { return true }
-        // npm forbids package names that start with a dot, so such a folder or file is the package
-        // manager's own state or a tool's cache (.cache, .vite, .prisma), which the tools make
-        // again. A repository never is.
-        if name.hasPrefix("."), name.lowercased() != ".git" {
-          return type == S_IFDIR || type == S_IFREG
+        guard lstat(path + "/" + name, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else {
+          return false
         }
-        guard type == S_IFDIR else { return false }
         if name.hasPrefix("@"),
           let packages = try? FileManager.default.contentsOfDirectory(atPath: path + "/" + name)
         {
-          // pnpm links each scoped package, as it does the others.
           return packages.allSatisfy {
             linked(name + "/" + $0) || regular(name + "/" + $0 + "/package.json")
           }
