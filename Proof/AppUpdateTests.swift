@@ -318,4 +318,70 @@ private func updateQuiescenceProof(root: URL) async throws {
   await coordinator.resumeAfterAppUpdateFailure()
   _ = await engine.tick()
   equal(calls.all.count, 2, "a failed update resumes the unchanged cleanup policy")
+
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: root.appendingPathComponent("monitor"),
+    accessCheck: fixtureAccess, discoveryWalker: fixtureWalker())
+  try await monitor.prepareForAppUpdate()
+  do {
+    _ = try await monitor.burnTargets(
+      [], label: "fixture", rationale: "fixture", callerPID: getpid())
+    failTest("legacy cleanup must wait while the app is updating")
+  } catch {
+    check(error.localizedDescription.contains("already in progress"))
+  }
+  await monitor.resumeAfterAppUpdateFailure()
+  do {
+    _ = try await monitor.burnTargets(
+      [], label: "fixture", rationale: "fixture", callerPID: getpid())
+  } catch {
+    checkFalse(
+      error.localizedDescription.contains("already in progress"),
+      "failed update released legacy cleanup gate")
+  }
+
+  let reviewRoot = root.appendingPathComponent("reviewer")
+  let reviewStore = try Store(root: reviewRoot)
+  let cli = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+    .appendingPathComponent("burnzombies").path
+  try MachineReviewConfiguration(
+    harness: "claude", executable: "/usr/bin/true", launcher: cli,
+    server: cli
+  ).save(root: reviewRoot)
+  try HarnessHook.publish(
+    .init(
+      observedAt: Date(), processCount: 1, residentBytes: 1, pressure: "Low",
+      reviewEvidence: [.init(id: "fixture-review", revision: "one")]), store: reviewStore)
+  let reviewBegan = DispatchSemaphore(value: 0)
+  let reviewFinish = DispatchSemaphore(value: 0)
+  let reviews = Calls()
+  let reviewer = try MachineReviewer(
+    root: reviewRoot, accessCheck: fixtureAccess,
+    executor: { _, _, _ in
+      reviews.add("review")
+      reviewBegan.signal()
+      _ = reviewFinish.wait(timeout: .now() + 5)
+    })
+  let review = Task { await reviewer.hunt() }
+  let reviewStarted = await Task.detached { reviewBegan.wait(timeout: .now() + 5) == .success }
+    .value
+  check(reviewStarted, "existing reviewer began")
+  let held = Task { try await reviewer.prepareForAppUpdate() }
+  try await Task.sleep(nanoseconds: 80_000_000)
+  await reviewer.hunt()
+  equal(reviews.all.count, 1, "update holds new legacy reviews")
+  reviewFinish.signal()
+  await review.value
+  try await held.value
+  let completedReview = await reviewer.snapshot()
+  equal(completedReview.phase, "observing", "existing legacy review finishes normally")
+  await reviewer.resumeAfterAppUpdateFailure()
+  try HarnessHook.publish(
+    .init(
+      observedAt: Date(), processCount: 1, residentBytes: 1, pressure: "Low",
+      reviewEvidence: [.init(id: "fixture-review-after-update", revision: "two")]),
+    store: reviewStore)
+  reviewFinish.signal()
+  await reviewer.hunt()
+  equal(reviews.all.count, 2, "failed update resumes legacy reviews without a configuration change")
 }

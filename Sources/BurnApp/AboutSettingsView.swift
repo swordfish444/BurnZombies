@@ -31,7 +31,7 @@ import SwiftUI
       as? String ?? BuildIdentity.version,
     build: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
       ?? BuildIdentity.build,
-    root: URL = Store.defaultRoot, check: @escaping Check = AppUpdateClient.check,
+    root: URL = Store.defaultRoot, check: @escaping Check = { try await AppUpdateClient.check() },
     prepare: @escaping Prepare = { release, progress in
       try await AppUpdatePreparation.prepare(
         release, destination: Bundle.main.bundleURL, progress: progress)
@@ -103,7 +103,7 @@ import SwiftUI
     task = Task {
       var prepared: AppUpdatePlan?
       do {
-        let plan = try await prepare(release) { [weak self] progress in
+        let plan = try await prepare(release) { progress in
           Task { @MainActor in
             guard let self, self.operation == id else { return }
             switch progress {
@@ -204,7 +204,7 @@ struct AboutSettingsView: View {
     }
     .task {
       updates.refreshResult()
-      for _ in 0..<120 where updates.result?.state == "installing" {
+      while updates.result?.state == "installing" {
         do { try await Task.sleep(nanoseconds: 500_000_000) } catch { return }
         updates.refreshResult()
       }

@@ -370,7 +370,8 @@ public enum AppUpdateInstallation {
   /// The CLI helper calls this only after the old app has exited. Proofs use inert fixture apps.
   public static func install(
     _ plan: AppUpdatePlan, root: URL = Store.defaultRoot,
-    verify: Verification = AppUpdateVerification.verify, launch: Launch, stop: Launch
+    verify: Verification = { try AppUpdateVerification.verify($0, version: $1) }, launch: Launch,
+    stop: Launch
   ) async throws {
     try plan.validatePaths()
     guard try AppUpdateBundle.read(plan.app) == plan.previous,

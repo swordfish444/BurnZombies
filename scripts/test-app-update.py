@@ -152,7 +152,8 @@ int main(int argc, char **argv) {
                     owned.terminate()
                     try: owned.wait(timeout=5)
                     except subprocess.TimeoutExpired: owned.kill(); owned.wait(timeout=5)
-    print("PASS signed updater handoff: existing certificate, parent-exit barrier, health rollback, pre/post-handoff authentication and exact state preservation; inert apps only")
+    if not options.real_app_only:
+        print("PASS signed updater handoff: existing certificate, parent-exit barrier, health rollback, pre/post-handoff authentication and exact state preservation; inert apps only")
 
     # Exercise LaunchServices, the actual observer and its health response too, with an
     # isolated root, cleanup held and AI disabled. Custom roots never register a login item.
