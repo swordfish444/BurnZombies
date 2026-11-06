@@ -880,6 +880,20 @@ import UserNotifications
   func sweepNow() {
     sendAutopilot(.sweepNow) { AutopilotLocal.sweepNow(&$0, now: Date()) }
   }
+  static let keyAllowed = "Thanks. Old copies can burn again."
+  /// The menu's Allow while old copies wait for the backup key: macOS asks the owner now, right
+  /// after the click, and what waited burns once it can. The card says macOS is asking meanwhile.
+  func allowRecoveryKey() {
+    guard autopilot.recoveryKey?.asking != true else { return }
+    autopilot.recoveryKey?.asking = true
+    sendAutopilot(.allowRecoveryKey, local: { $0.recoveryKey = nil }) { [weak self] reason in
+      if reason == nil {
+        self?.message = Self.keyAllowed
+      } else {
+        self?.autopilot.recoveryKey?.asking = false
+      }
+    }
+  }
   static let couldntFinish = "Autopilot couldn't finish that. Try again in a moment."
   /// `finished` runs once the command is done, with why the engine couldn't do it, or nil. The
   /// reason is also the footer's message.

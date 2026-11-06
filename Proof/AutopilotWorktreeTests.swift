@@ -1289,6 +1289,7 @@ func autopilotWorktreeProof() async throws {
   try apDirtyRetire(world, items["dirty"]!)
   try apBrowserProfileRetire(world)
   try apBigFilesRetire(world)
+  try apBlockedKeyRetire(world)
   try apUnwalkedAgeProof(world)
   try apSubmoduleProof(world)
   try await apRestartProof(world)
@@ -1298,6 +1299,44 @@ func autopilotWorktreeProof() async throws {
     Set(leftovers).isSubset(of: ["leases", "private-recovery"]),
     "temporary scratch was left behind: \(leftovers)")
   check(leftovers.contains("private-recovery"), "verified private recovery outlives retirement")
+}
+
+/// Retire with a backup-key read that never answers, as `SecItemCopyMatching` does while macOS's
+/// keychain question waits for the owner: the copy is refused within the bound and left exactly as
+/// it was, with no restore point and no archive.
+private func apBlockedKeyRetire(_ world: APWorld) throws {
+  let path = try world.addWorktree("keywait", branch: "feature-keywait")
+  var cache: [String: AutopilotDelivery] = [:]
+  let item = try apItem(path, world, cache: &cache)
+  equal(item.facts["saved"], "merged", "the waiting copy is otherwise ready to retire")
+  let refs = try apGit(world.main, ["for-each-ref", "refs/burnzombies/retired/"])
+  let archives = (try? FileManager.default.contentsOfDirectory(
+    atPath: world.state.appendingPathComponent("private-recovery").path)) ?? []
+  let answer = DispatchSemaphore(value: 0)
+  defer { answer.signal() }
+  let bound: TimeInterval = 0.5
+  let keys = AutopilotRecoveryKey(bound: bound) { _, _ in
+    answer.wait()
+    throw StoreError.message("The owner never answered.")
+  }
+  let started = Date()
+  let receipt = AutopilotWorktrees.retire(
+    item, authority: "starter:starter-finished-copies", root: world.state, inUse: { _ in 0 },
+    keys: keys)
+  let took = Date().timeIntervalSince(started)
+  equal(receipt.outcome, "refused", "no key, no retire: " + receipt.detail)
+  equal(receipt.detail, AutopilotRecoveryKey.refusal, "the refusal says what to do")
+  check(took < bound + 5, "retire didn't wait on the key past its bound: \(took)")
+  check(keys.wait != nil, "the owner will be asked")
+  check(apExists(path + "/.git"), "the copy is still there")
+  let listing = try apGit(world.main, ["worktree", "list", "--porcelain"])
+  check(listing.contains("worktree " + path + "\n"), "and still registered")
+  equal(
+    try apGit(world.main, ["for-each-ref", "refs/burnzombies/retired/"]), refs,
+    "no restore point was made")
+  let after = (try? FileManager.default.contentsOfDirectory(
+    atPath: world.state.appendingPathComponent("private-recovery").path)) ?? []
+  equal(after.sorted(), archives.sorted(), "no archive was started")
 }
 
 private let apRecoveryKey = SymmetricKey(data: Data(repeating: 0x73, count: 32))

@@ -10,6 +10,12 @@ import Security
 /// load moves a key that an earlier build kept in the Keychain, byte for byte, so every existing
 /// recovery copy still opens; that read is the last Keychain prompt.
 public enum WorktreeRecoveryKey {
+  /// Every Keychain read holds this lock. Keychain interaction is a process-wide setting
+  /// (`keychainKey`), so a quiet read must never overlap one that may ask.
+  static let lock = NSLock()
+
+  /// `allowInteraction: false` means no Keychain question: the move of an earlier build's key then
+  /// fails at once instead of waiting on macOS's dialog (`keychainKey`).
   public static func load(
     create: Bool = true, namespace: String = "BurnZombies.WorktreeRecovery",
     allowInteraction: Bool = false, root: URL = Store.defaultRoot
@@ -89,7 +95,23 @@ public enum WorktreeRecoveryKey {
   }
 
   /// The key an earlier build kept in the Keychain, or nil when there is none.
+  ///
+  /// A quiet read (`allowInteraction: false`) never shows a Keychain question.
+  /// `kSecUseAuthenticationUIFail` alone doesn't do that: the file-based login keychain ignores
+  /// it, and an item whose access list lacks this build (a new code hash, as after every update)
+  /// or a locked keychain makes `SecItemCopyMatching` wait for the owner to answer macOS's dialog.
+  /// That stalled Autopilot on build 62. The file keychain asks only while the process allows
+  /// keychain interaction, so a quiet read turns it off for exactly its own call and fails at once
+  /// instead.
   static func keychainKey(_ namespace: String, allowInteraction: Bool) throws -> Data? {
+    lock.lock()
+    defer { lock.unlock() }
+    var interaction: DarwinBoolean = true
+    if !allowInteraction {
+      _ = SecKeychainGetUserInteractionAllowed(&interaction)
+      _ = SecKeychainSetUserInteractionAllowed(false)
+    }
+    defer { if !allowInteraction { _ = SecKeychainSetUserInteractionAllowed(interaction.boolValue) } }
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: namespace, kSecAttrAccount as String: "archive-key-v1",
@@ -99,13 +121,30 @@ public enum WorktreeRecoveryKey {
     ]
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
-    if status == errSecItemNotFound { return nil }
+    if status == errSecItemNotFound {
+      // A locked keychain is skipped by a search that may not ask to unlock it, or by one whose
+      // unlock dialog was cancelled, so there "not found" proves nothing. A key made then would
+      // orphan every recovery copy sealed with the one still inside it.
+      guard keychainUnlocked() else {
+        throw StoreError.message(
+          "The login keychain is locked, so I can't tell whether an earlier key is in it. Nothing was replaced."
+        )
+      }
+      return nil
+    }
     guard status == errSecSuccess, let data = result as? Data, data.count == 32 else {
       throw StoreError.message(
         "Recovery key unavailable in Keychain. Preserve the checkout; unlock Keychain and retry explicitly."
       )
     }
     return data
+  }
+
+  /// Whether the default keychain, where an earlier build kept the key, is unlocked. Asks nothing.
+  static func keychainUnlocked() -> Bool {
+    var status: SecKeychainStatus = 0
+    return SecKeychainGetStatus(nil, &status) == errSecSuccess
+      && status & SecKeychainStatus(kSecUnlockStateStatus) != 0
   }
 }
 

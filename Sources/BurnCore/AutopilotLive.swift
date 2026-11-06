@@ -5,10 +5,11 @@ import Foundation
 extension AutopilotSources {
   /// Production wiring: the monitor's process records and burns, the worktree inventory,
   /// agent threads, junk folders, and the three executors. Proofs pass a `junk` cache that
-  /// measures slowly.
+  /// measures slowly. `keys` reads the backup key for burns without a keychain question.
   public static func live(
     monitor: Monitor, root: URL = Store.defaultRoot, home: String = NSHomeDirectory(),
-    junk: AutopilotJunkCache = AutopilotJunkCache(), recoveryKey: SymmetricKey? = nil
+    junk: AutopilotJunkCache = AutopilotJunkCache(), recoveryKey: SymmetricKey? = nil,
+    keys: AutopilotRecoveryKey = .shared
   ) -> AutopilotSources {
     // Kept with Autopilot's state, so a restart doesn't size and date every copy again.
     let store = try? AutopilotStore(root: root)
@@ -70,13 +71,15 @@ extension AutopilotSources {
         let receipt = junk.clearing(item.path) {
           AutopilotWorktrees.retire(
             item, authority: authority, root: root, protected: scope(), recoveryKey: recoveryKey,
-            authorize: { Autopilot.executorAllowed(item, authority: authority, root: root) })
+            authorize: { Autopilot.executorAllowed(item, authority: authority, root: root) },
+            keys: keys)
         }
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt
       },
       restoreWorktree: {
-        try AutopilotWorktrees.restore($0, protected: scope(), recoveryKey: recoveryKey)
+        try AutopilotWorktrees.restore(
+          $0, protected: scope(), recoveryKey: recoveryKey, keys: keys)
       },
       reclaimDisk: { item, authority in
         let protected = scope()
@@ -87,7 +90,8 @@ extension AutopilotSources {
           AutopilotDisk.reclaim(
             item, authority: authority, home: home, protected: scope(), root: root,
             recoveryKey: recoveryKey,
-            authorize: { Autopilot.executorAllowed(item, authority: authority, root: root) })
+            authorize: { Autopilot.executorAllowed(item, authority: authority, root: root) },
+            keys: keys)
         }
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt
@@ -108,7 +112,10 @@ extension AutopilotSources {
             : " \(places.count) old copies are in " + ProtectedLocations.list(names) + "."
         }
         return [note + " Turn on Full Disk Access to cover them too. Everything else is covered."]
-      })
+      },
+      recoveryKeyWait: { keys.wait },
+      allowRecoveryKey: { try keys.allow() },
+      retryRecoveryKey: { keys.retry() })
   }
 
   /// PIDs of the user's LaunchAgents: started on purpose by launchd, never orphans.
