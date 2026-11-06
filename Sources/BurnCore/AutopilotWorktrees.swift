@@ -30,14 +30,41 @@ public enum AutopilotWorktrees {
     var reason: String
     /// The unsaved files too big to back up that kept the copy, named for the owner's card.
     var bigFiles: [AutopilotBigFiles]?
-    init(_ reason: String, bigFiles: [AutopilotBigFiles]? = nil) {
+    /// What failed, when the reason alone can't say (`AutopilotReceipt.cause`).
+    var cause: String?
+    init(_ reason: String, bigFiles: [AutopilotBigFiles]? = nil, cause: String? = nil) {
       self.reason = reason
       self.bigFiles = bigFiles
+      self.cause = cause
     }
   }
   /// Why a copy is left alone when a project inside it holds work that can't be backed up.
   private static let nestedProject =
     "There is another project folder inside it that I can't back up, so I left it alone."
+  /// The general reason, when an error left nothing plainer to say.
+  static let uncheckable = "I could not check it safely, so I left it alone."
+
+  /// What failed, for the receipt and the burn log: "step: what failed". It never holds a path or a
+  /// name. A Git run gives its subcommand and status; BZ's own message is kept only when it quotes
+  /// nothing; any other error gives just its domain and code, since Foundation's descriptions can
+  /// name files.
+  public static func cause(of error: Error, at step: String) -> String {
+    step + ": " + failure(error)
+  }
+
+  private static func failure(_ error: Error) -> String {
+    if let git = error as? WorktreeGit.Failure { return git.summary }
+    if error is CancellationError { return "it was cancelled" }
+    if let stop = error as? StoreError, case .message(let message) = stop {
+      let quoting: Set<Character> = ["/", "\"", "\u{201C}", "\u{201D}"]
+      guard message.count <= 160, !message.contains(where: { quoting.contains($0) }) else {
+        return "an error whose message I left out"
+      }
+      return message
+    }
+    let error = error as NSError
+    return error.domain + " " + String(error.code)
+  }
 
   // MARK: Catalog
 
@@ -269,25 +296,57 @@ public enum AutopilotWorktrees {
     if let reason = refusal(path, protected ?? .limited()) {
       return .refused(item, authority: authority, reason)
     }
+    var step = Step.gitFolder
     do {
       return try perform(
         item, path: path, authority: authority, root: root, inUse: inUse, recoveryKey: recoveryKey,
-        authorize: authorize, keys: keys)
+        authorize: authorize, keys: keys, step: &step)
     } catch let refusal as Refusal {
+      var receipt: AutopilotReceipt
       if let big = refusal.bigFiles {
-        return .refused(item, authority: authority, bigFiles: big)
+        receipt = .refused(item, authority: authority, bigFiles: big)
+      } else {
+        receipt = .refused(item, authority: authority, refusal.reason)
       }
-      return .refused(item, authority: authority, refusal.reason)
+      receipt.cause = refusal.cause
+      return receipt
     } catch {
-      return .refused(item, authority: authority, plainReason(error))
+      // Not one of the checks' own refusals: the owner reads a plain reason, and the receipt keeps
+      // which step failed and how.
+      var receipt = AutopilotReceipt.refused(item, authority: authority, plainReason(error))
+      receipt.cause = cause(of: error, at: step)
+      return receipt
     }
   }
 
-  /// Why the backup walk, the backup or Git stopped a retire, in the owner's words. Anything
-  /// without plain words still says what stopped it, so a copy is never kept for no stated reason.
-  static func plainReason(_ error: Error) -> String {
+  /// What a retire is doing, for the cause when a step fails.
+  private enum Step {
+    static let gitFolder = "reading its Git folder"
+    static let saved = "checking where its work is saved"
+    static let changes = "checking its changes"
+    static let submodules = "checking its submodules"
+    static let unsaved = "listing its unsaved files"
+    static let backup = "backing it up"
+    static let commit = "saving its commit"
+    static let check = "checking the backup"
+    static let last = "checking it once more"
+    static let restorePoint = "saving its restore point"
+  }
+
+  /// Why the backup walk, the backup or Git stopped a retire, in the owner's words. What has no
+  /// plain words gets the general reason; the receipt's cause says what stopped it.
+  public static func plainReason(_ error: Error) -> String {
     let stopped = "I stopped before I finished checking it, so I left it alone."
     if Task.isCancelled || error is CancellationError { return stopped }
+    if let git = error as? WorktreeGit.Failure {
+      // The bounded runner's own codes: out of time, more output than it reads, stopped.
+      switch git.status {
+      case 124: return "Git took too long to answer about it, so I left it alone."
+      case 125: return tooManyFiles
+      case 130: return stopped
+      default: return "Git gave an error when I checked it, so I left it alone."
+      }
+    }
     guard case StoreError.message(let message) = error else {
       let failure = error as NSError
       if (failure.domain == NSPOSIXErrorDomain && failure.code == Int(ENOSPC))
@@ -295,21 +354,10 @@ public enum AutopilotWorktrees {
       {
         return noRoom
       }
-      return "I could not check it safely, so I left it alone. What stopped me: "
-        + failure.localizedDescription
+      return uncheckable
     }
-    if let plain = plainReasons[message] { return plain }
-    if message.hasPrefix(WorktreeGit.refusedPrefix) {
-      // The bounded runner's own codes: out of time, more output than it reads, stopped.
-      let status = message.components(separatedBy: "(status ").last ?? ""
-      switch String(status.prefix(while: \.isNumber)) {
-      case "124": return "Git took too long to answer about it, so I left it alone."
-      case "125": return tooManyFiles
-      case "130": return stopped
-      default: return "Git gave an error when I checked it, so I left it alone."
-      }
-    }
-    return "I could not check it safely, so I left it alone. What stopped me: " + message
+    if message == "Checkout inspection was cancelled; coverage incomplete." { return stopped }
+    return plainReasons[message] ?? uncheckable
   }
 
   private static let tooManyFiles = "It has too many files for me to back up, so I left it alone."
@@ -329,6 +377,8 @@ public enum AutopilotWorktrees {
       "Nested repository is protected.": nestedProject,
       "Nested bare repository is protected.": nestedProject,
       "Checkout inspection limit reached; coverage incomplete.": tooManyFiles,
+      "Checkout inspection ran out of time; coverage incomplete.":
+        "Backing it up took too long, so I left it alone.",
       "Recovery metadata exceeds its bound; nothing removed.": tooManyFiles,
       "Links or special files require supported recovery.":
         "It holds a special file, like a socket or a pipe, that I can't back up, so I left it alone.",
@@ -379,9 +429,11 @@ public enum AutopilotWorktrees {
     return nil
   }
 
+  /// `step` says what it is doing, so a failure can say where it happened.
   private static func perform(
     _ item: AutopilotItem, path: String, authority: String, root: URL, inUse: (String) -> Int32,
-    recoveryKey: SymmetricKey?, authorize: () -> Bool, keys: AutopilotRecoveryKey
+    recoveryKey: SymmetricKey?, authorize: () -> Bool, keys: AutopilotRecoveryKey,
+    step: inout String
   ) throws -> AutopilotReceipt {
     // A real, linked worktree that is not locked, mid-operation or in use.
     var folder = stat()
@@ -404,16 +456,20 @@ public enum AutopilotWorktrees {
             ? "It is locked, so I left it alone."
             : "Git is in the middle of something in it, so I left it alone.")
       }
-      guard errno == ENOENT else {
-        throw Refusal("I could not check it safely, so I left it alone.")
+      let code = errno
+      guard code == ENOENT else {
+        let cause = "checking Git's state: " + String(cString: strerror(code))
+        throw Refusal(uncheckable, cause: cause)
       }
     }
     try unused(path, inUse, else: "Something is using it right now.")
 
     // What the catalog said must still be true, recomputed from the current HEAD. A fact it
     // had not checked yet may only turn out safe; anything riskier is judged again.
+    step = Step.saved
     let head = try line(path, ["rev-parse", "--verify", "HEAD^{commit}"])
     let current = try delivery(path: path)
+    step = Step.changes
     let changes = try currentChanges(path)
     let checks = [("saved", current.saved, ["merged", "pushed"]), ("changes", changes, ["none"])]
     for (fact, live, safe) in checks where item.facts[fact] != live {
@@ -426,6 +482,7 @@ public enum AutopilotWorktrees {
     }
 
     // Submodule content lives inside the worktree's own Git folder and goes with it.
+    step = Step.submodules
     let links = try gitlinks(path, environment: [:])
     if let reason = try submoduleRefusal(path, links: links, depth: 0) {
       throw Refusal(reason)
@@ -435,6 +492,7 @@ public enum AutopilotWorktrees {
     // freeing the disk, so they keep the copy, named so the owner can be asked about them. Under an
     // owner's Yes to that kind of them they go with the copy instead (`dropsBigFiles`). Browser
     // profiles don't count: they aren't kept.
+    step = Step.unsaved
     let untracked = try WorktreeGit.run(
       path, ["ls-files", "-z", "--others", "--exclude-standard"], seconds: 60
     ).split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
@@ -479,17 +537,21 @@ public enum AutopilotWorktrees {
     do { key = try recoveryKey ?? keys.forBurn() } catch {
       throw Refusal(AutopilotRecoveryKey.refusal)
     }
+    step = Step.backup
     let archive = try PrivateRecovery.capture(
       path, root: root, excluding: excluded, leavingOut: Set(big.map(\.path)),
       gitPointers: try submodulePointers(path, links: links), repository: common, head: head,
       key: key, hardLinks: true)
     let snapshot = changes != "none"
     let ref = refPrefix + archive.id.lowercased()
+    step = Step.commit
     _ = try WorktreeGit.run(common, ["update-ref", ref, head])
     guard try line(common, ["rev-parse", "--verify", ref + "^{commit}"]) == head else {
       throw Refusal("I could not preserve the commit, so I left it alone.")
     }
+    step = Step.check
     try PrivateRecovery.validate(archive, key: key)
+    step = Step.last
     guard try line(path, ["rev-parse", "--verify", "HEAD^{commit}"]) == head else {
       throw Refusal("It changed while I was backing it up, so I left it alone.")
     }
@@ -504,11 +566,13 @@ public enum AutopilotWorktrees {
     var recovery = AutopilotRestore(
       repository: common, path: path, ref: ref, head: head, branch: branch, snapshot: snapshot)
     recovery.recovery = archive
+    step = Step.restorePoint
     let journal = try Store(root: root)
     try journal.write(
       JSONEncoder().encode(recovery),
       to: URL(fileURLWithPath: archive.directory).appendingPathComponent("restore.json"),
       limit: 65536)
+    step = Step.last
     var finalFolder = stat()
     guard lstat(path, &finalFolder) == 0, finalFolder.st_ino == folder.st_ino,
       finalFolder.st_dev == folder.st_dev,

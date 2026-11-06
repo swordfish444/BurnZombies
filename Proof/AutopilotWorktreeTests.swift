@@ -1101,6 +1101,8 @@ private func apPlainRefusals(_ world: APWorld) throws {
   equal(
     nested.detail,
     "There is another project folder inside it that I can't back up, so I left it alone.")
+  equal(nested.cause, "backing it up: Nested repository is protected.")
+  apCleanCause(nested.cause, holder, "project inside")
   check(apExists(holder + "/inner/.git"), "the project inside is still there")
 
   // A pipe a dev server left behind.
@@ -1110,6 +1112,7 @@ private func apPlainRefusals(_ world: APWorld) throws {
   equal(
     pipe.detail,
     "It holds a special file, like a socket or a pipe, that I can't back up, so I left it alone.")
+  equal(pipe.cause, "backing it up: Links or special files require supported recovery.")
 
   // Git can't read the copy: its HEAD is damaged.
   let broken = try world.addWorktree("broken", branch: "feature-broken")
@@ -1121,7 +1124,70 @@ private func apPlainRefusals(_ world: APWorld) throws {
   try apWrite(admin + "/HEAD", head)
   equal(damaged.outcome, "refused", "a copy Git can't read: " + damaged.detail)
   equal(damaged.detail, "Git gave an error when I checked it, so I left it alone.")
+  equal(
+    damaged.cause, "reading its Git folder: git config exited with status 128",
+    "the receipt says which step and which Git command failed")
+  apCleanCause(damaged.cause, broken, "a copy Git can't read")
   try apAssertUntouched(world, item, "a copy Git can't read")
+}
+
+/// A cause never names the copy: not its folder, not its name.
+private func apCleanCause(_ cause: String?, _ path: String, _ label: String) {
+  let text = cause ?? ""
+  checkFalse(text.isEmpty, label + ": no cause was recorded")
+  checkFalse(text.contains(path), label + ": the cause names the copy's folder: " + text)
+  checkFalse(
+    text.contains((path as NSString).lastPathComponent), label + ": the cause names the copy: "
+      + text)
+}
+
+/// A refusal that came from an error says which step stopped it and how, in the receipt and the
+/// burn log; the owner reads a plain reason. The checks' own refusals need no cause.
+private func apCauseProof(_ world: APWorld) throws {
+  var cache: [String: AutopilotDelivery] = [:]
+
+  // Git's own failures say which command failed and how.
+  do {
+    _ = try WorktreeGit.run(world.main, ["rev-parse", "--verify", "refs/heads/no-such-branch"])
+    failTest("a branch that doesn't exist was verified")
+  } catch let failure as WorktreeGit.Failure {
+    equal(failure.command, "rev-parse")
+    equal(failure.status, 128)
+    equal(failure.summary, "git rev-parse exited with status 128")
+    equal(
+      failure.localizedDescription,
+      "Git refused or exceeded the bounded rev-parse request (status 128); preserve the worktree and inspect its operation history.",
+      "the message is what it always was")
+  }
+  do {
+    _ = try WorktreeGit.run(
+      world.main, ["--literal-pathspecs", "ls-files", "--error-unmatch", "--", "missing.txt"])
+    failTest("a file Git doesn't track was matched")
+  } catch let failure as WorktreeGit.Failure {
+    equal(failure.command, "ls-files", "options before the subcommand don't name it")
+    equal(failure.status, 1)
+  }
+
+  // Git can read the copy but not its index, so it can't say what changed: a later step.
+  let broken = try world.addWorktree("broken-index", branch: "feature-broken-index")
+  let brokenItem = try apItem(broken, world, cache: &cache)
+  let index = try apLine(broken, ["rev-parse", "--path-format=absolute", "--git-path", "index"])
+  let saved = try Data(contentsOf: URL(fileURLWithPath: index))
+  try Data("not an index".utf8).write(to: URL(fileURLWithPath: index))
+  let failed = try apExpectRefusal(world, brokenItem, "a broken index")
+  try saved.write(to: URL(fileURLWithPath: index))
+  equal(failed.detail, "Git gave an error when I checked it, so I left it alone.")
+  equal(failed.cause, "checking its changes: git status exited with status 128")
+  apCleanCause(failed.cause, broken, "a broken index")
+
+  // A check's own refusal already says it all.
+  let locked = try world.addWorktree("locked-late", branch: "feature-locked-late")
+  let lockedItem = try apItem(locked, world, cache: &cache)
+  try apGit(world.main, ["worktree", "lock", "--reason", "proof", locked])
+  let held = try apExpectRefusal(world, lockedItem, "locked after cataloging")
+  try apGit(world.main, ["worktree", "unlock", locked])
+  equal(held.detail, "It is locked, so I left it alone.")
+  isNil(held.cause)
 }
 
 // MARK: Copies the inventory couldn't walk
@@ -1417,6 +1483,7 @@ func autopilotWorktreeProof() async throws {
   try apPnpmRetire(world)
   try apHardLinkRetire(world)
   try apPlainRefusals(world)
+  try apCauseProof(world)
   try await apRestartProof(world)
 
   let leftovers = (try? fm.contentsOfDirectory(atPath: world.state.path)) ?? []
