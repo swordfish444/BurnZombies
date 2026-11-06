@@ -88,6 +88,24 @@ public struct Native {
     return String(
       ProcessCommandSummary.describe(arguments, executable: process.executable).prefix(limit))
   }
+  /// The live arguments, the program first, one entry each. Read only to recognize robot
+  /// browsers; never persisted and never shown to a model.
+  public func arguments(_ pid: Int32, limit: Int = 131_072) -> [String]? {
+    var buffer = [CChar](repeating: 0, count: limit)
+    defer {
+      _ = buffer.withUnsafeMutableBytes { $0.initializeMemory(as: UInt8.self, repeating: 0) }
+    }
+    let used = bz_command_arguments(pid, &buffer, Int32(buffer.count))
+    guard used > 0 else { return nil }
+    return buffer.prefix(Int(used)).map { UInt8(bitPattern: $0) }
+      .split(separator: 0, omittingEmptySubsequences: false).dropLast()
+      .map { String(decoding: $0, as: UTF8.self) }
+  }
+  /// How many clients are connected to the ports the process listens on; nil when unknown.
+  public func clients(_ pid: Int32) -> Int? {
+    let count = bz_listen_peers(pid)
+    return count < 0 ? nil : Int(count)
+  }
   public func currentDirectory(_ pid: Int32) -> String? {
     var buffer = [CChar](repeating: 0, count: 4096)
     guard bz_cwd(pid, &buffer, Int32(buffer.count)) == 1 else { return nil }

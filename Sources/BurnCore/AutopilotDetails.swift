@@ -172,9 +172,16 @@ extension AutopilotPolicy {
       if f["listening"] == "unknown" {
         tags.append(Tag(text: "Serving not checked", risky: true, filter: "unchecked"))
       }
-      if f["orphaned"] == "yes" { tags.append(Tag(text: "Its app is gone", risky: false, filter: nil)) }
+      if f["robot"] == "abandoned" {
+        tags.append(Tag(text: "Nothing can drive it", risky: false, filter: nil))
+      } else if f["orphaned"] == "yes" {
+        tags.append(Tag(text: "Its app is gone", risky: false, filter: nil))
+      }
     case .disk:
-      tags.append(Tag(text: "Rebuilds itself", risky: false, filter: nil))
+      tags.append(
+        f["folder"] == "browser-temp"
+          ? Tag(text: "Its browsers are gone", risky: false, filter: nil)
+          : Tag(text: "Rebuilds itself", risky: false, filter: nil))
     }
     return tags
   }
@@ -267,6 +274,7 @@ extension AutopilotPolicy {
     case "xcode-derived": return "Xcode DerivedData"
     case "package-cache": return "Package cache"
     case "python-env": return "Python environment"
+    case "browser-temp": return "Robot-browser leftovers"
     case .some(let other) where !other.isEmpty && other != "other":
       return capitalized(other.replacingOccurrences(of: "-", with: " "))
     default: return "Folder"

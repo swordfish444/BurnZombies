@@ -131,7 +131,7 @@ private func templateProof() {
     &copies, .worktree,
     ["changes": ["none"], "saved": ["local", "pushed", "merged"], "stale": ["month", "older"]])
   teach(&copies, .worktree, ["changes": ["none"], "saved": ["merged"], "stale": ["older"]])
-  var starter = AutopilotPolicy.starterRules[1]
+  var starter = AutopilotPolicy.starterRules.first { $0.id == "starter-finished-copies" }!
   starter.id = "a-starter-rule"
   copies.rules.append(starter)
   let byAge = AutopilotPolicy.lessonGroups(copies)

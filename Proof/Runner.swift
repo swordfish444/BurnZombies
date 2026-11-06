@@ -84,6 +84,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       ("--autopilot-worktrees", "Autopilot worktrees", autopilotWorktreeProof),
       ("--autopilot-disk", "Autopilot junk folders and threads", autopilotDiskProof),
       ("--autopilot-process", "Autopilot processes", autopilotProcessProof),
+      ("--autopilot-browsers", "Real robot browsers", autopilotBrowserProof),
       ("--autopilot-sweep", "Autopilot sweep", autopilotSweepProof),
       ("--autopilot-learning", "Autopilot learning", autopilotLearningProof),
       ("--autopilot-look-only", "Autopilot look-only", lookOnlyProof),
@@ -142,6 +143,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       let beforePolicy = failures
       do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
       if failures == beforePolicy { print("PASS Autopilot policy") }
+      let beforeRobots = failures
+      do { try robotBrowserPolicyProof() } catch { failTest("Robot browsers: \(error)") }
+      if failures == beforeRobots { print("PASS Robot browsers") }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
@@ -531,6 +535,8 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await securityBoundaryProof() } catch { failTest("Security boundaries: \(error)") }
     let beforeAutopilot = failures
     do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
+    do { try robotBrowserPolicyProof() } catch { failTest("Robot browsers: \(error)") }
+    do { try await autopilotBrowserProof() } catch { failTest("Real robot browsers: \(error)") }
     do { try await autopilotWorktreeProof() } catch { failTest("Autopilot worktrees: \(error)") }
     do { try await autopilotDiskProof() } catch { failTest("Autopilot junk folders: \(error)") }
     do { try await autopilotProcessProof() } catch { failTest("Autopilot processes: \(error)") }

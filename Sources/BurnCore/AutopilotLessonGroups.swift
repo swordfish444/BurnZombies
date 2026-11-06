@@ -50,7 +50,7 @@ extension AutopilotPolicy {
   static let folderNames: [String: String] = [
     "node_modules": "node_modules", "build-output": "build folders",
     "xcode-derived": "Xcode build folders", "package-cache": "tool caches",
-    "python-env": "Python environments",
+    "python-env": "Python environments", "browser-temp": "robot-browser leftovers",
   ]
 
   /// The most recent use a lesson covers, when it pins recency: its first recency value in

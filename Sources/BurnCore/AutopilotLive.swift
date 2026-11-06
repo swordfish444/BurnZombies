@@ -17,6 +17,8 @@ extension AutopilotSources {
     let skipped = AutopilotSkipped()
     // Without verified Full Disk Access, Autopilot leaves the places macOS protects alone.
     @Sendable func scope() -> ProtectedLocations { .current(root: root, homes: [home]) }
+    // The temp folder is the real user's: a stand-in home has none.
+    let trail = home == NSHomeDirectory() ? AutopilotBrowserTrail.temporaryFolder() : nil
     return AutopilotSources(
       threads: { AgentThreads.index(home: home) },
       processes: { threads in
@@ -49,7 +51,7 @@ extension AutopilotSources {
           ages.fill(worth), threads: threads, delivery: &delivery, budget: 150)
         return (items, delivery)
       },
-      disk: { records in junk.items(records, home: home, protected: scope()) },
+      disk: { records in junk.items(records, home: home, protected: scope(), trail: trail) },
       burnProcess: { item, authority, why in
         guard let key = item.processKey else {
           throw StoreError.message("I lost track of which program that was.")
@@ -167,9 +169,10 @@ public final class AutopilotJunkCache: @unchecked Sendable {
     return walks.clearing(path, burn)
   }
 
-  func items(_ records: [WorktreeRecord], home: String, protected: ProtectedLocations)
-    -> [AutopilotItem]
-  {
+  func items(
+    _ records: [WorktreeRecord], home: String, protected: ProtectedLocations,
+    trail: String? = nil
+  ) -> [AutopilotItem] {
     let walk: (records: [WorktreeRecord], everything: Bool)? = lock.withLock {
       guard !running else { return nil }
       let age = refreshed.map { Date().timeIntervalSince($0) } ?? .infinity
@@ -193,7 +196,7 @@ public final class AutopilotJunkCache: @unchecked Sendable {
         let fresh = AutopilotDisk.items(
           worktrees: walk.records, home: home, caches: walk.everything, mains: walk.everything,
           sizer: { folder in sizer(folder) { walks.wanted(folder) } }, protected: protected,
-          walks: walks)
+          walks: walks, trail: trail)
         let skipped = walks.skipped()
         lock.withLock {
           if walk.everything {
