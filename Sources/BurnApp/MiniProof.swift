@@ -287,7 +287,34 @@ import Vision
     throw StoreError.message("Turning Autopilot back on left the popup saying off: \(back)")
   }
   guard host.frame.size == MiniImpactView.size else { throw StoreError.message("Popover size changed") }
-  print("PASS offscreen compact Autopilot switch: starts on, one click turns it off and the row says so, another turns it back on")
+
+  // A busy engine answers late: the switch moves at once, and the engine's answer keeps it there.
+  let busy = AppModel(demo: true)
+  var saved = busy.autopilot
+  saved.sweep.enabled = false
+  let reply = saved
+  busy.autopilotRunner = { _ in
+    try await Task.sleep(for: .milliseconds(300))
+    return reply
+  }
+  busy.setAutopilot(enabled: false)
+  guard !busy.autopilot.sweep.enabled else {
+    throw StoreError.message("The switch waited for a busy engine")
+  }
+  RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+  guard !busy.autopilot.sweep.enabled, busy.message == nil else {
+    throw StoreError.message("The engine's answer moved the switch back")
+  }
+  // An engine that can't save it: the switch moves back, and the footer says why.
+  let stuck = AppModel(demo: true)
+  let why = "Saved permissions could not be read."
+  stuck.autopilotRunner = { _ in throw StoreError.message(why) }
+  stuck.setAutopilot(enabled: false)
+  RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+  guard stuck.autopilot.sweep.enabled, stuck.message == why else {
+    throw StoreError.message("A change the engine couldn't save stayed on the switch")
+  }
+  print("PASS offscreen compact Autopilot switch: starts on, one click turns it off and the row says so, another turns it back on; it moves at once for a busy engine and moves back when the engine can't save it")
 }
 
 /// A look-only first run: the panel says nothing burns, shows what BZ would burn, and one tap on
