@@ -9,9 +9,15 @@ extension AutopilotPolicy {
 
   /// What's inside a listed folder stays. So does what holds one: burning an old copy would take
   /// the listed folder with it.
+  /// Docker's build cache has no folder of its own: it lives wherever Docker does.
   public static func neverTouched(_ item: AutopilotItem, memory: AutopilotMemory) -> Bool {
-    guard !memory.neverTouch.isEmpty, let path = item.path else { return false }
-    return memory.neverTouch.contains { inside(path, $0) || inside($0, path) }
+    guard !memory.neverTouch.isEmpty else { return false }
+    let paths: [String] =
+      AutopilotDockerCache.isCache(item)
+      ? AutopilotDockerCache.places() : item.path.map { [$0] } ?? []
+    return paths.contains { path in
+      memory.neverTouch.contains { inside(path, $0) || inside($0, path) }
+    }
   }
 }
 

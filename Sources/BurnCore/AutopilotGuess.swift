@@ -14,7 +14,7 @@ extension AutopilotPolicy {
   static let riskyFacts: Set<String> = Set([
     "saved=local", "changes=small", "changes=large", "listening=yes", "stale=today",
     "idle=active", "idle=10m",
-  ]).union(namedRisks(.worktree))
+  ]).union(namedRisks(.worktree)).union(namedRisks(.disk))
   /// Caution text on older questions, and the risk each one names.
   static let cautionRisks: [(text: String, risk: String)] = [
     ("work only on this Mac", "saved=local"), ("unsaved changes", "changes=small"),

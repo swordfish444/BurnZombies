@@ -5,11 +5,12 @@ import Foundation
 extension AutopilotSources {
   /// Production wiring: the monitor's process records and burns, the worktree inventory,
   /// agent threads, junk folders, and the three executors. Proofs pass a `junk` cache that
-  /// measures slowly. `keys` reads the backup key for burns without a keychain question.
+  /// measures slowly. `keys` reads the backup key for burns without a keychain question. `docker`
+  /// comes only from the running app, so no proof reaches the Mac's real Docker.
   public static func live(
     monitor: Monitor, root: URL = Store.defaultRoot, home: String = NSHomeDirectory(),
     junk: AutopilotJunkCache = AutopilotJunkCache(), recoveryKey: SymmetricKey? = nil,
-    keys: AutopilotRecoveryKey = .shared
+    keys: AutopilotRecoveryKey = .shared, docker: AutopilotDockerCache? = nil
   ) -> AutopilotSources {
     // Kept with Autopilot's state, so a restart doesn't size and date every copy again.
     let store = try? AutopilotStore(root: root)
@@ -52,7 +53,10 @@ extension AutopilotSources {
           ages.fill(worth), threads: threads, delivery: &delivery, budget: 150)
         return (items, delivery)
       },
-      disk: { records in junk.items(records, home: home, protected: scope(), trail: trail) },
+      disk: { records in
+        junk.items(records, home: home, protected: scope(), trail: trail)
+          + (docker?.items() ?? [])
+      },
       burnProcess: { item, authority, why in
         guard let key = item.processKey else {
           throw StoreError.message("I lost track of which program that was.")
@@ -82,6 +86,12 @@ extension AutopilotSources {
           $0, protected: scope(), recoveryKey: recoveryKey, keys: keys)
       },
       reclaimDisk: { item, authority in
+        // It has no folder. Only Docker removes anything, by exact record.
+        if let docker, AutopilotDockerCache.isCache(item) {
+          return docker.reclaim(
+            item, authority: authority,
+            authorize: { Autopilot.executorAllowed(item, authority: authority, root: root) })
+        }
         let protected = scope()
         if let path = item.path, let place = protected.resolution(path).place {
           return .refused(item, authority: authority, AutopilotDisk.protectedRefusal(place))
@@ -322,6 +332,7 @@ public enum AutopilotInspector {
   public static func inspect(_ item: AutopilotItem, protected: ProtectedLocations = .limited())
     -> [String: String]
   {
+    if AutopilotDockerCache.isCache(item) { return AutopilotDockerCache.inspect(item) }
     if item.kind != .process, let path = item.path,
       let place = protected.resolution(path).place ?? protected.pointerPlace(path)
     {

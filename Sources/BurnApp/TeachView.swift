@@ -227,7 +227,7 @@ struct TeachView: View {
               TeachRows(rows: card.rows, more: card.more)
             } else {
               TeachDetailsPanel(
-                listed: listed, noun: Self.noun(question.kind), cost: card.cost, state: $details,
+                listed: listed, noun: Self.noun(question), cost: card.cost, state: $details,
                 hover: $hover, spare: toggleSpare, did: { tips.did($0) })
             }
           }
@@ -276,7 +276,12 @@ struct TeachView: View {
       }
       let filters = AutopilotPolicy.detailFilters(listed).contains(where: \.risky)
       let bigFiles: Bool = AutopilotPolicy.bigFilesCost(question) != nil
-      tips.start(kind: question.kind, filters: filters, bigFiles: bigFiles)
+      // Docker's card has nothing to explain, and tips about folders wouldn't be about it.
+      if AutopilotDockerCache.about(question.match) {
+        tips.stop()
+      } else {
+        tips.start(kind: question.kind, filters: filters, bigFiles: bigFiles)
+      }
     }
     .onChange(of: place, initial: true) { _, now in tips.at(now) }
     .onDisappear { tips.stop() }
@@ -304,6 +309,11 @@ struct TeachView: View {
     case .process: return "program"
     case .disk: return "folder"
     }
+  }
+
+  /// What a question's details call its things. Docker's build cache isn't a folder to the owner.
+  static func noun(_ question: AutopilotQuestion) -> String {
+    AutopilotDockerCache.about(question.match) ? "cache" : noun(question.kind)
   }
 
   /// View details or Hide details, styled like Not sure — skip. Opened with nothing opened inside,

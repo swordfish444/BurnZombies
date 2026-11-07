@@ -471,8 +471,18 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
     AutopilotQuestionRow(title: "tool cache in docs", bytes: 4_000_000_000, lastUsed: used),
   ]
   caches.line = nil
+  var docker = busy(
+    .disk, ["folder": [AutopilotDockerCache.folder], "stale": ["week"]], count: 1,
+    bytes: 14_000_000_000)
+  docker.rows = [
+    AutopilotQuestionRow(
+      title: AutopilotDockerCache.name, bytes: 14_000_000_000,
+      lastUsed: Date().addingTimeInterval(-20 * 86_400))
+  ]
+  docker.line = AutopilotDockerCache.safeLine
   for (name, question) in [
     ("teach-copies", copies), ("teach-programs", programs), ("teach-caches", caches),
+    ("teach-docker", docker),
   ] {
     let busyModel = AppModel(demo: true)
     busyModel.autopilot.tells = []
@@ -510,6 +520,14 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
     if name == "teach-caches" {
       try check(
         busyCard.facts.isEmpty, "The tool-caches card should have no chips to leave a gap")
+    }
+    if name == "teach-docker" {
+      try check(busyCard.facts.isEmpty, "Docker's card has nothing more to read")
+      try check(
+        shown.hasWords(of: "Burn Docker's build cache?"), "Docker's headline. OCR saw: \(shown.raw)")
+      try check(shown.hasWords(of: "Frees 14.0 GB"), "What it frees. OCR saw: \(shown.raw)")
+      try check(
+        shown.hasWords(of: AutopilotDockerCache.safeLine), "Its one line. OCR saw: \(shown.raw)")
     }
   }
   // What BZ did on its own comes first: how much, which things, why, and Good call or Undo.

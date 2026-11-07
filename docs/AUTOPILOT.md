@@ -7,6 +7,7 @@ BurnZombies cleans up on its own. It looks for three kinds of leftovers right aw
 | **Zombies** | Programs whose app or chat is gone: test runners, build watchers, robot browsers, dev servers from finished chats. | A graceful stop (SIGTERM) for the program and everything it started. Never a force-kill. |
 | **Old copies** | Git worktrees you or your agents made and stopped using. | Every commit and local change is saved in a restore point inside the repository, then the folder is removed. **Restore** puts it back. |
 | **Junk folders** | Rebuildable output: `node_modules`, build folders, Xcode DerivedData, tool caches, Playwright browser builds that no installed Playwright uses (never a profile), and what robot browsers left in your temp folder. | The folder is deleted. Your tools rebuild it when needed. |
+| **[Docker's build cache](#dockers-build-cache)** | Old leftovers from Docker builds that nothing uses. | Docker removes them, one exact record at a time, and makes them again when a build needs them. |
 
 ## How it decides
 
@@ -24,7 +25,7 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
    - old copies already merged, unchanged and untouched for a month (not ones made by Codex, Claude or Conductor). They are always backed up first;
    - rebuildable folders (`node_modules`, build output, Xcode build folders) inside copies untouched for two weeks;
    - the throwaway profiles and recordings robot browsers leave in your temp folder (`playwright_chromiumdev_profile-…`, `playwright-artifacts-…`, `puppeteer_dev_chrome_profile-…`, chromedriver's `.org.chromium.Chromium.…`), once they add up to 100 MB. Each must be untouched for an hour, unlocked by a running browser and unused by any program when it is removed.
-5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor.
+5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor. Docker's build cache is never its call.
 6. Everything else is **unsure** and becomes a question.
 
 Copies made by Codex, Claude or Conductor are checked like any other copy, so your yes answers cover them too; the starter rules and the AI never burn them on their own. A copy whose files BurnZombies never finished reading (a hard-linked file, a project inside it or a special file stops that walk) gets its age from a second look instead: the newest of its last commit, Git's index and everything in it except what is inside its junk folders, a few copies at each look. Until then, or when that look can't finish either (a folder it can't open, too many files), it has no age, so no rule about how long things sat unused matches it; the same goes for a copy outside the folders you selected, whose unsaved changes BurnZombies never reads. Junk inside such a copy counts as inside an old copy only once a second look, which skips the junk and Git's own files, finds nothing in the copy changed for two weeks; an old last commit alone never makes a copy old. Clearing a junk folder inside a copy doesn't count as using the copy.
@@ -152,11 +153,25 @@ Native code catalogs and applies rules without any model. With Claude Code or Co
 
 Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). The switch beside **Autopilot on** in the menu, or **Off** in **Settings**, turns Autopilot, AI included, off. **Which AI → Off** in **Settings** turns off only the AI.
 
+## Docker's build cache
+
+When Docker is running and has at least 1 GB of old build leftovers, BurnZombies asks once in **Teach BZ**: *Burn Docker's build cache? Frees 14.0 GB.* A Yes covers it from then on, and it burns whenever they pile up again. A No keeps it until you forget that lesson in Settings. If Docker isn't installed or running, BZ says nothing. There's nothing to set.
+
+Only build records nothing uses go:
+
+- Never a record a build is using, one an image shares, one of the 3 most recently used, one used in the last 14 days, or one something that has to stay is built on.
+- Never an image, container or volume. BZ checks they are all still there afterwards, and counts nothing if they aren't.
+- Only your answer decides. A Yes or a No about other folders doesn't reach it, and the AI can't burn it or keep it. **Burn now** is yours as with anything else, and **Spare** lists it under **Never touches**, where it comes off again.
+- **Never touches** on Docker stops it too: the app, `~/.docker`, Docker's data folders, or anything holding them. Look-only and Autopilot off hold it, like every burn.
+
+Your next build may take a little longer, since Docker has to make those leftovers again. Your images, containers and volumes stay. BZ asks Docker every 6 hours, because asking wakes a resting Docker, and it asks no AI.
+
 ## Undo
 
 - **Old copies:** **Restore** in **Findings** for 30 days. The restore point lives in the repository as `refs/burnzombies/retired/…` and holds every commit and local change. Ignored files over 5 MB, anything inside rebuildable folders, and browser profiles that test runs leave in a copy (a Chrome-style profile folder), ignored or not, aren't saved. A copy with more than 512 MB of other unsaved files is left alone until you say its big files can go ([The question card](#the-question-card)). Then those files are deleted for good: the receipt names them, and Restore brings the copy back without them.
 - **Backup key:** backups are encrypted with BZ's own key, kept in a private file. Earlier versions kept it in your login keychain. The first time a newer BZ needs that key, macOS may ask for your password to hand it over. BZ doesn't wait on that dialog: old copies wait, and the menu shows **Allow**. Click it and enter your password when macOS asks, and they burn right away. The key then lives in BZ's private file, and nothing asks again.
 - **Junk folders:** your tools rebuild them.
+- **Docker's build cache:** Docker makes it again when a build needs it.
 - **Programs:** a graceful stop, which can't be undone.
 - **What BZ did on its own:** **Undo** on its card in **Teach BZ** brings back the copies it burned and turns its lesson into a keep, so it asks next time. If a copy can't come back, the card says how many and why until you press *OK*. Big unsaved files deleted with a copy don't come back, and the card says so before you press Undo. Programs and folders can't come back; their button reads *I'd have said no* and still teaches the keep ([Act, then tell](#act-then-tell)).
 
@@ -172,6 +187,7 @@ Uninstalling leaves restore points in place; [Uninstall](INSTALL.md#uninstall) s
 - Unsaved files too big for a restore point are deleted only under a lesson from your Yes to a card that showed that kind of them, or BZ's own call on a kind you said yes to. **Burn now**, the AI and the starter rules never delete them. A copy holding them waits instead of being tried every 6 hours.
 - Junk folders must be a known rebuildable kind, untracked by git, outside private areas (iCloud, Mail, Messages, Photos, `.ssh`, Keychains), and unused by any program. A `node_modules` counts only when a package manager made it and it holds nothing but packages, the links pnpm makes to them, and the caches tools keep there (`.cache`, `.vite`, `.prisma`).
 - Without Full Disk Access, nothing in a place macOS protects is read, sized, judged or burned, and neither is a copy whose project lives in one.
+- Docker's build cache goes only by exact record, through Docker, and only what Docker reports gone and a fresh look confirms is counted ([more](DISK-CLEANUP.md#build-cache-without-marking-folders)).
 - At most 50 programs, 20 copies and 20 junk folders burned per look.
 
 ## Command line

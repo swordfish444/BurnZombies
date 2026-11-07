@@ -4,9 +4,26 @@ import Foundation
 
 /// Owner-mediated BuildKit GC. This never removes host paths, worktrees, images,
 /// containers or volumes. An engine reference check replaces no filesystem guard.
-/// The caller must persist a prepared receipt and consume its plan token BEFORE
-/// clean(), and must reconcile an uncertain attempt instead of automatically retrying.
+/// Two callers, each with its own permission: the old disk cleaner under `DiskPolicy` (off since
+/// v0.17.0), which must persist a prepared receipt and consume its plan token BEFORE clean(), and
+/// Autopilot under the owner's answer (`AutopilotDockerCache`), whose burns pass `Autopilot.execute`.
+/// Neither automatically retries an uncertain attempt on stale evidence.
 public struct BuildKitCache {
+  /// What stays, whoever asks: the most recently used records, and everything used too recently.
+  public struct Retention: Equatable, Sendable {
+    public var keepNewest: Int
+    public var minimumAgeDays: Int
+    public init(keepNewest: Int, minimumAgeDays: Int) {
+      self.keepNewest = keepNewest
+      self.minimumAgeDays = minimumAgeDays
+    }
+    public init(_ policy: DiskPolicy) {
+      self.init(keepNewest: policy.keepNewest, minimumAgeDays: policy.minimumAgeDays)
+    }
+    /// Autopilot's: the old cleaner's defaults, built in. There's nothing to set.
+    public static let standard = Retention(keepNewest: 3, minimumAgeDays: 14)
+    var revision: String { "retention:\(keepNewest):\(minimumAgeDays)" }
+  }
   public struct Target: Codable, Equatable, Sendable {
     public var context: String
     public var builder: String
@@ -33,6 +50,8 @@ public struct BuildKitCache {
     public var reclaimable: Bool
     public var shared: Bool
     public var type: String
+    /// What it is built on, when Buildx says. The engine holds a record while another is built on it.
+    public var parents: [String]?
   }
   public struct Inventory: Codable, Sendable {
     public var owner: Owner
@@ -69,7 +88,8 @@ public struct BuildKitCache {
     public var requestedIDs: [String]
     public var removedIDs: [String]
     public var outcome: String
-    /// Owner cache accounting, NOT physical disk space returned to macOS.
+    /// What Docker verifiably removed. Docker Desktop gave it back to macOS within about 10 seconds
+    /// when measured, but this isn't a measure of that.
     public var cacheReleasedBytes: UInt64
     /// Deliberately nil: Docker VM allocation/trim requires separate observation.
     public var hostDiskReclaimedBytes: UInt64?
@@ -115,6 +135,20 @@ public struct BuildKitCache {
     self.socketIdentity = socketIdentity
     self.executableIdentity = executableIdentity
   }
+  /// The context the owner's own `docker` uses, and its embedded builder. Decodes only routing
+  /// metadata; never copies credentials to a tool or model.
+  public static func currentTarget(
+    home: URL = FileManager.default.homeDirectoryForCurrentUser
+  ) throws -> Target {
+    struct Config: Decodable { var currentContext: String? }
+    let url = home.appendingPathComponent(".docker/config.json")
+    let data = try Data(contentsOf: url, options: .mappedIfSafe)
+    guard data.count <= 262144 else {
+      throw StoreError.message("Docker context metadata exceeds bound.")
+    }
+    let context = try JSONDecoder().decode(Config.self, from: data).currentContext ?? "default"
+    return .init(context: context, builder: context)
+  }
   private static func fail(_ message: String) -> StoreError { .message(message) }
   private static func name(_ value: String) -> Bool {
     !value.isEmpty && value.count <= 128
@@ -125,10 +159,13 @@ public struct BuildKitCache {
       && value.range(of: "^[a-zA-Z0-9]+$", options: .regularExpression) != nil
   }
   private func command(
-    _ target: Target, _ args: [String], transport: Command.Transport = .dockerCLI
+    _ target: Target, _ args: [String], milliseconds: Int32 = 8000,
+    transport: Command.Transport = .dockerCLI
   ) throws -> Data {
     let data = try run(
-      .init(arguments: ["--context", target.context] + args, transport: transport))
+      .init(
+        arguments: ["--context", target.context] + args, milliseconds: milliseconds,
+        transport: transport))
     guard data.count <= 1_048_576 else {
       throw Self.fail("BuildKit evidence exceeded its output bound.")
     }
@@ -209,6 +246,7 @@ public struct BuildKitCache {
       var Reclaimable: Bool
       var Shared: Bool
       var `Type`: String
+      var Parents: [String]?
     }
     struct Usage: Decodable {
       var ID: String
@@ -260,35 +298,85 @@ public struct BuildKitCache {
       }
       return Record(
         id: r.ID, bytes: r.Size, created: r.CreatedAt, lastUsed: r.LastUsedAt,
-        mutable: state.Mutable, reclaimable: state.Reclaimable, shared: r.Shared, type: r.`Type`)
+        mutable: state.Mutable, reclaimable: state.Reclaimable, shared: r.Shared, type: r.`Type`,
+        parents: state.Parents)
     }
   }
-  private static func eligible(_ records: [Record], policy: DiskPolicy, now: Date) -> [Record] {
+  private static func eligible(_ records: [Record], retention: Retention, now: Date) -> [Record] {
     let ordered = records.filter { $0.type == "regular" }.sorted {
       let l = $0.lastUsed ?? $0.created
       let r = $1.lastUsed ?? $1.created
       return l == r ? $0.id < $1.id : l > r
     }
-    let retained = Set(ordered.prefix(policy.keepNewest).map(\.id))
-    let cutoff = now.addingTimeInterval(-Double(policy.minimumAgeDays) * 86400)
-    return records.filter {
-      guard let used = $0.lastUsed else { return false }
-      return !retained.contains($0.id) && $0.type == "regular" && !$0.mutable && !$0.shared
-        && $0.reclaimable
-        && $0.bytes > 0 && $0.created <= used && used <= cutoff
-    }.sorted { $0.id < $1.id }
+    let retained = Set(ordered.prefix(retention.keepNewest).map(\.id))
+    let cutoff = now.addingTimeInterval(-Double(retention.minimumAgeDays) * 86400)
+    var chosen = Set(
+      records.filter {
+        guard let used = $0.lastUsed else { return false }
+        return !retained.contains($0.id) && $0.type == "regular" && !$0.mutable && !$0.shared
+          && $0.reclaimable
+          && $0.bytes > 0 && $0.created <= used && used <= cutoff
+      }.map(\.id))
+    // The engine won't remove a record while another is built on it, so whatever stays keeps what
+    // it is built on, all the way down, and those bytes are never promised.
+    let byID = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    var staying = records.filter { !chosen.contains($0.id) }
+    while let record = staying.popLast() {
+      for parent in record.parents ?? [] where chosen.remove(parent) != nil {
+        if let held = byID[parent] { staying.append(held) }
+      }
+    }
+    return records.filter { chosen.contains($0.id) }.sorted { $0.id < $1.id }
+  }
+  /// The eligible records in the order the engine can remove them: each before what it is built on,
+  /// the biggest first among those that are ready.
+  public static func removalOrder(_ inventory: Inventory) -> [String] {
+    let eligible = Set(inventory.eligibleIDs)
+    let records = inventory.records.filter { eligible.contains($0.id) }
+    let byID = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    var above = [String: Int]()
+    for record in records {
+      for parent in Set(record.parents ?? []) where eligible.contains(parent) {
+        above[parent, default: 0] += 1
+      }
+    }
+    var order = [String]()
+    var ready = records.filter { above[$0.id, default: 0] == 0 }
+    while !ready.isEmpty {
+      ready.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
+      order += ready.map(\.id)
+      var next = [Record]()
+      for record in ready {
+        for parent in Set(record.parents ?? []) where eligible.contains(parent) {
+          above[parent, default: 0] -= 1
+          if above[parent] == 0, let held = byID[parent] { next.append(held) }
+        }
+      }
+      ready = next
+    }
+    return order
   }
   public func inspect(target: Target, policy: DiskPolicy, now: Date = Date()) throws -> Inventory {
     try policy.validate()
     guard policy.mode != "off" else { throw Self.fail("Disk cleanup is off.") }
+    return try inventory(target, retention: Retention(policy), revision: policy.revision, now: now)
+  }
+  /// Autopilot's way in. The owner's answer is its permission, so no mode, goal or cap applies; every
+  /// check on the owner and on each record does.
+  public func inspect(target: Target, retention: Retention, now: Date = Date()) throws -> Inventory {
+    try inventory(target, retention: retention, revision: retention.revision, now: now)
+  }
+  private func inventory(_ target: Target, retention: Retention, revision: String, now: Date) throws
+    -> Inventory
+  {
     let identity = try owner(target)
     let data = try command(
       target, ["buildx", "--builder", target.builder, "du", "--format=json", "--timeout", "5s"])
     let exactUsage = try command(target, [], transport: .localEngineCacheUsage)
     let records = try Self.decodeRecords(data, exactUsage: exactUsage)
-    let allowed = Self.eligible(records, policy: policy, now: now)
+    let allowed = Self.eligible(records, retention: retention, now: now)
     return .init(
-      owner: identity, date: now, policyRevision: policy.revision, records: records,
+      owner: identity, date: now, policyRevision: revision, records: records,
       eligibleIDs: allowed.map(\.id), eligibleBytes: allowed.reduce(0) { $0 + $1.bytes })
   }
   public static func preview(
@@ -300,7 +388,7 @@ public struct BuildKitCache {
       (0...600).contains(now.timeIntervalSince(inventory.date)), (1...32).contains(recordIDs.count),
       Set(recordIDs).count == recordIDs.count
     else { throw fail("Cache preview requires fresh evidence and automatic cleanup policy.") }
-    let eligible = eligible(inventory.records, policy: policy, now: now)
+    let eligible = eligible(inventory.records, retention: Retention(policy), now: now)
     let ids = Set(recordIDs)
     let selected = eligible.filter { ids.contains($0.id) }
     let bytes = selected.reduce(UInt64(0)) { $0 + $1.bytes }
@@ -315,6 +403,26 @@ public struct BuildKitCache {
     return .init(
       id: UUID(), inventory: inventory, recordIDs: recordIDs.sorted(), cacheBytes: bytes,
       created: now, expires: now.addingTimeInterval(120))
+  }
+  /// Autopilot's preview: fresh evidence and exact, eligible records, with no goal or daily cap.
+  public static func preview(
+    inventory: Inventory, recordIDs: [String], retention: Retention, now: Date = Date()
+  ) throws -> Plan {
+    guard inventory.policyRevision == retention.revision,
+      (0...600).contains(now.timeIntervalSince(inventory.date)), (1...32).contains(recordIDs.count),
+      Set(recordIDs).count == recordIDs.count
+    else { throw fail("Cache preview requires fresh evidence.") }
+    let ids = Set(recordIDs)
+    let selected = eligible(inventory.records, retention: retention, now: now).filter {
+      ids.contains($0.id)
+    }
+    guard selected.count == ids.count else {
+      throw fail("Selected cache records must be old, unused, unshared and outside newest retention.")
+    }
+    return .init(
+      id: UUID(), inventory: inventory, recordIDs: recordIDs.sorted(),
+      cacheBytes: selected.reduce(UInt64(0)) { $0 + $1.bytes }, created: now,
+      expires: now.addingTimeInterval(120))
   }
   private struct Controls {
     var containers: [String: String]
@@ -359,15 +467,23 @@ public struct BuildKitCache {
       images: try ids(["image", "ls", "--all", "--no-trunc", "--format", "{{json .ID}}"]),
       volumes: try ids(["volume", "ls", "--format", "{{json .Name}}"]))
   }
-  private static func pruneArguments(_ target: Target, ids: [String], policy: DiskPolicy)
+  /// How long a prune may take. A layer of 100,000 files took 0.74 s (Docker 29.7.2), so a whole
+  /// batch of such layers fits. `--timeout` bounds only loading the builder.
+  private static let pruneMilliseconds: Int32 = 60_000
+  /// What a prune is told, by exact id. BuildKit's `private` and `immutable` are there or not, so
+  /// they take an empty value: `shared=false`, `mutable=false` and `inuse=false` compare with text
+  /// that isn't there and match nothing, which is how the real engine answered on Docker 29.7.2,
+  /// Buildx 0.36.1 and BuildKit 0.32.2. Use needs no filter: without `--all` the engine never removes
+  /// what something holds, what another record is built on, or what an image shares.
+  public static func pruneArguments(_ target: Target, ids: [String], retention: Retention)
     -> [String]
   {
     [
       "buildx", "--builder", target.builder, "prune",
       "--filter", "id=^(" + ids.joined(separator: "|") + ")$", "--filter",
-      "until=\(policy.minimumAgeDays * 24)h",
-      "--filter", "inuse=false", "--filter", "shared=false", "--filter", "mutable=false",
-      "--filter", "type=regular", "--force", "--timeout", "5s",
+      "until=\(retention.minimumAgeDays * 24)h",
+      "--filter", "type=regular", "--filter", "private=\"\"", "--filter", "immutable=\"\"",
+      "--force", "--timeout", "5s",
     ]
   }
   private static func removedIDs(_ output: Data) -> Set<String> {
@@ -402,7 +518,9 @@ public struct BuildKitCache {
         "One exact absent-ID actuator request; zero existing records selected or cleanup credited.")
     var dispatchError: String?
     do {
-      let output = try command(target, Self.pruneArguments(target, ids: [id], policy: policy))
+      let output = try command(
+        target, Self.pruneArguments(target, ids: [id], retention: Retention(policy)),
+        milliseconds: Self.pruneMilliseconds)
       result.reportedRemovedIDs = Self.removedIDs(output).sorted()
       let text = String(decoding: output, as: UTF8.self)
       if !result.reportedRemovedIDs.isEmpty
@@ -441,18 +559,45 @@ public struct BuildKitCache {
     plan: Plan, policy: DiskPolicy, usedTodayBytes: UInt64,
     now: Date = Date(), authorize: () throws -> Void = {}
   ) throws -> Receipt {
+    guard plan.inventory.policyRevision == policy.revision else {
+      throw Self.fail("Cache plan expired or its policy changed.")
+    }
+    return try clean(
+      plan, retention: Retention(policy), now: now, authorize: authorize,
+      inspect: { try inspect(target: $0, policy: policy, now: $1) },
+      validate: {
+        try Self.preview(
+          inventory: $0, recordIDs: plan.recordIDs, policy: policy, usedTodayBytes: usedTodayBytes,
+          now: now)
+      })
+  }
+  /// Autopilot's: the same steps and checks, with no goal or daily cap in them.
+  public func clean(
+    plan: Plan, retention: Retention, now: Date = Date(), authorize: () throws -> Void = {}
+  ) throws -> Receipt {
+    guard plan.inventory.policyRevision == retention.revision else {
+      throw Self.fail("Cache plan expired or its policy changed.")
+    }
+    return try clean(
+      plan, retention: retention, now: now, authorize: authorize,
+      inspect: { try inspect(target: $0, retention: retention, now: $1) },
+      validate: {
+        try Self.preview(inventory: $0, recordIDs: plan.recordIDs, retention: retention, now: now)
+      })
+  }
+  private func clean(
+    _ plan: Plan, retention: Retention, now: Date, authorize: () throws -> Void,
+    inspect look: (Target, Date) throws -> Inventory, validate: (Inventory) throws -> Plan
+  ) throws -> Receipt {
     guard plan.created <= now, now <= plan.expires,
-      plan.expires.timeIntervalSince(plan.created) <= 120,
-      plan.inventory.policyRevision == policy.revision
+      plan.expires.timeIntervalSince(plan.created) <= 120
     else { throw Self.fail("Cache plan expired or its policy changed.") }
     let target = plan.inventory.owner.target
-    let fresh = try inspect(target: target, policy: policy, now: now)
+    let fresh = try look(target, now)
     guard fresh.owner == plan.inventory.owner else {
       throw Self.fail("Docker owner changed; cache plan refused.")
     }
-    let validated = try Self.preview(
-      inventory: fresh, recordIDs: plan.recordIDs, policy: policy, usedTodayBytes: usedTodayBytes,
-      now: now)
+    let validated = try validate(fresh)
     let selected = Set(plan.recordIDs)
     guard validated.cacheBytes == plan.cacheBytes,
       fresh.records.filter({ selected.contains($0.id) }).sorted(by: { $0.id < $1.id })
@@ -462,8 +607,8 @@ public struct BuildKitCache {
     guard try owner(target) == fresh.owner else {
       throw Self.fail("Docker owner changed before cleanup.")
     }
-    // The Monitor reloads live policy, remaining allowance and disk target here;
-    // those can change during the bounded owner/controls inspection above.
+    // The Monitor reloads live policy, remaining allowance and disk target here, and Autopilot its
+    // decision to burn: those can change during the bounded owner/controls inspection above.
     try authorize()
     guard Date() <= plan.expires else {
       throw Self.fail("Cache plan expired during owner verification; preserved.")
@@ -477,12 +622,13 @@ public struct BuildKitCache {
       // Buildx's id= filter is a regex. Validated alphanumeric IDs plus anchors
       // prevent prefix/substring matches. One bounded set avoids partial batches.
       let output = try command(
-        target, Self.pruneArguments(target, ids: plan.recordIDs, policy: policy))
+        target, Self.pruneArguments(target, ids: plan.recordIDs, retention: retention),
+        milliseconds: Self.pruneMilliseconds)
       let reported = Self.removedIDs(output)
       guard reported.isSubset(of: selected) else {
         throw Self.fail("Owner reported an unexpected cache record; reconciliation required.")
       }
-      let after = try inspect(target: target, policy: policy, now: Date())
+      let after = try look(target, Date())
       guard after.owner == fresh.owner else {
         throw Self.fail("Owner changed during cleanup; reconciliation required.")
       }
@@ -633,7 +779,10 @@ private final class ManagedCacheCapture {
       argv.forEach { free($0) }
       env.forEach { free($0) }
     }
-    let result = bz_capture_tool(&argv, &env, fd, command.milliseconds, 1_048_576)
+    let result =
+      command.milliseconds > 8000
+      ? bz_capture_prune_tool(&argv, &env, fd, command.milliseconds, 1_048_576)
+      : bz_capture_tool(&argv, &env, fd, command.milliseconds, 1_048_576)
     guard result == 0 else {
       let operation =
         command.transport == .localEngineCacheUsage

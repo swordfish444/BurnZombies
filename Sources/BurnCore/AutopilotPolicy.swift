@@ -79,7 +79,8 @@ public enum AutopilotPolicy {
     }
     let rules = memory.rules.filter { $0.enabled && matches($0, item) }
     if let rule = rules.first(where: { $0.verdict == .keep }) { return (.keep, "rule:" + rule.id) }
-    let judgment = memory.judgments[item.id].flatMap {
+    // Docker's build cache is the owner's call: the AI's verdict counts for nothing, either way.
+    let judgment = AutopilotDockerCache.isCache(item) ? nil : memory.judgments[item.id].flatMap {
       $0.revision == item.revision && $0.confidence >= aiConfidenceFloor ? $0 : nil
     }
     if let judgment, judgment.verdict == .keep { return (.keep, ai(judgment)) }
@@ -116,7 +117,7 @@ public enum AutopilotPolicy {
       if f["inUse"] != "no" { return "Might be in use" }
       return "Needs your OK"
     case .disk:
-      return "Not a known junk folder"
+      return AutopilotDockerCache.isCache(item) ? "Needs your OK" : "Not a known junk folder"
     }
   }
 
@@ -132,7 +133,7 @@ public enum AutopilotPolicy {
       return !ownerManagedPlaces.contains(f["place"] ?? "") && f["inUse"] == "no"
         && f["thread"] != "live" && !AutopilotWorktrees.holdsBigFiles(item)
     case .disk:
-      return (f["folder"] ?? "other") != "other"
+      return (f["folder"] ?? "other") != "other" && !AutopilotDockerCache.isCache(item)
     }
   }
 
@@ -322,7 +323,9 @@ public enum AutopilotPolicy {
   public static func coverage(_ kind: AutopilotKind, _ match: [String: [String]]) -> AutopilotRule {
     var wide: [String: [String]] = widen(match, verdict: .burn)
     for named in namedRisks[kind] ?? [] where wide[named.fact] == nil {
-      wide[named.fact] = [named.risky, named.clear]
+      // Docker's build cache has a card of its own: no other question is about it.
+      let own: Bool = named.fact != AutopilotDockerCache.risk || AutopilotDockerCache.about(match)
+      wide[named.fact] = own ? [named.risky, named.clear] : [named.clear]
     }
     return AutopilotRule(kind: kind, match: wide, verdict: .burn, source: .operator, title: "")
   }
@@ -444,6 +447,9 @@ public enum AutopilotPolicy {
       return "Can I burn old project copies" + (parts.isEmpty ? "" : " " + parts.joined(separator: ", "))
         + "?"
     case .disk:
+      if AutopilotDockerCache.about(match) {
+        return "Can I burn Docker's build cache? Docker makes it again when it needs it."
+      }
       let folder =
         [
           "node_modules": "downloaded packages (node_modules)",
@@ -493,6 +499,10 @@ public enum AutopilotPolicy {
       return
         "The folder goes away, but nothing is lost: your code is saved and I keep a backup you can restore."
     case .disk:
+      if AutopilotDockerCache.isCache(item) {
+        return
+          "Docker clears it to free space, and makes it again the next time a build needs it. Your images, containers and volumes stay."
+      }
       return
         "The folder is deleted to free space. Your tools rebuild it automatically next time it's needed."
     }
@@ -634,6 +644,7 @@ extension AutopilotPolicy {
         "package-cache": ("tool cache", "tool caches"),
         "python-env": ("Python environment", "Python environments"),
         "browser-temp": ("robot-browser leftover", "robot-browser leftovers"),
+        AutopilotDockerCache.folder: (AutopilotDockerCache.name, AutopilotDockerCache.name),
       ][value("folder")] ?? ("folder", "folders")
     }
   }
@@ -674,7 +685,9 @@ extension AutopilotPolicy {
   /// A pattern's facts in two to four words each, most decisive first: a card's chips, by the first
   /// value of each fact.
   static func facts(_ kind: AutopilotKind, match: [String: [String]]) -> [String] {
-    factWords(kind).compactMap { row in match[row.fact]?.first.flatMap { row.words[$0] } }
+    // Docker's build cache has nothing to weigh: its age is the same for every card.
+    if AutopilotDockerCache.about(match) { return [] }
+    return factWords(kind).compactMap { row in match[row.fact]?.first.flatMap { row.words[$0] } }
   }
 
   /// A fact BZ couldn't check, as a lesson names it.
@@ -792,12 +805,20 @@ extension AutopilotPolicy {
           ? "It's backed up first, so you can undo it."
           : "Each one is backed up first, so you can undo it.")
     case .process: note = one ? "It just gets asked to quit." : "They just get asked to quit."
-    case .disk: note = one ? "Your tools rebuild it when needed." : "Your tools rebuild them when needed."
+    case .disk:
+      note =
+        AutopilotDockerCache.about(question.match)
+        ? AutopilotDockerCache.safeLine
+        : one ? "Your tools rebuild it when needed." : "Your tools rebuild them when needed."
     }
     let age = when(
       question.kind, newest: question.newest, match: question.match, now: now, calendar: calendar)
     let words: [String] = ["Burn", String(question.count), one ? single : plural, age]
-    let headline: String = words.filter { !$0.isEmpty }.joined(separator: " ") + "?"
+    // There's one of it, and how old it is doesn't matter to the answer.
+    let headline: String =
+      AutopilotDockerCache.about(question.match)
+      ? "Burn " + AutopilotDockerCache.name + "?"
+      : words.filter { !$0.isEmpty }.joined(separator: " ") + "?"
     // When the headline says how long it sat unused, the facts and cautions don't say it again.
     var described = question.match
     if !age.isEmpty, let recency = recencyFacts[question.kind] { described[recency] = nil }
