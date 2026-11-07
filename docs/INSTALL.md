@@ -10,7 +10,7 @@ BZ keeps running with no chat open, and a new install starts at login, so it com
 
 ## Updates and About
 
-Open **Settings → About BurnZombies** to see the installed version and build. **Check for Updates**
+Your installed version and build are at the top of **Settings**, on every tab. **Check for Updates**
 checks the latest published stable GitHub release. If one is newer, choose **Update and Restart**.
 BZ downloads and verifies it, finishes work already in progress, and restarts into Settings. Your
 rules, Keep decisions, recovery files, selected harness/model and start-at-login choice stay in place.

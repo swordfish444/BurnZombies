@@ -1042,7 +1042,12 @@ import UserNotifications
       NSApp.terminate(nil)
     }
   }
-  lazy var appUpdates = AppUpdateSettingsModel { [weak self] plan in
+  lazy var appUpdates = AppUpdateSettingsModel(
+    // The header is on every tab. A demo has no update history, and proofs stay out of real state.
+    root: demo
+      ? FileManager.default.temporaryDirectory.appendingPathComponent("bz-demo-updates")
+      : Store.defaultRoot
+  ) { [weak self] plan in
     guard let self else { throw StoreError.message("The app is closing.") }
     let stopped = self.observationStopped
     self.observationStopped = true
@@ -1067,7 +1072,7 @@ import UserNotifications
   }
 }
 
-private let ember = Color(red: 0.78, green: 0.28, blue: 0.09)
+private let ember = BurnTheme.ember
 private func bytes(_ n: UInt64) -> String {
   ByteCountFormatter.string(fromByteCount: Int64(clamping: n), countStyle: .memory)
 }
@@ -1114,22 +1119,11 @@ struct Dashboard: View {
   }
   var body: some View {
     VStack(spacing: 0) {
-      HStack(spacing: 10) {
-        Image(systemName: "flame.fill").font(.title2).foregroundStyle(ember)
-        VStack(alignment: .leading, spacing: 2) {
-          Text("BurnZombies").font(.headline)
-          Text(model.demo ? "DEMO · synthetic data" : "Keep your work running").font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        Spacer()
-        if model.working { ProgressView().controlSize(.small) }
-        Button {
-          model.refresh()
-        } label: {
-          Image(systemName: "arrow.clockwise")
-        }.clickPointer().buttonStyle(.borderless).help("Refresh observations").accessibilityLabel(
-          "Refresh observations")
-      }.padding(20)
+      AboutHeader(
+        updates: model.appUpdates,
+        subtitle: model.demo ? "DEMO · synthetic data" : "Keep your work running",
+        working: model.working
+      ).disabled(model.demo).padding(20)
       Divider()
       if model.autopilotAvailable && model.selection == nil {
         AutopilotMenuSection(model: model)
@@ -1147,11 +1141,6 @@ struct Dashboard: View {
           Text("History").tag("History")
           Text("Settings").tag("Settings")
         }.clickPointer().pickerStyle(.segmented).padding([.horizontal, .top], 16)
-        if model.tab == "Settings" {
-          AboutSettingsView(updates: model.appUpdates).disabled(model.demo)
-            .padding(.horizontal, 20).padding(.vertical, 12)
-          Divider()
-        }
         ScrollView {
           VStack(alignment: .leading, spacing: model.tab == "Settings" ? 10 : 18) {
             if model.tab == "Overview" {

@@ -23,6 +23,7 @@ import SwiftUI
   let checkRelease: Check
   let prepare: Prepare
   let install: Install
+  let answerNanoseconds: UInt64
   private var task: Task<Void, Never>?
   private var operation: UUID?
 
@@ -35,7 +36,7 @@ import SwiftUI
     prepare: @escaping Prepare = { release, progress in
       try await AppUpdatePreparation.prepare(
         release, destination: Bundle.main.bundleURL, progress: progress)
-    }, install: @escaping Install
+    }, answerNanoseconds: UInt64 = 8_000_000_000, install: @escaping Install
   ) {
     self.version = version
     self.build = build
@@ -43,6 +44,7 @@ import SwiftUI
     checkRelease = check
     self.prepare = prepare
     self.install = install
+    self.answerNanoseconds = answerNanoseconds
   }
   var busy: Bool {
     result?.state == "installing"
@@ -53,6 +55,17 @@ import SwiftUI
     return release.version > current
   }
   var canCancel: Bool { [.checking, .downloading, .verifying].contains(phase) }
+  /// A quick check's answer stays beside the version. The line under the header is for the rest.
+  var showsStatusLine: Bool {
+    result?.state == "installing" || ![.idle, .checking, .upToDate].contains(phase)
+  }
+  /// A failed update stands until it's retried, unless that version got here another way.
+  var failedUpdate: String? {
+    guard let result, result.state == "failed", let target = try? AppVersion(result.version),
+      let current = try? AppVersion(version), target > current
+    else { return nil }
+    return result.detail
+  }
   var status: String {
     if result?.state == "installing" { return "Finishing the update…" }
     switch phase {
@@ -151,21 +164,43 @@ import SwiftUI
   func refreshResult() {
     result = AppUpdateResult.load(root: root)
   }
+  /// "You're up to date" and "Couldn't check" are true for a moment, and the header is on every
+  /// tab. A failed update with a newer version waiting stays: there's something to retry.
+  func settleAnswer() async {
+    let shown = phase
+    guard shown == .upToDate || (shown == .failed && !updateAvailable) else { return }
+    try? await Task.sleep(nanoseconds: answerNanoseconds)
+    if !Task.isCancelled, phase == shown { phase = .idle }
+  }
   func waitForOperation() async { await task?.value }
 }
 
-struct AboutSettingsView: View {
+/// The top of the panel on every tab: BZ's name on the left, its version and updates on the right.
+struct AboutHeader: View {
   @ObservedObject var updates: AppUpdateSettingsModel
+  let subtitle: String
+  var working = false
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
-        Text("Version \(updates.version) (\(updates.build))")
-          .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-          .textSelection(.enabled).accessibilityIdentifier("about-version")
-        Spacer(minLength: 0)
-        actionButtons
+      HStack(spacing: 10) {
+        Image(systemName: "flame.fill").font(.title2).foregroundStyle(BurnTheme.ember)
+        VStack(alignment: .leading, spacing: 2) {
+          Text("BurnZombies").font(.headline)
+          Text(subtitle).font(.caption).foregroundStyle(.secondary)
+        }
+        // By the name, not the version: this is BZ at work, not an update in progress.
+        if working { ProgressView().controlSize(.small) }
+        Spacer(minLength: 8)
+        VStack(alignment: .trailing, spacing: 2) {
+          Text("Version \(updates.version) (\(updates.build))")
+            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            .textSelection(.enabled).accessibilityIdentifier("about-version")
+          actionButtons
+        }
+        .fixedSize()
+        .help("Checks GitHub only when you ask. Updating restarts BZ and keeps your settings.")
       }
-      if updates.phase != .idle || updates.result?.state == "installing" {
+      if updates.showsStatusLine {
         HStack(alignment: .top, spacing: 8) {
           if updates.busy {
             ProgressView().controlSize(.mini)
@@ -187,12 +222,11 @@ struct AboutSettingsView: View {
       if updates.phase == .downloading, let fraction = updates.fraction {
         ProgressView(value: fraction).accessibilityLabel("Update download")
       }
-      if let result = updates.result, result.state == "failed" {
-        Text(result.detail).font(.caption).foregroundStyle(Color.orange)
-        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("update-result")
+      if let failure = updates.failedUpdate {
+        Text(failure).font(.caption).foregroundStyle(Color.orange)
+          .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("update-result")
       }
     }
-    .help("Checks GitHub only when you ask. Updating restarts BZ and keeps your settings.")
     .task {
       updates.refreshResult()
       while updates.result?.state == "installing" {
@@ -200,10 +234,14 @@ struct AboutSettingsView: View {
         updates.refreshResult()
       }
     }
+    .task(id: updates.phase) { await updates.settleAnswer() }
   }
+  /// One line beside the version whatever the updater is doing, so the panel doesn't jump.
   private var actionButtons: some View {
-    HStack(spacing: 8) {
-      if updates.updateAvailable && [.available, .failed].contains(updates.phase) {
+    HStack(spacing: 6) {
+      if updates.phase == .upToDate {
+        Text(updates.status).foregroundStyle(.secondary).accessibilityIdentifier("update-status")
+      } else if updates.updateAvailable && [.available, .failed].contains(updates.phase) {
         Button("Update and Restart") { updates.update() }
           .buttonStyle(.link).clickPointer()
           .accessibilityIdentifier("update-install")
@@ -212,11 +250,18 @@ struct AboutSettingsView: View {
           .buttonStyle(.link)
           .accessibilityIdentifier("update-check")
       } else if updates.canCancel {
+        if updates.phase == .checking {
+          ProgressView().controlSize(.mini)
+          Text(updates.status).foregroundStyle(.secondary).accessibilityIdentifier("update-status")
+        }
         Button("Cancel") { updates.cancel() }.buttonStyle(.link).clickPointer().accessibilityIdentifier(
           "update-cancel")
+      } else {
+        // Nothing to press while BZ restarts. A blank keeps the version from moving.
+        Text(" ").accessibilityHidden(true)
       }
     }
-    .font(.caption).fixedSize()
+    .font(.caption)
   }
 }
 
