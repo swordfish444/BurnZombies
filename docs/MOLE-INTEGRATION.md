@@ -10,11 +10,11 @@ Paths outside the measured branch, linked paths and protected paths are discarde
 
 ## Supported owner operation
 
-Discovery can now lead to one bounded owner-controlled action: **unused local BuildKit cache**. An independent harness review receives exact eligible record IDs, previews a selected set and consumes a one-use cleanup token. No folder marking or per-session hook is needed. Native code gathers evidence and enforces the boundary; the model selects the useful operation.
+One bounded owner-controlled action exists: **unused local BuildKit cache**, which Autopilot handles once the owner says Yes to [its one question](AUTOPILOT.md#dockers-build-cache). No folder marking or per-session hook is needed. Native code gathers evidence and enforces the boundary; no model selects it.
 
-Only an already running, single-node local embedded Docker builder is supported. Current owner inventory combines exact Engine API v1.51 bytes/timestamps with Buildx's state flags. Automatic policy, retention, newest-record protection, the free-space goal and remaining daily byte allowance apply. The adapter pins the owner, revalidates before dispatch, and supplies anchored exact IDs plus unused/unshared/immutable/regular filters to the engine. The engine rechecks active references under its own locks. No raw path, image, container or volume removal is exposed.
+Only an already running, single-node local embedded Docker builder is supported. Current owner inventory combines exact Engine API v1.51 bytes/timestamps with Buildx's state flags. Fixed retention and newest-record protection apply, and nothing is promised that another record holds. The adapter pins the owner, revalidates before dispatch, and supplies anchored exact IDs plus age, regular, private and immutable filters to the engine. The engine rechecks active references under its own locks. No raw path, image, container or volume removal is exposed.
 
-Prepared and uncertain attempts remain recorded; unknown completion is never retried automatically or counted as recovery. Receipts distinguish cache capacity released inside Docker from physical disk space returned to macOS. See [the full boundary and validation limits](DISK-CLEANUP.md#build-cache-without-marking-folders).
+Unknown completion earns no credit, and the next attempt starts from fresh evidence after the same wait as any refusal. See [the full boundary and validation limits](DISK-CLEANUP.md#build-cache-without-marking-folders).
 
 ## Other operation classes
 
@@ -22,7 +22,7 @@ Future adapters should approve **operation classes**, not arbitrary paths, and p
 
 | Operation | Evidence before execution | Execution boundary |
 | --- | --- | --- |
-| Docker build cache — implemented | Exact local embedded builder; old, unused, immutable, unshared regular records | Exact-ID owner GC, policy allowance and durable receipts; no raw host deletion |
+| Docker build cache — implemented | Exact local embedded builder; old, unused, immutable, unshared regular records | Exact-ID owner GC under the owner's answer, with receipts; no raw host deletion |
 | Package-manager downloads — not automated | Exact manager/store identity, retention and documented concurrent-use protection | A future manager-native adapter; never install, upgrade or uninstall |
 | Generated project output | Producer/build manifest, ignored and untracked output, reproducibility, completed use, complete consumer visibility | Exact identity-bound preview and cleanup, rechecked at execution |
 | Harness worktrees | Owner attachment, saved changes/commits, ignored-file retention, no active consumers | Owning harness's recoverable archive |
@@ -38,4 +38,4 @@ Mole's current `clean` removes categories broadly and rejects the former `--sele
 
 Reviewed upstream `tw93/Mole` commit `45ee88cbb07b325901b80d7db8b1624fa1dceb05` and locally installed Mole 1.65.0. Relevant upstream sources: [JSON analysis and scan status](https://github.com/tw93/Mole/blob/45ee88cbb07b325901b80d7db8b1624fa1dceb05/cmd/analyze/json.go), [cleanup flags and preview ledger](https://github.com/tw93/Mole/blob/45ee88cbb07b325901b80d7db8b1624fa1dceb05/bin/clean.sh), [project purge](https://github.com/tw93/Mole/blob/45ee88cbb07b325901b80d7db8b1624fa1dceb05/bin/purge.sh), and [license](https://github.com/tw93/Mole/blob/45ee88cbb07b325901b80d7db8b1624fa1dceb05/LICENSE).
 
-Mole proof covers outside-scope paths, symlinks, protected entries, partial results, cached bounded inspection, and no deletion through the recommendation path. BuildKit protocol fixtures additionally cover exact selection, active-reference races, retained/shared controls, policy/owner drift, late revocation and uncertain dispatch. Read-only inspection passed on the installed Docker engine; all 57 records were younger than the current retention. One real-engine contract using a generated, verified-absent ID accepted the production filters and preserved every existing record, container state, image and volume. It reclaimed zero bytes. Positive real-engine cache deletion remains unproven; no cache or physical disk recovery is claimed from these checks.
+Mole proof covers outside-scope paths, symlinks, protected entries, partial results, cached bounded inspection, and no deletion through the recommendation path. BuildKit protocol fixtures additionally cover exact selection, active-reference races, retained/shared controls, policy/owner drift, late revocation and uncertain dispatch. On the real engine, `BurnProof --docker-real` removes exact records of a throwaway chain it builds itself and preserves every other record, container state, image and volume.

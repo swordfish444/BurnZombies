@@ -353,6 +353,26 @@ private func yesProof() async throws {
   check(lessons.first?.evidence.hasPrefix("From 1 answer") == true, lessons.first?.evidence ?? "")
 }
 
+/// Everything was very old when the owner said Yes. Fresher leftovers later aren't a new question.
+private func olderFirstProof() async throws {
+  let root = try scratchFolder()
+  defer { try? FileManager.default.removeItem(at: root) }
+  let docker = DockerFixture()
+  docker.rows[0].days = 300
+  docker.rows[1].days = 200
+  let cache = AutopilotDockerCache(open: docker.open, alive: docker.alive)
+  cache.look(now: docker.now)
+  let autopilot = try engine(cache, root: root)
+  let question = try require(await autopilot.tick().questions.first, "the question")
+  _ = try await autopilot.apply(
+    .answer(questionID: question.id, answer: .yes, risks: question.risks))
+  equal(try await burned(root).first?.bytes, 14_000_000_000)
+  docker.rows.append(.init(id: "cacheold0016", bytes: 2_000_000_000, days: 15))
+  cache.look(now: docker.now)
+  equal(await autopilot.tick().questions.count, 0, "no second question for what's younger")
+  checkFalse(docker.ids.contains("cacheold0016"), "the Yes covers it")
+}
+
 private func noProof() async throws {
   let root = try scratchFolder()
   defer { try? FileManager.default.removeItem(at: root) }
@@ -783,7 +803,8 @@ private func wiringProof() async throws {
 
 func autopilotDockerProof() async throws {
   let parts: [(String, () async throws -> Void)] = [
-    ("what may go", selectionProof), ("ask once, a Yes covers it", yesProof), ("a No stays", noProof),
+    ("what may go", selectionProof), ("ask once, a Yes covers it", yesProof),
+    ("the oldest first", olderFirstProof), ("a No stays", noProof),
     ("says nothing", silenceProof), ("rails", railsProof), ("races", racesProof),
     ("batches", batchesProof), ("words", wordsProof), ("wiring", wiringProof),
   ]
