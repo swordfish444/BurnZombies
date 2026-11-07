@@ -118,4 +118,73 @@ func impactMetricsProof() throws {
   check(
     log.burnLog.map(\.id).count == Set(log.burnLog.map(\.id)).count, "Each row has its own id")
   equal(Catalog().burnLog.count, 0, "An empty catalog has an empty log")
+
+  // Past the limit the newest burns stay. Each one walks through its real life, an hour apart: it's
+  // still being checked at the first prune, then verified at the next.
+  let clock = Date()
+  var busy = Catalog()
+  for hour in stride(from: 520, through: 0, by: -1) {
+    var burned = event()
+    burned.label = String(hour)
+    burned.date = clock.addingTimeInterval(Double(-hour) * 3600)
+    burned.outcome = "verifying"
+    busy.events.append(burned)
+    busy.prune(now: burned.date)
+    let row = try require(busy.events.firstIndex { $0.id == burned.id }, "the burn just added")
+    busy.events[row].outcome = "verified"
+    busy.prune(now: burned.date)
+  }
+  equal(busy.events.count, 500, "The limit holds")
+  check(busy.events.contains { $0.label == "0" }, "The newest burn stays past the limit")
+  check(!busy.events.contains { $0.label == "500" }, "The oldest burns are the ones that go")
+  check(busy.events.contains { $0.label == "499" }, "Exactly the newest 500 stay")
+  equal(
+    busy.events.suffix(3).map(\.label), ["2", "1", "0"],
+    "The list runs oldest first, so what reads its end gets the newest")
+  let midnight = ImpactPeriod.today.start(now: clock, calendar: .current)
+  let hoursToday = (0...520).filter { clock.addingTimeInterval(Double(-$0) * 3600) >= midnight }.count
+  equal(
+    ImpactNumbers.make(catalog: busy, period: .today, now: clock).count, hoursToday,
+    "Today's total counts today's burns past the limit")
+  // What's unresolved stays whatever its age, in date order with the rest.
+  var stuck = burn(0, "unverified")
+  stuck.date = clock.addingTimeInterval(-40 * 86_400)
+  stuck.label = "stuck"
+  var checking = burn(0, "verifying")
+  checking.date = clock.addingTimeInterval(1)
+  checking.label = "checking"
+  busy.events += [stuck, checking]
+  busy.prune(now: clock)
+  equal(busy.events.count, 502, "Unresolved rows don't count toward the limit")
+  equal(busy.events.first?.label, "stuck", "An old unresolved row stays, first by date")
+  equal(busy.events.last?.label, "checking", "A row being checked stays, last by date")
+
+  // The worktree and storage lists keep the same way, from the order that same walk leaves them in.
+  var worktrees = Catalog()
+  worktrees.workspaceReceipts = (0..<510).map { hour in
+    var receipt = worktree
+    receipt.id = UUID()
+    receipt.label = String(hour)
+    receipt.date = clock.addingTimeInterval(Double(-hour) * 3600)
+    receipt.verifiedAt = receipt.date
+    receipt.outcome = "verified"
+    return receipt
+  }
+  worktrees.prune(now: clock)
+  equal(worktrees.workspaceReceipts?.count, 500, "The worktree list keeps 500")
+  equal(worktrees.workspaceReceipts?.last?.label, "0", "The newest worktree burn stays")
+  equal(worktrees.workspaceReceipts?.first?.label, "499", "The oldest worktree burns go")
+  var outputs = Catalog()
+  outputs.diskReceipts = (0..<510).map { hour in
+    var receipt = output
+    receipt.id = UUID()
+    receipt.path = String(hour)
+    receipt.date = clock.addingTimeInterval(Double(-hour) * 3600)
+    receipt.outcome = "verified"
+    return receipt
+  }
+  outputs.prune(now: clock)
+  equal(outputs.diskReceipts?.count, 500, "The storage list keeps 500")
+  equal(outputs.diskReceipts?.last?.path, "0", "The newest storage burn stays")
+  equal(outputs.diskReceipts?.first?.path, "499", "The oldest storage burns go")
 }
