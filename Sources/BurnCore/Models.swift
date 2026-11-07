@@ -232,36 +232,39 @@ public struct Catalog: Codable, Sendable {
         ["prepared", "uncertain"].contains($0.outcome) || pinned.contains($0.plan.id.uuidString)
       }
       let ids = Set(preserve.map { $0.plan.id })
-      managedCacheAttempts =
-        preserve + Array(attempts.filter { !ids.contains($0.plan.id) }.suffix(500))
+      managedCacheAttempts = Self.retained(
+        preserve, attempts.filter { !ids.contains($0.plan.id) }, by: \.date)
     }
     if let receipts = diskReceipts {
       let preserve = receipts.filter {
         !["verified", "refused"].contains($0.outcome) || pinned.contains($0.id.uuidString)
       }
       let ids = Set(preserve.map(\.id))
-      diskReceipts = preserve + Array(receipts.filter { !ids.contains($0.id) }.suffix(500))
+      diskReceipts = Self.retained(preserve, receipts.filter { !ids.contains($0.id) }, by: \.date)
     }
     if let receipts = workspaceReceipts {
       let preserve = receipts.filter {
         !["verified", "refused"].contains($0.outcome) || pinned.contains($0.id.uuidString)
       }
       let ids = Set(preserve.map(\.id))
-      workspaceReceipts =
-        preserve
-        + Array(
-          receipts.filter {
-            !ids.contains($0.id) && now.timeIntervalSince($0.verifiedAt ?? $0.date) < 30 * 86400
-          }.suffix(500))
+      let recent = receipts.filter {
+        !ids.contains($0.id) && now.timeIntervalSince($0.verifiedAt ?? $0.date) < 30 * 86400
+      }
+      workspaceReceipts = Self.retained(preserve, recent) { $0.verifiedAt ?? $0.date }
     }
     let preserve = events.filter {
       !["verified", "refused"].contains($0.outcome) || pinned.contains($0.id.uuidString)
     }
     let ids = Set(preserve.map(\.id))
-    events =
-      preserve
-      + Array(
-        events.filter { !ids.contains($0.id) && now.timeIntervalSince($0.date) < 30 * 86400 }
-          .suffix(500))
+    let recent = events.filter { !ids.contains($0.id) && now.timeIntervalSince($0.date) < 30 * 86400 }
+    events = Self.retained(preserve, recent, by: \.date)
+  }
+  /// What a list of receipts keeps: everything unresolved, and the newest 500 of the rest, oldest
+  /// first. Date decides, not place: a row is unresolved when it's added, so it stops being last.
+  private static func retained<Row>(_ unresolved: [Row], _ rest: [Row], by date: (Row) -> Date)
+    -> [Row]
+  {
+    let newest: ArraySlice<Row> = rest.sorted { date($0) < date($1) }.suffix(500)
+    return (unresolved + newest).sorted { date($0) < date($1) }
   }
 }

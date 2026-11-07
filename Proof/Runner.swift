@@ -135,6 +135,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       ("--autopilot-learning", "Autopilot learning", autopilotLearningProof),
       ("--autopilot-look-only", "Autopilot look-only", lookOnlyProof),
       ("--autopilot-recovery-key", "Autopilot backup key", autopilotRecoveryKeyProof),
+      ("--autopilot-docker", "Docker's build cache", autopilotDockerProof),
       ("--agent-session-environment", "Agent session environment", agentSessionEnvironmentProof),
     ] as [(String, String, () async throws -> Void)] where CommandLine.arguments.contains(flag) {
       do { try await proof() } catch { failTest("\(name): \(error)") }
@@ -204,6 +205,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         print("PASS Live hunt: stream, deep hunt, Stop, limit and Keep hunting")
       }
       do { try await autopilotRecoveryKeyProof() } catch { failTest("Backup key: \(error)") }
+      let beforeDocker = failures
+      do { try await autopilotDockerProof() } catch { failTest("Docker's build cache: \(error)") }
+      if failures == beforeDocker { print("PASS Docker's build cache") }
       let beforeCause = failures
       retireCauseProof()
       if failures == beforeCause { print("PASS Retire causes") }
@@ -432,6 +436,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     if CommandLine.arguments.contains("--managed-cache") {
       do { try managedCacheProof() } catch { failTest("Managed cache: \(error)") }
       print("Managed cache checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--docker-real") {
+      do { try dockerRealEngineProof() } catch { failTest("Real Docker: \(error)") }
+      print("Real Docker checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--cache-inspect")

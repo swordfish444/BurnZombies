@@ -11,7 +11,14 @@ extension AutopilotPolicy {
     var groups: [AutopilotLessonGroup] = []
     groups += copyGroups(burns.filter { $0.kind == .worktree }, memory)
     groups += programGroups(burns.filter { $0.kind == .process }, memory)
-    groups += folderGroups(burns.filter { $0.kind == .disk }, memory)
+    // Docker's build cache isn't a folder to the owner, so it reads on its own.
+    let docker = burns.filter { AutopilotDockerCache.about($0.match) }
+    groups += folderGroups(
+      burns.filter { $0.kind == .disk && !AutopilotDockerCache.about($0.match) }, memory)
+    if !docker.isEmpty {
+      let sentence = AutopilotDockerCache.name + " can go once it sits unused for 2 weeks."
+      groups.append(group("disk:burn:docker", .disk, .burn, sentence, docker, memory))
+    }
     // A No to a card asked again for new risks teaches a keep per risk, so that it doesn't cancel
     // an earlier Yes; those keeps read and are forgotten as one.
     var keeps: [[AutopilotRule]] = []
@@ -311,6 +318,7 @@ extension AutopilotPolicy {
   /// "Copies used in the last week stay: Work only on this Mac, Has unsaved changes." Every value
   /// each fact keeps is named, so a keep narrowed to some risks never reads as keeping everything.
   static func keepSentence(_ rule: AutopilotRule) -> String {
+    if AutopilotDockerCache.about(rule.match) { return AutopilotDockerCache.name + " stays." }
     var subject: String = keptSubject(rule)
     if let bound = keptBound(rule) { subject += " " + bound }
     // How recently they were used is the bound's to say, so it isn't listed again as a fact.
@@ -376,6 +384,9 @@ extension AutopilotPolicy {
     case .process:
       return "Stopped " + AutopilotEval.plural(done.count, "program") + " · " + freed + " of memory"
     case .disk:
+      if rules.allSatisfy({ AutopilotDockerCache.about($0.match) }) {
+        return "Cleared " + AutopilotEval.plural(done.count, "time") + " · " + freed
+      }
       return "Deleted " + AutopilotEval.plural(done.count, "folder") + " · " + freed
     }
   }
@@ -454,6 +465,9 @@ extension AutopilotPolicy {
       let stopped: String = " · stopped " + programs + ", " + freed
       return text + stopped + " of memory"
     case .disk:
+      if rules.allSatisfy({ AutopilotDockerCache.about($0.match) }) {
+        return text + " · cleared " + AutopilotEval.plural(done.count, "time") + ", " + freed
+      }
       let folders: String = AutopilotEval.plural(done.count, "folder")
       return text + " · deleted " + folders + ", " + freed
     }

@@ -189,9 +189,9 @@ public enum BurnLogRow: Identifiable, Sendable {
 }
 
 extension Catalog {
-  /// The Burn Log, newest first: every burn in the last 30 days, once. The stored lists aren't in
-  /// date order: `prune` moves what's still being checked to the front of its list. A program is
-  /// also in Autopilot's receipts, and the catalog knows more about it, so it shows from here.
+  /// The Burn Log, newest first: every burn in the last 30 days, once, from the catalog's lists and
+  /// Autopilot's receipts, each in its own order. A program is in both, and the catalog knows more
+  /// about it, so it shows from there.
   public func burnLog(autopilot: [AutopilotReceipt] = [], now: Date = Date()) -> [BurnLogRow] {
     var rows: [BurnLogRow] = events.map { .helpers($0) }
     rows += (workspaceReceipts ?? []).map { .worktree($0) }

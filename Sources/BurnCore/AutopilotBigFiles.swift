@@ -275,8 +275,12 @@ extension AutopilotPolicy {
   /// thing without the fact. A copy's unsaved files too big to back up are deleted when it burns, so
   /// a lesson learned before a card showed that kind of them never burns them, nor does a starter
   /// rule or the AI; BZ's own call reaches only kinds the owner said yes to.
+  ///
+  /// Docker's build cache is one too. It is listed with folders, but a Yes about folders never
+  /// reaches it, nor a starter rule: only a Yes to its own card.
   static let namedRisks: [AutopilotKind: [(fact: String, risky: String, clear: String)]] = [
-    .worktree: AutopilotWorktrees.bigFileRisks.map { (fact: $0.fact, risky: "yes", clear: "no") }
+    .worktree: AutopilotWorktrees.bigFileRisks.map { (fact: $0.fact, risky: "yes", clear: "no") },
+    .disk: [(fact: AutopilotDockerCache.risk, risky: "yes", clear: "no")],
   ]
 
   /// The named risks of a kind as a card lists them: "bigCode=yes".
@@ -291,12 +295,16 @@ extension AutopilotPolicy {
   }
 
   /// A lesson's match as it covers things: a burn that leaves out a named risk covers only things
-  /// clear of it. Keeps are as they are.
+  /// clear of it. Keeps are as they are. Docker's build cache goes further: only an answer to its own
+  /// card reaches it, whether that answer was Yes or No.
   static func effective(_ rule: AutopilotRule) -> [String: [String]] {
-    guard rule.verdict == .burn else { return rule.match }
     var match = rule.match
     for named in namedRisks[rule.kind] ?? [] where match[named.fact] == nil {
-      match[named.fact] = [named.clear]
+      if named.fact == AutopilotDockerCache.risk {
+        if !AutopilotDockerCache.about(rule.match) { match[named.fact] = [named.clear] }
+      } else if rule.verdict == .burn {
+        match[named.fact] = [named.clear]
+      }
     }
     return match
   }
@@ -383,7 +391,9 @@ extension AutopilotPolicy {
   /// What a Yes costs, before anything is pressed: "A Yes deletes its 914 MB of big unsaved files
   /// for good. Undo won't bring these back; everything else in it is backed up first."
   public static func bigFilesCost(_ question: AutopilotQuestion) -> String? {
-    guard !risks(of: question).isDisjoint(with: namedRisks(question.kind)) else { return nil }
+    guard question.kind == .worktree,
+      !risks(of: question).isDisjoint(with: namedRisks(question.kind))
+    else { return nil }
     let one: Bool = question.count == 1
     let bytes: UInt64 = question.bigBytes ?? 0
     let size: String = bytes > 0 ? roughly(bytes) + " of " : ""

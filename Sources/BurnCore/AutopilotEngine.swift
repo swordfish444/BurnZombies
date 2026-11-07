@@ -223,8 +223,10 @@ public actor Autopilot {
     looked(.worktree, records.count)
     let junk = sources.disk(records)
     items += junk
-    seen[.disk] = junk.count
-    looked(.disk, junk.count)
+    // Docker's build cache isn't a folder to anyone looking at the count.
+    let folders = junk.filter { !AutopilotDockerCache.isCache($0) }.count
+    seen[.disk] = folders
+    looked(.disk, folders)
     // A copy retire couldn't back up for big unsaved files carries them as risks of their own.
     items = AutopilotPolicy.withBigFiles(items, receipts: (try? store.receipts()) ?? [])
     // A deep hunt looks at small programs too: a swarm of them frees as much as one big one.
@@ -470,6 +472,9 @@ public actor Autopilot {
     case .disk:
       receipt = await Task.detached { sources.reclaimDisk(item, authority) }.value
     }
+    // Docker went away since BZ looked. That's no refusal to wait out or to mention: BZ says nothing
+    // while Docker isn't running, and this burns once it's back.
+    if receipt.detail == AutopilotDockerCache.away { return receipt }
     if (try? store.append(receipt)) != nil { tally([receipt]) }
     recordBurn(receipt, item: item)
     var line = (receipt.outcome == "refused" ? "Skipped " : "Burned ") + item.name
@@ -631,10 +636,10 @@ public actor Autopilot {
         consequence: AutopilotPolicy.consequence(item), receipt: receipt)
       entry.judged = judgment != nil
       // The AI is sure but may not burn this one itself. Copies with big unsaved files are left
-      // to their own card, which says a Yes deletes them for good.
+      // to their own card, which says a Yes deletes them for good, and Docker's build cache to its.
       if status == .unsure, let judgment, judgment.verdict == .burn,
         judgment.confidence >= AutopilotPolicy.aiConfidenceFloor,
-        !AutopilotWorktrees.holdsBigFiles(item)
+        !AutopilotWorktrees.holdsBigFiles(item), !AutopilotDockerCache.isCache(item)
       {
         entry.needsOK = true
         entry.aiWhy = judgment.why
@@ -766,14 +771,14 @@ public actor Autopilot {
       let receipt = await execute(item, authority: "operator", why: "You asked me to burn it.")
       if receipt.outcome == "refused" { throw StoreError.message(receipt.detail) }
     case .keep(let id):
-      let path = catalog?.items.first(where: { $0.id == id })?.path
+      let path = catalog?.items.first(where: { $0.id == id })?.path ?? AutopilotDockerCache.kept(id)
       try store.updateMemory { memory in
         memory.keptItems.insert(id)
         if let path { memory.keptItems.insert("path:" + path) }
       }
     case .unkeep(let id):
       // Both ways a keep can name it go, so nothing of the keep is left to hold it.
-      let path = catalog?.items.first(where: { $0.id == id })?.path
+      let path = catalog?.items.first(where: { $0.id == id })?.path ?? AutopilotDockerCache.kept(id)
       try store.updateMemory { memory in
         memory.keptItems.remove(id)
         if let path { memory.keptItems.remove("path:" + path) }
@@ -854,7 +859,8 @@ public actor Autopilot {
       refreshQuestions(now: now, acting: false)
     case .allowTouch(let path):
       // Both ways a keep can name it go, as with Unspare.
-      let ids = catalog?.items.filter { $0.path == path }.map(\.id) ?? []
+      var ids = catalog?.items.filter { $0.path == path }.map(\.id) ?? []
+      if path == AutopilotDockerCache.name { ids.append(AutopilotDockerCache.itemID) }
       try store.updateMemory { memory in
         memory.neverTouch.removeAll { $0 == path }
         memory.keptItems.remove("path:" + path)
@@ -1075,6 +1081,10 @@ public actor Autopilot {
     _ question: AutopilotQuestion, replacing: String? = nil, guess: AutopilotAnswer? = nil
   ) throws -> AutopilotQuestion {
     let items = catalog?.items ?? []
+    guard
+      !AutopilotDockerCache.about(question.match),
+      question.match[AutopilotDockerCache.risk] == nil
+    else { throw StoreError.message("Docker's build cache is the owner's call. BZ asks them itself.") }
     guard !question.match.values.contains(where: { $0.contains("unknown") }) else {
       throw StoreError.message(
         "Leave out facts I haven't checked yet (\"unknown\"): an answer about them stops applying once they are checked."

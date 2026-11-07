@@ -27,11 +27,19 @@ public enum AutopilotSweeper {
   /// digest means new work for the AI.
   public static func digest(_ snapshot: AutopilotSnapshot) -> String {
     AutopilotItem.hash(
-      (snapshot.entries.filter { $0.status == .unsure && $0.judged != true }.map {
+      (snapshot.entries.filter(waitsForAI).map {
         $0.item.revision
       }.sorted()
-        + snapshot.rules.filter(\.enabled).map(\.id).sorted()
-        + snapshot.questions.map(\.id).sorted()).joined(separator: "|"))
+        + snapshot.rules.filter { $0.enabled && !AutopilotDockerCache.about($0.match) }.map(\.id)
+        .sorted()
+        + snapshot.questions.filter { !AutopilotDockerCache.about($0.match) }.map(\.id).sorted())
+        .joined(separator: "|"))
+  }
+
+  /// Unsure and not judged yet. Docker's build cache is the owner's call and comes and goes with
+  /// Docker, so it never wakes the AI or spends anything.
+  static func waitsForAI(_ entry: AutopilotEntry) -> Bool {
+    entry.status == .unsure && entry.judged != true && !AutopilotDockerCache.isCache(entry.item)
   }
 
   public static func aiDue(
@@ -41,9 +49,12 @@ public enum AutopilotSweeper {
     if manual { return true }
     if let first = state.firstTick, now.timeIntervalSince(first) < firstSweepDelay { return false }
     if let retry = state.retryAfter, retry > now { return false }
-    guard snapshot.count(.unsure) > 0 else { return false }
+    let onlyTheOwners = snapshot.entries.filter {
+      $0.status == .unsure && AutopilotDockerCache.isCache($0.item)
+    }.count
+    guard snapshot.count(.unsure) > onlyTheOwners else { return false }
     let since = state.lastAISweep.map { now.timeIntervalSince($0) } ?? .infinity
-    let unjudged = snapshot.entries.contains { $0.status == .unsure && $0.judged != true }
+    let unjudged = snapshot.entries.contains(where: waitsForAI)
     return (unjudged && since >= minimumSpacing && digest(snapshot) != state.lastAIDigest)
       || since >= rejudgeInterval
   }
@@ -106,6 +117,7 @@ public enum AutopilotHarness {
     - Old copy: burning removes the folder, but the app first saves every commit and local change in a restore point, so mistakes are recoverable. Burn copies whose work is merged or pushed and that nobody touched in weeks. Be careful with copies changed in the last few days or holding unmerged work: ask instead. A copy whose bigCode, bigMedia, bigData, bigArchives or bigOther fact is yes holds unsaved files too big for the restore point: burning deletes them for good, so only the owner's Yes to that kind lets them go. Don't judge those burn; if no question covers them, ask about their age.
     - Robot browser (fact `robot`): a browser Playwright, Puppeteer, chromedriver or an MCP server drives. `abandoned` means nothing can drive it anymore, so it can go. `driven` means a program (often a Playwright CLI daemon or an MCP server) or a client can still drive it: burn that program once its chat has ended and it sits idle, keep it while a chat works.
     - Junk folder: rebuildable output such as node_modules, build folders and caches. Burn it when the project is not being worked on right now.
+    - Docker's build cache (fact `docker`) is the owner's call alone, and BZ asks them itself. Leave it out: don't judge it, burn it or ask about it.
 
     The owner's lessons (catalog `lessons`) are their intent and your brief: judge unsure items by why they burn or keep things, ask only where no lesson reaches, never contradict one.
 

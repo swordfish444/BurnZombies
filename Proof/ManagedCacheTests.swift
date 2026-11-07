@@ -102,7 +102,9 @@ private final class ManagedCacheFixture {
   func command(_ command: BuildKitCache.Command) throws -> Data {
     let args = command.arguments
     calls.append(args)
-    guard args.prefix(2) == ["--context", "desktop-linux"], command.milliseconds <= 8000 else {
+    guard args.prefix(2) == ["--context", "desktop-linux"],
+      command.milliseconds <= (args.contains("prune") ? 60_000 : 8000)
+    else {
       throw StoreError.message("Owner command escaped its fixed local context or runtime bound")
     }
     let tail = Array(args.dropFirst(2))
@@ -141,8 +143,7 @@ private final class ManagedCacheFixture {
         guard filter == "id=^(\(id))$",
           id.range(of: "^bz[a-f0-9]{24}$", options: .regularExpression) != nil,
           !rows.contains(where: { $0["ID"] as? String == id }), tail.contains("until=336h"),
-          tail.contains("inuse=false"), tail.contains("shared=false"),
-          tail.contains("mutable=false"),
+          tail.contains("private=\"\""), tail.contains("immutable=\"\""),
           tail.contains("type=regular"), !tail.contains("--all")
         else {
           throw StoreError.message(
@@ -152,7 +153,7 @@ private final class ManagedCacheFixture {
       }
       guard let idFilter = tail.first(where: { $0.hasPrefix("id=") }),
         idFilter == "id=^(cacheold111|cacheold222)$", tail.contains("until=336h"),
-        tail.contains("inuse=false"), tail.contains("shared=false"), tail.contains("mutable=false"),
+        tail.contains("private=\"\""), tail.contains("immutable=\"\""),
         tail.contains("type=regular"), tail.contains("--force"), !tail.contains("--all")
       else {
         throw StoreError.message("Unsafe or broadened prune arguments")

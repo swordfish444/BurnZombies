@@ -47,7 +47,9 @@ extension AppModel {
     for path in Set(autopilot.neverTouch + autopilot.keptPaths).sorted() {
       rows.append(
         NeverTouchRow(
-          id: "path:" + path, title: (path as NSString).lastPathComponent, detail: shown(path)
+          id: "path:" + path, title: (path as NSString).lastPathComponent,
+          // What has no folder, such as Docker's build cache, is listed by its name alone.
+          detail: path.hasPrefix("/") ? shown(path) : nil
         ) { [weak self] in self?.allowTouch(path: path) })
     }
     for path in state.catalog.preferences.protectedExecutables.sorted() {

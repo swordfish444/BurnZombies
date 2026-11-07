@@ -286,6 +286,7 @@ extension AutopilotPolicy {
     case "stale-worktree": return "An old project copy"
     case "repo": return "A project"
     case "global-cache": return "A shared cache"
+    case "docker": return "Docker"
     default: return "This Mac"
     }
   }
