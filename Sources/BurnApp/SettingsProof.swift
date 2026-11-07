@@ -87,7 +87,6 @@
       throw fail("Today, this week and this month: \(today), \(week), \(month)")
     }
     let usageModel = AppModel(demo: true)
-    usageModel.tab = "Settings"
     usageModel.settingsPage = .aiUse
     let usagePage = NSHostingView(
       rootView: SettingsSubpage(model: usageModel, ai: ai).frame(width: 440, height: 560)
@@ -253,9 +252,8 @@
 
     // settings.png, for the record.
     let model = AppModel(demo: true)
-    model.tab = "Settings"
     let host = NSHostingView(
-      rootView: Dashboard(model: model, ai: ai).environment(\.colorScheme, .dark))
+      rootView: SettingsWindow(model: model, ai: ai).environment(\.colorScheme, .dark))
     host.frame = NSRect(x: 0, y: 0, width: 440, height: 660)
     host.layoutSubtreeIfNeeded()
     guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {

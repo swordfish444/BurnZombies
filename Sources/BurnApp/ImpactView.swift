@@ -115,6 +115,8 @@ extension ImpactNumbers {
     if n >= 1_000_000 { return String(format: "%.0f MB", Double(n) / 1e6) }
     return String(format: "%.0f KB", Double(n) / 1e3)
   }
+  /// "Nov 7". The log keeps 30 days, so the year would only get in the way.
+  static func day(_ date: Date) -> String { date.formatted(.dateTime.month(.abbreviated).day()) }
   static func cpuTime(_ value: Double?) -> String {
     guard let value else { return "—" }
     if value >= 3600 { return String(format: "~%.1f h", value / 3600) }
@@ -761,7 +763,7 @@ struct ImpactWindowView: View {
               .system(size: 18, weight: .semibold))
             Text(
               numbers.last == nil
-                ? "Review the helpers ready to go."
+                ? "No burns yet."
                 : "\(ImpactNumbers.bytes(numbers.latestIsWorkspace ? numbers.latestDisk : numbers.latestMemory)) \(numbers.latestIsWorkspace ? "disk reclaimed" : "released") · \(numbers.age)"
             )
             .font(.system(size: 16)).foregroundStyle(BurnTheme.muted)
@@ -880,114 +882,104 @@ struct ImpactWindowView: View {
         }
         if model.state.error != nil {
           Text("Monitoring needs attention.").foregroundStyle(.orange)
-          Button("Open details") { model.openAudit?() }.clickPointer()
-        }
-        if !model.state.findings.isEmpty {
-          Text("WORTH A LOOK").font(.system(size: 14, weight: .semibold, design: .monospaced))
-            .foregroundStyle(BurnTheme.orange)
-          ForEach(model.state.findings.prefix(12)) { finding in
-            Button {
-              model.choose(finding)
-              model.openAudit?()
-            } label: {
-              HStack {
-                Flame(size: 23)
-                VStack(alignment: .leading, spacing: 5) {
-                  Text(finding.title).fontWeight(.semibold)
-                  Text(finding.reason).font(.system(size: 15)).foregroundStyle(BurnTheme.muted)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-              }
-              .padding(18).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-            }.clickPointer()
-          }
+          Button("Open Settings") { model.openSettings?() }.clickPointer()
         }
         Text("RECENT BURNS").font(.system(size: 14, weight: .semibold, design: .monospaced))
           .foregroundStyle(.gray)
-        if model.state.catalog.events.isEmpty
-          && (model.state.catalog.workspaceReceipts ?? []).isEmpty
-          && (model.state.catalog.diskReceipts ?? []).isEmpty
-        {
+        let rows = model.state.catalog.burnLog
+        if rows.isEmpty {
           Text(
             model.demo
               ? "18 disposable helpers · 1.2 GB released · 2m ago"
               : "No burns yet. Your work comes first."
           ).foregroundStyle(BurnTheme.muted).padding(.vertical, 24)
         }
-        ForEach((model.state.catalog.diskReceipts ?? []).reversed(), id: \.id) { receipt in
-          DisclosureGroup {
-            Text(receipt.path + "\n" + receipt.rationale).font(.system(size: 15)).foregroundStyle(
-              BurnTheme.muted
-            ).padding(.top, 8)
-            if ["prepared", "unverified"].contains(receipt.outcome) {
-              HStack {
-                Button("Inspect and reconcile") { model.reconcileDisk(receipt.id, restore: false) }
-                Button("Restore intact pending output") {
-                  model.reconcileDisk(receipt.id, restore: true)
-                }
-              }
-              Text(
-                "No overwrite, no deletion and no retrospective cleanup credit. Conflicting or incomplete contents remain preserved."
-              ).font(.caption)
-            }
-          } label: {
-            HStack {
-              Image(systemName: "externaldrive").foregroundStyle(BurnTheme.orange)
-              Text(
-                receipt.fixture == true
-                  ? "Test fixture · excluded from impact" : "Regenerable output"
-              ).fontWeight(.semibold)
-              Spacer()
-              Text(
-                receipt.outcome == "verified"
-                  ? ImpactNumbers.bytes(receipt.diskReclaimedBytes) : receipt.outcome.capitalized
-              ).foregroundStyle(BurnTheme.muted)
-            }
-          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
-            .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-        }
-        ForEach((model.state.catalog.workspaceReceipts ?? []).reversed(), id: \.id) { receipt in
-          DisclosureGroup {
-            Text(receipt.detail).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(
-              .top, 8)
-          } label: {
-            HStack {
-              Image(systemName: "folder.badge.minus").foregroundStyle(BurnTheme.orange)
-              Text(receipt.fixture == true ? "Test fixture · excluded from impact" : receipt.label)
-                .fontWeight(.semibold)
-              Spacer()
-              Text(
-                receipt.outcome == "verified"
-                  ? "1 worktree · \(ImpactNumbers.bytes(receipt.diskReclaimedBytes))"
-                  : receipt.outcome.capitalized
-              )
-              .foregroundStyle(BurnTheme.muted)
-            }
-          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
-            .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-        }
-        ForEach(model.state.catalog.events.reversed()) { event in
-          DisclosureGroup {
-            Text(event.detail).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(
-              .top, 8)
-          } label: {
-            HStack {
-              Flame(size: 24)
-              Text(event.fixture == true ? "Test fixture · excluded from impact" : event.label)
-                .fontWeight(.semibold)
-              Spacer()
-              Text(
-                event.outcome == "verified"
-                  ? "\(event.verifiedCount) burned · \(ImpactNumbers.bytes(event.residentBefore))"
-                  : event.outcome.capitalized
-              ).foregroundStyle(BurnTheme.muted)
-            }
-          }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
-            .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+        ForEach(rows) { row in
+          switch row {
+          case .output(let receipt): outputRow(receipt)
+          case .worktree(let receipt): worktreeRow(receipt)
+          case .helpers(let event): helpersRow(event)
+          }
         }
       }.padding(38).frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+  /// The right side of a row: what came of it, then the day, in a column of its own.
+  func burnResult(_ result: String, on date: Date) -> some View {
+    HStack(spacing: 22) {
+      Text(result)
+      Text(ImpactNumbers.day(date)).frame(width: 62, alignment: .trailing)
+    }.foregroundStyle(BurnTheme.muted)
+  }
+  func outputRow(_ receipt: DiskReceipt) -> some View {
+    DisclosureGroup {
+      Text(receipt.path + "\n" + receipt.rationale).font(.system(size: 15)).foregroundStyle(
+        BurnTheme.muted
+      ).padding(.top, 8)
+      if ["prepared", "unverified"].contains(receipt.outcome) {
+        HStack {
+          Button("Inspect and reconcile") { model.reconcileDisk(receipt.id, restore: false) }
+          Button("Restore intact pending output") {
+            model.reconcileDisk(receipt.id, restore: true)
+          }
+        }
+        Text(
+          "No overwrite, no deletion and no retrospective cleanup credit. Conflicting or incomplete contents remain preserved."
+        ).font(.caption)
+      }
+    } label: {
+      HStack {
+        Image(systemName: "externaldrive").foregroundStyle(BurnTheme.orange)
+        Text(
+          receipt.fixture == true
+            ? "Test fixture · excluded from impact" : "Regenerable output"
+        ).fontWeight(.semibold)
+        Spacer()
+        burnResult(
+          receipt.outcome == "verified"
+            ? ImpactNumbers.bytes(receipt.diskReclaimedBytes) : receipt.outcome.capitalized,
+          on: receipt.date)
+      }
+    }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
+      .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+  }
+  func worktreeRow(_ receipt: WorkspaceReceipt) -> some View {
+    DisclosureGroup {
+      Text(receipt.detail).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(
+        .top, 8)
+    } label: {
+      HStack {
+        Image(systemName: "folder.badge.minus").foregroundStyle(BurnTheme.orange)
+        Text(receipt.fixture == true ? "Test fixture · excluded from impact" : receipt.label)
+          .fontWeight(.semibold)
+        Spacer()
+        burnResult(
+          receipt.outcome == "verified"
+            ? "1 worktree · \(ImpactNumbers.bytes(receipt.diskReclaimedBytes))"
+            : receipt.outcome.capitalized,
+          on: receipt.date)
+      }
+    }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
+      .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+  }
+  func helpersRow(_ event: CleanupEvent) -> some View {
+    DisclosureGroup {
+      Text(event.detail).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(
+        .top, 8)
+    } label: {
+      HStack {
+        Flame(size: 24)
+        Text(event.fixture == true ? "Test fixture · excluded from impact" : event.label)
+          .fontWeight(.semibold)
+        Spacer()
+        burnResult(
+          event.outcome == "verified"
+            ? "\(event.verifiedCount) burned · \(ImpactNumbers.bytes(event.residentBefore))"
+            : event.outcome.capitalized,
+          on: event.date)
+      }
+    }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
+      .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
   }
   var calculation: some View {
     VStack(alignment: .leading, spacing: 18) {
@@ -1007,6 +999,7 @@ struct ImpactWindowView: View {
           ? "This visual preview uses synthetic numbers from the supplied design."
           : "Agent speed uses the middle matched command-launch comparison across this period, including slower results. A boost needs stable samples, separated timing ranges, at least 5% improvement and a 1 ms difference. No clear improvement stays neutral. Legacy timings without sample dispersion cannot establish a boost. This measures local launches, not model or network speed."
       )
+      Text("The Burn Log keeps 30 days, up to 500 burns. All-time totals count only verified burns.")
       Text("CPU time saved: \(ImpactNumbers.cpuTime(numbers.cpuSeconds))").foregroundStyle(
         BurnTheme.muted)
       Text(

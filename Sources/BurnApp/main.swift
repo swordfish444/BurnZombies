@@ -14,12 +14,6 @@ import UserNotifications
           accessPreferences?.removeObject(forKey: Self.accessBannerDismissedKey)
         }
       }
-      let pending = Set(oldValue.catalog.events.filter { $0.outcome == "verifying" }.map(\.id))
-      if let finished = state.catalog.events.last(where: {
-        pending.contains($0.id) && $0.outcome != "verifying"
-      }) {
-        message = finished.outcome == "verified" ? "Cleanup verified." : finished.detail
-      }
       if didLoadState
         && state.catalog.lifetimeVerified + (state.catalog.lifetimeWorktreesCleaned ?? 0) > oldValue
           .catalog.lifetimeVerified + (oldValue.catalog.lifetimeWorktreesCleaned ?? 0)
@@ -36,9 +30,6 @@ import UserNotifications
     guard demo else { return }
     Demo.recordBurn(in: &state.catalog)
   }
-  @Published var selection: Finding?
-  @Published var tab = "Overview"
-  @Published var preview = false
   @Published var cleanupQueued = false
   @Published var machineReview = MachineReviewState()
   @Published var machineReviewEnabled = false
@@ -335,7 +326,13 @@ import UserNotifications
     didSet { if oldValue && !working { checkAccessAfterReturnIfReady() } }
   }
   @Published var message: String?
-  @Published var technical = [String]()
+  /// How long the Settings window's footer shows a message. Proofs make it short.
+  var messageSeconds: Double = 8
+  /// What the footer says is true for a moment. Anything lasting has its own place on the page.
+  func settleMessage(_ shown: String) async {
+    try? await Task.sleep(nanoseconds: UInt64(messageSeconds * 1_000_000_000))
+    if !Task.isCancelled, message == shown { message = nil }
+  }
   @Published var impactTab = "Impact"
   @Published var impactPeriod = ImpactPeriod.today
   /// The menu bar popup's own period, so its tabs never move the Impact window's.
@@ -344,7 +341,6 @@ import UserNotifications
   var openImpact: (() -> Void)?
   var openLog: (() -> Void)?
   var openSettings: (() -> Void)?
-  var openAudit: (() -> Void)?
   var openWorktrees: (() -> Void)?
   var openHunt: (() -> Void)?
   var openFindings: (() -> Void)?
@@ -610,7 +606,6 @@ import UserNotifications
       pressure = Native().memoryPressure()
       working = false
       guard !observationSuspended, !observationStopped else { return }
-      if let selected = selection { selection = state.findings.first { $0.id == selected.id } }
       if state.error == nil {
         do {
           // With Autopilot, BZ tells the owner about its questions instead.
@@ -709,75 +704,6 @@ import UserNotifications
     Task {
       await monitor?.resetContinuity()
       refresh()
-    }
-  }
-  func choose(_ f: Finding) {
-    selection = f
-    preview = false
-    technical = []
-    message = nil
-  }
-  func protect() {
-    guard let selected = selection else { return }
-    if demo {
-      state.findings.removeAll { $0.id == selected.id }
-      selection = nil
-      message = "Demo protection applied."
-      return
-    }
-    Task {
-      do {
-        try await monitor?.protect(selected)
-        state = await monitor?.snapshot() ?? state
-        selection = nil
-        message = "Protected this executable, including future instances."
-      } catch { message = error.localizedDescription }
-    }
-  }
-  func snooze() {
-    guard let selected = selection else { return }
-    if demo {
-      state.findings.removeAll { $0.id == selected.id }
-      selection = nil
-      return
-    }
-    Task {
-      do {
-        try await monitor?.snooze(selected)
-        state = await monitor?.snapshot() ?? state
-        selection = nil
-        message = "Notifications snoozed for these identities for 24 hours."
-      } catch { message = error.localizedDescription }
-    }
-  }
-  func inspect() {
-    guard let f = selection else { return }
-    Task {
-      technical =
-        await monitor?.details(f) ?? [
-          "Demo process · synthetic identity · 4 descriptors · no live inspection"
-        ]
-    }
-  }
-  func clean() {
-    guard let f = selection, !working else { return }
-    working = true
-    if demo {
-      message = "Demo only: no process was signaled."
-      preview = false
-      working = false
-      return
-    }
-    Task {
-      do {
-        message = try await monitor?.cleanup(f)
-        state = await monitor?.snapshot() ?? state
-        selection = nil
-        tab = "History"
-      } catch { message = error.localizedDescription }
-      working = false
-      preview = false
-      schedule()
     }
   }
   func setNotifications(_ enabled: Bool) {
@@ -1097,7 +1023,7 @@ import UserNotifications
     }
   }
   lazy var appUpdates = AppUpdateSettingsModel(
-    // The header is on every tab. A demo has no update history, and proofs stay out of real state.
+    // Settings' header reads this. A demo has no update history, and proofs stay out of real state.
     root: demo
       ? FileManager.default.temporaryDirectory.appendingPathComponent("bz-demo-updates")
       : Store.defaultRoot
@@ -1126,271 +1052,12 @@ import UserNotifications
   }
 }
 
-private let ember = BurnTheme.ember
-private func bytes(_ n: UInt64) -> String {
-  ByteCountFormatter.string(fromByteCount: Int64(clamping: n), countStyle: .memory)
-}
-private func color(_ d: Disposition) -> Color {
-  switch d {
-  case .eligible: return ember
-  case .investigate: return .orange
-  case .protected: return .secondary
-  case .healthy: return .green
-  }
-}
-private func status(_ d: Disposition) -> String {
-  switch d {
-  case .eligible: return "READY TO REVIEW"
-  case .investigate: return "WORTH A LOOK"
-  case .protected: return "PROTECTED"
-  case .healthy: return "HEALTHY"
-  }
-}
-
-struct Dashboard: View {
-  @StateObject private var ai: AISettingsModel
-  @ObservedObject var model: AppModel
-  /// Proofs pass a scratch-folder model so rendering never reads the real state folder. A demo has
-  /// no real AI to change.
-  init(model: AppModel, ai: AISettingsModel? = nil) {
-    self.model = model
-    let root = model.demo
-      ? FileManager.default.temporaryDirectory.appendingPathComponent("bz-demo-ai") : Store.defaultRoot
-    let settings = ai ?? AISettingsModel(root: root)
-    if !model.demo { settings.saved = { [weak model] in model?.reloadReviewConfiguration() } }
-    _ai = StateObject(wrappedValue: settings)
-  }
-  var eligible: Int { model.state.findings.filter { $0.disposition == .eligible }.count }
-  var attention: Int {
-    model.state.findings.filter { $0.disposition == .eligible || $0.disposition == .investigate }
-      .count
-  }
-  var body: some View {
-    VStack(spacing: 0) {
-      AboutHeader(
-        updates: model.appUpdates,
-        subtitle: model.demo ? "DEMO · synthetic data" : "Keep your work running",
-        working: model.working
-      ).disabled(model.demo).padding(20)
-      Divider()
-      // On Settings the page is about Settings; the popup and the other tabs say what BZ is up to.
-      if model.autopilotAvailable && model.selection == nil && model.tab != "Settings" {
-        AutopilotMenuSection(model: model)
-        Divider()
-      }
-      if let error = model.state.error {
-        Label(error, systemImage: "exclamationmark.shield").font(.callout).padding()
-          .foregroundStyle(.red)
-      }
-      if let selected = model.selection {
-        detail(selected)
-      } else if model.tab == "Settings" && model.settingsPage != .home {
-        SettingsSubpage(model: model, ai: ai)
-      } else {
-        Picker("View", selection: $model.tab) {
-          Text("Overview").tag("Overview")
-          Text("History").tag("History")
-          Text("Settings").tag("Settings")
-        }.clickPointer().pickerStyle(.segmented).labelsHidden().padding(.horizontal, 20).padding(.top, 14)
-        ScrollView {
-          if model.tab == "Settings" {
-            SettingsHome(model: model, ai: ai).padding(.horizontal, 20).padding(.vertical, 14)
-              .frame(maxWidth: .infinity, alignment: .leading)
-          } else {
-            VStack(alignment: .leading, spacing: 18) {
-              if model.tab == "Overview" { overview } else { history }
-            }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-          }
-        }.id(model.tab)
-      }
-      if let message = model.message {
-        Text(message).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20).padding(
-          .vertical, 10
-        ).frame(maxWidth: .infinity, alignment: .leading)
-      }
-    }.frame(width: 440, height: 660).background(Color(nsColor: .windowBackgroundColor)).tint(ember)
-  }
-  var overview: some View {
-    Group {
-      if !model.accessReady { FullDiskAccessView(model: model) }
-      VStack(alignment: .leading, spacing: 8) {
-        Text(
-          !model.accessReady
-            ? "One step before cleanup."
-            : attention == 0
-              ? "Room to keep going." : eligible > 0 ? "A few loose ends." : "Worth a closer look."
-        ).font(.system(size: 25, weight: .semibold, design: .rounded))
-        Text(
-          !model.accessReady
-            ? "Turn on Full Disk Access to run background reviews and cover the places macOS protects."
-            : attention == 0
-              ? "Your connected agent reviews live evidence and decides what is safe to stop."
-              : "\(attention) activities need a look. \(eligible) have enough ownership evidence to review for cleanup."
-        ).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      }
-      HStack(spacing: 0) {
-        metric("\(model.state.catalog.lifetimeVerified)", "Helpers verified stopped")
-        Divider().frame(height: 40)
-        metric("\(model.state.catalog.lifetimeActions)", "Verified cleanups")
-      }.padding(.vertical, 14).background(
-        .quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
-      HStack {
-        Text("ACTIVITIES").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-        Spacer()
-        Text("\(model.state.processCount) processes observed").font(.caption).foregroundStyle(
-          .secondary)
-      }
-      if model.state.findings.isEmpty && model.accessReady {
-        VStack(alignment: .leading, spacing: 10) {
-          Label("Your agent takes it from here", systemImage: "leaf").font(.headline)
-          Text(
-            "BurnZombies watches this Mac across every project and session. Background reviews use your selected harness while the app records verified impact."
-          ).font(.callout).foregroundStyle(.secondary)
-          Text(
-            "Use Hunt Zombies for a deep review now. Scheduled hunts keep watch between runs."
-          ).font(.caption).foregroundStyle(.secondary)
-        }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(
-          .quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
-      }
-      ForEach(model.state.findings.prefix(30)) { f in
-        Button {
-          model.choose(f)
-        } label: {
-          HStack(alignment: .top, spacing: 12) {
-            Image(
-              systemName: f.disposition == .protected
-                ? "shield" : f.disposition == .eligible ? "sparkle" : "waveform.path"
-            ).foregroundStyle(color(f.disposition)).frame(width: 20).padding(.top, 3)
-            VStack(alignment: .leading, spacing: 5) {
-              Text(status(f.disposition)).font(.system(size: 9, weight: .bold)).foregroundStyle(
-                color(f.disposition))
-              Text(f.title).font(.headline).foregroundStyle(.primary).lineLimit(2)
-              Text(f.reason).font(.callout).foregroundStyle(.secondary).fixedSize(
-                horizontal: false, vertical: true)
-              Text("\(f.members.count) helpers · \(bytes(f.rss)) resident footprint").font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-          }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(
-            Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        }.clickPointer().buttonStyle(.plain).accessibilityLabel("Review \(f.title)")
-      }
-      Text("See Impact for local responsiveness.").font(.caption).foregroundStyle(.secondary)
-      if model.state.partial || model.state.hiddenCount > 0 {
-        Text(
-          "Visibility is limited. \(model.state.hiddenCount) process reads were unavailable. \(model.state.partial ? "Cleanup is paused because the scan is incomplete." : "Other users and restricted processes are outside monitoring scope.")"
-        ).font(.caption).foregroundStyle(.secondary)
-      }
-    }
-  }
-  func metric(_ value: String, _ label: String) -> some View {
-    VStack(alignment: .leading, spacing: 5) {
-      Text(value).font(.system(size: 26, weight: .semibold, design: .rounded)).monospacedDigit()
-      Text(label).font(.caption).foregroundStyle(.secondary)
-    }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
-  }
-  func detail(_ f: Finding) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Button {
-        model.selection = nil
-        model.preview = false
-        model.message = nil
-      } label: {
-        Label("All activities", systemImage: "chevron.left")
-      }.clickPointer().buttonStyle(.borderless).padding(20)
-      ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
-          Text(status(f.disposition)).font(.caption.weight(.semibold)).foregroundStyle(
-            color(f.disposition))
-          Text(f.title).font(.title2.weight(.semibold))
-          Text(f.reason).font(.body)
-          Text(
-            "\(f.members.count) \(f.members.count == 1 ? "helper" : "helpers") · \(bytes(f.rss)) resident footprint"
-          ).font(.callout)
-            .foregroundStyle(.secondary)
-          Divider()
-          Text("Why this finding exists").font(.headline)
-          ForEach(f.evidence, id: \.self) {
-            Text("• " + $0).font(.callout).fixedSize(horizontal: false, vertical: true)
-          }
-          Text(f.uncertainty).font(.callout).foregroundStyle(.secondary)
-          if model.preview {
-            VStack(alignment: .leading, spacing: 10) {
-              Text("Review the stop request").font(.headline)
-              Text(
-                "Send SIGTERM to \(f.members.count) explicitly registered helpers. Allow 15 seconds to exit, then watch 120 seconds for reappearance. Termination cannot be undone. No force kill or file deletion."
-              ).font(.callout)
-              Text(
-                "Use the owning tool's supported shutdown first when it is available. These helpers must be disposable; idle CPU cannot prove that work is safe to discard."
-              ).font(.caption).foregroundStyle(.secondary)
-              Button("Request graceful stop") { model.clean() }.clickPointer().buttonStyle(
-                .borderedProminent
-              )
-              .disabled(model.working)
-            }.padding(14).background(ember.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-          } else if f.disposition == .eligible {
-            Button("Preview cleanup") { model.preview = true }.clickPointer().buttonStyle(
-              .borderedProminent)
-          }
-          HStack {
-            Button("Protect executable") { model.protect() }.clickPointer()
-            Button("Snooze 24 hours") { model.snooze() }.clickPointer()
-          }.disabled(f.members.isEmpty)
-          DisclosureGroup("Technical details") {
-            VStack(alignment: .leading, spacing: 10) {
-              Button("Inspect descriptors") { model.inspect() }.clickPointer()
-              ForEach(model.technical, id: \.self) {
-                Text($0).font(.caption.monospaced()).textSelection(.enabled)
-              }
-            }.padding(.top, 8)
-          }.disclosureGroupStyle(ClickDisclosureStyle()).font(.callout)
-        }.padding(.horizontal, 20).padding(.bottom, 20).frame(
-          maxWidth: .infinity, alignment: .leading)
-      }
-    }
-  }
-  var history: some View {
-    Group {
-      Text("Wins with receipts.").font(.title2.weight(.semibold))
-      Text(
-        "A cleanup counts only after exact targets exit and no matching executable returns during the observation window."
-      ).font(.callout).foregroundStyle(.secondary)
-      if model.state.catalog.events.isEmpty {
-        Label("No cleanup attempts yet", systemImage: "clock").padding(.vertical, 24)
-          .foregroundStyle(.secondary)
-      }
-      ForEach(model.state.catalog.events.reversed()) { e in
-        VStack(alignment: .leading, spacing: 8) {
-          HStack {
-            Text(e.label).font(.headline)
-            Spacer()
-            Text(e.outcome.capitalized).font(.caption.weight(.semibold)).foregroundStyle(
-              e.outcome == "verified" ? .green : .secondary)
-          }
-          Text(e.date, style: .date).font(.caption).foregroundStyle(.secondary)
-          Text(e.detail).font(.callout)
-          Text(
-            "\(e.verifiedCount) verified helpers · \(bytes(e.residentBefore)) pre-stop resident footprint"
-          ).font(.caption).foregroundStyle(.secondary)
-        }.padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
-      }
-      Text(
-        "Memory released uses the resident footprint of verified exits; shared pages can overlap. Impact shows a local command-launch comparison when available. CPU time saved accumulates from the observed pre-stop CPU rate during observed awake time after verified exit. Agent speed is shown only when the timing samples establish a stable improvement."
-      ).font(.caption).foregroundStyle(.secondary)
-      Text(
-        "Detailed history: 30 days, up to 500 attempts. Lifetime counts retain only verified outcomes."
-      ).font(.caption).foregroundStyle(.secondary)
-    }
-  }
-}
-
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   var item: NSStatusItem!
   var popover: NSPopover!
   var window: NSWindow?
   var worktreeWindow: NSWindow?
-  var auditWindow: NSWindow?
+  var settingsWindow: NSWindow?
   var menuPreviewWindow: NSWindow?
   var huntWindow: NSWindow?
   var findingsWindow: NSWindow?
@@ -1406,10 +1073,8 @@ struct Dashboard: View {
     model.openImpact = { [weak self] in self?.showImpact("Impact") }
     model.openLog = { [weak self] in self?.showImpact("Burn Log") }
     model.openSettings = { [weak self] in
-      self?.model.selection = nil
-      self?.model.tab = "Settings"
       self?.model.settingsPage = .home
-      self?.showAudit()
+      self?.showSettings()
     }
     model.openWorktrees = { [weak self] in self?.showWorktrees() }
     model.openWorktreeID = { [weak self] id in self?.showWorktrees(selectedID: id) }
@@ -1419,7 +1084,6 @@ struct Dashboard: View {
     findingNotifications = FindingNotifications { [weak self] id, revision, action in
       self?.model.notificationAction(id: id, revision: revision, action: action)
     }
-    model.openAudit = { [weak self] in self?.showAudit() }
     model.openHunt = { [weak self] in self?.showHunt() }
     item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let icon = NSImage(
@@ -1439,10 +1103,7 @@ struct Dashboard: View {
     NSWorkspace.shared.notificationCenter.addObserver(
       self, selector: #selector(waking), name: NSWorkspace.didWakeNotification, object: nil)
     if CommandLine.arguments.contains("--show-worktrees") { showWorktrees() }
-    if CommandLine.arguments.contains("--show-settings") {
-      model.tab = "Settings"
-      showAudit()
-    }
+    if CommandLine.arguments.contains("--show-settings") { showSettings() }
     if CommandLine.arguments.contains("--show-findings") { showFindings() }
     if CommandLine.arguments.contains("--show-advanced-findings") { showAdvancedFindings() }
     if CommandLine.arguments.contains("--show-teach") { showTeach() }
@@ -1531,19 +1192,19 @@ struct Dashboard: View {
     teachWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
-  func showAudit() {
+  func showSettings() {
     popover.performClose(nil)
-    if auditWindow == nil {
+    if settingsWindow == nil {
       let w = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 440, height: 660), styleMask: [.titled, .closable],
         backing: .buffered, defer: false)
-      w.title = "BurnZombies — Details"
+      w.title = "BurnZombies — Settings"
       w.isReleasedWhenClosed = false
-      w.contentView = NSHostingView(rootView: Dashboard(model: model))
+      w.contentView = NSHostingView(rootView: SettingsWindow(model: model))
       w.center()
-      auditWindow = w
+      settingsWindow = w
     }
-    auditWindow?.makeKeyAndOrderFront(nil)
+    settingsWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
   func showHunt() {
