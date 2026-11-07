@@ -719,6 +719,33 @@ private func batchesProof() {
   equal(receipt.outcome, "burned")
   equal(parents.rows.count, 3, "every chain goes")
   equal(receipt.bytes, 40_000_040_000)
+
+  // Records Docker won't let go of don't get in the way of the others, however big they are.
+  let stuck = DockerFixture()
+  stuck.rows = (1...3).map { .init(id: "cachenewest0\($0)", bytes: 1 << 20, days: Double($0)) }
+  stuck.rows += (1...40).map {
+    .init(id: "cachestuck\(100 + $0)", bytes: 9_000_000_000, days: 30)
+  }
+  stuck.rows.append(.init(id: "cachesmall001", bytes: 1_000_000_000, days: 30))
+  let held = AutopilotDockerCache(open: stuck.open, alive: stuck.alive)
+  held.look(now: stuck.now)
+  guard let big = held.items(now: stuck.now).first else { return failTest("no big item") }
+  equal(big.bytes, 361_000_000_000)
+  // Something the engine holds that Docker's own list doesn't show.
+  stuck.onCommand = { [unowned stuck] args in
+    if args.contains("prune") {
+      for index in stuck.rows.indices where stuck.rows[index].id.hasPrefix("cachestuck") {
+        stuck.rows[index].active = true
+      }
+    } else if args.contains("du") {
+      for index in stuck.rows.indices { stuck.rows[index].active = false }
+    }
+  }
+  receipt = held.reclaim(big, authority: "rule:x", authorize: { true })
+  checkFalse(stuck.ids.contains("cachesmall001"), "the small one still goes: \(receipt.detail)")
+  equal(receipt.bytes, 1_000_000_000, "and only that is counted")
+  check(receipt.detail.contains("Some of it stayed"), receipt.detail)
+  equal(stuck.prunes.count, 2, "each record is tried once: \(stuck.prunes.count)")
 }
 
 // MARK: Words and wiring

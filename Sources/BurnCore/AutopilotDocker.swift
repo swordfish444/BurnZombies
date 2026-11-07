@@ -167,17 +167,17 @@ public final class AutopilotDockerCache: @unchecked Sendable {
     }
     var released: UInt64 = 0
     var stopped: (reason: String, cause: String?)?
+    // What Docker kept this time doesn't get in the way of the rest.
+    var tried = Set<String>()
+    var kept = false
     let deadline = Date().addingTimeInterval(Self.burnsFor)
     repeat {
       do {
         let inventory = try opened.engine.inspect(target: opened.target, retention: .standard)
-        let ids = Array(BuildKitCache.removalOrder(inventory).prefix(Self.batch))
-        if ids.isEmpty {
-          if released == 0 {
-            stopped = ("Nothing in Docker's build cache is old enough now.", nil)
-          }
-          break
-        }
+        let order = BuildKitCache.removalOrder(inventory).filter { !tried.contains($0) }
+        let ids = Array(order.prefix(Self.batch))
+        if ids.isEmpty { break }
+        tried.formUnion(ids)
         let plan = try BuildKitCache.preview(
           inventory: inventory, recordIDs: ids, retention: .standard)
         let receipt = try opened.engine.clean(
@@ -191,10 +191,7 @@ public final class AutopilotDockerCache: @unchecked Sendable {
           )
           break
         }
-        if receipt.removedIDs.isEmpty {
-          stopped = ("Docker kept all of it, so something may still need it.", nil)
-          break
-        }
+        if receipt.removedIDs.count < ids.count { kept = true }
       } catch is Withdrawn {
         stopped = ("Permissions changed since I decided, so I left it alone.", nil)
         break
@@ -206,11 +203,17 @@ public final class AutopilotDockerCache: @unchecked Sendable {
         break
       }
     } while Date() < deadline
-    guard released > 0 else { return refuse(stopped?.reason ?? "", cause: stopped?.cause) }
+    guard released > 0 else {
+      if let stopped { return refuse(stopped.reason, cause: stopped.cause) }
+      return refuse(
+        kept
+          ? "Docker kept all of it, so something may still need it."
+          : "Nothing in Docker's build cache is old enough now.")
+    }
     return AutopilotReceipt(
       itemID: item.id, kind: .disk, name: item.name, authority: authority, outcome: "burned",
       detail: "Burned \(AutopilotPolicy.roughly(released)) of Docker's build cache."
-        + (stopped == nil ? " Docker makes it again when it needs it." : " Some of it stayed."),
+        + (stopped == nil && !kept ? " Docker makes it again when it needs it." : " Some of it stayed."),
       bytes: released)
   }
 

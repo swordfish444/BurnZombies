@@ -10,7 +10,7 @@ import Foundation
 /// Neither automatically retries an uncertain attempt on stale evidence.
 public struct BuildKitCache {
   /// What stays, whoever asks: the most recently used records, and everything used too recently.
-  public struct Retention: Codable, Equatable, Sendable {
+  public struct Retention: Equatable, Sendable {
     public var keepNewest: Int
     public var minimumAgeDays: Int
     public init(keepNewest: Int, minimumAgeDays: Int) {
