@@ -127,3 +127,35 @@ public struct ImpactNumbers: Sendable {
         }.reduce(0) { $0 + $1.verifiedCount }))
   }
 }
+
+/// One line of the Burn Log, whichever way the burn was made.
+public enum BurnLogRow: Identifiable, Sendable {
+  case helpers(CleanupEvent)
+  case worktree(WorkspaceReceipt)
+  case output(DiskReceipt)
+  public var id: UUID {
+    switch self {
+    case .helpers(let event): return event.id
+    case .worktree(let receipt): return receipt.id
+    case .output(let receipt): return receipt.id
+    }
+  }
+  public var date: Date {
+    switch self {
+    case .helpers(let event): return event.date
+    case .worktree(let receipt): return receipt.date
+    case .output(let receipt): return receipt.date
+    }
+  }
+}
+
+extension Catalog {
+  /// The Burn Log, newest first. The stored lists aren't in date order: `prune` moves what's still
+  /// being checked to the front of its list.
+  public var burnLog: [BurnLogRow] {
+    var rows: [BurnLogRow] = events.map { .helpers($0) }
+    rows += (workspaceReceipts ?? []).map { .worktree($0) }
+    rows += (diskReceipts ?? []).map { .output($0) }
+    return rows.sorted { $0.date > $1.date }
+  }
+}

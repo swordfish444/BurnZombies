@@ -1,6 +1,11 @@
 import BurnCore
 import Foundation
 
+private func require<T>(_ value: T?, _ what: String) throws -> T {
+  guard let value else { throw StoreError.message("Missing: " + what) }
+  return value
+}
+
 func impactMetricsProof() throws {
   func event(before: Double = 2.22125, after: Double = 2.88971) -> CleanupEvent {
     var e = CleanupEvent(leaseID: UUID(), label: "Metrics fixture", date: Date(),
@@ -84,4 +89,33 @@ func impactMetricsProof() throws {
   equal(restored.events[0].cpuObservedSeconds, 3660)
   equal(restored.lifetimeCPUSecondsSaved, 1830)
   equal(ImpactNumbers.make(catalog: restored, period: .today).cpuSeconds, 1830)
+
+  // The Burn Log reads newest first, across every kind of burn, in the order a real catalog ends up
+  // in: `prune` keeps what wasn't verified first, then what was checked last.
+  let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
+  func burn(_ hoursIn: Double, _ outcome: String = "verified") -> CleanupEvent {
+    var e = event()
+    e.date = start.addingTimeInterval(hoursIn * 3600)
+    e.outcome = outcome
+    e.label = "\(hoursIn)"
+    return e
+  }
+  var log = Catalog()
+  log.events = [burn(4, "unverified"), burn(1, "unverified"), burn(8), burn(6), burn(2)]
+  var worktree = try require(Demo.state().catalog.workspaceReceipts?.first, "a demo worktree receipt")
+  worktree.date = start.addingTimeInterval(7 * 3600)
+  log.workspaceReceipts = [worktree]
+  var output = try JSONDecoder().decode(
+    DiskReceipt.self,
+    from: Data(
+      #"{"id":"C2C2C2C2-0000-4000-8000-000000000001","candidateID":"fixture","path":"/fixture","date":0,"outcome":"verified","allocatedRemoved":1,"diskReclaimedBytes":1,"rationale":""}"#
+        .utf8))
+  output.date = start.addingTimeInterval(3 * 3600)
+  log.diskReceipts = [output]
+  equal(
+    log.burnLog.map { $0.date.timeIntervalSince(start) / 3600 }, [8, 7, 6, 4, 3, 2, 1],
+    "The Burn Log reads newest first across every kind of burn")
+  check(
+    log.burnLog.map(\.id).count == Set(log.burnLog.map(\.id)).count, "Each row has its own id")
+  equal(Catalog().burnLog.count, 0, "An empty catalog has an empty log")
 }

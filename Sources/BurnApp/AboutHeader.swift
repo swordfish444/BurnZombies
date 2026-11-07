@@ -164,8 +164,8 @@ import SwiftUI
   func refreshResult() {
     result = AppUpdateResult.load(root: root)
   }
-  /// "You're up to date" and "Couldn't check" are true for a moment, and the header is on every
-  /// tab. A failed update with a newer version waiting stays: there's something to retry.
+  /// "You're up to date" and "Couldn't check" are true for a moment, and the header stays on screen.
+  /// A failed update with a newer version waiting stays: there's something to retry.
   func settleAnswer() async {
     let shown = phase
     guard shown == .upToDate || (shown == .failed && !updateAvailable) else { return }
@@ -175,7 +175,7 @@ import SwiftUI
   func waitForOperation() async { await task?.value }
 }
 
-/// The top of the panel on every tab: BZ's name on the left, its version and updates on the right.
+/// The top of the Settings window: BZ's name on the left, its version and updates on the right.
 struct AboutHeader: View {
   @ObservedObject var updates: AppUpdateSettingsModel
   let subtitle: String

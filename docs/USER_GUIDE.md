@@ -12,7 +12,7 @@ BZ watches every program your macOS user runs, across every project, terminal, a
 
 ## Menu bar and impact
 
-Click the skull in the menu bar. Autopilot is on from the start; the small switch beside **Autopilot on** turns it off and back on. The **Today**, **7 days** and **All time** tabs switch its four totals. **Impact** opens the bigger view, **Findings** shows what BZ found, and **Burn Log** keeps a record of every burn. **Hunt Zombies** starts an AI sweep now; while it runs, **Hunting Zombies →** opens the live hunt scene and activity log. No restart or special setup needed.
+Click the skull in the menu bar. Autopilot is on from the start; the small switch beside **Autopilot on** turns it off and back on. The **Today**, **7 days** and **All time** tabs switch its four totals. **Impact** opens the bigger view, **Findings** shows what BZ found and burned, and **Burn Log** lists the programs it stopped, newest first, with the day (old copies and junk folders are under **Findings → Burned**). The gear opens **Settings**. **Hunt Zombies** starts an AI sweep now; while it runs, **Hunting Zombies →** opens the live hunt scene and activity log. No restart or special setup needed.
 
 ## AI sweeps
 
@@ -49,7 +49,9 @@ To uninstall, follow [the three steps](INSTALL.md#uninstall). Default setup adds
 
 ## Never touches
 
-**Settings → Never touches** is one list of what BZ leaves alone, no matter what: folders and apps you add, anything you chose **Keep forever** or **Spare** for, programs you protected, and your **No** answers. Anything inside a listed folder stays, and so does an old copy that holds one. Rules, the AI and **Burn now** all stop here.
+**Settings → Never touches** is one list of what BZ leaves alone, no matter what: folders and apps you add, anything you chose **Keep forever** or **Spare** for, and your **No** answers. Anything inside a listed folder stays, and so does an old copy that holds one. Rules, the AI and **Burn now** all stop here.
+
+To protect a program, choose **Keep forever** on it in **Findings**. That covers its later runs too, until you take it off this list.
 
 The old **Disk cleanup** section is gone. Autopilot does the cleaning, and what you protected there moved onto this list. [What it was](DISK-CLEANUP.md).
 
