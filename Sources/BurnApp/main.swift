@@ -173,7 +173,7 @@ import UserNotifications
       return
     }
     guard demo || harnessConfigured else {
-      message = "Choose a harness in Settings before hunting."
+      message = "Choose an AI in Settings before hunting."
       return
     }
     openHunt?()
@@ -352,7 +352,10 @@ import UserNotifications
   var openTeach: (() -> Void)?
   var openWorktreeID: ((String) -> Void)?
   /// Autopilot as the windows see it. The engine replaces this after every sweep and command.
-  @Published var autopilot = AutopilotSnapshot()
+  @Published var autopilot = AutopilotSnapshot() {
+    didSet { tellAboutNewQuestions() }
+  }
+  @Published var settingsPage = SettingsPage.home
   /// Applies one operator command in the engine and returns the new snapshot, or throws why it
   /// couldn't. While nil (demo and offscreen proofs) the model applies the same change to
   /// `autopilot` in memory instead.
@@ -417,6 +420,9 @@ import UserNotifications
     }
     restoringAccessPresentation = false
     startAtLoginOnFirstLaunch()
+    // Autopilot does the cleaning. The old cleaner, its cap and its scans stay off; a failure just
+    // tries again at the next launch.
+    try? Autopilot.retireDiskCleanup()
     do {
       let observer = try Monitor()
       monitor = observer
@@ -542,6 +548,10 @@ import UserNotifications
   }
   func notificationAction(id: String, revision: String, action: String) {
     Task {
+      if id == FindingNotifications.questionID {
+        openTeach?()
+        return
+      }
       if let monitor { state = await monitor.snapshot() }
       // These notifications are about the detailed inbox, so they open the advanced window.
       if id == "digest" {
@@ -603,7 +613,8 @@ import UserNotifications
       if let selected = selection { selection = state.findings.first { $0.id == selected.id } }
       if state.error == nil {
         do {
-          if state.catalog.preferences.notifications {
+          // With Autopilot, BZ tells the owner about its questions instead.
+          if state.catalog.preferences.notifications && autopilotRuntime == nil {
             try await deliverFindingNotification(
               next: { try await monitor.findingNotification() },
               send: { proposal in
@@ -769,28 +780,6 @@ import UserNotifications
       schedule()
     }
   }
-  func setAutomatic(_ enabled: Bool) {
-    guard !enabled || accessReady else {
-      message = state.fullDiskAccess.detail
-      return
-    }
-    do {
-      guard var config = try MachineReviewConfiguration.load(root: Store.defaultRoot) else {
-        message = "Run BurnZombies setup to select an installed harness."
-        return
-      }
-      config.enabled = enabled
-      try config.save(root: Store.defaultRoot)
-      machineReviewEnabled = enabled
-      if enabled {
-        Task {
-          try? await reviewer?.resume()
-          await receiveReviewState()
-          runHunt(manual: false)
-        }
-      }
-    } catch { message = error.localizedDescription }
-  }
   func setNotifications(_ enabled: Bool) {
     if enabled && !demo {
       Task {
@@ -947,7 +936,78 @@ import UserNotifications
         self?.tellProblems[tell.id] = problem
       })
   }
-  /// Settings → Autopilot → Act on its own when sure.
+  /// Settings' one choice: how much BZ may do on its own.
+  var autopilotLevel: AutopilotLevel {
+    let sweep = autopilot.sweep
+    if !sweep.enabled { return .off }
+    if sweep.lookOnly == true { return .lookOnly }
+    return autopilot.actsOnItsOwn ? .actWhenSure : .askFirst
+  }
+  /// The choice moves at once, and back if the engine can't save it. What holds burns goes first,
+  /// so nothing slips through between the steps.
+  func setAutopilotLevel(_ level: AutopilotLevel) {
+    let before = (autopilot.sweep.enabled, autopilot.sweep.lookOnly, autopilot.actsOnItsOwn)
+    let apply: (inout AutopilotSnapshot) -> Void = { snapshot in
+      snapshot.sweep.enabled = level != .off
+      switch level {
+      case .off: break
+      case .lookOnly: snapshot.sweep.lookOnly = true
+      case .askFirst:
+        snapshot.sweep.lookOnly = nil
+        snapshot.actsOnItsOwn = false
+      case .actWhenSure:
+        snapshot.sweep.lookOnly = nil
+        snapshot.actsOnItsOwn = true
+      }
+    }
+    let commands: [AutopilotCommand]
+    switch level {
+    case .off: commands = [.setEnabled(false)]
+    case .lookOnly: commands = [.setLookOnly(true), .setEnabled(true)]
+    case .askFirst: commands = [.setActsOnItsOwn(false), .setLookOnly(false), .setEnabled(true)]
+    case .actWhenSure: commands = [.setActsOnItsOwn(true), .setLookOnly(false), .setEnabled(true)]
+    }
+    apply(&autopilot)
+    sendAutopilot(commands, local: apply) { [weak self] reason in
+      guard reason != nil, let self else { return }
+      self.autopilot.sweep.enabled = before.0
+      self.autopilot.sweep.lookOnly = before.1
+      self.autopilot.actsOnItsOwn = before.2
+    }
+  }
+  /// The switch on a lesson in Settings. Off, it burns nothing until it's on again.
+  func setLesson(_ group: AutopilotLessonGroup, on: Bool) {
+    let ids = group.ruleIDs
+    sendAutopilot(.setLesson(ruleIDs: ids, enabled: on)) { snapshot in
+      for i in snapshot.lessons.indices where snapshot.lessons[i].id == group.id {
+        snapshot.lessons[i].off = on ? nil : true
+      }
+    }
+  }
+  func neverTouch(path: String) {
+    sendAutopilot(.neverTouch(path: path)) { snapshot in
+      snapshot.neverTouch = Array(Set(snapshot.neverTouch).union([path])).sorted()
+    }
+  }
+  func allowTouch(path: String) {
+    sendAutopilot(.allowTouch(path: path)) { snapshot in
+      snapshot.neverTouch.removeAll { $0 == path }
+      snapshot.keptPaths.removeAll { $0 == path }
+    }
+  }
+  private static let toldQuestionsKey = "BZToldQuestions"
+  /// One notification for questions nobody was told about yet, never one per question or per look.
+  private func tellAboutNewQuestions() {
+    guard !demo, state.catalog.preferences.notifications else { return }
+    let defaults = UserDefaults.standard
+    let told = Set(defaults.stringArray(forKey: Self.toldQuestionsKey) ?? [])
+    let open = autopilot.questions.filter(\.isOpen)
+    guard let alert = AutopilotText.questionAlert(open, told: told) else { return }
+    let keep = Set(open.map(\.id)).union(told)
+    defaults.set(Array(keep.sorted().suffix(300)), forKey: Self.toldQuestionsKey)
+    Task { try? await FindingNotifications.deliverQuestions(alert) }
+  }
+  /// Act on its own when sure.
   func setActsOnItsOwn(_ acts: Bool) {
     sendAutopilot(.setActsOnItsOwn(acts)) { $0.actsOnItsOwn = acts }
   }
@@ -969,14 +1029,8 @@ import UserNotifications
   func setLookOnly(_ on: Bool) {
     sendAutopilot(.setLookOnly(on)) { $0.sweep.lookOnly = on ? true : nil }
   }
-  func setSweepInterval(minutes: Int) {
-    sendAutopilot(.setInterval(minutes: minutes)) { $0.sweep.intervalMinutes = minutes }
-  }
   func resetTraining() {
     sendAutopilot(.resetTraining) { AutopilotLocal.reset(&$0) }
-  }
-  func sweepNow() {
-    sendAutopilot(.sweepNow) { AutopilotLocal.sweepNow(&$0, now: Date()) }
   }
   static let keyAllowed = "Thanks. Old copies can burn again."
   /// The menu's Allow while old copies wait for the backup key: macOS asks the owner now, right
@@ -1094,23 +1148,17 @@ private func status(_ d: Disposition) -> String {
 }
 
 struct Dashboard: View {
-  @StateObject private var reviewerSettings: ReviewSettingsModel
-  @StateObject private var huntSettings: HuntSettingsModel
-  @StateObject private var diskSettings: DiskSettingsModel
-  @StateObject private var sections: SettingsExpansion
+  @StateObject private var ai: AISettingsModel
   @ObservedObject var model: AppModel
-  /// Proofs pass scratch-folder models so rendering never reads the real state folder.
-  init(
-    model: AppModel, reviewerSettings: ReviewSettingsModel? = nil,
-    huntSettings: HuntSettingsModel? = nil, diskSettings: DiskSettingsModel? = nil,
-    sections: SettingsExpansion? = nil
-  ) {
+  /// Proofs pass a scratch-folder model so rendering never reads the real state folder. A demo has
+  /// no real AI to change.
+  init(model: AppModel, ai: AISettingsModel? = nil) {
     self.model = model
-    _reviewerSettings = StateObject(wrappedValue: reviewerSettings ?? ReviewSettingsModel())
-    _huntSettings = StateObject(wrappedValue: huntSettings ?? HuntSettingsModel())
-    _diskSettings = StateObject(
-      wrappedValue: diskSettings ?? DiskSettingsModel(root: reviewerSettings?.root ?? Store.defaultRoot))
-    _sections = StateObject(wrappedValue: sections ?? SettingsExpansion())
+    let root = model.demo
+      ? FileManager.default.temporaryDirectory.appendingPathComponent("bz-demo-ai") : Store.defaultRoot
+    let settings = ai ?? AISettingsModel(root: root)
+    if !model.demo { settings.saved = { [weak model] in model?.reloadReviewConfiguration() } }
+    _ai = StateObject(wrappedValue: settings)
   }
   var eligible: Int { model.state.findings.filter { $0.disposition == .eligible }.count }
   var attention: Int {
@@ -1125,7 +1173,8 @@ struct Dashboard: View {
         working: model.working
       ).disabled(model.demo).padding(20)
       Divider()
-      if model.autopilotAvailable && model.selection == nil {
+      // On Settings the page is about Settings; the popup and the other tabs say what BZ is up to.
+      if model.autopilotAvailable && model.selection == nil && model.tab != "Settings" {
         AutopilotMenuSection(model: model)
         Divider()
       }
@@ -1135,22 +1184,23 @@ struct Dashboard: View {
       }
       if let selected = model.selection {
         detail(selected)
+      } else if model.tab == "Settings" && model.settingsPage != .home {
+        SettingsSubpage(model: model, ai: ai)
       } else {
         Picker("View", selection: $model.tab) {
           Text("Overview").tag("Overview")
           Text("History").tag("History")
           Text("Settings").tag("Settings")
-        }.clickPointer().pickerStyle(.segmented).padding([.horizontal, .top], 16)
+        }.clickPointer().pickerStyle(.segmented).labelsHidden().padding(.horizontal, 20).padding(.top, 14)
         ScrollView {
-          VStack(alignment: .leading, spacing: model.tab == "Settings" ? 10 : 18) {
-            if model.tab == "Overview" {
-              overview
-            } else if model.tab == "History" {
-              history
-            } else {
-              settings
-            }
-          }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+          if model.tab == "Settings" {
+            SettingsHome(model: model, ai: ai).padding(.horizontal, 20).padding(.vertical, 14)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          } else {
+            VStack(alignment: .leading, spacing: 18) {
+              if model.tab == "Overview" { overview } else { history }
+            }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+          }
         }.id(model.tab)
       }
       if let message = model.message {
@@ -1158,17 +1208,6 @@ struct Dashboard: View {
           .vertical, 10
         ).frame(maxWidth: .infinity, alignment: .leading)
       }
-      Divider()
-      HStack {
-        Label(
-          model.demo
-            ? "Preview mode"
-            : model.accessReady ? "Agent-led cleanup" : "Setup required",
-          systemImage: "lock.shield"
-        ).font(.caption).foregroundStyle(.secondary)
-        Spacer()
-        Button("Quit") { model.quit() }.clickPointer().buttonStyle(.borderless).font(.caption)
-      }.padding(14)
     }.frame(width: 440, height: 660).background(Color(nsColor: .windowBackgroundColor)).tint(ember)
   }
   var overview: some View {
@@ -1344,93 +1383,6 @@ struct Dashboard: View {
       ).font(.caption).foregroundStyle(.secondary)
     }
   }
-  var settings: some View {
-    Group {
-      SettingsSection(section: .permissions, expansion: sections) {
-        FullDiskAccessView(model: model)
-      }
-      SettingsSection(section: .autopilot, expansion: sections) {
-        if model.autopilotAvailable {
-          AutopilotSettingsView(model: model)
-        } else {
-          Text("Quiet by default.").font(.title2.weight(.semibold))
-          Text("Your whole Mac. One observer.").font(.headline)
-          Text(
-            "BurnZombies watches processes across all projects and sessions. Your selected harness reviews buildup in the background, even with no active chat. Active and uncertain work stays running."
-          )
-          .font(.caption).foregroundStyle(.secondary)
-          Text(
-            model.accessReady
-              ? model.machineReview.detail
-              : "Background reviews wait until Full Disk Access is available."
-          ).font(.caption).foregroundStyle(.secondary)
-          if model.accessReady && model.machineReview.phase == "paused" {
-            Button("Resume scheduled hunts") { model.setAutomatic(true) }.clickPointer()
-          }
-          // Autopilot replaces the evidence-led hunt schedule when it is available.
-          HuntSettingsView(settings: huntSettings, onSaved: model.reloadReviewConfiguration)
-            .disabled(model.demo)
-        }
-      }
-      SettingsSection(section: .intelligence, expansion: sections) {
-        ReviewSettingsView(settings: reviewerSettings).disabled(model.demo)
-        UsageHistoryView(root: reviewerSettings.root).disabled(model.demo)
-      }
-      DiskSettingsView(model: diskSettings, accessReady: model.accessReady).disabled(model.demo)
-      SettingsSection(section: .general, expansion: sections) {
-        Toggle(
-          "Grouped notifications",
-          isOn: Binding(
-            get: { model.state.catalog.preferences.notifications }, set: model.setNotifications)
-        ).clickPointer()
-        Text(
-          "Off by default. A finding notifies once; materially worse impact can notify again after a day. Snoozed and protected activities stay quiet."
-        ).font(.caption).foregroundStyle(.secondary)
-        Toggle(
-          "Start at login",
-          isOn: Binding(get: { SMAppService.mainApp.status == .enabled }, set: model.login)
-        ).clickPointer().disabled(model.demo)
-        Text(
-          "On for a new install, so Autopilot keeps running after a restart. Updates keep your choice."
-        ).font(.caption).foregroundStyle(.secondary)
-      }
-      SettingsSection(section: .protection, expansion: sections) {
-        Text("Protected executables").font(.headline)
-        if model.state.catalog.preferences.protectedExecutables.isEmpty {
-          Text(
-            "App bundles, system services, browsers, device tools, recordings, transfers, and credential tools are always protected."
-          ).font(.caption).foregroundStyle(.secondary)
-        }
-        ForEach(Array(model.state.catalog.preferences.protectedExecutables).sorted(), id: \.self) {
-          p in
-          HStack {
-            Text((p as NSString).lastPathComponent).font(.callout)
-            Spacer()
-            Button("Remove") { model.unprotect(p) }.clickPointer()
-          }
-        }
-        Divider()
-        Text("Local and bounded").font(.headline)
-        Text(
-          "No BurnZombies account or analytics. Reviews use your selected harness's existing account and usage allowance. Process evidence can reach that harness's model provider. No command arguments or environment collected. At most 4,096 process records, eight samples each."
-        ).font(.caption).foregroundStyle(.secondary)
-        Text(
-          String(
-            format: "Last scan %.1f ms · checkpoint %@", model.state.scanMS,
-            bytes(UInt64(model.state.checkpointBytes)))
-        ).font(.caption.monospaced()).foregroundStyle(.secondary)
-        if let observed = model.state.catalog.lastSample {
-          Text("Last observation \(observed.formatted(date: .omitted, time: .standard))")
-            .font(.caption.monospaced()).foregroundStyle(.secondary)
-        }
-        Link(
-          "Build, safety, and uninstall guide",
-          destination: URL(string: "https://github.com/swordfish444/BurnZombies")!
-        ).clickPointer().font(.callout)
-      }
-    }
-  }
-
 }
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -1456,6 +1408,7 @@ struct Dashboard: View {
     model.openSettings = { [weak self] in
       self?.model.selection = nil
       self?.model.tab = "Settings"
+      self?.model.settingsPage = .home
       self?.showAudit()
     }
     model.openWorktrees = { [weak self] in self?.showWorktrees() }

@@ -4,7 +4,7 @@
 
 ## Autopilot and Teach BZ
 
-BZ looks right away, every minute for its first half hour, then every 15 minutes. It burns programs, old project copies and junk folders it is sure about; its safe starter rules work from the first minute. Installed with `--look-only`, it finds and asks the same way but burns nothing until you choose **Start burning** in the menu. When it isn't sure, the menu shows **BZ has N quick questions**, and **Teach BZ** shows one card at a time with **Yes, burn them** / **No, keep them**. Yes burns all the matches now and later; No keeps them. Every answer becomes a rule. **View details** on a card lists everything it covers, with filters, a card with everything BZ knows when you rest the pointer on a row, and a page per thing you can flip through with the arrow keys; **Spare** takes one out of the fire for good (**Unspare** gives it back), and the card's count and size follow. Tips come and go in the corner above the question. **Findings** lists everything in plain words with **Burn now**, **Keep forever** and **Restore**. The switch in the menu, or **Settings → Autopilot**, turns Autopilot off; **Settings → Autopilot** also holds every burn with **Look only**, sets how often BZ looks, shows **What BZ has learned** and the starter rules, and has **Start training over**. [How Autopilot decides](AUTOPILOT.md).
+BZ looks right away, every minute for its first half hour, then every 15 minutes. It burns programs, old project copies and junk folders it is sure about; its safe starter rules work from the first minute. Installed with `--look-only`, it finds and asks the same way but burns nothing until you choose **Start burning** in the menu. When it isn't sure, the menu shows **BZ has N quick questions**, and **Teach BZ** shows one card at a time with **Yes, burn them** / **No, keep them**. Yes burns all the matches now and later; No keeps them. Every answer becomes a rule. **View details** on a card lists everything it covers, with filters, a card with everything BZ knows when you rest the pointer on a row, and a page per thing you can flip through with the arrow keys; **Spare** takes one out of the fire for good (**Unspare** gives it back), and the card's count and size follow. Tips come and go in the corner above the question. **Findings** lists everything in plain words with **Burn now**, **Keep forever** and **Restore**. The switch in the menu, or **Off** in **Settings**, turns Autopilot off. **Settings** has one choice, **How much can BZ do on its own?**: Off, Look only, Ask first or Act when sure. **Burns without asking** lists your lessons and the starter rules, each with a switch, and has **Start training over**. [How Autopilot decides](AUTOPILOT.md).
 
 ## Your whole Mac
 
@@ -18,14 +18,14 @@ Click the skull in the menu bar. Autopilot is on from the start; the small switc
 
 With Claude Code or Codex signed in, BZ asks it to judge new things in short AI sweeps that run in the background. Looking around between sweeps uses no AI. Without either, BZ still burns what its starter rules and your answers cover; [add AI later](INSTALL.md#with-or-without-claude-code-or-codex).
 
-- **When.** The first starts about 10 minutes after install, once the first look is complete. After that, one runs when there is something new to judge, at most every 30 minutes, and rechecks every 4 hours. **Hunt Zombies** or **Settings → Autopilot → Sweep now** starts one right away. One runs at a time.
+- **When.** The first starts about 10 minutes after install, once the first look is complete. After that, one runs when there is something new to judge, at most every 30 minutes, and rechecks every 4 hours. **Hunt Zombies** starts one right away. One runs at a time.
 - **How long.** A few minutes, capped at 15. A sweep that runs out of time after judging some things counts as done; the next picks up the rest.
 - **What it can do.** Read project files to understand what something is, record what it thinks, burn and ask you questions. It has no shell, and BZ re-checks every burn.
 - **What it may burn on its own.** Only when it is at least 85% sure, and only an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor. Everything else needs your yes.
 - **If it fails.** BZ waits 15, 30, 60, then 120 minutes before trying again (at least an hour after a login or usage-limit problem). It never stops for good and never switches tools or accounts. Your rules keep working meanwhile.
-- **Model and cost.** Claude Code uses Sonnet by default; Codex uses its own default. Change it in **Settings → Review intelligence**. On API pricing a sweep costs roughly $0.30–$1.20; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Usage & estimated cost** shows tokens and estimated cost per model for 1, 7 or 30 days. Unknown prices stay unknown, never guessed.
+- **Model and cost.** Claude Code uses Sonnet by default; Codex uses its own default. Change it with **How smart** in **Settings**: Quick, Smart or Smartest. On API pricing a sweep costs roughly $0.30–$1.20; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Used this week** shows what it would cost if you paid per use: today, this week and this month. Unknown prices stay unknown, never guessed.
 
-Scheduled sweeps never open a window or take focus, and closing the hunt window doesn't stop one. To turn the AI off, run `~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup --observe-only`; `--with-ai` turns it back on. The Autopilot switch in the menu, or in **Settings → Autopilot**, pauses all of Autopilot: it still looks and asks, but burns nothing on its own and runs no scheduled AI sweeps.
+Scheduled sweeps never open a window or take focus, and closing the hunt window doesn't stop one. To turn the AI off, choose **Which AI → Off** in **Settings**, or run `~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup --observe-only`; `--with-ai` turns it back on. The Autopilot switch in the menu, or **Off** in **Settings**, pauses all of Autopilot: it still looks and asks, but burns nothing on its own and runs no scheduled AI sweeps.
 
 ## Undo
 
@@ -47,11 +47,11 @@ Private state lives in `~/Library/Application Support/BurnZombies`: bounded prog
 
 To uninstall, follow [the three steps](INSTALL.md#uninstall). Default setup adds no chat hooks and changes no Claude Code or Codex settings, so there's nothing else to clean up. If you once used the optional chat integration, remove only BurnZombies' entries through your tool's own settings.
 
-## Disk cleanup
+## Never touches
 
-**Settings → Disk cleanup** maps storage across your Mac, including folders outside your projects, and lists the generated output it finds from 100 MB up. Choose **Keep** to protect a folder, or **Approve cleanup** to confirm that exact output is replaceable and allow guarded automatic cleanup. Approval never overrides something in use or a place BZ couldn't fully check. Automatic cache removal keeps its separate 10 GB floor. Retention, presets and saved preferences live under **Advanced**. See [the cleanup boundary and research](DISK-CLEANUP.md).
+**Settings → Never touches** is one list of what BZ leaves alone, no matter what: folders and apps you add, anything you chose **Keep forever** or **Spare** for, programs you protected, and your **No** answers. Anything inside a listed folder stays, and so does an old copy that holds one. Rules, the AI and **Burn now** all stop here.
 
-**Docker build cache** shows here too. Local build-cache records are checked one by one against live references, retention and your disk policy. Containers, images, volumes and recent or shared cache stay protected. Automatic cleanup is opt-in; space freed inside Docker is counted separately from your Mac's disk.
+The old **Disk cleanup** section is gone. Autopilot does the cleaning, and what you protected there moved onto this list. [What it was](DISK-CLEANUP.md).
 
 ## Advanced findings
 

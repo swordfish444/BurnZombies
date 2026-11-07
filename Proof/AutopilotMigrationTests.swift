@@ -183,6 +183,7 @@ private func roundTripProof() throws {
       note: "Stopped programs and deleted folders can't come back; I'll ask next time.")
   ]
   full.actsOnItsOwn = false
+  full.neverTouch = ["/work/keep"]
   let defaults = Array(Mirror(reflecting: AutopilotMemory()).children)
   let filled = Array(Mirror(reflecting: full).children)
   equal(filled.count, defaults.count)
@@ -200,6 +201,7 @@ private func roundTripProof() throws {
   let before = try JSONDecoder().decode(AutopilotMemory.self, from: Data(older.utf8))
   equal(before.tells, [], "memory without tells")
   check(before.actsOnItsOwn, "acts on its own by default")
+  check(before.neverTouch.isEmpty, "memory from before Never touches has nothing on it")
 }
 
 /// A restore that reads version-1 memory migrates it then, and the migration counts the restored

@@ -50,6 +50,57 @@ extension MachineReviewConfiguration {
   }
 }
 
+/// How smart the AI is, as Settings offers it: cost goes up with it.
+public enum AIBrain: String, CaseIterable, Sendable {
+  case quick, smart, smartest
+}
+
+extension MachineReviewConfiguration {
+  /// What each choice asks this AI for. Smart is BZ's default: nothing extra.
+  public func selection(_ brain: AIBrain) -> (model: String?, effort: String?) {
+    switch (brain, harness) {
+    case (.smart, _): return (nil, nil)
+    case (.quick, "claude"): return ("haiku", nil)
+    case (.smartest, "claude"): return ("opus", "high")
+    case (.quick, _): return (nil, thinkingLevels.contains("low") ? "low" : nil)
+    case (.smartest, _): return (nil, thinkingLevels.contains("high") ? "high" : nil)
+    }
+  }
+  /// The choice this configuration matches, or nil for a model picked some other way.
+  public var brain: AIBrain? {
+    AIBrain.allCases.first { selection($0) == (model, reasoningEffort) }
+  }
+  public mutating func set(_ brain: AIBrain) {
+    (model, reasoningEffort) = selection(brain)
+  }
+  /// Settings' AI picker: an installed AI, or nil for no AI. Rules and answers keep burning either
+  /// way. `bundle` is the running app, whose commands an AI run calls back.
+  public static func choose(_ harness: String?, root: URL, bundle: URL) throws {
+    let old = try load(root: root)
+    guard let harness else {
+      guard var config = old else { return }
+      config.enabled = false
+      try config.save(root: root)
+      return
+    }
+    guard let executable = detect(harness) else {
+      throw StoreError.message("That AI isn't installed on this Mac.")
+    }
+    if old == nil { _ = try IntentLedger.migrate(root: root) }
+    let commands = bundle.appendingPathComponent("Contents/MacOS")
+    var config = Self(
+      harness: harness, executable: executable,
+      launcher: commands.appendingPathComponent("burnzombies").path,
+      server: commands.appendingPathComponent("burnzombies-mcp").path)
+    config.huntIntervalHours = old?.huntIntervalHours
+    if old?.harness == harness {
+      config.model = old?.model
+      config.reasoningEffort = old?.reasoningEffort
+    }
+    try config.save(root: root)
+  }
+}
+
 /// Suggestions from Codex's local catalog; no model invocation or global config writes.
 /// Custom IDs remain possible when the catalog is missing or a new model is available.
 public struct ReviewModelOption: Decodable, Sendable, Identifiable {

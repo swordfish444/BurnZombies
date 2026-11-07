@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 | Option | What it does |
 | --- | --- |
-| `--look-only` | Look first. BZ finds, sizes and asks as usual but burns nothing until you choose **Start burning** in the menu, or switch off **Settings → Autopilot → Look only**. Works with every `--mcp` choice, `none` included. |
+| `--look-only` | Look first. BZ finds, sizes and asks as usual but burns nothing until you choose **Start burning** in the menu, or choose another level in **Settings**. Works with every `--mcp` choice, `none` included. |
 | `--observe-only` | AI judging off. It isn't a dry run: BZ still burns what its starter rules and your answers cover. Turn AI on later with `burnzombies setup --with-ai`. |
 | `--no-open` | Installs without starting the app. |
 | `--mcp claude` or `--mcp codex` | Uses that tool for AI judging. The default, `auto`, picks Claude Code, then Codex. |
@@ -62,9 +62,9 @@ From v0.13.0, releases are signed with BurnZombies' own certificate (not an Appl
 
 ## The first minutes
 
-BZ takes its first look right away and keeps looking every minute for its first half hour, then every 15 minutes (change that with **Settings → Autopilot → Sweep every**). Within about a minute the panel shows how much it found, like **Found 4.2 GB of leftovers**, and **BZ has N quick questions** when there's something to decide. Safe starter rules burn from the first minute. With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. [What BZ burns on its own →](AUTOPILOT.md)
+BZ takes its first look right away and keeps looking every minute for its first half hour, then every 15 minutes. Within about a minute the panel shows how much it found, like **Found 4.2 GB of leftovers**, and **BZ has N quick questions** when there's something to decide. Safe starter rules burn from the first minute. With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. [What BZ burns on its own →](AUTOPILOT.md)
 
-Installed with `--look-only`, nothing burns: not the starter rules, not your yes answers, not the AI. The panel says **Look-only · nothing burns** and shows how much BZ would burn, like **I'd burn 5.6 GB**; **Findings** shows what and why. Answers still become rules. When you're ready, choose **Start burning** on the panel and BZ starts burning what waited right away. To go back to looking, switch **Look only** on in **Settings → Autopilot**.
+Installed with `--look-only`, nothing burns: not the starter rules, not your yes answers, not the AI. The panel says **Look-only · nothing burns** and shows how much BZ would burn, like **I'd burn 5.6 GB**; **Findings** shows what and why. Answers still become rules. When you're ready, choose **Start burning** on the panel and BZ starts burning what waited right away. To go back to looking, choose **Look only** in **Settings**.
 
 ## Optional Full Disk Access
 
@@ -76,9 +76,9 @@ To turn it on:
 
 1. Click **Allow Full Disk Access** in the small menu-bar banner. It opens **System Settings → Privacy & Security → Full Disk Access**. The same link is always under **Settings cog → Full Disk Access**.
 2. Add and enable **BurnZombies.app**. If it isn't listed, use **Copy app path** in BurnZombies Settings, then **+**, **Command–Shift–G**, and paste the path into the macOS chooser.
-3. Return to BurnZombies; it checks access once by itself. If macOS asks, choose **Quit & Reopen**; the check runs after the relaunch. **Check access** stays in Settings if you need it. No restart needed.
+3. Return to BurnZombies; it checks access once by itself. If macOS asks, choose **Quit & Reopen**; the check runs after the relaunch. **Check again** stays in Settings if you need it. No restart needed.
 
-The banner's **×** hides the reminder and remembers your choice; it never grants permission or widens what BZ covers. Verified access removes the banner and turns the Settings section into a muted **Complete** row with a green checkmark and a **Manage access** link. If access is lost later, the reminder comes back. Opening the permission pane never marks setup complete by itself, and BZ never opens System Settings, Finder or an onboarding window on its own. An agent can install BZ, but macOS requires a person to grant this permission.
+The banner's **×** hides the reminder and remembers your choice; it never grants permission or widens what BZ covers. Verified access removes the banner, and the Settings row reads **On** with a green checkmark. If access is lost later, the reminder comes back. Opening the permission pane never marks setup complete by itself, and BZ never opens System Settings, Finder or an onboarding window on its own. An agent can install BZ, but macOS requires a person to grant this permission.
 
 BZ checks access without reading messages or mail: it opens a protected folder and closes it again without listing what's inside. macOS has no supported way to report Full Disk Access directly, so missing or unclear evidence counts as no access. Only the running app's own check counts; access that a shell or agent has is not proof that BZ has it.
 
@@ -102,13 +102,13 @@ Click **Hunt Zombies** in the menu bar to start an AI sweep now; it needs Claude
 
 On its own, BZ starts an AI sweep when there's something new to judge, at most every 30 minutes, and rechecks every 4 hours. The first waits about 10 minutes after install, until the first look is complete. A sweep takes a few minutes and is capped at 15; one that runs out of time after judging some things counts as done, and the next picks up the rest. If a sweep fails, BZ waits 15, 30, 60, then 120 minutes before trying again (at least an hour after a login or usage-limit problem). It never stops for good, and your rules keep working meanwhile. Scheduled sweeps never open a window or take focus.
 
-**Settings → Autopilot** turns Autopilot, AI included, off and on; holds every burn with **Look only**; sets how often BZ looks (**Sweep every**, 15 minutes by default); starts a sweep (**Sweep now**); and lists the starter rules and **What BZ has learned**.
+**Settings** has one choice, **How much can BZ do on its own?**: **Off** (burns nothing, no AI), **Look only** (looks and asks), **Ask first** (burns what your rules say) or **Act when sure**, the default. **Burns without asking** lists the starter rules and your lessons, each with a switch. **Never touches** lists what BZ leaves alone.
 
 ## Model and cost
 
-Claude Code uses Sonnet at **Medium** thinking by default; Codex uses its own default. BZ sets Claude Code's thinking level for each sweep, so an effort level in your own Claude Code settings (such as max) can't make every sweep think for minutes. To change it, open **Settings → Review intelligence**, choose a model and thinking level, then **Save**. The change applies to the next sweep; a running one finishes as it started. **Use defaults** goes back to these defaults.
+Claude Code uses Sonnet at **Medium** thinking by default; Codex uses its own default. BZ sets Claude Code's thinking level for each sweep, so an effort level in your own Claude Code settings (such as max) can't make every sweep think for minutes. To change it, choose **How smart** in **Settings**: Quick, Smart or Smartest. It saves at once. The change applies to the next sweep; a running one finishes as it started. **Use defaults** goes back to these defaults.
 
-On API pricing a sweep costs roughly $0.30–$1.20. On a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. **Settings → Usage & estimated cost** charts tokens and estimated cost by hour or day for 1, 7 or 30 days, for all models or one. Unknown prices and missing usage are marked unavailable, never guessed.
+On API pricing a sweep costs roughly $0.30–$1.20. On a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. **Settings → Used this week** shows what it would cost if you paid per use: today, this week and this month. Unknown prices are left out, never guessed.
 
 An agent can set the model without opening a window:
 

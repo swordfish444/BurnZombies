@@ -181,7 +181,7 @@ import Vision
         throw StoreError.message("Existing cleanup history presented as first use")
       }
     }
-    if name == "paused" && !visible.contains("retrying soon") {
+    if name == "paused" && !visible.contains("waiting") {
       throw StoreError.message("Autopilot retry hidden by compact status: " + visible)
     }
     if name == "populated" && !visible.contains("quick question") {

@@ -2,65 +2,40 @@ import AppKit
 import BurnCore
 import SwiftUI
 
-/// An inline optional setup; a completed setup recedes into a quiet status row.
+/// Optional setup: what Full Disk Access adds and the few steps to turn it on.
 struct FullDiskAccessView: View {
   @ObservedObject var model: AppModel
   var body: some View {
-    VStack(alignment: .leading, spacing: model.accessReady ? 8 : 12) {
-      HStack(spacing: 9) {
-        Image(systemName: model.accessReady ? "checkmark.circle.fill" : "lock.shield")
-          .foregroundStyle(model.accessReady ? Color(red: 0.48, green: 0.76, blue: 0.39) : BurnTheme.orange)
-        Text("Full Disk Access").font(.headline)
-          .foregroundStyle(model.accessReady ? Color.secondary : Color.primary)
-        Spacer(minLength: 4)
-        Text(model.accessReady ? "Complete" : "Optional")
-          .font(.caption.weight(.semibold)).foregroundStyle(model.accessReady ? Color.secondary : BurnTheme.orange)
+    VStack(alignment: .leading, spacing: 10) {
+      Text("Full Disk Access").font(.headline)
+      Text("BZ works without it. Turn it on so BZ can also check " + ProtectedLocations.summary + ".")
+        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      VStack(alignment: .leading, spacing: 6) {
+        Text("1. Click Open Settings.")
+        Text("2. Turn on BurnZombies. Not there? Click + and add it.")
+        Text("3. Come back. BZ checks by itself.")
+      }.font(.callout).fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: 8) {
+        Text(model.installedAppPath).font(.caption2.monospaced()).textSelection(.enabled)
+          .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        Button { model.copyInstalledAppPath() } label: { Image(systemName: "doc.on.doc") }
+          .buttonStyle(.borderless).foregroundStyle(.secondary).clickPointer()
+          .help("Copy where BZ is, for the + button").accessibilityLabel("Copy app path")
       }
-      if model.accessReady {
-        HStack {
-          Text("Access verified. Safety checks stay on.").font(.caption).foregroundStyle(.secondary)
-          Spacer(minLength: 4)
-          Button("Manage access") { model.openFullDiskAccessSettings() }
-            .font(.caption).buttonStyle(.plain).foregroundStyle(.secondary).clickPointer()
-            .accessibilityIdentifier("manage-full-disk-access")
-        }
-      } else {
-        Text("Covers the folders macOS protects.").font(.callout.weight(.semibold))
-        Text(
-          "BurnZombies already works everywhere else. Full Disk Access adds "
-            + ProtectedLocations.summary + ".")
-          .font(.caption).foregroundStyle(.secondary)
-        VStack(alignment: .leading, spacing: 7) {
-          Text("1. Open Privacy & Security → Full Disk Access.")
-          Text("2. Add BurnZombies with + and turn it on.")
-          Text("3. Return to BurnZombies, or choose Quit & Reopen if macOS asks. We’ll verify access automatically.")
-        }.font(.caption).fixedSize(horizontal: false, vertical: true)
-        HStack(alignment: .top, spacing: 8) {
-          Text(model.installedAppPath).font(.caption2.monospaced()).textSelection(.enabled)
-            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-          Spacer(minLength: 0)
-          Button { model.copyInstalledAppPath() } label: { Image(systemName: "doc.on.doc") }
-            .buttonStyle(.plain).foregroundStyle(.secondary).clickPointer()
-            .help("Copy app path for +, then Command-Shift-G").accessibilityLabel("Copy app path")
-        }
-        Text("This permission allows access to protected files. Active work, personal data and uncertain cleanup targets remain protected by BurnZombies’ safety checks.")
-          .font(.caption).foregroundStyle(.secondary)
-        VStack(alignment: .leading, spacing: 8) {
-          Button("Open Full Disk Access") { model.openFullDiskAccessSettings() }
-            .buttonStyle(.borderedProminent).tint(BurnTheme.orange).clickPointer()
-            .accessibilityIdentifier("open-full-disk-access")
-          Button("Check access") { model.recheckFullDiskAccess() }
-            .buttonStyle(.bordered).clickPointer().disabled(model.working)
-            .accessibilityIdentifier("check-full-disk-access")
-        }
-        Text("If an update needs access again, remove the old entry, add this copy of BurnZombies, then enable it.")
-          .font(.caption).foregroundStyle(.secondary)
-        Text(model.state.fullDiskAccess.detail).font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: 8) {
+        Button("Open Settings") { model.openFullDiskAccessSettings() }
+          .buttonStyle(.borderedProminent).tint(BurnTheme.orange).clickPointer()
+          .accessibilityIdentifier("open-full-disk-access")
+        Button("Check again") { model.recheckFullDiskAccess() }
+          .buttonStyle(.bordered).clickPointer().disabled(model.working)
+          .accessibilityIdentifier("check-full-disk-access")
       }
-    }.padding(16)
-      .background(model.accessReady ? Color.primary.opacity(0.025) : BurnTheme.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-      .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(model.accessReady ? Color.primary.opacity(0.08) : BurnTheme.orange.opacity(0.45)))
-      .accessibilityIdentifier("full-disk-access-setup")
+      if model.state.fullDiskAccess.state == .unknown {
+        Text("BZ couldn't tell if it's on yet.").font(.caption).foregroundStyle(.secondary)
+      }
+    }
+    .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+    .background(BurnTheme.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+    .accessibilityIdentifier("full-disk-access-setup")
   }
 }

@@ -435,6 +435,10 @@ public actor Autopilot {
         "Cleanup paused: saved permissions or recovery receipts could not be read. Preserve the state and repair it first."
       )
     }
+    // Never touches means never, whoever asks.
+    if AutopilotPolicy.neverTouched(item, memory: memory()) {
+      return .refused(item, authority: authority, Self.neverTouchHold)
+    }
     // Every burn passes here. Look-only lets through only the owner's own Burn now, and writes
     // nothing for a held one: it isn't a refusal to wait out.
     if authority != "operator", holdsBurns() {
@@ -677,6 +681,9 @@ public actor Autopilot {
       memory, receipts: receipts, impact: try? store.impact(), now: now)
     result.tells = memory.tells.filter(\.waitsForOwner)
     result.actsOnItsOwn = memory.actsOnItsOwn
+    result.neverTouch = memory.neverTouch
+    result.keptPaths = memory.keptItems.filter { $0.hasPrefix("path:") }
+      .map { String($0.dropFirst(5)) }.sorted()
     return result
   }
 
@@ -788,10 +795,12 @@ public actor Autopilot {
     case .resetTraining:
       try store.updateMemory { memory in
         let kept = memory.keptItems
+        let neverTouch = memory.neverTouch
         // Whether BZ may act on its own is the owner's setting, not something it learned.
         let acts = memory.actsOnItsOwn
         memory = AutopilotMemory()
         memory.keptItems = kept
+        memory.neverTouch = neverTouch
         memory.actsOnItsOwn = acts
       }
       // Nothing is trusted after a reset, so there is nothing to act on.
@@ -819,6 +828,30 @@ public actor Autopilot {
       try store.updateMemory { $0.actsOnItsOwn = acts }
     case .forgetLesson(let ids):
       try store.updateMemory { try AutopilotPolicy.forget(ids, memory: &$0) }
+    case .setLesson(let ids, let enabled):
+      try store.updateMemory { memory in
+        for i in memory.rules.indices where ids.contains(memory.rules[i].id) {
+          memory.rules[i].enabled = enabled
+        }
+      }
+      // Off, what it covered goes back to being unsure. On again, it burns like an answer does.
+      let acted = refreshQuestions(now: now, acting: enabled && burnsOnItsOwn())
+      if enabled { Task { await self.burnAuthorized(now: now, settling: acted) } }
+    case .neverTouch(let path):
+      let listed = WorkspaceSafety.canonical(path)
+      try store.updateMemory { memory in
+        memory.neverTouch = Array(Set(memory.neverTouch).union([listed])).sorted()
+      }
+      refreshQuestions(now: now, acting: false)
+    case .allowTouch(let path):
+      // Both ways a keep can name it go, as with Unspare.
+      let ids = catalog?.items.filter { $0.path == path }.map(\.id) ?? []
+      try store.updateMemory { memory in
+        memory.neverTouch.removeAll { $0 == path }
+        memory.keptItems.remove("path:" + path)
+        for id in ids { memory.keptItems.remove(id) }
+      }
+      refreshQuestions(now: now, acting: false)
     }
     return snapshot(now: now)
   }

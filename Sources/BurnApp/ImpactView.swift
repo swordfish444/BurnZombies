@@ -169,7 +169,7 @@ struct BurnStatus: View {
       if sweep.running || model.huntRunning { return "Hunting Zombies" }
       if !sweep.enabled { return "Autopilot off" }
       if sweep.lookOnly == true { return "Look-only · nothing burns" }
-      if let retry = sweep.retryAfter, retry > Date() { return "Autopilot · AI retrying soon" }
+      if let retry = sweep.retryAfter, retry > Date() { return "Autopilot on · AI waiting" }
       // Without Full Disk Access Autopilot skips only the places macOS protects; the banner says
       // so in plain words, and once it's dismissed the status keeps saying it.
       return model.accessReady || model.showsAccessBanner ? "Autopilot on" : "Autopilot on · limited"
@@ -327,6 +327,13 @@ struct MiniImpactView: View {
         Skull(size: 34, celebration: model.burnPulse)
         Text("BURNZOMBIES").font(BurnTheme.display(22)).tracking(0.25)
         Spacer(minLength: 8)
+        Button {
+          model.quit()
+        } label: {
+          Image(systemName: "power").font(.system(size: 15, weight: .semibold)).foregroundStyle(.gray)
+            .frame(width: 24, height: 32).contentShape(Rectangle())
+        }.buttonStyle(.plain).clickPointer().help("Quit BurnZombies").accessibilityLabel("Quit")
+          .accessibilityIdentifier("quit")
         Button {
           model.openSettings?()
         } label: {

@@ -574,6 +574,12 @@ struct TeachView: View {
         .multilineTextAlignment(.center)
       Text("I'll ask when I find something worth it.")
         .font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
+      // How BZ is doing, in plain counts. The fourth line takes too long to read.
+      VStack(spacing: 4) {
+        ForEach(Array(model.autopilot.progress.lines.prefix(3)), id: \.self) { line in
+          Text(line).font(.system(size: 12)).foregroundStyle(BurnTheme.muted)
+        }
+      }.padding(.top, 8)
     }.padding(36)
   }
 

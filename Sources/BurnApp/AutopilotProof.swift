@@ -334,7 +334,7 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   looking.lookOnly = true
   try check(
     AutopilotText.sweepLine(off, now: Date()) == "Autopilot off"
-      && AutopilotText.sweepLine(paused, now: Date()).hasPrefix("Autopilot paused — retrying at ")
+      && AutopilotText.sweepLine(paused, now: Date()).hasPrefix("Autopilot on · AI back ")
       && AutopilotText.sweepLine(looking, now: Date()).hasPrefix("Look-only · next sweep in"),
     "The menu line should cover off, paused and look-only")
   print(
@@ -360,9 +360,7 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   let menu = try render(
     ZStack {
       AutopilotTheme.window
-      Dashboard(
-        model: model, reviewerSettings: ReviewSettingsModel(root: scratch, catalog: []),
-        huntSettings: HuntSettingsModel(root: scratch))
+      Dashboard(model: model, ai: AISettingsModel(root: scratch))
     }.frame(width: 440, height: 660).environment(\.colorScheme, .dark),
     size: NSSize(width: 440, height: 660), name: "menu", directory: directory)
   try require(menu, ["Autopilot", "quick question"], in: "menu")
@@ -379,9 +377,7 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   let menuTell = try render(
     ZStack {
       AutopilotTheme.window
-      Dashboard(
-        model: tellOnly, reviewerSettings: ReviewSettingsModel(root: scratch, catalog: []),
-        huntSettings: HuntSettingsModel(root: scratch))
+      Dashboard(model: tellOnly, ai: AISettingsModel(root: scratch))
     }.frame(width: 440, height: 660).environment(\.colorScheme, .dark),
     size: NSSize(width: 440, height: 660), name: "menu-tell", directory: directory)
   try require(menuTell, ["Autopilot", tellPrompt], in: "menu-tell")
@@ -408,9 +404,7 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   let menuKey = try render(
     ZStack {
       AutopilotTheme.window
-      Dashboard(
-        model: keyWait, reviewerSettings: ReviewSettingsModel(root: scratch, catalog: []),
-        huntSettings: HuntSettingsModel(root: scratch))
+      Dashboard(model: keyWait, ai: AISettingsModel(root: scratch))
     }.frame(width: 440, height: 660).environment(\.colorScheme, .dark),
     size: NSSize(width: 440, height: 660), name: "menu-key", directory: directory)
   try require(menuKey, ["backup key", "quick question"], in: "menu-key")
@@ -908,6 +902,8 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
     TeachView(model: quiet), size: TeachView.size, name: "teach-empty", directory: directory)
   try require(teachEmpty, ["All caught up"], in: "teach-empty")
   try check(!teachEmpty.raw.contains("trained"), "caught-up shows a training percentage")
+  // How BZ is doing moved here from Settings.
+  hint(teachEmpty, "teach-empty", Array(quiet.autopilot.progress.lines.prefix(3)))
   // After a Yes: "Got it!", the lesson it taught in one sentence, and what BZ does from now on.
   let answeredModel = AppModel(demo: true)
   answeredModel.autopilot.tells = []
@@ -1023,65 +1019,52 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   try check(seconds < 30, "3,000 entries took \(seconds) s to render; the list must stay lazy")
   print("PASS autopilot UI Findings render: detail card, tabs, empty state and \(big.entries.count) entries in \(String(format: "%.1f", seconds)) s")
 
-  // Settings: the section that Settings embeds. The real window scrolls; the proof lays it out in full.
-  func settingsView(_ model: AppModel) -> some View {
-    AutopilotSettingsView(model: model).padding(20).frame(width: 440)
-      .frame(maxHeight: .infinity, alignment: .top).background(AutopilotTheme.window)
+  // Settings' pages, laid out in full: what burns without asking, and what's never touched.
+  func settingsPage(_ model: AppModel, _ page: SettingsPage, height: CGFloat) -> some View {
+    model.settingsPage = page
+    return SettingsSubpage(model: model, ai: AISettingsModel(root: scratch))
+      .frame(width: 440, height: height, alignment: .top).background(AutopilotTheme.window)
       .environment(\.colorScheme, .dark)
   }
-  let settings = try render(
-    settingsView(model), size: NSSize(width: 440, height: 1250), name: "settings",
-    directory: directory)
-  try require(
-    settings,
-    [
-      "What BZ has learned", "How I'm doing", "Act on its own when sure", "Look only",
-      "Start training over",
-    ],
-    in: "settings")
-  // Every lesson reads as its own sentence with what it rests on, and every count is a plain line.
-  for group in snapshot.lessons {
+  let burns = try render(
+    settingsPage(model, .burns, height: 1000), size: NSSize(width: 440, height: 1000),
+    name: "settings", directory: directory)
+  try require(burns, ["Burns without asking", "Start training over"], in: "settings")
+  for group in snapshot.lessons where group.verdict == .burn {
     try check(
-      settings.hasWords(of: group.sentence),
-      "settings lost the lesson \"\(group.sentence)\". OCR saw: \(settings.raw)")
-    try check(
-      settings.hasWords(of: group.evidence),
-      "settings lost its evidence \"\(group.evidence)\". OCR saw: \(settings.raw)")
+      burns.hasWords(of: group.sentence),
+      "Burns lost the lesson \"\(group.sentence)\". OCR saw: \(burns.raw)")
+    if let did = group.did {
+      try check(
+        burns.hasWords(of: did), "Burns lost what it did \"\(did)\". OCR saw: \(burns.raw)")
+    }
   }
-  for line in snapshot.progress.lines {
+  for rule in snapshot.rules where rule.source == .starter {
     try check(
-      settings.hasWords(of: line), "settings lost \"\(line)\". OCR saw: \(settings.raw)")
+      burns.hasWords(of: rule.title), "Burns lost the starter \"\(rule.title)\". OCR saw: \(burns.raw)")
   }
   try check(
-    settings.hasWords(of: AutopilotSettingsView.actsCaption),
-    "settings lost the toggle caption. OCR saw: \(settings.raw)")
-  try check(
-    AutopilotSettingsView.actsCaption
-      == "When I'm sure, I'll do it and tell you after. Copies can be undone, but not big unsaved files you let me delete. Off means I always ask first.",
-    "The toggle caption says only copies can be undone")
-  try check(
-    snapshot.lessons.allSatisfy {
-      AutopilotText.forgetLabel($0) == "Forget: " + $0.sentence
-    }, "Each Forget button is labeled with its lesson")
-  hint(settings, "settings", ["Sweep every", "Starter rules", "Forget", "Undo"])
-  try check(
-    !settings.raw.contains("%") && !settings.raw.contains("trained"),
-    "settings shows a percentage or training score. OCR saw: \(settings.raw)")
-  // A new install has nothing learned and nothing to count yet, and says so without an empty list.
+    !burns.raw.contains("%") && !burns.raw.contains("trained"),
+    "Burns shows a percentage or training score. OCR saw: \(burns.raw)")
+  let never = try render(
+    settingsPage(model, .never, height: 400), size: NSSize(width: 440, height: 400),
+    name: "settings-never", directory: directory)
+  try require(never, ["Never touches", "Add a folder or app", "Always safe"], in: "settings-never")
+  for group in snapshot.lessons where group.verdict != .burn {
+    try check(
+      never.hasWords(of: group.sentence),
+      "Never touches lost \"\(group.sentence)\". OCR saw: \(never.raw)")
+  }
+  // A new install has no lessons: its starter rules show, and nothing is on the list yet.
   let fresh = AppModel(demo: true)
   fresh.autopilot.lessons = []
   fresh.autopilot.progress = AutopilotProgress()
   let settingsFresh = try render(
-    settingsView(fresh), size: NSSize(width: 440, height: 640), name: "settings-empty",
-    directory: directory)
-  try require(
-    settingsFresh, ["What BZ has learned", "Nothing yet", "Act on its own when sure"],
-    in: "settings-empty")
-  try check(
-    !settingsFresh.has("How I'm doing"),
-    "A new install has no counts, so it shows no How I'm doing. OCR saw: \(settingsFresh.raw)")
+    settingsPage(fresh, .burns, height: 640), size: NSSize(width: 440, height: 640),
+    name: "settings-empty", directory: directory)
+  try require(settingsFresh, ["Burns without asking", "Starter rule"], in: "settings-empty")
   print(
-    "PASS autopilot UI Settings render: \(snapshot.lessons.count) lessons with Forget, How I'm doing, Act on its own when sure, starter rules and Start training over"
+    "PASS autopilot UI Settings pages: \(snapshot.lessons.count) lessons, starter rules and Never touches render whole"
   )
 
   try autopilotBehavior()
@@ -1376,13 +1359,6 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
     AutopilotText.sweepLine(sweep.autopilot.sweep, now: Date()) == "Autopilot off",
     "Autopilot off did not show")
   sweep.setAutopilot(enabled: true)
-  sweep.setSweepInterval(minutes: 30)
-  sweep.sweepNow()
-  try check(
-    sweep.autopilot.sweep.intervalMinutes == 30
-      && abs(sweep.autopilot.sweep.lastTick?.timeIntervalSinceNow ?? -1000) < 5
-      && AutopilotText.sweepLine(sweep.autopilot.sweep, now: Date()).contains("30 min"),
-    "Sweep interval or Sweep now did not apply")
   // Look-only: the menu line and the Findings sentence say nothing burns yet; switching it off
   // in Settings, or Start burning on the panel, brings Autopilot back.
   sweep.setLookOnly(true)
@@ -1431,14 +1407,16 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   wired.setStarter("starter-finished-copies", enabled: false)
   wired.setAutopilot(enabled: false)
   wired.setLookOnly(false)
-  wired.setSweepInterval(minutes: 60)
   wired.resetTraining()
-  wired.sweepNow()
   wired.tellGood(firstTell)
   wired.tellUndo(secondTell)
   wired.tellSeen(thirdTell)
   wired.setActsOnItsOwn(false)
   wired.forgetLesson(group)
+  wired.setLesson(group, on: false)
+  wired.neverTouch(path: "/work/keep")
+  wired.allowTouch(path: "/work/keep")
+  wired.setAutopilotLevel(.askFirst)
   wired.autopilot.recoveryKey = AutopilotKeyWait(since: Date())
   wired.allowRecoveryKey()
   try check(wired.autopilot.recoveryKey?.asking == true, "Allow shows macOS asking at once")
@@ -1447,9 +1425,12 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
     .answer(questionID: q.id, answer: .no, risks: q.risks), .burnNow(itemID: e.id),
     .keep(itemID: e.id), .restore(receiptID: rcpt.id), .forgetRule(ruleID: rule.id),
     .setStarter(ruleID: "starter-finished-copies", enabled: false), .setEnabled(false),
-    .setLookOnly(false), .setInterval(minutes: 60), .resetTraining, .sweepNow,
+    .setLookOnly(false), .resetTraining,
     .tellGood(id: firstTell.id), .tellUndo(id: secondTell.id), .tellSeen(id: thirdTell.id),
-    .setActsOnItsOwn(false), .forgetLesson(ruleIDs: group.ruleIDs), .allowRecoveryKey,
+    .setActsOnItsOwn(false), .forgetLesson(ruleIDs: group.ruleIDs),
+    .setLesson(ruleIDs: group.ruleIDs, enabled: false), .neverTouch(path: "/work/keep"),
+    .allowTouch(path: "/work/keep"), .setActsOnItsOwn(false), .setLookOnly(false),
+    .setEnabled(true), .allowRecoveryKey,
   ]
   let deadline = Date().addingTimeInterval(3)
   while (sent.count < expected.count || wired.autopilot != marker) && Date() < deadline {

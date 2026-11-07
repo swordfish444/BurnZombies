@@ -502,6 +502,8 @@ public struct AutopilotMemory: Codable, Sendable, Equatable {
   public var tells: [AutopilotTell] = []
   /// Act on its own when sure (Settings → Autopilot). Off, sure questions are asked like any other.
   public var actsOnItsOwn = true
+  /// What BZ never touches: folders, apps and programs the owner listed, and all that's inside.
+  public var neverTouch: [String] = []
   public init() {}
   /// Memory saved before a field existed still loads. The original fields are required as they
   /// always were; every field added since is decoded with `decodeIfPresent` and falls back to its
@@ -518,6 +520,7 @@ public struct AutopilotMemory: Codable, Sendable, Equatable {
     tallies = try values.decodeIfPresent([String: AutopilotTally].self, forKey: .tallies) ?? [:]
     tells = try values.decodeIfPresent([AutopilotTell].self, forKey: .tells) ?? []
     actsOnItsOwn = try values.decodeIfPresent(Bool.self, forKey: .actsOnItsOwn) ?? true
+    neverTouch = try values.decodeIfPresent([String].self, forKey: .neverTouch) ?? []
   }
   /// The owner's Yes and No answers; BZ's own calls aren't counted.
   public var answers: Int {
@@ -554,6 +557,8 @@ public struct AutopilotSweepState: Codable, Sendable, Equatable {
   public var failures = 0
   public var retryAfter: Date?
   public var lastError: String?
+  /// When a usage limit the AI hit comes back, if it said.
+  public var limitResetsAt: Date?
   public var running = false
   /// Set by "Hunt now" from the CLI or MCP; the coordinator starts an AI sweep next tick.
   public var requested: Bool?
@@ -613,9 +618,13 @@ public struct AutopilotLessonGroup: Codable, Sendable, Equatable, Identifiable {
   /// "From 11 answers · burned 364 copies, 396.0 GB · undone 0"
   public var evidence: String
   public var ruleIDs: [String]
+  /// True while the owner has it switched off in Settings.
+  public var off: Bool?
+  /// "Burned 298 copies · 389.0 GB": what it has done, in a few words, once it has done anything.
+  public var did: String?
   public init(
     id: String, kind: AutopilotKind, verdict: AutopilotVerdict, sentence: String,
-    evidence: String, ruleIDs: [String]
+    evidence: String, ruleIDs: [String], off: Bool? = nil, did: String? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -623,6 +632,8 @@ public struct AutopilotLessonGroup: Codable, Sendable, Equatable, Identifiable {
     self.sentence = sentence
     self.evidence = evidence
     self.ruleIDs = ruleIDs
+    self.off = off
+    self.did = did
   }
 }
 
@@ -659,6 +670,9 @@ public struct AutopilotSnapshot: Codable, Sendable, Equatable {
   /// Whether BZ acts on its own when sure (Settings → Autopilot): the owner's setting, not
   /// something it learned.
   public var actsOnItsOwn = true
+  /// The owner's Never touches list, and where Keep forever and Spare kept something.
+  public var neverTouch: [String] = []
+  public var keptPaths: [String] = []
   /// While old copies wait for the owner to allow the backup key; the menu asks.
   public var recoveryKey: AutopilotKeyWait?
   public init() {}
@@ -712,6 +726,12 @@ public enum AutopilotCommand: Codable, Sendable, Equatable {
   case setActsOnItsOwn(Bool)
   /// Forgets every lesson of a group, as Settings shows them.
   case forgetLesson(ruleIDs: [String])
+  /// Settings' switch on a lesson: off, it burns nothing until it's on again.
+  case setLesson(ruleIDs: [String], enabled: Bool)
+  /// Adds a folder, app or program to Never touches.
+  case neverTouch(path: String)
+  /// Takes something off Never touches, or takes back a Keep forever at that path.
+  case allowTouch(path: String)
   /// The owner's Allow in the menu: macOS asks whether BZ may use its backup key. Never from the
   /// agent socket.
   case allowRecoveryKey

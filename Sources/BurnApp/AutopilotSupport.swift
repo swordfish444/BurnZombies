@@ -103,13 +103,53 @@ enum AutopilotText {
     if minutes < 90 { return "next sweep in \(minutes) min" }
     return "next sweep in \(Int((Double(minutes) / 60).rounded())) hr"
   }
+  /// "Sunday 2 PM", "2:30 PM" today, or "Nov 20" a week or more away.
+  static func when(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
+    let time = date.formatted(
+      calendar.component(.minute, from: date) == 0
+        ? .dateTime.hour() : .dateTime.hour().minute())
+    if calendar.isDate(date, inSameDayAs: now) { return time }
+    guard date.timeIntervalSince(now) < 6 * 86_400 else {
+      return date.formatted(.dateTime.month(.abbreviated).day())
+    }
+    return date.formatted(.dateTime.weekday(.wide)) + " " + time
+  }
+  /// When the AI is back, while it's waiting.
+  static func aiBack(_ sweep: AutopilotSweepState, now: Date) -> String? {
+    guard let retry = sweep.retryAfter, retry > now else { return nil }
+    return when(sweep.limitResetsAt ?? retry, now: now)
+  }
+  /// One plain sentence while the AI can't help, for the top of Settings. Nil when all is well.
+  static func aiProblem(_ sweep: AutopilotSweepState, harness: String?, now: Date) -> String? {
+    guard sweep.enabled, let back = aiBack(sweep, now: now) else { return nil }
+    let name = harness == "codex" ? "Codex" : "Claude"
+    if let limit = sweep.limitResetsAt, limit > now {
+      return "AI is out of \(name) usage until \(back). Your rules still burn."
+    }
+    if sweep.lastError.map(AutopilotSweeper.accountProblem) == true {
+      return "AI needs a \(name) login or more usage. Trying again \(back). Your rules still burn."
+    }
+    return "AI hit a snag. Trying again \(back). Your rules still burn."
+  }
+  /// What a notification says when BZ has questions nobody was told about yet.
+  static func questionAlert(_ open: [AutopilotQuestion], told: Set<String>)
+    -> (title: String, body: String)?
+  {
+    guard open.contains(where: { !told.contains($0.id) }) else { return nil }
+    let total = open.reduce(UInt64(0)) { $0 + $1.bytes }
+    let title = open.count == 1 ? "BZ has a question" : "BZ has \(open.count) questions"
+    return (title, "Answer to free " + AutopilotPolicy.format(total) + ".")
+  }
   /// The menu line: "Autopilot on · next sweep in 12 min", "Look-only · next sweep in 12 min",
   /// "Autopilot off", or the paused form.
   static func sweepLine(_ sweep: AutopilotSweepState, now: Date) -> String {
     guard sweep.enabled else { return "Autopilot off" }
     let mode = sweep.lookOnly == true ? "Look-only" : "Autopilot on"
     guard let next = nextSweep(sweep, now: now) else { return mode }
-    if next.hasPrefix("retrying") { return "Autopilot paused — " + next }
+    // Only the AI waits; rules keep burning.
+    if next.hasPrefix("retrying"), let back = aiBack(sweep, now: now) {
+      return mode + " · AI back " + back
+    }
     return mode + " · " + next
   }
   static func lastSweep(_ sweep: AutopilotSweepState, now: Date) -> String {
@@ -252,8 +292,6 @@ enum AutopilotText {
     if tells > 0 { return "Next up…" }
     return questions > 0 ? "Next question coming up…" : "That's everything for now."
   }
-  /// What VoiceOver reads for a lesson's Forget button: which lesson it forgets.
-  static func forgetLabel(_ group: AutopilotLessonGroup) -> String { "Forget: " + group.sentence }
 }
 
 extension AutopilotSnapshot {
@@ -556,13 +594,6 @@ enum AutopilotLocal {
     s.tells = []
     s.progress = AutopilotProgress()
     recount(&s)
-  }
-
-  static func sweepNow(_ s: inout AutopilotSnapshot, now: Date) {
-    s.sweep.lastTick = now
-    s.sweep.retryAfter = nil
-    s.sweep.lastError = nil
-    s.sweep.append("Swept just now.", date: now)
   }
 }
 
