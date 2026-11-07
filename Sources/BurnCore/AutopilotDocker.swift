@@ -95,8 +95,9 @@ public final class AutopilotDockerCache: @unchecked Sendable {
     return [item]
   }
 
-  /// Asks Docker what's old enough now. Any failure means it isn't there to ask: no item, no words.
-  public func look(now: Date = Date()) {
+  /// Asks Docker what's old enough now, and says whether it answered. Any failure means it isn't
+  /// there to ask: no item, no words.
+  @discardableResult public func look(now: Date = Date()) -> Bool {
     let started = lock.withLock { generation }
     var found: AutopilotItem?
     var path: String?
@@ -115,6 +116,7 @@ public final class AutopilotDockerCache: @unchecked Sendable {
       socketPath = path
       nextLook = now.addingTimeInterval(looked ? Self.looksEvery : Self.looksAgainAfter)
     }
+    return looked
   }
 
   static func item(_ inventory: BuildKitCache.Inventory) -> AutopilotItem? {
@@ -226,7 +228,7 @@ public final class AutopilotDockerCache: @unchecked Sendable {
   }
 
   /// Whether something answers on a Unix socket. Starts nothing and wakes nothing.
-  static func accepting(_ path: String) -> Bool {
+  public static func accepting(_ path: String) -> Bool {
     var address = sockaddr_un()
     let capacity = MemoryLayout.size(ofValue: address.sun_path)
     guard path.utf8.count < capacity else { return false }

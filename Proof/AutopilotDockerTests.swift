@@ -414,7 +414,7 @@ private func silenceProof() async throws {
     docker.installed = installed
     docker.running = running
     let cache = AutopilotDockerCache(open: docker.open, alive: docker.alive)
-    cache.look(now: docker.now)
+    checkFalse(cache.look(now: docker.now), what + ": it didn't answer")
     let snapshot = await (try engine(cache, root: root)).tick()
     try assertQuiet(snapshot, root, what)
     equal(docker.prunes.count, 0)
@@ -884,6 +884,13 @@ func dockerRealEngineProof() throws {
       "buildx", "--builder", target.builder, "prune", "--filter", "id=^(\(id))$", "--force",
     ])
   }
+  // The app's own way in answers, and tells a live socket from a missing one.
+  let live = AutopilotDockerCache.live(root: folder.appendingPathComponent("live"))
+  check(live.look(), "the app's own way in reaches Docker")
+  equal(live.items().first?.bytes, before.eligibleBytes > 0 ? before.eligibleBytes : nil)
+  check(AutopilotDockerCache.accepting(String(before.owner.endpoint.dropFirst("unix://".count))))
+  checkFalse(AutopilotDockerCache.accepting(folder.path + "/absent.sock"))
+
   // The newest 3 and the age check would rule these out. Only this proof's own ids are ever named.
   let noAge = BuildKitCache.Retention(keepNewest: 0, minimumAgeDays: 0)
   func records() throws -> [String: BuildKitCache.Record] {
