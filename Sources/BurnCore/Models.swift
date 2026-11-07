@@ -121,20 +121,6 @@ public struct Lease: Codable, Identifiable, Sendable {
 }
 
 public enum OwnerState: String, Sendable { case alive, gone, unknown }
-public enum Disposition: String, Codable, Sendable {
-  case healthy, investigate, eligible, protected
-}
-public struct Finding: Identifiable, Sendable {
-  public var id: String
-  public var title: String
-  public var disposition: Disposition
-  public var reason: String
-  public var evidence: [String]
-  public var uncertainty: String
-  public var members: [String]
-  public var leaseID: UUID?
-  public var rss: UInt64
-}
 
 public struct CleanupEvent: Codable, Identifiable, Sendable {
   public var fixture: Bool?

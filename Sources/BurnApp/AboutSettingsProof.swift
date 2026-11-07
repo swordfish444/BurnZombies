@@ -228,7 +228,7 @@
     guard cancel.phase == .available, installs == 1 else {
       throw StoreError.message("Cancelling a download restarted the app")
     }
-    // The header is on every tab, so what it says has to stay true there. Run in the real view.
+    // The header stays on screen, so what it says has to stay true. Run in the real view.
     func shown(_ updates: AppUpdateSettingsModel) async throws {
       let view = NSHostingView(rootView: AboutHeader(updates: updates, subtitle: "Keep your work running"))
       surface.contentView = view
@@ -266,6 +266,19 @@
     guard retry.phase == .failed else {
       throw StoreError.message("A failed update that can be retried cleared itself")
     }
+    // The window's footer clears itself the same way, so it never says "Hunting now" for hours.
+    let footer = AppModel(demo: true)
+    footer.messageSeconds = 0.05
+    footer.message = "Hunting now."
+    let window = NSHostingView(
+      rootView: SettingsWindow(model: footer, ai: AISettingsModel(root: scratch)))
+    surface.contentView = window
+    window.frame = NSRect(x: 0, y: 0, width: 440, height: 660)
+    settle(window)
+    try await Task.sleep(nanoseconds: 400_000_000)
+    guard footer.message == nil else {
+      throw StoreError.message("The footer still says \"\(footer.message ?? "")\" after its moment")
+    }
     // A saved failure (0.16.0, above) stands only while this copy is still behind that version.
     for (version, stands) in [("0.15.1", true), ("0.16.0", false), ("0.17.0", false)] {
       let saved = AppUpdateSettingsModel(
@@ -278,7 +291,7 @@
     }
     guard installs == 1 else { throw StoreError.message("A proof step installed an update") }
     print(
-      "PASS About header and updater: pressed the shipped links, version never moves across update states, quick answers stay on its line and clear themselves, a retryable failure stays, a saved failure ends once that version arrives, offline, no downgrade, cancellation, narrow/wide renders; no visible window or observer started"
+      "PASS About header and updater: pressed the shipped links, version never moves across update states, quick answers stay on its line and clear themselves, a retryable failure stays, a saved failure ends once that version arrives, the window's footer clears itself, offline, no downgrade, cancellation, narrow/wide renders; no visible window or observer started"
     )
   }
 #endif

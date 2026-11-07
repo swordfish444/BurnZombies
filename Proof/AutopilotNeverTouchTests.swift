@@ -89,6 +89,29 @@ func autopilotNeverTouchProof() async throws {
   equal(await engine.snapshot().keptPaths, [], "taken back")
   isNil(try AutopilotStore(root: root).memory().keptItems.first { $0.contains(cache.id) })
 
+  // Keep forever is how a program is protected: that program, its next run too, on the same list.
+  let running = AutopilotItem(
+    id: "process:run-1", kind: .process, name: "node", path: "/opt/tool/bin/node", bytes: 1 << 30,
+    facts: program.facts)
+  let programRoot = base.appendingPathComponent("state-program")
+  let programs = try Autopilot(
+    root: programRoot, sources: AutopilotSources(processes: { _ in [running] }))
+  try AutopilotStore(root: programRoot).updateSweep { $0.lookOnly = true }
+  _ = await programs.tick()
+  _ = try await programs.apply(.keep(itemID: running.id))
+  equal(await programs.snapshot().keptPaths, [running.path!], "the program shows by its path")
+  let nextRun = AutopilotItem(
+    id: "process:run-2", kind: .process, name: "node", path: running.path, bytes: 1 << 30,
+    facts: program.facts)
+  let kept = try AutopilotStore(root: programRoot).memory()
+  equal(AutopilotPolicy.decide(running, memory: kept).status, .keep, "the program stays")
+  equal(AutopilotPolicy.decide(nextRun, memory: kept).status, .keep, "its next run stays too")
+  _ = try await programs.apply(.allowTouch(path: running.path!))
+  equal(await programs.snapshot().keptPaths, [], "taken back off the list")
+  equal(
+    AutopilotPolicy.decide(nextRun, memory: try AutopilotStore(root: programRoot).memory()).status,
+    .burn, "off the list, its next run can burn again")
+
   // A lesson switched off burns nothing, teaches nothing, and comes back on.
   let copy = AutopilotItem(
     id: "worktree:c", kind: .worktree, name: "c", path: "/work/c", bytes: 1 << 30,

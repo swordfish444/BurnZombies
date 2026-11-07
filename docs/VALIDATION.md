@@ -13,6 +13,7 @@ Validated on macOS 15.8.1 / Apple Silicon. Version 0.4 removes the dependency on
 - Native setup tests cover five providers, preservation of unrelated settings and hooks, parsed Codex TOML with conflict refusal, portable skill installation, idempotent setup, provider pinning and cancellation of a TERM-resistant reviewer group while an unrelated active process survives.
 - The compact menu renders at 360 × 550 points. Offscreen OCR checks verify readable labels, the footer, an empty first-use state, populated impact, paused reviews, a quiet day with earlier history, and cleanups without a speed measurement. These fixtures never start an observer or write live history.
 - Settings tests cover draft/save/reopen, default reset, invalid-input refusal, preservation of disabled reviews, and offscreen rendering of the native SwiftUI controls. Five-provider subprocess captures verify that saved model/effort selections reach the actual review worker; no model is invoked by those tests.
+- The Settings window is checked by position (`--settings-layout-proof`): version and update link on top, no tabs or status strip, the Autopilot choice first, and one screen with or without the AI waiting. `--impact-proof` reads the Burn Log the same way: newest first whatever order the catalog holds, each row with its day.
 - MCP protocol and compatibility tests cover live status/inspection, strict arguments, protected identities, invalid preview refusal, quiet legacy callbacks and EOF shutdown.
 
 ## Worktree validation (0.7)
@@ -168,4 +169,4 @@ macOS 27.0.1 / arm64, Swift 6.4. All destructive checks use sacrificial fixtures
 - `--autopilot-disk`: chat-thread index (live and ended Claude sessions, Claude transcripts, Codex rollouts), rebuildable folders inside stale copies and global developer caches, tracked folders and private areas excluded, and reclaim refusals for unknown kinds, symlinks and in-use or unknown consumers.
 - `--autopilot-sweep`: native starter burns with no AI, AI verdicts authorizing only eligible items, answers creating rules that burn in the background, AI wake rules (unjudged work, 30-minute spacing, 4-hour refresh, manual hunts), backoff instead of pause, catalog-only while off.
 - `scripts/test-autopilot-mcp.py`: the real MCP server in autopilot mode over stdio against a private app endpoint — exactly six tools, compact catalog, inspect, refusal guidance, AI authority, a 7-second burn past the old 5-second socket deadline, listening-server refusal, questions and report.
-- `--autopilot-proof`: offscreen menu, Teach BZ, Findings and Settings renders with text checks.
+- `--autopilot-proof`: offscreen popup, Teach BZ, Findings and Settings renders with text checks.

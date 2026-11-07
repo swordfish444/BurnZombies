@@ -348,6 +348,52 @@ struct SettingsHome: View {
   }
 }
 
+/// The Settings window: BZ's name, version and updates on top, then Settings and its pages.
+struct SettingsWindow: View {
+  @StateObject private var ai: AISettingsModel
+  @ObservedObject var model: AppModel
+  /// Proofs pass a scratch-folder model so rendering never reads the real state folder. A demo has
+  /// no real AI to change.
+  init(model: AppModel, ai: AISettingsModel? = nil) {
+    self.model = model
+    let root =
+      model.demo
+      ? FileManager.default.temporaryDirectory.appendingPathComponent("bz-demo-ai") : Store.defaultRoot
+    let settings = ai ?? AISettingsModel(root: root)
+    if !model.demo { settings.saved = { [weak model] in model?.reloadReviewConfiguration() } }
+    _ai = StateObject(wrappedValue: settings)
+  }
+  var body: some View {
+    VStack(spacing: 0) {
+      AboutHeader(
+        updates: model.appUpdates,
+        subtitle: model.demo ? "DEMO · synthetic data" : "Keep your work running",
+        working: model.working
+      ).disabled(model.demo).padding(20)
+      Divider()
+      if let error = model.state.error {
+        Label(error, systemImage: "exclamationmark.shield").font(.callout).padding()
+          .foregroundStyle(.red)
+      }
+      if model.settingsPage == .home {
+        ScrollView {
+          SettingsHome(model: model, ai: ai).padding(.horizontal, 20).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      } else {
+        SettingsSubpage(model: model, ai: ai)
+      }
+      if let message = model.message {
+        Text(message).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20).padding(
+          .vertical, 10
+        ).frame(maxWidth: .infinity, alignment: .leading)
+          .task(id: message) { await model.settleMessage(message) }
+      }
+    }.frame(width: 440, height: 660).background(Color(nsColor: .windowBackgroundColor))
+      .tint(BurnTheme.ember)
+  }
+}
+
 /// A page under Settings: the way back, a short title and sentence, then what it's about.
 struct SettingsSubpage: View {
   @ObservedObject var model: AppModel

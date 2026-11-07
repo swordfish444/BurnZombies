@@ -25,13 +25,12 @@
     ).save(root: root)
     let ai = AISettingsModel(root: root)
     let model = AppModel(demo: true)
-    model.tab = "Settings"
     var checks = 0
     model.appUpdates = AppUpdateSettingsModel(
       root: root, check: { throw StoreError.message("No network in layout proof") },
       install: { _ in checks += 1 })
     let host = NSHostingView(
-      rootView: Dashboard(model: model, ai: ai).environment(\.colorScheme, .dark))
+      rootView: SettingsWindow(model: model, ai: ai).environment(\.colorScheme, .dark))
     let surface = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 440, height: 660), styleMask: .borderless,
       backing: .buffered, defer: false)
@@ -85,53 +84,52 @@
     model.autopilot.sweep.limitResetsAt = Date().addingTimeInterval(86_400)
     try render("settings-ai-waiting")
     try fitsOneScreen("Settings with the AI waiting")
+    // The most it can show at once: the AI waiting and a message in the footer.
+    model.message = "Hunting now. I'll burn what's safe and ask if I'm unsure."
+    try render("settings-ai-waiting-message")
+    try fitsOneScreen("Settings with the AI waiting and a message")
+    model.message = nil
     model.autopilot.sweep.retryAfter = nil
     model.autopilot.sweep.limitResetsAt = nil
 
-    // The header holds the version and update link, with nothing else above the tabs.
+    // The window is Settings and nothing else: BZ's name, version and update link, then the page.
     let headerBottom: CGFloat = 72
-    for tab in ["Settings", "Overview", "History"] {
-      model.tab = tab
-      try render("tab-" + tab.lowercased())
-      guard
-        let tabs = appKitViews(NSSegmentedControl.self, in: host).map(frame)
-          .min(by: { $0.minY < $1.minY }), let scroll = scrollView().map(frame)
-      else { throw fail("\(tab): tabs or content missing") }
-      guard
-        let version = appKitViews(NSTextField.self, in: host)
-          .first(where: { $0.stringValue.hasPrefix("Version ") }).map(frame)
-      else { throw fail("\(tab): the version isn't on this tab") }
-      guard version.maxY <= headerBottom, version.maxY <= tabs.minY else {
-        throw fail(
-          "\(tab): the version sits at y=\(Int(version.minY)), below the header or tabs (y=\(Int(tabs.minY)))")
-      }
-      let buttons = appKitViews(NSButton.self, in: host).map(frame).filter {
-        $0.maxY <= headerBottom
-      }
-      guard buttons.count == 1, buttons[0].width > 60 else {
-        throw fail(
-          "\(tab): the header should hold only the update link, found widths \(buttons.map { Int($0.width) })")
-      }
-      guard scroll.minY - tabs.maxY < 12 else {
-        throw fail("\(tab): something sits between the tabs and the content")
-      }
-      // No "View" label pushing the tabs off the page's left edge.
-      guard abs(tabs.minX - 20) <= 4, abs(tabs.maxX - 420) <= 4 else {
-        throw fail("\(tab): the tabs run \(Int(tabs.minX))...\(Int(tabs.maxX)), not 20...420")
-      }
-      // Settings gets the whole window: the strip with BZ's status stays on the other tabs.
-      let close = tabs.minY - headerBottom < 24
-      guard close == (tab == "Settings") else {
-        throw fail("\(tab): the tabs start at y=\(Int(tabs.minY))")
-      }
+    guard let page = scrollView().map(frame) else { throw fail("The page is missing") }
+    guard
+      let version = appKitViews(NSTextField.self, in: host)
+        .first(where: { $0.stringValue.hasPrefix("Version ") }).map(frame)
+    else { throw fail("The version is missing") }
+    guard version.maxY <= headerBottom else {
+      throw fail("The version sits at y=\(Int(version.minY)), below the header")
     }
-    model.tab = "Settings"
-    settle()
+    let headerButtons = appKitViews(NSButton.self, in: host).map(frame).filter {
+      $0.maxY <= headerBottom
+    }
+    guard headerButtons.count == 1, headerButtons[0].width > 60 else {
+      throw fail(
+        "The header should hold only the update link, found widths \(headerButtons.map { Int($0.width) })")
+    }
+    // No tabs and no status strip: the page starts right under the header.
+    guard page.minY - headerBottom < 12 else {
+      throw fail("Something sits between the header and the page, which starts at y=\(Int(page.minY))")
+    }
+    let pickers = appKitViews(NSSegmentedControl.self, in: host)
+    guard pickers.count == 1, pickers[0].segmentCount == AutopilotLevel.allCases.count else {
+      throw fail(
+        "The Autopilot choice should be the only picker, found \(pickers.map { $0.segmentCount }) segments")
+    }
+    // It runs the page's full width, and it's the first thing on the page.
+    let choice = frame(pickers[0])
+    guard abs(choice.minX - 20) <= 4, abs(choice.maxX - 420) <= 4 else {
+      throw fail("The Autopilot choice runs \(Int(choice.minX))...\(Int(choice.maxX)), not 20...420")
+    }
+    guard choice.minY - headerBottom < 48 else {
+      throw fail("The Autopilot choice starts at y=\(Int(choice.minY)), too far below the header")
+    }
+    try render("header")
 
     // The one choice: each segment says what it does and does it.
-    let segments = appKitViews(NSSegmentedControl.self, in: host)
-      .first { $0.segmentCount == AutopilotLevel.allCases.count }
-    guard let level = segments else { throw fail("The Autopilot choice is missing") }
+    let level = pickers[0]
     let shown = (0..<level.segmentCount).map { level.label(forSegment: $0) ?? "" }
     guard shown == AutopilotLevel.allCases.map(\.label) else {
       throw fail("The Autopilot choice reads \(shown)")
@@ -179,7 +177,7 @@
       model.settingsPage = page
       try render(name)
       guard appKitViews(NSSegmentedControl.self, in: host).isEmpty else {
-        throw fail("\(name): the tabs should give way to the page")
+        throw fail("\(name): the Autopilot choice should give way to the page")
       }
       if page == .burns { try linedUp(name, atLeast: 6) }
       guard
@@ -202,7 +200,7 @@
     try render("header-working")
     model.working = false
     print(
-      "PASS Settings fits one screen with and without the AI waiting; four-way Autopilot choice, switches lined up, question switch and pages press through their real views; version and update link above the tabs on every tab, no View label, no status strip on Settings; no network or install"
+      "PASS Settings fits one screen with and without the AI waiting; four-way Autopilot choice, switches lined up, question switch and pages press through their real views; the window is Settings alone: version and update link on top, no tabs, no status strip, the Autopilot choice first; no network or install"
     )
   }
 #endif

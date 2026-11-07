@@ -212,7 +212,7 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   BurnTheme.registerFonts()
   let directory = URL(fileURLWithPath: output, isDirectory: true)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  // The menu view builds settings models that read a state folder; hand them an empty one.
+  // Settings models read a state folder, so they get an empty one. Renders nobody checks go here too.
   let scratch = directory.appendingPathComponent("scratch-state", isDirectory: true)
   try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
   var notes = [String]()
@@ -356,58 +356,35 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
     "  tell: \(AutopilotText.tellHeadline(demoTell)) | \(AutopilotText.tellSize(demoTell)) | \(AutopilotText.tellWhy(demoTell))"
   )
 
-  // Menu: the Details view with the Autopilot block at the top.
-  let menu = try render(
-    ZStack {
-      AutopilotTheme.window
-      Dashboard(model: model, ai: AISettingsModel(root: scratch))
-    }.frame(width: 440, height: 660).environment(\.colorScheme, .dark),
-    size: NSSize(width: 440, height: 660), name: "menu", directory: directory)
-  try require(menu, ["Autopilot", "quick question"], in: "menu")
-  hint(menu, "menu", ["Autopilot on", "Teach BZ", "Advanced findings"])
-  print("PASS autopilot UI menu render: Autopilot line and quick-question button")
-  // BZ acts instead of asking, so a tell comes when no question is waiting: the menu prompts for it
-  // in the Details view and in the compact popover, in the place the questions prompt takes.
+  // The popup: what BZ wants from the owner, where the owner looks first.
+  let miniAsking = try render(
+    MiniImpactView(model: model), size: MiniImpactView.size, name: "mini", directory: directory)
+  try require(miniAsking, ["BZ has 3 quick questions"], in: "mini")
+  hint(miniAsking, "mini", ["Autopilot on"])
+  // BZ acts instead of asking, so a tell comes when no question is waiting: the popup prompts for it
+  // in the place the questions prompt takes.
   let tellOnly = AppModel(demo: true)
   tellOnly.autopilot.questions = []
   let tellPrompt = AutopilotText.burnedOnItsOwn(tellOnly.autopilot.tells)
   try check(
     tellPrompt == "BZ burned 3 things on its own",
-    "The menu prompt for a tell reads: \(tellPrompt)")
-  let menuTell = try render(
-    ZStack {
-      AutopilotTheme.window
-      Dashboard(model: tellOnly, ai: AISettingsModel(root: scratch))
-    }.frame(width: 440, height: 660).environment(\.colorScheme, .dark),
-    size: NSSize(width: 440, height: 660), name: "menu-tell", directory: directory)
-  try require(menuTell, ["Autopilot", tellPrompt], in: "menu-tell")
-  try check(!menuTell.has("quick question"), "A tell-only menu still prompts for questions")
+    "The popup's prompt for a tell reads: \(tellPrompt)")
   let miniTell = try render(
     MiniImpactView(model: tellOnly), size: MiniImpactView.size, name: "mini-tell",
     directory: directory)
   try require(miniTell, [tellPrompt], in: "mini-tell")
-  try check(!miniTell.has("quick question"), "A tell-only popover still prompts for questions")
-  let miniAsking = try render(
-    MiniImpactView(model: model), size: MiniImpactView.size, name: "mini", directory: directory)
-  try require(miniAsking, ["BZ has 3 quick questions"], in: "mini")
-  try check(!miniAsking.has(tellPrompt), "Questions come first in the popover's prompt")
-  print("PASS autopilot UI menu prompts: quick questions first, then what BZ burned on its own")
+  try check(!miniTell.has("quick question"), "A tell-only popup still prompts for questions")
+  try check(!miniAsking.has(tellPrompt), "Questions come first in the popup's prompt")
+  print("PASS autopilot UI popup prompts: quick questions first, then what BZ burned on its own")
 
-  // The backup key: while old copies wait for the owner's OK, the popover and the menu ask, once,
-  // ahead of any question, and say when macOS's own dialog is up.
+  // The backup key: while old copies wait for the owner's OK, the popup asks, and says when macOS's
+  // own dialog is up. Questions keep their place above it.
   let keyWait = AppModel(demo: true)
   keyWait.autopilot.recoveryKey = AutopilotKeyWait(since: Date())
   let miniKey = try render(
     MiniImpactView(model: keyWait), size: MiniImpactView.size, name: "mini-key",
     directory: directory)
-  try require(miniKey, ["backup key", "password", "Allow"], in: "mini-key")
-  let menuKey = try render(
-    ZStack {
-      AutopilotTheme.window
-      Dashboard(model: keyWait, ai: AISettingsModel(root: scratch))
-    }.frame(width: 440, height: 660).environment(\.colorScheme, .dark),
-    size: NSSize(width: 440, height: 660), name: "menu-key", directory: directory)
-  try require(menuKey, ["backup key", "quick question"], in: "menu-key")
+  try require(miniKey, ["backup key", "password", "Allow", "quick question"], in: "mini-key")
   keyWait.autopilot.recoveryKey?.asking = true
   let miniKeyAsking = try render(
     MiniImpactView(model: keyWait), size: MiniImpactView.size, name: "mini-key-asking",
@@ -417,8 +394,8 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   let miniKeyDone = try render(
     MiniImpactView(model: keyWait), size: MiniImpactView.size, name: "mini-key-done",
     directory: directory)
-  try check(!miniKeyDone.has("backup key"), "Once the key reads, the popover stops asking")
-  print("PASS autopilot UI backup key: the popover and the menu ask until the key is allowed")
+  try check(!miniKeyDone.has("backup key"), "Once the key reads, the popup stops asking")
+  print("PASS autopilot UI backup key: the popup asks until the key is allowed")
 
   // Teach BZ: what BZ did on its own first, then one big question at a time.
   // The question card as the owner sees it once no tell waits: the headline, what it frees, the

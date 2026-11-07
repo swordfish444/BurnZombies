@@ -9,7 +9,6 @@ public struct ViewState: Sendable {
   public var worktrees: WorktreeReply?
   public var worktreeError: String?
   public var fullDiskAccess = FullDiskAccessStatus()
-  public var findings: [Finding] = []
   public var catalog = Catalog()
   /// Autopilot's own cleanups, which never pass through the catalog.
   public var autopilotImpact: AutopilotImpact?
@@ -751,8 +750,6 @@ public actor Monitor {
             && protected.allows($0.path)
         }
       }
-      // Observation is factual. The connected harness owns diagnosis and target selection.
-      state.findings = []
       state.interval = catalog.events.contains { $0.outcome == "verifying" } ? 15 : 60
       if receiptNeedsCheckpoint || now.timeIntervalSince(lastSave) >= 300 {
         try checkpoint()
@@ -770,7 +767,6 @@ public actor Monitor {
     } catch {
       try? FileManager.default.removeItem(at: store.root.appendingPathComponent("review-signal"))
       state.error = error.localizedDescription
-      state.findings = []
     }
     state.catalog = catalog
     state.scanMS = (ProcessInfo.processInfo.systemUptime - start) * 1000
@@ -853,15 +849,6 @@ public actor Monitor {
     try checkpoint()
     state.catalog = catalog
   }
-  public func protect(_ finding: Finding) throws {
-    for key in finding.members {
-      guard let r = catalog.records[key] else { continue }
-      catalog.preferences.protectedExecutables.insert(r.latest.executable)
-      catalog.records[key]?.protection = true
-    }
-    try checkpoint()
-    _ = refresh()
-  }
   public func removeProtection(_ path: String) throws {
     catalog.preferences.protectedExecutables.remove(path)
     for key in Array(catalog.records.keys) where catalog.records[key]?.latest.executable == path {
@@ -870,50 +857,6 @@ public actor Monitor {
     try checkpoint()
     _ = refresh()
   }
-  public func snooze(_ finding: Finding) throws {
-    for key in finding.members {
-      catalog.records[key]?.ignoreUntil = Date().addingTimeInterval(86400)
-    }
-    try checkpoint()
-    _ = refresh()
-  }
-  public func details(_ finding: Finding) -> [String] {
-    finding.members.prefix(10).compactMap { catalog.records[$0] }.map { r in
-      "\(r.latest.name) · PID \(r.latest.identity.pid) · start \(r.latest.identity.seconds).\(r.latest.identity.micros)\n\(native.enrich(r.latest))"
-    }
-  }
-  public func notificationSummary() throws -> String? {
-    guard catalog.preferences.notifications else { return nil }
-    let now = Date()
-    let candidates = state.findings.filter {
-      $0.disposition == .eligible || $0.disposition == .investigate
-    }.filter { f in
-      f.members.contains { key in
-        guard let r = catalog.records[key], !r.protection,
-          !catalog.preferences.protectedExecutables.contains(r.latest.executable),
-          !(r.ignoreUntil.map { $0 > now } ?? false)
-        else {
-          return false
-        }
-        return r.alertedAt == nil
-          || (now.timeIntervalSince(r.alertedAt!) > 86400 && f.rss > max(1, r.alertLevel) * 2)
-      }
-    }
-    guard !candidates.isEmpty else { return nil }
-    for f in candidates {
-      for key in f.members {
-        catalog.records[key]?.alertedAt = now
-        catalog.records[key]?.alertLevel = f.rss
-      }
-    }
-    try checkpoint()
-    return
-      "\(candidates.count) activities are worth a look. Open BurnZombies to review the evidence."
-  }
-  public func cleanup(_ requested: Finding, automatic: Bool = false) async throws -> String {
-    throw StoreError.message("Cleanup is agent-led. Ask your connected harness to tame the horde.")
-  }
-
   public func recordWorkspace(_ request: AgentRequest) async throws -> (
     String?, String, WorkspaceClaim?
   ) {
