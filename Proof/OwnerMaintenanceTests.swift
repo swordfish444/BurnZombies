@@ -263,6 +263,17 @@ private func ownerQueueProgressProof(
     "Uncertain owner RPCs must never become retryable because history was pruned")
   equal(retained.filter { $0.outcome == "refused" }.count, 500)
   equal(retained.count, 502)
+  // In the order a real list ends up in, the limit still keeps the newest.
+  catalog.managedCacheAttempts = [prepared, uncertain] + completed.reversed()
+  catalog.prune(now: now)
+  let newestKept = catalog.managedCacheAttempts ?? []
+  check(
+    newestKept.contains { $0.plan.id == completed[509].plan.id },
+    "The newest attempt stays past the limit")
+  check(
+    !newestKept.contains { $0.plan.id == completed[0].plan.id },
+    "The oldest attempts are the ones that go")
+  equal(newestKept.count, 502, "Pending attempts don't count toward the limit")
 }
 
 private final class OwnerProbeRounds: @unchecked Sendable {
