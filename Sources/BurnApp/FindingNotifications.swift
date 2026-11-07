@@ -26,6 +26,16 @@ import UserNotifications
         identifier: "bz-burn", actions: [burn, keep, review], intentIdentifiers: [], options: []),
     ])
   }
+  /// A tap on it opens Teach BZ. A newer one replaces it, so questions never pile up.
+  static let questionID = "bz-question"
+  static func deliverQuestions(_ alert: (title: String, body: String)) async throws {
+    let content = UNMutableNotificationContent()
+    content.title = alert.title
+    content.body = alert.body
+    content.userInfo = ["proposal": questionID, "revision": ""]
+    try await UNUserNotificationCenter.current().add(
+      UNNotificationRequest(identifier: questionID, content: content, trigger: nil))
+  }
   static func deliver(_ p: CleanupProposal, details: Bool) async throws {
     let content = UNMutableNotificationContent()
     content.title = "BurnZombies found something to review"

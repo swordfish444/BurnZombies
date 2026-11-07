@@ -54,6 +54,23 @@ public enum AutopilotSweeper {
     return max(minutes, accountProblem ? 60 : 0) * 60
   }
 
+  /// When a usage limit a run was refused for comes back: the run's last refusal in the future.
+  public static func limitReset(in log: Data, now: Date) -> Date? {
+    var reset: Date?
+    for line in log.split(separator: UInt8(ascii: "\n")) {
+      guard line.count < 8192, line.first == UInt8(ascii: "{"),
+        let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+        object["type"] as? String == "rate_limit_event",
+        let info = object["rate_limit_info"] as? [String: Any],
+        info["status"] as? String == "rejected",
+        let seconds = info["resetsAt"] as? Double
+      else { continue }
+      let date = Date(timeIntervalSince1970: seconds)
+      reset = date > now ? date : nil
+    }
+    return reset
+  }
+
   public static func accountProblem(_ text: String) -> Bool {
     let lower = text.lowercased()
     return ["log in", "login", "authenticat", "usage limit", "rate limit", "quota", "credit"]
@@ -601,7 +618,7 @@ public actor AutopilotCoordinator {
     }
     let runner = runner
     let root = root
-    // Sweeps appear in Settings → Usage & estimated cost like any other review.
+    // Sweeps count in Settings → AI → Used this week like any other review.
     let attempt: UUID? = {
       guard let store = try? Store(root: root), var ledger = try? ReviewLedger.load(store: store)
       else { return nil }
@@ -675,13 +692,19 @@ public actor AutopilotCoordinator {
     }
     let summary = note
     if let message = failure {
+      // A limit that says when it comes back isn't worth knocking on before then.
+      let log = try? Store(root: root).read(
+        root.appendingPathComponent("last-review.log"), limit: 1_048_576)
+      let resets = log.flatMap { AutopilotSweeper.limitReset(in: $0, now: now) }
       await engine.updateSweep {
         $0.running = false
         $0.failures += 1
         $0.lastError = message
-        $0.retryAfter = now.addingTimeInterval(
+        $0.limitResetsAt = resets
+        let waited = now.addingTimeInterval(
           AutopilotSweeper.backoff(
             failures: $0.failures, accountProblem: AutopilotSweeper.accountProblem(message)))
+        $0.retryAfter = resets.map { max($0, waited) } ?? waited
         $0.append(message + " I'll try again later; my rules keep working meanwhile.")
       }
     } else {
@@ -690,6 +713,7 @@ public actor AutopilotCoordinator {
         $0.failures = 0
         $0.retryAfter = nil
         $0.lastError = nil
+        $0.limitResetsAt = nil
         $0.lastAISweep = now
         $0.lastAIDigest = digest
         $0.append(summary)

@@ -92,7 +92,7 @@ enum MachineSetup {
     try config.save(root: root)
     print(
       config.enabled
-        ? "\(config.harnessName) judges what BurnZombies isn't sure about, with your existing login. Change the model in Settings → Review intelligence."
+        ? "\(config.harnessName) judges what BurnZombies isn't sure about, with your existing login. Change it in Settings → AI."
         : "AI judging is off. \(cleansAnyway) To turn it on: \(launcher.path) setup --with-ai"
     )
   }

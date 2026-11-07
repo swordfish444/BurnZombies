@@ -190,6 +190,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       let beforePolicy = failures
       do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
       if failures == beforePolicy { print("PASS Autopilot policy") }
+      let beforeNever = failures
+      do { try await autopilotNeverTouchProof() } catch { failTest("Never touches: \(error)") }
+      if failures == beforeNever {
+        print("PASS Never touches, lesson switches, old cleaner off and the AI rows")
+      }
       let beforeRobots = failures
       do { try robotBrowserPolicyProof() } catch { failTest("Robot browsers: \(error)") }
       if failures == beforeRobots { print("PASS Robot browsers") }
@@ -213,6 +218,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     if CommandLine.arguments.contains("--start-at-login") {
       do { try startAtLoginProof() } catch { failTest("Start at login: \(error)") }
       if failures == 0 { print("PASS Start at login") }
+      exit(failures == 0 ? 0 : 1)
+    }
+    if CommandLine.arguments.contains("--never-touches") {
+      do { try await autopilotNeverTouchProof() } catch { failTest("Never touches: \(error)") }
+      if failures == 0 { print("PASS Never touches") }
       exit(failures == 0 ? 0 : 1)
     }
     if CommandLine.arguments.contains("--autopilot-policy") {
@@ -596,6 +606,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await securityBoundaryProof() } catch { failTest("Security boundaries: \(error)") }
     let beforeAutopilot = failures
     do { try autopilotPolicyProof() } catch { failTest("Autopilot policy: \(error)") }
+    do { try await autopilotNeverTouchProof() } catch { failTest("Never touches: \(error)") }
     do { try robotBrowserPolicyProof() } catch { failTest("Robot browsers: \(error)") }
     do { try await autopilotBrowserProof() } catch { failTest("Real robot browsers: \(error)") }
     do { try await autopilotWorktreeProof() } catch { failTest("Autopilot worktrees: \(error)") }

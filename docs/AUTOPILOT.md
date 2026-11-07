@@ -17,7 +17,7 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 1. **Protected** — never touched, never asked about: macOS, your apps, your AI tools, BurnZombies itself, anything a running chat is working in, your main project folders, copies something is using right now.
 2. **Your keeps win.** "Keep forever" on an item, a "No, keep them" answer, an Undo, or a confident AI "keep" always blocks burning.
 3. **Your yes answers** burn everything their lesson covers, now and later. So do the calls BZ makes on its own once it has earned your trust ([Act, then tell](#act-then-tell)).
-4. **Starter rules** burn the obvious from the first minute (with look-only, once you start burning). Switch each off in **Settings → Autopilot**:
+4. **Starter rules** burn the obvious from the first minute (with look-only, once you start burning). Switch each off in **Settings → Burns without asking**:
    - robot browsers nothing can drive anymore, idle for 10+ minutes. A robot browser is one Playwright, Puppeteer, chromedriver or an MCP server started: it has a control pipe, or a debugging port plus automation signs (headless, a fake keychain, WebDriver flags or a throwaway profile). Nothing can drive it once the program that started it is gone and it was driven over a pipe, or it has a throwaway profile and nothing is connected to its port. Its helpers go with it. A pipe-driven one goes even while a chat works in its folder: that chat can't reach it, and it holds the profile the chat's next browser needs. The browser you use never has these flags, so it stays protected;
    - programs still driving a robot browser (a Playwright CLI daemon, an MCP server, a test runner) an hour after the chat that worked in their folder ended, when they serve no network port;
    - programs whose app or chat is gone, idle for 6+ hours, with no open port. A program that has barely used the CPU since it started counts as idle from its start, so old leftovers go right away;
@@ -31,7 +31,7 @@ Copies made by Codex, Claude or Conductor are checked like any other copy, so yo
 
 ## Look-only
 
-Install with `--look-only`, or switch on **Settings → Autopilot → Look only**, to see what BurnZombies would burn before it burns anything. It finds, sizes, asks and judges exactly as above, but nothing burns on its own: not the starter rules, not your yes answers, not the AI. BZ doesn't act on its own either: a question it is sure of is asked like any other. The menu says **Look-only · nothing burns** and shows how much it would burn; **Findings** says what and why, with *I'd burn N once you start burning* on top.
+Install with `--look-only`, or choose **Look only** in **Settings**, to see what BurnZombies would burn before it burns anything. It finds, sizes, asks and judges exactly as above, but nothing burns on its own: not the starter rules, not your yes answers, not the AI. BZ doesn't act on its own either: a question it is sure of is asked like any other. The menu says **Look-only · nothing burns** and shows how much it would burn; **Findings** says what and why, with *I'd burn N once you start burning* on top.
 
 - Your answers still become lessons, and AI sweeps still run on their usual schedule, at the usual cost. When a sweep asks to burn something, the app holds it without a receipt; its verdicts burn once you start.
 - **Start burning** in the menu, or switching **Look only** off, starts burning what waited right away instead of at the next look, within the usual limits per look; the rest follows at the next looks.
@@ -91,12 +91,12 @@ Big unsaved files are a risk of their own for each kind: code, media, data, arch
 - A folder counts as every kind that makes up a tenth of it, and as code whenever it holds any.
 - Only a Yes to a card that showed every kind a folder holds lets it go. A Yes to big code files covers later copies with big code files, while a copy with big videos, or with videos among the code, gets a card of its own. A No to such a card keeps only the copies with those big files, at that age and newer; the clean copies your other lessons burn still go.
 
-"Got it!" after an answer shows the lesson in one sentence. **Settings → Autopilot → What BZ has learned** lists them all:
+"Got it!" after an answer shows the lesson in one sentence. **Settings → Burns without asking** lists them all, and your keeps are under **Settings → Never touches**:
 
 > Copies nobody touched for a week are done once their work is on GitHub and nothing is unsaved.
 > From 4 answers · burned 17 copies, 38.6 GB · undone 0
 
-Each has a **Forget** button, which forgets the lesson and the answers behind it so those things can be asked again. **Start training over** forgets everything you taught; the starter rules stay.
+A lesson to burn has a switch: off, it burns nothing until it's on again, and BZ won't teach itself the same thing. Taking a keep off **Never touches** forgets it and the answers behind it, so those things can be asked again. **Start training over** forgets everything you taught; the starter rules stay.
 
 ### Guessing and trust
 
@@ -127,29 +127,30 @@ It tells you on the first card in **Teach BZ**:
 - **What Undo can't bring back:** stopped programs and deleted folders. Their card says so before you press anything, and its button reads *I'd have said no*. It still turns the lesson into a keep and ends trust. Big unsaved files BZ deleted with a copy don't come back either. The card names them under the copy and says, before you press Undo, that it brings the copies back without them. After the Undo, it says how many came back that way and waits for your *OK*.
 - A card like this that you don't touch closes after a week.
 
-**Settings → Autopilot → Act on its own when sure** is on by default. Off, BZ asks every question, sure or not, and still checks its guesses. While Autopilot is off or look-only is on, it doesn't act either. If you turn look-only on just after it acted, what it meant to burn waits too, and its card shows once you start burning.
+**Act when sure** in **Settings** is the default. On **Ask first**, BZ asks every question, sure or not, and still checks its guesses. While Autopilot is off or look-only is on, it doesn't act either. If you turn look-only on just after it acted, what it meant to burn waits too, and its card shows once you start burning.
 
 ## How I'm doing
 
-Below the lessons in **Settings → Autopilot**, a few plain counts, each shown once it has something to say:
+Under **All caught up!** in **Teach BZ**, a few plain counts, each shown once it has something to say:
 
 - "I guessed 9 of your last 10 answers right."
 - "This week: 3 questions, 6.5 GB burned on my own. Last week: 9 questions, 80.0 GB." Questions are the ones you were shown; what BZ did on its own isn't one. "On my own" is the disk BZ freed without your **Burn now**: lessons, starter rules, the AI and its own calls.
 - "You undid 0 of the 29 copies I burned."
-- Once you've answered 5 questions: "Replaying your 27 answers, I'd have asked 17 and handled the other 10 on my own the way you would have." The replay goes through your answers in order with the same lessons, guesses and trust BZ uses now. `burnzombies autopilot eval` shows it answer by answer ([Command line](#command-line)).
+
+`burnzombies autopilot eval` replays your answers: what BZ would have asked, and what it would have handled on its own the way you would have.
 
 ## The AI sweep
 
 Native code catalogs and applies rules without any model. With Claude Code or Codex signed in, BurnZombies also runs short AI sweeps in the background. Only Claude Code and Codex run sweeps.
 
-- **When.** The first starts about 10 minutes after install, once the first look is complete. After that, a sweep runs when there is something new to judge, at most every 30 minutes, and rechecks every 4 hours. **Hunt Zombies** in the menu bar, or **Sweep now** in **Settings → Autopilot**, starts one right away.
-- **What it uses.** Claude Code uses Sonnet at medium thinking by default, whatever your own Claude Code settings say; Codex uses its own default. Change it in **Settings → Review intelligence**.
+- **When.** The first starts about 10 minutes after install, once the first look is complete. After that, a sweep runs when there is something new to judge, at most every 30 minutes, and rechecks every 4 hours. **Hunt Zombies** in the menu bar starts one right away.
+- **What it uses.** Claude Code uses Sonnet at medium thinking by default, whatever your own Claude Code settings say; Codex uses its own default. Change it with **How smart** in **Settings**.
 - **What it can do.** Six tools (catalog, inspect, decide, burn, ask, report), plus reading project files to understand what something is. It has no shell, and the app re-checks every burn.
 - **How long.** A few minutes, capped at 15. A sweep that runs out of time after judging things counts as done, and the next picks up the rest.
 - **Failures** back off 15 → 30 → 60 → 120 minutes (at least an hour after a login or usage-limit problem). The loop never stops for good, and your rules keep working while the AI is unavailable.
-- **Cost.** Roughly $0.30–$1.20 a sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Usage & estimated cost** shows what sweeps used.
+- **Cost.** Roughly $0.30–$1.20 a sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Used this week** shows what sweeps used.
 
-Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). The switch beside **Autopilot on** in the menu, or **Settings → Autopilot**, turns Autopilot, AI included, off.
+Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). The switch beside **Autopilot on** in the menu, or **Off** in **Settings**, turns Autopilot, AI included, off. **Which AI → Off** in **Settings** turns off only the AI.
 
 ## Undo
 

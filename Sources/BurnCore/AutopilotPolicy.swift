@@ -71,6 +71,7 @@ public enum AutopilotPolicy {
     status: AutopilotStatus, authority: String?
   ) {
     if item.protectedReason != nil { return (.protected, nil) }
+    if neverTouched(item, memory: memory) { return (.keep, "operator") }
     if memory.keptItems.contains(item.id)
       || item.path.map({ memory.keptItems.contains("path:" + $0) }) == true
     {

@@ -232,8 +232,10 @@ private func tipDeckProof() {
   var shuffled = AutopilotTipDeck(tips: copies)
   var last: String?
   for _ in 0..<30 {
+    // The only one left may repeat; that's the one time it can.
+    let left = copies.filter { shuffled.live($0) && $0.place <= .list }.count
     let id = shuffled.next(at: .list)?.id
-    check(id != nil && id != last, "never the same tip twice running")
+    check(id != nil && (id != last || left == 1), "never the same tip twice running")
     last = id
   }
   check(

@@ -356,7 +356,28 @@ extension AutopilotPolicy {
   ) -> AutopilotLessonGroup {
     AutopilotLessonGroup(
       id: id, kind: kind, verdict: verdict, sentence: sentence,
-      evidence: evidence(kind, verdict, rules, memory), ruleIDs: rules.map(\.id))
+      evidence: evidence(kind, verdict, rules, memory), ruleIDs: rules.map(\.id),
+      off: rules.allSatisfy(\.enabled) ? nil : true,
+      did: did(kind, verdict, rules, memory))
+  }
+
+  /// "Burned 298 copies · 389.0 GB", or nil until a burn lesson has done something.
+  static func did(
+    _ kind: AutopilotKind, _ verdict: AutopilotVerdict, _ rules: [AutopilotRule],
+    _ memory: AutopilotMemory
+  ) -> String? {
+    let done: AutopilotTally = tallied(rules, memory)
+    guard verdict == .burn, done.count > 0 else { return nil }
+    let freed: String = roughly(done.bytes)
+    switch kind {
+    case .worktree:
+      let copies: String = done.count == 1 ? "1 copy" : "\(done.count) copies"
+      return "Burned " + copies + " · " + freed
+    case .process:
+      return "Stopped " + AutopilotEval.plural(done.count, "program") + " · " + freed + " of memory"
+    case .disk:
+      return "Deleted " + AutopilotEval.plural(done.count, "folder") + " · " + freed
+    }
   }
 
   /// The owner's lessons as the AI reads them in the catalog (spec 2.6): one per group Settings
@@ -365,7 +386,7 @@ extension AutopilotPolicy {
   public static func catalogLessons(_ memory: AutopilotMemory) -> [AutopilotCatalogLesson] {
     var byID: [String: AutopilotRule] = [:]
     for rule in memory.rules where byID[rule.id] == nil { byID[rule.id] = rule }
-    return lessonGroups(memory).map { group in
+    return lessonGroups(memory).filter { $0.off != true }.map { group in
       let rules: [AutopilotRule] = group.ruleIDs.compactMap { byID[$0] }
       let behind = answers(behind: rules, memory)
       let done: AutopilotTally = tallied(rules, memory)

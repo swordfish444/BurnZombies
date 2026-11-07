@@ -109,25 +109,31 @@ struct FindingsView: View {
           }
         }.frame(minWidth: 450)
       }
-      DisclosureGroup("Notifications and workflow rules", isExpanded: $notificationsExpanded) {
+      // With Autopilot, BZ tells the owner about its questions; Settings holds that switch.
+      DisclosureGroup(
+        model.autopilotAvailable ? "Workflow rules" : "Notifications and workflow rules",
+        isExpanded: $notificationsExpanded
+      ) {
         VStack(alignment: .leading, spacing: 8) {
-          Toggle(
-            "Notify me about findings",
-            isOn: Binding(
-              get: { model.state.catalog.preferences.notifications }, set: model.setNotifications))
-          Stepper(
-            "At most \(model.state.catalog.preferences.notificationBudget ?? 3) prompts per day, plus one initial digest",
-            value: Binding(
-              get: { model.state.catalog.preferences.notificationBudget ?? 3 },
-              set: model.setNotificationBudget), in: 1...5)
-          Toggle(
-            "Show target details and eligible approval actions in notifications",
-            isOn: Binding(
-              get: { model.state.catalog.preferences.notificationDetails == true },
-              set: model.setNotificationDetails))
-          Text(
-            "Default notifications show no target details. Missed or ignored notifications never approve cleanup."
-          ).font(.caption).foregroundStyle(.secondary)
+          if !model.autopilotAvailable {
+            Toggle(
+              "Notify me about findings",
+              isOn: Binding(
+                get: { model.state.catalog.preferences.notifications }, set: model.setNotifications))
+            Stepper(
+              "At most \(model.state.catalog.preferences.notificationBudget ?? 3) prompts per day, plus one initial digest",
+              value: Binding(
+                get: { model.state.catalog.preferences.notificationBudget ?? 3 },
+                set: model.setNotificationBudget), in: 1...5)
+            Toggle(
+              "Show target details and eligible approval actions in notifications",
+              isOn: Binding(
+                get: { model.state.catalog.preferences.notificationDetails == true },
+                set: model.setNotificationDetails))
+            Text(
+              "Default notifications show no target details. Missed or ignored notifications never approve cleanup."
+            ).font(.caption).foregroundStyle(.secondary)
+          }
           Toggle(
             "Use my scoped decisions in AI reviews",
             isOn: Binding(

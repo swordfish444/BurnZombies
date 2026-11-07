@@ -39,7 +39,7 @@
     let visible = (text.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(
       separator: "\n")
     for control in [
-      "Search findings", "Notify me about findings", "Notifications and workflow rules",
+      "Search findings", "Workflow rules",
       "Worktrees", "Hunt now",
     ] {
       guard visible.localizedCaseInsensitiveContains(control) else {

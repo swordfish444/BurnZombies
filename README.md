@@ -54,7 +54,7 @@ To BZ, burning means stopping a program or deleting a folder.
 <details>
 <summary><b>Exactly what it burns on its own</b></summary>
 
-- **Starter rules** (switch each off in **Settings → Autopilot**):
+- **Starter rules** (switch each off in **Settings → Burns without asking**):
   - robot browsers nothing can drive anymore, once idle 10+ minutes;
   - programs still driving a robot browser, an hour after their chat ended;
   - orphaned programs that have barely used the CPU for 6+ hours and have no open port;
@@ -64,7 +64,7 @@ To BZ, burning means stopping a program or deleting a folder.
 - **Robot browsers** are browsers a tool started with automation flags: a control pipe, or a debugging port plus headless mode, a fake keychain or a throwaway profile. The browser you use has none of these, so it is never touched, and neither are logged-in profiles a tool keeps.
 - **The AI,** if on, may burn a low-risk item only when it rates itself at least 85% sure: an orphaned program with no open port, a known junk folder, or a worktree nothing uses. Every burn it asks for passes BZ's own checks.
 - **Never on its own:** worktrees made by Claude Code, Codex or the Conductor app. Other worktrees, such as ones Cursor or your scripts make, follow the two rules above.
-- **Your yes answers:** a question says what it covers, like "Burn 5 tool caches?", and **Yes** also covers new matches later. Forget any rule in **Settings → Autopilot → What BZ has learned**.
+- **Your yes answers:** a question says what it covers, like "Burn 5 tool caches?", and **Yes** also covers new matches later. Switch any rule off in **Settings → Burns without asking**. **Settings → Never touches** lists what BZ leaves alone, and you can add any folder or app.
 - **Limits:** at most 20 worktrees, 20 junk folders and 50 programs per look. BZ knows an idle Claude Code or Codex chat is still open from the session records those tools keep.
 
 The [tests](Proof) check these rules on every code change. [How cleanup stays safe →](docs/SAFETY.md)
@@ -76,7 +76,7 @@ The [tests](Proof) check these rules on every code change. [How cleanup stays sa
 <details>
 <summary><b>What does the AI cost, and can I turn it off?</b></summary>
 
-Without Claude Code or Codex signed in there's no AI at all; with one, AI sweeps are on by default and run on your login: roughly $0.30–$1.20 a sweep at API prices, or plan usage on a subscription. They run only when there's something new to judge, at most every 30 minutes, so a quieter Mac runs fewer. On the author's Mac, working through about 1,000 worktrees in its first days, they came to about $13–23 a day at API prices. There's no spending cap yet; **Settings → Usage & estimated cost** shows what they used. Turn them off with `~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup --observe-only` (`--with-ai` turns them back on); the starter rules and your answers keep cleaning. [Model and cost →](docs/INSTALL.md#model-and-cost)
+Without Claude Code or Codex signed in there's no AI at all; with one, AI sweeps are on by default and run on your login: roughly $0.30–$1.20 a sweep at API prices, or plan usage on a subscription. They run only when there's something new to judge, at most every 30 minutes, so a quieter Mac runs fewer. On the author's Mac, working through about 1,000 worktrees in its first days, they came to about $13–23 a day at API prices. There's no spending limit; **Settings → Used this week** shows what they used. Turn them off with **Which AI → Off** in **Settings**; the starter rules and your answers keep cleaning. [Model and cost →](docs/INSTALL.md#model-and-cost)
 
 </details>
 
@@ -90,9 +90,9 @@ The plain facts BZ gathered about each item, like where it is, its size and what
 <details>
 <summary><b>Can I see what it would burn before it burns anything?</b></summary>
 
-Yes: install with `--look-only` (`curl … | bash -s -- --look-only`). BZ finds, sizes and asks exactly as usual, and **Findings** lists everything it found, why, and what burning it would do. Nothing burns on its own: not the starter rules, not your yes answers, not the AI. The menu says **Look-only · nothing burns** and how much it would burn. When you're ready, choose **Start burning** there, or switch off **Look only** in **Settings → Autopilot**, and BZ starts burning what waited right away. A **Burn now** you click on one item still burns that item.
+Yes: install with `--look-only` (`curl … | bash -s -- --look-only`). BZ finds, sizes and asks exactly as usual, and **Findings** lists everything it found, why, and what burning it would do. Nothing burns on its own: not the starter rules, not your yes answers, not the AI. The menu says **Look-only · nothing burns** and how much it would burn. When you're ready, choose **Start burning** there, or choose another level in **Settings**, and BZ starts burning what waited right away. A **Burn now** you click on one item still burns that item.
 
-Already installed? Switch on **Look only** in **Settings → Autopilot**. `--observe-only` is not a dry run: it only turns the AI off, and the rules keep burning.
+Already installed? Choose **Look only** in **Settings**. `--observe-only` is not a dry run: it only turns the AI off, and the rules keep burning.
 
 </details>
 

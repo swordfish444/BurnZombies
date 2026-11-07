@@ -6,7 +6,7 @@ Requires macOS 14+, Apple Silicon or Intel. Claude Code or Codex is optional: wi
 
 ## Rules
 
-- Install and configure only what the operator asked for. Setup is not cleanup: never start a sweep (Hunt Zombies, Sweep now, `autopilot sweep`), answer a question, burn, restore or stop anything as an installation test. Never turn look-only off: Start burning is the operator's decision.
+- Install and configure only what the operator asked for. Setup is not cleanup: never start a sweep (Hunt Zombies, `autopilot sweep`), answer a question, burn, restore or stop anything as an installation test. Never turn look-only off: Start burning is the operator's decision.
 - Do not change credentials, account routing, global MCP configuration, chat hooks or shell profiles. Preserve the operator's tool, model and thinking choices.
 - If a login, usage limit or permission is refused, stop and report it. Never fall back to another tool or account.
 - Never disable Gatekeeper, remove quarantine metadata or grant macOS permissions yourself. Report steps that need the human.
@@ -24,7 +24,7 @@ rm "$installer"
 
 - Default (`--mcp auto`): Claude Code if installed, otherwise Codex. If the operator named one, add `--mcp claude` or `--mcp codex`.
 - Neither installed: run the same command. AI judging stays off. Once the operator installs and signs in to one, run `"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" setup`.
-- `--look-only`: BZ finds, sizes and asks as usual but burns nothing until the operator chooses Start burning in the menu (or switches off Settings → Autopilot → Look only). Add it if the operator wants to see what BZ would burn first. Works with every `--mcp` choice.
+- `--look-only`: BZ finds, sizes and asks as usual but burns nothing until the operator chooses Start burning in the menu (or picks another level in Settings). Add it if the operator wants to see what BZ would burn first. Works with every `--mcp` choice.
 - `--observe-only`: AI judging off. Not a dry run: the starter rules and the operator's answers still burn. Add it only if the operator asks; `burnzombies setup --with-ai` turns it back on.
 - `--no-open`: install without starting the app.
 
@@ -48,7 +48,7 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
 
 - BZ looks right away and every minute for its first half hour. Within about a minute the menu-bar panel (the skull) shows how much it found, and "BZ has N quick questions" when something needs a decision.
 - Installed with `--look-only`, nothing burns on its own (not the rules below, not yes answers, not the AI) until the operator chooses Start burning in the menu-bar panel; then BZ starts burning what waited right away. The panel says "Look-only · nothing burns" and how much it would burn.
-- Otherwise, from the first minute, starter rules burn on their own (each can be switched off in Settings → Autopilot):
+- Otherwise, from the first minute, starter rules burn on their own (each can be switched off in Settings → Burns without asking):
   - programs whose app or chat is gone, idle 6+ hours, with no open port (a program that has barely used the CPU since it started counts as idle from its start);
   - old project copies (git worktrees) already merged, unchanged and untouched for a month, always backed up first;
   - rebuildable folders (node_modules, build output) inside copies untouched for two weeks.
@@ -60,7 +60,7 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
 
 ## Cost
 
-Claude Code uses Sonnet by default; Codex uses its own default. Roughly $0.30–$1.20 per AI sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. Model: Settings → Review intelligence. AI off: `"$bz" setup --observe-only` (back on: `--with-ai`); the Autopilot switch in the menu (or Settings → Autopilot) pauses all of Autopilot; it's on from install. Spend: Settings → Usage & estimated cost.
+Claude Code uses Sonnet by default; Codex uses its own default. Roughly $0.30–$1.20 per AI sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. Model: How smart in Settings. AI off: Which AI → Off in Settings, or `"$bz" setup --observe-only` (back on: `--with-ai`); the Autopilot switch in the menu (or Off in Settings) pauses all of Autopilot; it's on from install. Spend: Settings → Usage & estimated cost.
 
 ## Full Disk Access (optional, human only)
 

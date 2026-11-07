@@ -88,10 +88,14 @@ extension AutopilotPolicy {
       guard subject(rule.kind, rule.match) == topic else { return false }
       return overlaps(rule.match, general)
     }
+    // A lesson the owner switched off stays off: BZ asks, and never teaches itself the same thing.
+    let turnedOff = memory.rules.contains { rule in
+      !rule.enabled && rule.kind == question.kind && overlaps(rule.match, general)
+    }
     let earned: Bool = trusted(topic, scores: memory.scores) && lean == .yes
     let answeredYes: Bool = same.contains { $0.answer == .yes }
     let known: Bool = asked.isSubset(of: saidYes)
-    let sure: Bool = earned && answeredYes && known && !kept
+    let sure: Bool = earned && answeredYes && known && !kept && !turnedOff
     // The words name only risks the owner said yes to among the answers counted.
     var seen = Set<String>()
     for past in yes { seen.formUnion(risks(of: past)) }
