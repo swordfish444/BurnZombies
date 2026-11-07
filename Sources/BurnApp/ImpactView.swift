@@ -109,12 +109,6 @@ extension ImpactNumbers {
   @MainActor static func make(_ model: AppModel, period: ImpactPeriod) -> Self {
     make(catalog: model.state.catalog, autopilot: model.state.autopilotImpact, period: period)
   }
-  static func bytes(_ n: UInt64) -> String {
-    if n == 0 { return "0 GB" }
-    if n >= 1_000_000_000 { return String(format: "%.1f GB", Double(n) / 1e9) }
-    if n >= 1_000_000 { return String(format: "%.0f MB", Double(n) / 1e6) }
-    return String(format: "%.0f KB", Double(n) / 1e3)
-  }
   /// "Nov 7". The log keeps 30 days, so the year would only get in the way.
   static func day(_ date: Date) -> String { date.formatted(.dateTime.month(.abbreviated).day()) }
   static func cpuTime(_ value: Double?) -> String {
@@ -140,26 +134,31 @@ extension ImpactNumbers {
   }
   var benefitCaption: String {
     switch benefit {
-    case .memory: return "Memory reclaimed"
+    case .memory: return "Memory released"
     case .disk: return "Disk reclaimed"
     case .worktrees: return "Worktrees cleaned"
-    default: return "Helpers cleared"
+    default: return "Zombies burned"
     }
   }
-  var clearedHelpers: String {
+  var zombiesBurned: String {
     let trees = benefit == .ready ? lifetimeWorktrees : worktrees
     if (benefit == .ready ? lifetimeCount : count) == 0 && trees > 0 {
       return "\(trees) \(trees == 1 ? "worktree" : "worktrees") cleaned"
         + (benefit == .ready ? " all time" : "")
     }
     let total = benefit == .ready ? lifetimeCount : count
-    return "\(total) \(total == 1 ? "helper" : "helpers") cleared"
+    return "\(total) \(total == 1 ? "zombie" : "zombies") burned"
       + (benefit == .ready ? " all time" : "")
   }
   var age: String {
     guard let last else { return "No burns yet" }
-    let minutes = max(0, Int(Date().timeIntervalSince(last) / 60))
-    return minutes < 1 ? "just now" : minutes < 60 ? "\(minutes)m ago" : "\(minutes / 60)h ago"
+    return Self.age(since: last)
+  }
+  static func age(since date: Date) -> String {
+    let minutes = max(0, Int(Date().timeIntervalSince(date) / 60))
+    if minutes < 1 { return "just now" }
+    if minutes < 60 { return "\(minutes)m ago" }
+    return minutes < 48 * 60 ? "\(minutes / 60)h ago" : "\(minutes / (24 * 60))d ago"
   }
 }
 struct BurnStatus: View {
@@ -573,7 +572,7 @@ struct MiniImpactView: View {
                 .font(.system(size: 13, weight: .semibold))
               Text(
                 numbers.benefit == .firstBurn
-                  ? "Your first cleanup starts here." : numbers.clearedHelpers
+                  ? "Your first cleanup starts here." : numbers.zombiesBurned
               )
               .font(.system(size: 11))
               .foregroundStyle(BurnTheme.muted).lineLimit(1).minimumScaleFactor(0.85)
@@ -584,7 +583,7 @@ struct MiniImpactView: View {
             ImpactValue(value: numbers.benefitValue, size: 32).foregroundStyle(BurnTheme.orange)
             VStack(alignment: .leading, spacing: 4) {
               Text(numbers.benefitCaption).font(.system(size: 12, weight: .semibold))
-              Text(numbers.benefit == .memory ? numbers.clearedHelpers : "Dead weight. Gone.")
+              Text(numbers.benefit == .memory ? numbers.zombiesBurned : "Dead weight. Gone.")
                 .font(.system(size: 10.5)).foregroundStyle(BurnTheme.muted)
             }.lineLimit(1).minimumScaleFactor(0.8)
             Spacer(minLength: 0)
@@ -756,15 +755,15 @@ struct ImpactWindowView: View {
       Button {
         model.impactTab = "Burn Log"
       } label: {
+        let last = lastBurn
         HStack(spacing: 24) {
           Flame(size: 35)
           VStack(alignment: .leading, spacing: 5) {
-            Text(numbers.latestLabel ?? "Your next cleanup starts here.").font(
-              .system(size: 18, weight: .semibold))
+            Text(last.map { "Last burn: " + $0.row.title } ?? "Your next cleanup starts here.")
+              .font(.system(size: 18, weight: .semibold)).lineLimit(1).truncationMode(.middle)
             Text(
-              numbers.last == nil
-                ? "No burns yet."
-                : "\(ImpactNumbers.bytes(numbers.latestIsWorkspace ? numbers.latestDisk : numbers.latestMemory)) \(numbers.latestIsWorkspace ? "disk reclaimed" : "released") · \(numbers.age)"
+              last.map { "\($0.row.result) · \(ImpactNumbers.age(since: $0.finished))" }
+                ?? "No burns yet."
             )
             .font(.system(size: 16)).foregroundStyle(BurnTheme.muted)
           }
@@ -779,6 +778,15 @@ struct ImpactWindowView: View {
       Text("You build. We burn.").font(.system(size: 14, design: .monospaced)).tracking(3)
         .foregroundStyle(.gray).padding(.bottom, 18)
     }.padding(.horizontal, 37)
+  }
+  /// The Burn Log's newest finished burn in this period, the row the link to the log names.
+  var lastBurn: (row: BurnLogRow, finished: Date)? {
+    let now = Date()
+    let start = period.start(now: now, calendar: .current)
+    for row in logRows {
+      if let finished = row.finishedAt, finished >= start, finished <= now { return (row, finished) }
+    }
+    return nil
   }
   func metric(_ value: String, _ title: String, flame: Bool = false) -> some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -826,7 +834,7 @@ struct ImpactWindowView: View {
             VStack(alignment: .leading, spacing: 4) {
               Text(
                 numbers.benefit == .firstBurn
-                  ? "Your first cleanup starts here." : numbers.clearedHelpers
+                  ? "Your first cleanup starts here." : numbers.zombiesBurned
               )
               .font(.system(size: 20, weight: .semibold))
               if numbers.benefit != .firstBurn {
@@ -841,7 +849,7 @@ struct ImpactWindowView: View {
         } label: {
           HStack {
             Spacer()
-            Text("View impact details")
+            Text("How BZ counts")
             Image(systemName: "chevron.right")
           }.font(.system(size: 15))
         }.clickPointer().padding(.top, 4)
@@ -870,152 +878,188 @@ struct ImpactWindowView: View {
       }.frame(height: 15)
     }
   }
+  var logRows: [BurnLogRow] { model.state.catalog.burnLog(autopilot: model.autopilot.receipts) }
   var burnLog: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 22) {
         Text("THE BURN LOG.").font(BurnTheme.display(49))
-        HStack {
-          Text("A little less dead weight.").font(.system(size: 22)).foregroundStyle(
-            BurnTheme.muted)
-          Spacer()
-          Button("Refresh") { model.refresh() }.clickPointer()
-        }
+        Text("A little less dead weight.").font(.system(size: 22)).foregroundStyle(BurnTheme.muted)
         if model.state.error != nil {
-          Text("Monitoring needs attention.").foregroundStyle(.orange)
+          Text("BZ hit a problem.").foregroundStyle(.orange)
           Button("Open Settings") { model.openSettings?() }.clickPointer()
         }
-        Text("RECENT BURNS").font(.system(size: 14, weight: .semibold, design: .monospaced))
-          .foregroundStyle(.gray)
-        let rows = model.state.catalog.burnLog
+        HStack(spacing: 18) {
+          Text("RECENT BURNS").font(.system(size: 14, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.gray)
+          Spacer()
+          // What each row's mark means.
+          ForEach(BurnLogRow.Kind.allCases, id: \.self) { kind in
+            HStack(spacing: 5) {
+              BurnMark(kind: kind, size: 13)
+              Text(kind.rawValue).font(.system(size: 13)).foregroundStyle(BurnTheme.muted)
+            }
+          }
+        }
+        let rows = logRows
         if rows.isEmpty {
           Text(
             model.demo
-              ? "18 disposable helpers · 1.2 GB released · 2m ago"
+              ? "18 zombies burned · 1.2 GB released · 2m ago"
               : "No burns yet. Your work comes first."
           ).foregroundStyle(BurnTheme.muted).padding(.vertical, 24)
         }
-        ForEach(rows) { row in
-          switch row {
-          case .output(let receipt): outputRow(receipt)
-          case .worktree(let receipt): worktreeRow(receipt)
-          case .helpers(let event): helpersRow(event)
-          }
+        // Hundreds of rows, so they're tight and made only as they scroll into view.
+        LazyVStack(spacing: 8) {
+          ForEach(rows) { row in logRow(row) }
         }
       }.padding(38).frame(maxWidth: .infinity, alignment: .leading)
     }
   }
-  /// The right side of a row: what came of it, then the day, in a column of its own.
-  func burnResult(_ result: String, on date: Date) -> some View {
-    HStack(spacing: 22) {
-      Text(result)
-      Text(ImpactNumbers.day(date)).frame(width: 62, alignment: .trailing)
-    }.foregroundStyle(BurnTheme.muted)
-  }
-  func outputRow(_ receipt: DiskReceipt) -> some View {
+  func logRow(_ row: BurnLogRow) -> some View {
     DisclosureGroup {
-      Text(receipt.path + "\n" + receipt.rationale).font(.system(size: 15)).foregroundStyle(
-        BurnTheme.muted
-      ).padding(.top, 8)
-      if ["prepared", "unverified"].contains(receipt.outcome) {
-        HStack {
-          Button("Inspect and reconcile") { model.reconcileDisk(receipt.id, restore: false) }
-          Button("Restore intact pending output") {
-            model.reconcileDisk(receipt.id, restore: true)
+      VStack(alignment: .leading, spacing: 8) {
+        Text(row.words).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
+          .fixedSize(horizontal: false, vertical: true)
+        if case .output(let receipt) = row, ["prepared", "unverified"].contains(receipt.outcome) {
+          HStack {
+            Button("Check it") { model.reconcileDisk(receipt.id, restore: false) }.clickPointer()
+            Button("Put it back") { model.reconcileDisk(receipt.id, restore: true) }.clickPointer()
           }
+          Text(
+            "This won't overwrite or delete anything, and it doesn't count as a burn. Anything that doesn't match stays put."
+          ).font(.caption)
         }
-        Text(
-          "No overwrite, no deletion and no retrospective cleanup credit. Conflicting or incomplete contents remain preserved."
-        ).font(.caption)
-      }
+      }.padding(.top, 8).padding(.leading, 17).frame(maxWidth: .infinity, alignment: .leading)
     } label: {
-      HStack {
-        Image(systemName: "externaldrive").foregroundStyle(BurnTheme.orange)
-        Text(
-          receipt.fixture == true
-            ? "Test fixture · excluded from impact" : "Regenerable output"
-        ).fontWeight(.semibold)
-        Spacer()
-        burnResult(
-          receipt.outcome == "verified"
-            ? ImpactNumbers.bytes(receipt.diskReclaimedBytes) : receipt.outcome.capitalized,
-          on: receipt.date)
+      HStack(spacing: 10) {
+        BurnMark(kind: row.kind)
+        Text(row.title).fontWeight(.semibold).lineLimit(1).truncationMode(.middle).help(row.title)
+        Spacer(minLength: 16)
+        Text(row.result).foregroundStyle(BurnTheme.muted).fixedSize()
+        // The day, in a column of its own.
+        Text(ImpactNumbers.day(row.date)).foregroundStyle(BurnTheme.muted)
+          .frame(width: 62, alignment: .trailing)
       }
-    }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
-      .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-  }
-  func worktreeRow(_ receipt: WorkspaceReceipt) -> some View {
-    DisclosureGroup {
-      Text(receipt.detail).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(
-        .top, 8)
-    } label: {
-      HStack {
-        Image(systemName: "folder.badge.minus").foregroundStyle(BurnTheme.orange)
-        Text(receipt.fixture == true ? "Test fixture · excluded from impact" : receipt.label)
-          .fontWeight(.semibold)
-        Spacer()
-        burnResult(
-          receipt.outcome == "verified"
-            ? "1 worktree · \(ImpactNumbers.bytes(receipt.diskReclaimedBytes))"
-            : receipt.outcome.capitalized,
-          on: receipt.date)
-      }
-    }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
-      .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-  }
-  func helpersRow(_ event: CleanupEvent) -> some View {
-    DisclosureGroup {
-      Text(event.detail).font(.system(size: 15)).foregroundStyle(BurnTheme.muted).padding(
-        .top, 8)
-    } label: {
-      HStack {
-        Flame(size: 24)
-        Text(event.fixture == true ? "Test fixture · excluded from impact" : event.label)
-          .fontWeight(.semibold)
-        Spacer()
-        burnResult(
-          event.outcome == "verified"
-            ? "\(event.verifiedCount) burned · \(ImpactNumbers.bytes(event.residentBefore))"
-            : event.outcome.capitalized,
-          on: event.date)
-      }
-    }.disclosureGroupStyle(ClickDisclosureStyle()).padding(18).background(
-      .white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+    }.disclosureGroupStyle(ClickDisclosureStyle()).padding(.horizontal, 18).padding(.vertical, 12)
+      .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
   }
   var calculation: some View {
-    VStack(alignment: .leading, spacing: 18) {
-      HStack {
-        Text("Behind the burn.").font(BurnTheme.display(34))
-        Spacer()
-        Button("Done") { showCalculation = false }.clickPointer()
-      }
-      Text(
-        "Worktrees count only after native removal and receipt verification. Disk reclaimed is the observed free-space increase capped by allocated files removed; shared APFS blocks and concurrent disk activity can reduce attribution. Commits remain recoverable in the receipt’s Git ref. Existing checkouts, unsaved/ignored files and uncertain work are preserved."
-      )
-      Text(
-        "Every burned helper has a verified exit receipt. Memory released uses its resident footprint before the stop; shared pages can overlap. CPU time saved applies the pre-stop CPU rate to observed awake time after verified exit, up to 24 hours per cleanup. Sleep, observation gaps, reboot and detected replacements add no credit. Older one-hour estimates are preserved until new observed time exceeds that credit. CPU already consumed is never counted as saved."
-      )
-      Text(
-        model.demo
-          ? "This visual preview uses synthetic numbers from the supplied design."
-          : "Agent speed uses the middle matched command-launch comparison across this period, including slower results. A boost needs stable samples, separated timing ranges, at least 5% improvement and a 1 ms difference. No clear improvement stays neutral. Legacy timings without sample dispersion cannot establish a boost. This measures local launches, not model or network speed."
-      )
-      Text("The Burn Log keeps 30 days, up to 500 burns. All-time totals count only verified burns.")
-      Text("CPU time saved: \(ImpactNumbers.cpuTime(numbers.cpuSeconds))").foregroundStyle(
-        BurnTheme.muted)
-      Text(
-        "Before \(ImpactNumbers.latency(numbers.before)) · Now \(ImpactNumbers.latency(numbers.after))"
-      ).font(.system(.body, design: .monospaced))
-      if model.demo {
-        Button("Preview success animation") {
-          showCalculation = false
-          model.previewBurn()
-        }.clickPointer()
-      }
-      Button("Open Burn Log") {
+    BurnCountsSheet(
+      numbers: numbers, demo: model.demo,
+      done: { showCalculation = false },
+      openLog: {
         showCalculation = false
         model.impactTab = "Burn Log"
-      }.clickPointer()
-    }.padding(32).frame(width: 520).foregroundStyle(BurnTheme.cream).background(BurnBackdrop())
+      },
+      previewBurn: {
+        showCalculation = false
+        model.previewBurn()
+      })
+  }
+}
+
+/// What a Burn Log row burned, as a mark that lines up whichever kind it is.
+struct BurnMark: View {
+  let kind: BurnLogRow.Kind
+  var size: CGFloat = 16
+  var symbol: String {
+    switch kind {
+    case .program: return "flame.fill"
+    case .copy: return "folder.fill"
+    case .folder: return "trash.fill"
+    }
+  }
+  var body: some View {
+    Image(systemName: symbol).font(.system(size: size)).foregroundStyle(BurnTheme.orange)
+      // The same box whichever glyph it is, so every row is the same height.
+      .frame(width: size + 6, height: size + 2).help(kind.rawValue)
+      .accessibilityLabel(kind.rawValue)
+  }
+}
+
+/// How the numbers are counted, in plain words.
+struct BurnCountsSheet: View {
+  /// One thing BZ counts: what it's called, and how it's counted.
+  struct Fact: Identifiable {
+    let name: String
+    let words: String
+    var id: String { name }
+  }
+  static let width: CGFloat = 520
+  static let title = "HOW BZ COUNTS."
+  static let facts: [Fact] = [
+    Fact(
+      name: "Programs",
+      words:
+        "A program counts once it stops and stays gone for 2 minutes. Memory is what it was using. Programs can share memory, so this may read a little high."
+    ),
+    Fact(
+      name: "Old copies and junk folders",
+      words:
+        "They count once they're gone. Disk is their size, minus any backup BZ keeps. Files can share space, so this may read a little high too."
+    ),
+    Fact(
+      name: "CPU time saved",
+      words:
+        "How busy a program was, times how long your Mac stayed awake after it stopped, up to a day per burn. Sleep, restarts and programs that come back add nothing."
+    ),
+    Fact(
+      name: "Agent speed",
+      words:
+        "How fast commands start on this Mac, before and after. Slow results count too. A boost shows only when it's clear: at least 5% and 1 ms. It doesn't measure AI or network speed."
+    ),
+    Fact(
+      name: "The Burn Log",
+      words: "It keeps about 500 burns, for up to 30 days. Your totals keep counting."
+    ),
+  ]
+  let numbers: ImpactNumbers
+  let demo: Bool
+  let done: () -> Void
+  let openLog: () -> Void
+  let previewBurn: () -> Void
+  /// The number beside a fact, only once there is one.
+  func value(_ fact: Fact) -> String? {
+    switch fact.name {
+    case "CPU time saved": return numbers.cpuSeconds.map { ImpactNumbers.cpuTime($0) }
+    case "Agent speed":
+      guard numbers.before != nil, numbers.after != nil else { return nil }
+      return
+        "Before \(ImpactNumbers.latency(numbers.before)) · Now \(ImpactNumbers.latency(numbers.after))"
+    default: return nil
+    }
+  }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      HStack {
+        Text(Self.title).font(BurnTheme.display(34))
+        Spacer()
+        Button("Done", action: done).clickPointer()
+      }
+      ForEach(Self.facts) { fact in
+        VStack(alignment: .leading, spacing: 4) {
+          HStack {
+            Text(fact.name).font(.system(size: 15, weight: .semibold))
+            Spacer()
+            if let value = value(fact) {
+              Text(value).font(.system(size: 13, design: .monospaced)).foregroundStyle(
+                BurnTheme.orange)
+            }
+          }
+          Text(fact.words).font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      if demo { Text("These numbers are made up for this preview.").font(.system(size: 14)) }
+      HStack {
+        if demo {
+          Button("Preview success animation", action: previewBurn).clickPointer()
+        }
+        Spacer()
+        Button("Open Burn Log", action: openLog).clickPointer()
+      }
+    }.padding(32).frame(width: Self.width).foregroundStyle(BurnTheme.cream)
+      .background(BurnBackdrop())
   }
 }
 

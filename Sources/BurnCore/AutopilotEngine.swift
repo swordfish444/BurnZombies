@@ -603,6 +603,15 @@ public actor Autopilot {
     return "Decided by " + authority + "."
   }
 
+  /// What the windows get, newest first: the latest 100 of anything, and every burn on file for the
+  /// Burn Log, which lists them all.
+  public static func shownReceipts(_ receipts: [AutopilotReceipt]) -> [AutopilotReceipt] {
+    let recent = receipts.count - 100
+    return zip(receipts.indices, receipts).reversed().compactMap { index, receipt in
+      index >= recent || ["burned", "restored"].contains(receipt.outcome) ? receipt : nil
+    }
+  }
+
   public func snapshot(now: Date = Date()) -> AutopilotSnapshot {
     let memory = memory()
     let receipts = (try? store.receipts()) ?? []
@@ -678,7 +687,7 @@ public actor Autopilot {
     result.trainingProgress = AutopilotPolicy.trainingProgress(memory)
     result.coverage = AutopilotPolicy.coverage(result.entries)
     result.sweep = sweepState()
-    result.receipts = Array(receipts.suffix(100).reversed())
+    result.receipts = Self.shownReceipts(receipts)
     result.coverageNotes = catalog?.coverageNotes ?? []
     result.observedAt = catalog?.observedAt
     result.lessons = AutopilotPolicy.lessonGroups(memory)

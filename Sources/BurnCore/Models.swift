@@ -215,8 +215,7 @@ public struct Catalog: Codable, Sendable {
     }
     for i in events.indices where events[i].outcome == "verifying" {
       events[i].outcome = "unverified"
-      events[i].detail =
-        "Observation was interrupted by restart, sleep, or a sampling gap. No benefit credited."
+      events[i].detail = BurnWords.lostTrack
     }
   }
   public mutating func prune(now: Date) {

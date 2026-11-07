@@ -288,6 +288,7 @@ public enum AutopilotDisk {
 
   /// Why a junk folder was left when the check for programs using it couldn't finish.
   static let uncheckedUse = "I couldn't tell if something is using that folder, so I left it alone."
+  public static let backedUpWords = "What your tools can't rebuild is backed up, ready to restore."
 
   /// Removes one junk folder after checking every rail again on the live path. Never throws;
   /// a refusal leaves the folder untouched. Known kinds are deleted and measured first; any
@@ -436,7 +437,7 @@ public enum AutopilotDisk {
       "Cleared \(item.name)."
         + (recovery == nil
           ? " Your tools will rebuild it when they need it."
-          : " Unique contents are encrypted and restorable."),
+          : " " + backedUpWords),
       bytes: bytes > retained ? bytes - retained : 0)
     if let recovery {
       var restore = AutopilotRestore(
