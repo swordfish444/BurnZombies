@@ -3,6 +3,12 @@
   import BurnCore
   import SwiftUI
 
+  /// The AppKit views SwiftUI really laid out. Accessibility reads empty offscreen, so proofs that
+  /// care where something landed look here.
+  @MainActor func appKitViews<T>(_ kind: T.Type, in view: NSView) -> [T] {
+    ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { appKitViews(kind, in: $0) }
+  }
+
   /// Exercise the shipped Dashboard offscreen with scratch settings, never a live observer.
   @MainActor func settingsLayoutProof(output: String) throws {
     NSApp.setActivationPolicy(.prohibited)
@@ -113,6 +119,37 @@
       try encoder.encode(model.state.catalog.preferences) == preferences, checks == 0,
       model.appUpdates.phase == .idle
     else { throw StoreError.message("Disclosure/tab navigation lost drafts, wrote settings, or moved from the top") }
-    print("PASS collapsed defaults, all section renders, pinned header while scrolling, tab scroll reset, retained drafts, unchanged saved settings and cleanup preferences; no network, review or install")
+    func frame(_ view: NSView) -> NSRect { view.convert(view.bounds, to: host) }
+    let headerBottom: CGFloat = 72
+    for tab in ["Settings", "Overview", "History"] {
+      model.tab = tab
+      try render("tab-" + tab.lowercased())
+      guard let tabs = appKitViews(NSSegmentedControl.self, in: host).first.map(frame),
+        let scroll = scrollView(host).map(frame)
+      else { throw StoreError.message("\(tab): tabs or content missing") }
+      guard
+        let version = appKitViews(NSTextField.self, in: host)
+          .first(where: { $0.stringValue.hasPrefix("Version ") }).map(frame)
+      else { throw StoreError.message("\(tab): the version isn't on this tab") }
+      guard version.maxY <= headerBottom, version.maxY <= tabs.minY else {
+        throw StoreError.message(
+          "\(tab): the version sits at y=\(Int(version.minY)), below the header or tabs (y=\(Int(tabs.minY)))")
+      }
+      // One thing to press up here, and it's the update link: an icon-only button is too narrow.
+      let buttons = appKitViews(NSButton.self, in: host).map(frame).filter {
+        $0.maxY <= headerBottom
+      }
+      guard buttons.count == 1, buttons[0].width > 60 else {
+        throw StoreError.message(
+          "\(tab): the header should hold only the update link, found widths \(buttons.map { Int($0.width) })")
+      }
+      guard scroll.minY - tabs.maxY < 12 else {
+        throw StoreError.message("\(tab): something sits between the tabs and the content")
+      }
+    }
+    model.working = true
+    try render("header-working")
+    model.working = false
+    print("PASS collapsed defaults, all section renders, pinned header while scrolling, tab scroll reset, retained drafts, unchanged saved settings and cleanup preferences; version and update link in the header above the tabs on every tab, no refresh button, nothing between the tabs and the content; no network, review or install")
   }
 #endif

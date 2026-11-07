@@ -7,6 +7,7 @@ import SwiftUI
 enum BurnTheme {
   static let cream = Color(red: 0.985, green: 0.976, blue: 0.94)
   static let orange = Color(red: 1, green: 0.33, blue: 0.12)
+  static let ember = Color(red: 0.78, green: 0.28, blue: 0.09)
   static let muted = Color(white: 0.68)
   static let line = Color.white.opacity(0.10)
   static func display(_ size: CGFloat) -> Font { .custom("Anton-Regular", size: size) }
