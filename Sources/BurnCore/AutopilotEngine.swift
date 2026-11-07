@@ -622,10 +622,10 @@ public actor Autopilot {
         consequence: AutopilotPolicy.consequence(item), receipt: receipt)
       entry.judged = judgment != nil
       // The AI is sure but may not burn this one itself. Copies with big unsaved files are left
-      // to their own card, which says a Yes deletes them for good.
+      // to their own card, which says a Yes deletes them for good, and Docker's build cache to its.
       if status == .unsure, let judgment, judgment.verdict == .burn,
         judgment.confidence >= AutopilotPolicy.aiConfidenceFloor,
-        !AutopilotWorktrees.holdsBigFiles(item)
+        !AutopilotWorktrees.holdsBigFiles(item), !AutopilotDockerCache.isCache(item)
       {
         entry.needsOK = true
         entry.aiWhy = judgment.why

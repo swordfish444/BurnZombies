@@ -435,6 +435,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       print("Managed cache checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.contains("--docker-real") {
+      do { try dockerRealEngineProof() } catch { failTest("Real Docker: \(error)") }
+      print("Real Docker checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.contains("--cache-inspect")
       || CommandLine.arguments.contains("--cache-contract")
     {

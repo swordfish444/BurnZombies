@@ -54,6 +54,8 @@ int bz_agent_write(int fd, const char *buffer, int count);
 int bz_review_worker(char *const argv[], int seconds);
 // Runs only a caller-created tool group; bounds capture and closes its descendants.
 int bz_capture_tool(char *const argv[], char *const env[], int output, int milliseconds, uint64_t max_bytes);
+// A BuildKit prune only: a batch of big layers can outlast the limit on ordinary owner probes.
+int bz_capture_prune_tool(char *const argv[], char *const env[], int output, int milliseconds, uint64_t max_bytes);
 // Update verification/relaunch only; preserves the shorter limits of ordinary owner probes.
 int bz_capture_update_tool(char *const argv[], char *const env[], int output, int milliseconds, uint64_t max_bytes);
 // Read-only, incremental metadata walker. Never follows links or hydrates files.

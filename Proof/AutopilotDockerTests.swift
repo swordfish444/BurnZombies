@@ -86,7 +86,8 @@ private final class DockerFixture: @unchecked Sendable {
       guard tail.isEmpty else { throw StoreError.message("The cache API takes no arguments") }
       let records = rows.map { row -> [String: Any] in
         var value: [String: Any] = [
-          "ID": row.id, "Size": row.bytes, "CreatedAt": stamp(60), "InUse": row.active,
+          "ID": row.id, "Size": row.bytes, "CreatedAt": stamp(max(row.days ?? 0, 60)),
+          "InUse": row.active,
           "Shared": row.shared, "Type": row.type,
         ]
         if let days = row.days { value["LastUsedAt"] = stamp(days) }
@@ -131,23 +132,35 @@ private final class DockerFixture: @unchecked Sendable {
     throw StoreError.message("BZ ran something it never should: \(tail)")
   }
 
-  /// What the engine does with a prune: only records matching every filter, and only once nothing
-  /// is built on them, which removing their children can change within one prune.
+  /// What the real engine did with a prune: only records matching every filter, and never one
+  /// something holds, an image shares or another record is built on, which removing its children
+  /// can change within one prune. Its flags are there or not, so a filter on one matches only with an
+  /// empty value: `mutable=false` compares with text that isn't there and matches nothing.
   private func prune(_ tail: [String]) throws -> Data {
-    var filters = [String]()
-    for (index, word) in tail.enumerated() where word == "--filter" { filters.append(tail[index + 1]) }
-    guard
-      let wanted = filters.first(where: { $0.hasPrefix("id=^(") && $0.hasSuffix(")$") }),
-      Set(filters.dropFirst()) == [
-        "until=336h", "inuse=false", "shared=false", "mutable=false", "type=regular",
-      ], tail.contains("--force"), !tail.contains("--all")
+    var filters = [String: String]()
+    for (index, word) in tail.enumerated() where word == "--filter" {
+      let parts = tail[index + 1].split(
+        separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+      filters[String(parts[0])] = parts.count > 1 ? String(parts[1]) : ""
+    }
+    guard let wanted = filters["id"], wanted.hasPrefix("^("), wanted.hasSuffix(")$"),
+      filters["until"]?.hasSuffix("h") == true, tail.contains("--force"), !tail.contains("--all")
     else { throw StoreError.message("Unsafe or broadened prune arguments: \(tail)") }
-    let named = Set(wanted.dropFirst("id=^(".count).dropLast(2).split(separator: "|").map(String.init))
+    let named = Set(wanted.dropFirst(2).dropLast(2).split(separator: "|").map(String.init))
+    let keptDays = (Double(filters["until"]?.dropLast() ?? "") ?? 0) / 24
+    func flag(_ name: String, _ present: Bool) -> Bool {
+      filters[name].map { present && $0 == "\"\"" } ?? true
+    }
+    func matches(_ row: Row) -> Bool {
+      named.contains(row.id) && (filters["type"].map { $0 == row.type } ?? true)
+        && flag("private", !row.shared) && flag("shared", row.shared)
+        && flag("immutable", !row.mutable) && flag("mutable", row.mutable)
+        && flag("inuse", row.active) && (row.days.map { $0 >= keptDays } ?? true)
+    }
     var removed = [Row]()
     while true {
       let free = rows.filter { row in
-        named.contains(row.id) && !rows.contains { $0.parents.contains(row.id) } && !row.active
-          && !row.shared && !row.mutable && row.type == "regular" && (row.days ?? 0) >= 14
+        matches(row) && !rows.contains { $0.parents.contains(row.id) } && !row.active && !row.shared
       }
       guard !free.isEmpty else { break }
       removed += free
@@ -294,6 +307,9 @@ private func yesProof() async throws {
     ], "everything else stays")
   equal(docker.prunes.count, 1)
   check(docker.prunes[0].contains("id=^(cacheold0001|cacheold0002)$"), "exact ids: \(docker.prunes)")
+  for filter in ["until=336h", "type=regular", "private=\"\"", "immutable=\"\""] {
+    check(docker.prunes[0].contains(filter), "the engine is told " + filter)
+  }
   for call in docker.calls {
     let words = Set(call)
     check(
@@ -775,4 +791,126 @@ func autopilotDockerProof() async throws {
   for (name, part) in parts {
     do { try await part() } catch { failTest("Docker's build cache, " + name + ": \(error)") }
   }
+}
+
+// MARK: The real engine
+
+/// By hand, on a Mac with Docker running: `BurnProof --docker-real`. The real engine, through the code
+/// a Yes runs, on a chain of layers this proof builds and removes itself. Everything else in Docker
+/// is only ever named to check it stayed. Fixtures say what the engine did when this last ran; this is
+/// what notices the engine changing: its filters once matched nothing, and every fixture still passed.
+func dockerRealEngineProof() throws {
+  let binaries = [
+    "/Applications/Docker.app/Contents/Resources/bin/docker", "/opt/homebrew/bin/docker",
+    "/usr/local/bin/docker",
+  ]
+  let fm = FileManager.default
+  let folder = try scratchFolder()
+  defer { try? fm.removeItem(at: folder) }
+  guard let binary = binaries.first(where: fm.isExecutableFile(atPath:)),
+    let target = try? BuildKitCache.currentTarget(),
+    let engine = try? BuildKitCache.live(store: Store(root: folder.appendingPathComponent("state"))),
+    let before = try? engine.inspect(target: target, retention: .standard)
+  else {
+    print("SKIP Docker isn't installed or running")
+    return
+  }
+  /// Runs Docker on this proof's own things, and says what it said.
+  @discardableResult func docker(_ arguments: [String]) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: binary)
+    process.arguments = ["--context", target.context] + arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    try process.run()
+    let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+      throw StoreError.message("docker \(arguments.prefix(3)): \(output.suffix(300))")
+    }
+    return output
+  }
+  func exactly(_ id: String) throws {
+    try docker([
+      "buildx", "--builder", target.builder, "prune", "--filter", "id=^(\(id))$", "--force",
+    ])
+  }
+  // The newest 3 and the age check would rule these out. Only this proof's own ids are ever named.
+  let noAge = BuildKitCache.Retention(keepNewest: 0, minimumAgeDays: 0)
+  func records() throws -> [String: BuildKitCache.Record] {
+    let found = try engine.inspect(target: target, retention: noAge).records
+    return Dictionary(found.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+  }
+
+  let context = folder.appendingPathComponent("context")
+  try fm.createDirectory(at: context, withIntermediateDirectories: true)
+  let mark = "bz-throwaway-" + UUID().uuidString.lowercased()
+  for name in ["a", "b", "c"] {
+    var random = SystemRandomNumberGenerator()
+    let bytes = (0..<(1 << 18)).map { _ in random.next() as UInt64 }
+    try bytes.withUnsafeBytes { Data($0) }.write(to: context.appendingPathComponent(name))
+  }
+  try Data(mark.utf8).write(to: context.appendingPathComponent("top"))
+  let steps = ["a", "b", "c", "top"].map { "COPY \($0) /\(mark)-\($0)\n" }.joined()
+  try Data(("FROM scratch\n" + steps).utf8).write(to: context.appendingPathComponent("Dockerfile"))
+  let known = Set(before.records.map(\.id))
+  var mine = [String]()
+  defer {
+    // Whatever the proof found: nothing of its own stays behind, built-on records last.
+    if let left = try? records() {
+      for id in mine.reversed() where left[id] != nil { try? exactly(id) }
+      for id in left.keys where !known.contains(id) && mine.contains(id) { try? exactly(id) }
+    }
+  }
+  try docker([
+    "buildx", "build", "--builder", target.builder, "--no-cache", "--output", "type=cacheonly",
+    context.path,
+  ])
+  var now = try records()
+  let fresh = now.values.filter { !known.contains($0.id) }
+  guard let top = fresh.first(where: { $0.type == "regular" && $0.mutable }),
+    let c = top.parents?.first, let b = now[c]?.parents?.first, let a = now[b]?.parents?.first
+  else { throw StoreError.message("No throwaway chain of four layers: \(fresh)") }
+  // The sources first, so that the chain above them goes in order at the end.
+  mine = fresh.filter { $0.type != "regular" }.map(\.id) + [a, b, c, top.id]
+  for id in [a, b, c] {
+    equal(now[id]?.mutable, false, "committed")
+    equal(now[id]?.shared, false, "private")
+    equal(now[id]?.reclaimable, true, "unused")
+  }
+  var chain = try engine.inspect(target: target, retention: noAge)
+  for id in [a, b, c] { checkFalse(chain.eligibleIDs.contains(id), "its top layer still holds it") }
+
+  try exactly(top.id)
+  chain = try engine.inspect(target: target, retention: noAge)
+  for id in [a, b, c] { check(chain.eligibleIDs.contains(id), "free once nothing is on it") }
+  let order = BuildKitCache.removalOrder(chain).filter { [a, b, c].contains($0) }
+  equal(order, [c, b, a], "top down")
+
+  func production(_ ids: [String], _ retention: BuildKitCache.Retention) throws {
+    try docker(BuildKitCache.pruneArguments(target, ids: ids, retention: retention))
+  }
+  // The filters a Yes uses, by themselves: fresh layers stay, and so does what another is built on.
+  try production([b, c], .standard)
+  now = try records()
+  check(now[b] != nil && now[c] != nil, "14 days keeps fresh layers")
+  try production([b], noAge)
+  now = try records()
+  check(now[b] != nil, "a layer stays under another")
+
+  // What a Yes runs: exact records, checked and verified. Two of them go, in one prune.
+  let plan = try BuildKitCache.preview(inventory: chain, recordIDs: [b, c], retention: noAge)
+  let receipt = try engine.clean(plan: plan, retention: noAge)
+  equal(receipt.outcome, "verified", receipt.detail)
+  equal(Set(receipt.removedIDs), [b, c])
+  equal(receipt.cacheReleasedBytes, plan.cacheBytes, "credit for what really went")
+  equal(receipt.controlsPreserved, true, "containers, images and volumes stayed")
+  now = try records()
+  check(now[a] != nil, "the layer nobody named stays")
+  equal(now[b] == nil, true, "gone")
+  equal(now[c] == nil, true, "gone")
+  let gone = known.filter { now[$0] == nil }
+  equal(gone, [], "nothing that was already here went")
+  print("Real engine: \(before.owner.buildkitVersion), released \(receipt.cacheReleasedBytes) bytes")
 }

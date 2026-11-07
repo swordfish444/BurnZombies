@@ -275,8 +275,12 @@ extension AutopilotPolicy {
   /// thing without the fact. A copy's unsaved files too big to back up are deleted when it burns, so
   /// a lesson learned before a card showed that kind of them never burns them, nor does a starter
   /// rule or the AI; BZ's own call reaches only kinds the owner said yes to.
+  ///
+  /// Docker's build cache is one too. It is listed with folders, but a Yes about folders never
+  /// reaches it, nor a starter rule: only a Yes to its own card.
   static let namedRisks: [AutopilotKind: [(fact: String, risky: String, clear: String)]] = [
-    .worktree: AutopilotWorktrees.bigFileRisks.map { (fact: $0.fact, risky: "yes", clear: "no") }
+    .worktree: AutopilotWorktrees.bigFileRisks.map { (fact: $0.fact, risky: "yes", clear: "no") },
+    .disk: [(fact: "docker", risky: "yes", clear: "no")],
   ]
 
   /// The named risks of a kind as a card lists them: "bigCode=yes".
@@ -383,7 +387,9 @@ extension AutopilotPolicy {
   /// What a Yes costs, before anything is pressed: "A Yes deletes its 914 MB of big unsaved files
   /// for good. Undo won't bring these back; everything else in it is backed up first."
   public static func bigFilesCost(_ question: AutopilotQuestion) -> String? {
-    guard !risks(of: question).isDisjoint(with: namedRisks(question.kind)) else { return nil }
+    guard question.kind == .worktree,
+      !risks(of: question).isDisjoint(with: namedRisks(question.kind))
+    else { return nil }
     let one: Bool = question.count == 1
     let bytes: UInt64 = question.bigBytes ?? 0
     let size: String = bytes > 0 ? roughly(bytes) + " of " : ""

@@ -56,17 +56,8 @@ public final class OwnerMaintenance: @unchecked Sendable {
       }
     self.cacheCollector =
       cacheCollector ?? { policy in
-        // Decode only routing metadata; never copy credentials to a tool or model.
-        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
-          ".docker/config.json")
-        struct Config: Decodable { var currentContext: String? }
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        guard data.count <= 262144 else {
-          throw StoreError.message("Docker context metadata exceeds bound.")
-        }
-        let context = try JSONDecoder().decode(Config.self, from: data).currentContext ?? "default"
-        return try BuildKitCache.live(store: store).inspect(
-          target: .init(context: context, builder: context), policy: policy)
+        try BuildKitCache.live(store: store).inspect(
+          target: BuildKitCache.currentTarget(), policy: policy)
       }
     // Restore selection facts only. The next native tick prunes exact identities,
     // and every owner action still requires fresh producer revalidation. Never

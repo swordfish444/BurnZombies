@@ -115,7 +115,7 @@ extension AutopilotPolicy {
   /// One sentence on what every one of the things shares that is safe, from their own facts and
   /// not from the pattern, which holds only the subject and how long they sat unused. Only what
   /// is true of all of them is said. Folders say nothing: their card already says tools rebuild
-  /// them.
+  /// them. Docker's build cache has no other words on its card, so it says so here.
   public static func safeLine(_ kind: AutopilotKind, _ items: [AutopilotItem]) -> String? {
     guard !items.isEmpty else { return nil }
     let one = items.count == 1
@@ -142,7 +142,9 @@ extension AutopilotPolicy {
         sentences.append(one ? "Its app is gone." : "Their apps are gone.")
       }
     case .disk:
-      break
+      if items.allSatisfy(AutopilotDockerCache.isCache) {
+        sentences.append(AutopilotDockerCache.safeLine)
+      }
     }
     return sentences.isEmpty ? nil : sentences.joined(separator: " ")
   }
