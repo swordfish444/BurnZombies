@@ -7,9 +7,9 @@ public enum ImpactPeriod: String, CaseIterable, Sendable {
 
   public var caption: String {
     switch self {
-    case .today: return "Totals from completed cleanups today"
-    case .week: return "Totals from completed cleanups in the last 7 days"
-    case .all: return "Totals from completed cleanups across all time"
+    case .today: return "Finished burns today"
+    case .week: return "Finished burns in the last 7 days"
+    case .all: return "Finished burns, all time"
     }
   }
 
@@ -30,15 +30,10 @@ public struct ImpactNumbers: Sendable {
   public var disk: UInt64 = 0
   public var worktrees: Int = 0
   public var lifetimeWorktrees: Int = 0
-  public var latestIsWorkspace: Bool = false
-  public var latestDisk: UInt64 = 0
   public var cpuSeconds: Double? = 0
   public var before: Double?
   public var after: Double?
   public var last: Date?
-  public var latestCount: Int = 0
-  public var latestMemory: UInt64 = 0
-  public var latestLabel: String?
   public var speedBoostPercent: Double?
   public var lifetimeCount: Int = 0
 
@@ -58,6 +53,13 @@ public struct ImpactNumbers: Sendable {
   public var boost: String {
     guard let percent = speedBoostPercent, percent.isFinite, percent >= 5 else { return "—" }
     return String(format: "~%.0f%%", percent)
+  }
+
+  public static func bytes(_ n: UInt64) -> String {
+    if n == 0 { return "0 GB" }
+    if n >= 1_000_000_000 { return String(format: "%.1f GB", Double(n) / 1e9) }
+    if n >= 1_000_000 { return String(format: "%.0f MB", Double(n) / 1e6) }
+    return String(format: "%.0f KB", Double(n) / 1e3)
   }
 
   public static func make(
@@ -82,10 +84,6 @@ public struct ImpactNumbers: Sendable {
       $0.outcome == "verified" && $0.fixture != true && $0.date >= start && $0.date <= now
     }
     let cleanups = (autopilot?.cleanups ?? []).filter { $0.date >= start && $0.date <= now }
-    let workspace = workspaces.last
-    let latestIsWorkspace =
-      (workspace?.verifiedAt ?? .distantPast)
-      > (latest?.verificationDate ?? latest?.date ?? .distantPast)
     // Autopilot's own cleanups count in every period; kept as small typed steps for the compiler.
     let periodDisk: UInt64 = workspaces.reduce(0) { $0 + $1.diskReclaimedBytes }
     let outputDisk: UInt64 = diskOutputs.reduce(0) { $0 + $1.diskReclaimedBytes }
@@ -93,9 +91,10 @@ public struct ImpactNumbers: Sendable {
     let lifetimeDisk: UInt64 = (catalog.lifetimeDiskReclaimedBytes ?? 0) + (autopilot?.bytes ?? 0)
     let lifetimeWorktrees: Int = (catalog.lifetimeWorktreesCleaned ?? 0) + (autopilot?.worktrees ?? 0)
     let periodWorktrees: Int = workspaces.count + cleanups.filter(\.worktree).count
-    let latestDate: Date? =
-      latestIsWorkspace ? workspace?.verifiedAt : latest?.verificationDate ?? latest?.date
-    let cleanupDate: Date? = cleanups.map(\.date).max()
+    let dates: [Date?] = [
+      workspaces.last?.verifiedAt, latest?.verificationDate ?? latest?.date,
+      cleanups.map(\.date).max(),
+    ]
     return Self(
       count: period == .all
         ? catalog.lifetimeVerified : verified.reduce(0) { $0 + $1.verifiedCount },
@@ -105,57 +104,17 @@ public struct ImpactNumbers: Sendable {
       disk: period == .all ? lifetimeDisk : periodDisk + outputDisk + cleanupDisk,
       worktrees: period == .all ? lifetimeWorktrees : periodWorktrees,
       lifetimeWorktrees: lifetimeWorktrees,
-      latestIsWorkspace: latestIsWorkspace,
-      latestDisk: latestIsWorkspace ? (workspace?.diskReclaimedBytes ?? 0) : 0,
       cpuSeconds: period == .all
         ? (catalog.lifetimeCPUSecondsSaved ?? (catalog.lifetimeVerified == 0 ? 0 : nil))
         : (cpu.isEmpty && !verified.isEmpty ? nil : cpu.reduce(0, +)),
       before: comparison?.before ?? measured?.responseBeforeMS,
       after: comparison?.after ?? measured?.responseAfterMS,
-      last: [latestDate, cleanupDate].compactMap { $0 }.max(),
-      latestCount: latest?.verifiedCount ?? 0,
-      latestMemory: latest?.residentBefore ?? 0,
-      latestLabel: latestIsWorkspace
-        ? "Worktree cleaned"
-        : latest.map {
-          "\($0.verifiedCount) \($0.verifiedCount == 1 ? "helper" : "helpers") burned"
-        }, speedBoostPercent: comparison?.boostPercent,
+      last: dates.compactMap { $0 }.max(),
+      speedBoostPercent: comparison?.boostPercent,
       lifetimeCount: max(
         catalog.lifetimeVerified,
         catalog.events.filter {
           $0.outcome == "verified" && $0.fixture != true && ($0.verificationDate ?? $0.date) <= now
         }.reduce(0) { $0 + $1.verifiedCount }))
-  }
-}
-
-/// One line of the Burn Log, whichever way the burn was made.
-public enum BurnLogRow: Identifiable, Sendable {
-  case helpers(CleanupEvent)
-  case worktree(WorkspaceReceipt)
-  case output(DiskReceipt)
-  public var id: UUID {
-    switch self {
-    case .helpers(let event): return event.id
-    case .worktree(let receipt): return receipt.id
-    case .output(let receipt): return receipt.id
-    }
-  }
-  public var date: Date {
-    switch self {
-    case .helpers(let event): return event.date
-    case .worktree(let receipt): return receipt.date
-    case .output(let receipt): return receipt.date
-    }
-  }
-}
-
-extension Catalog {
-  /// The Burn Log, newest first. The stored lists aren't in date order: `prune` moves what's still
-  /// being checked to the front of its list.
-  public var burnLog: [BurnLogRow] {
-    var rows: [BurnLogRow] = events.map { .helpers($0) }
-    rows += (workspaceReceipts ?? []).map { .worktree($0) }
-    rows += (diskReceipts ?? []).map { .output($0) }
-    return rows.sorted { $0.date > $1.date }
   }
 }

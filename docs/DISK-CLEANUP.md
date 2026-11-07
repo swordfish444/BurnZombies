@@ -34,7 +34,7 @@ Autopilot's AI sweeps replace scheduled deep hunts ([when they run](AUTOPILOT.md
 
 ## Interrupted output cleanup
 
-An interrupted raw-output operation appears under **Impact** with its original and pending recovery location. **Inspect and reconcile** checks the recorded directory identity and full contents. **Restore intact pending output** returns the preserved directory only when the destination is absent; it never overwrites another folder. Changed, partially removed or inaccessible contents remain protected for manual recovery.
+An interrupted raw-output operation appears in the **Burn Log** with its original and pending recovery location. **Check it** checks the recorded directory identity and full contents. **Put it back** returns the preserved directory only when the destination is absent; it never overwrites another folder. Changed, partially removed or inaccessible contents remain protected for manual recovery.
 
 Requesting restoration saves exact-resource Keep before removal permission can return. Keep survives restarts, including a preference-store write failure. Clear it explicitly in Findings before reconsidering that output. Reconciliation never awards retrospective cleanup or disk credit. Older receipts without the original identity and manifest require manual recovery.
 

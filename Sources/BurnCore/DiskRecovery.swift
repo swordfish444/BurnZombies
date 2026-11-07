@@ -70,7 +70,7 @@ public enum DiskRecovery {
       try intact(pending, moved)
       guard restore else {
         throw StoreError.message(
-          "Intact pending output is preserved at \(pending). Choose Restore intact pending output to return it without overwriting anything."
+          "It's safe at \(pending). Choose Put it back to return it. Nothing gets overwritten."
         )
       }
       let parent = (receipt.path as NSString).deletingLastPathComponent

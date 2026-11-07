@@ -191,6 +191,7 @@ final class StorageNativeTests: TestSuite {
     c.resetContinuity()
     equal(c.events[0].outcome, "unverified")
     equal(c.lifetimeVerified, 0)
+    equal(c.events[0].detail, BurnWords.lostTrack)
   }
   func testHungProcessNotForceKilled() throws {
     let process = Process()

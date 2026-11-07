@@ -207,6 +207,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       let beforeCause = failures
       retireCauseProof()
       if failures == beforeCause { print("PASS Retire causes") }
+      let beforeLog = failures
+      do { try await burnLogSnapshotProof() } catch { failTest("Burn Log: \(error)") }
+      if failures == beforeLog { print("PASS Burn Log: every burn on file reaches the window") }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
@@ -531,6 +534,8 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       do {
         try impactMetricsProof()
         try impactPeriodProof()
+        try burnLogProof()
+        try await burnLogSnapshotProof()
       } catch { failTest("Impact metrics: \(error)") }
       print("Impact metrics and period checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
@@ -614,6 +619,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await autopilotProcessProof() } catch { failTest("Autopilot processes: \(error)") }
     do { try await autopilotSweepProof() } catch { failTest("Autopilot sweep: \(error)") }
     do { try await autopilotLearningProof() } catch { failTest("Autopilot learning: \(error)") }
+    do { try await burnLogSnapshotProof() } catch { failTest("Burn Log: \(error)") }
     do { try await lookOnlyProof() } catch { failTest("Autopilot look-only: \(error)") }
     for lookOnly in [false, true] {
       do {
@@ -656,6 +662,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         diskDiscoveryProof
       ),
       ("cumulative awake CPU savings and stable nonnegative speed impact", impactMetricsProof),
+      ("the Burn Log: every burn once, newest first, in plain words", burnLogProof),
       (
         "impact periods, completion dates, DST, empty history and preview accounting",
         impactPeriodProof

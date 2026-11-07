@@ -142,8 +142,8 @@ import Vision
         throw StoreError.message("Measured boost not displayed")
       }
     } else if ["legacy-negative", "slower", "noisy", "unmeasured"].contains(name) {
-      guard visible.contains("AGENT BOOST"), visible.contains("Memory reclaimed"),
-        visible.contains("128 helpers cleared"), !visible.contains("23%"), view.numbers.boost == "—" else {
+      guard visible.contains("AGENT BOOST"), visible.contains("Memory released"),
+        visible.contains("128 zombies burned"), !visible.contains("23%"), view.numbers.boost == "—" else {
         throw StoreError.message("Verified resource benefit missing: \(visible)")
       }
     } else if name == "disk" || name == "worktrees" {
@@ -152,11 +152,11 @@ import Vision
         throw StoreError.message("Worktree-only verified benefit missing: \(visible)")
       }
     } else if name == "zero-memory" {
-      guard visible.contains("Helpers cleared"), visible.contains("Dead weight. Gone.") else {
+      guard visible.contains("Zombies burned"), visible.contains("Dead weight. Gone.") else {
         throw StoreError.message("Zero-memory cleanup benefit missing: \(visible)")
       }
     } else if name == "quiet-day" || name == "pruned" {
-      guard visible.contains("Ready for the next burn"), visible.contains("880 helpers cleared all time") else {
+      guard visible.contains("Ready for the next burn"), visible.contains("880 zombies burned all time") else {
         throw StoreError.message("Lifetime benefit missing on a quiet day: \(visible)")
       }
     } else {

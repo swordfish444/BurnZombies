@@ -799,8 +799,7 @@ public actor Monitor {
           continue
         case .unverified:
           catalog.events[i].outcome = "unverified"
-          catalog.events[i].detail =
-            "Owner watch lost continuity or exceeded its bounded wait; no escalation or credit."
+          catalog.events[i].detail = BurnWords.lostTrack
           continue
         case .verify(let elapsedSinceExit): elapsed = elapsedSinceExit
         }
@@ -812,23 +811,14 @@ public actor Monitor {
       let outcome = Verification.outcome(
         elapsed: elapsed, targets: statuses, recurrence: recurrence, partialScan: state.partial)
       catalog.events[i].outcome = outcome
-      if outcome == "unverified" {
-        catalog.events[i].detail = "Visibility was lost during verification. No benefit credited."
-      }
-      if outcome == "partial" {
-        catalog.events[i].detail =
-          "A helper remained after the 15-second graceful deadline. No escalation and no benefit credited."
-      }
-      if outcome == "reappeared" {
-        catalog.events[i].detail =
-          "A new matching helper appeared under the same verified parent after cleanup. Possible recurrence; no benefit credited. Inspect the creator."
-      }
+      if outcome == "unverified" { catalog.events[i].detail = BurnWords.lostTrack }
+      if outcome == "partial" { catalog.events[i].detail = BurnWords.keptRunning }
+      if outcome == "reappeared" { catalog.events[i].detail = BurnWords.cameBack }
       if outcome == "verified" {
         catalog.events[i].outcome = "verified"
         catalog.events[i].verifiedCount = e.targets.count
         catalog.events[i].verificationDate = now
-        catalog.events[i].detail =
-          "Exact targets exited; no replacement was observed under the same verified parent during the 120-second watch. Reparented or differently owned replacements cannot be attributed. Resident footprint is an upper-bound attribution."
+        catalog.events[i].detail = BurnWords.stopped(e.targets.count)
         if e.fixture != true {
           catalog.lifetimeVerified += e.targets.count
           catalog.lifetimeActions += 1
@@ -1637,7 +1627,7 @@ public actor Monitor {
     }
     if !failures.isEmpty, let i = catalog.events.lastIndex(where: { $0.id == event.id }) {
       catalog.events[i].outcome = "partial"
-      catalog.events[i].detail = failures.joined(separator: "; ") + ". No benefit credited."
+      catalog.events[i].detail = failures.joined(separator: "; ") + ". This one doesn't count."
     }
     try checkpoint()
     _ = refresh()
@@ -1697,7 +1687,7 @@ public actor Monitor {
     if !failures.isEmpty {
       catalog.events[catalog.events.count - 1].outcome = "partial"
       catalog.events[catalog.events.count - 1].detail =
-        failures.joined(separator: "; ") + ". No benefit credited."
+        failures.joined(separator: "; ") + ". This one doesn't count."
     }
     try checkpoint()
     _ = refresh()

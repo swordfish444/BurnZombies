@@ -12,7 +12,7 @@ BZ watches every program your macOS user runs, across every project, terminal, a
 
 ## Menu bar and impact
 
-Click the skull in the menu bar. Autopilot is on from the start; the small switch beside **Autopilot on** turns it off and back on. The **Today**, **7 days** and **All time** tabs switch its four totals. **Impact** opens the bigger view, **Findings** shows what BZ found and burned, and **Burn Log** lists the programs it stopped, newest first, with the day (old copies and junk folders are under **Findings → Burned**). The gear opens **Settings**. **Hunt Zombies** starts an AI sweep now; while it runs, **Hunting Zombies →** opens the live hunt scene and activity log. No restart or special setup needed.
+Click the skull in the menu bar. Autopilot is on from the start; the small switch beside **Autopilot on** turns it off and back on. The **Today**, **7 days** and **All time** tabs switch its four totals. **Impact** opens the bigger view, **Findings** shows what BZ found and burned, and **Burn Log** lists every burn, newest first, with the day: programs, old copies and junk folders. The gear opens **Settings**. **Hunt Zombies** starts an AI sweep now; while it runs, **Hunting Zombies →** opens the live hunt scene and activity log. No restart or special setup needed.
 
 ## AI sweeps
 
@@ -37,9 +37,9 @@ Scheduled sweeps never open a window or take focus, and closing the hunt window 
 
 The main views show zombies burned, memory released, disk reclaimed and worktrees cleaned. Only verified exits count as burned programs and released memory. Old copies and junk folders count once they are really gone, and a restore takes its share back out. Click **Worktrees cleaned** to see every copy BZ found, with its owner and unsaved work. [Worktree safety and recovery](WORKTREE-CLEANUP.md).
 
-CPU time saved, in the impact details, counts the CPU a program was using before it stopped, over the time your Mac stayed awake afterward, up to 24 hours per burn. Sleep, restarts and programs that come back add nothing. Agent speed stays neutral when timing samples are noisy, unchanged or slower. Anything pending or uncertain gets no credit.
+CPU time saved, under **How BZ counts** on the Impact view, counts the CPU a program was using before it stopped, over the time your Mac stayed awake afterward, up to 24 hours per burn. Sleep, restarts and programs that come back add nothing. Agent speed stays neutral when timing samples are noisy, unchanged or slower. Anything pending or uncertain gets no credit.
 
-The Burn Log shows why each program was judged a leftover. A true OS zombie has already exited and must be reaped by its parent; killing it can't free memory.
+Open a row in the Burn Log to see what happened to it. It keeps about 500 burns, for up to 30 days; your totals keep counting. A true OS zombie has already exited and must be reaped by its parent; killing it can't free memory.
 
 ## Privacy and uninstall
 

@@ -113,9 +113,9 @@ func impactMetricsProof() throws {
   output.date = start.addingTimeInterval(3 * 3600)
   log.diskReceipts = [output]
   equal(
-    log.burnLog.map { $0.date.timeIntervalSince(start) / 3600 }, [8, 7, 6, 4, 3, 2, 1],
+    log.burnLog().map { $0.date.timeIntervalSince(start) / 3600 }, [8, 7, 6, 4, 3, 2, 1],
     "The Burn Log reads newest first across every kind of burn")
   check(
-    log.burnLog.map(\.id).count == Set(log.burnLog.map(\.id)).count, "Each row has its own id")
-  equal(Catalog().burnLog.count, 0, "An empty catalog has an empty log")
+    log.burnLog().map(\.id).count == Set(log.burnLog().map(\.id)).count, "Each row has its own id")
+  equal(Catalog().burnLog().count, 0, "An empty catalog has an empty log")
 }
