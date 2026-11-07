@@ -9,7 +9,7 @@ extension AutopilotSources {
   public static func live(
     monitor: Monitor, root: URL = Store.defaultRoot, home: String = NSHomeDirectory(),
     junk: AutopilotJunkCache = AutopilotJunkCache(), recoveryKey: SymmetricKey? = nil,
-    keys: AutopilotRecoveryKey = .shared
+    keys: AutopilotRecoveryKey = .shared, docker: AutopilotDockerCache? = nil
   ) -> AutopilotSources {
     // Kept with Autopilot's state, so a restart doesn't size and date every copy again.
     let store = try? AutopilotStore(root: root)
