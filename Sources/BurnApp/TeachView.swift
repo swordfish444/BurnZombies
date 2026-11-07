@@ -227,7 +227,7 @@ struct TeachView: View {
               TeachRows(rows: card.rows, more: card.more)
             } else {
               TeachDetailsPanel(
-                listed: listed, noun: Self.noun(question.kind), cost: card.cost, state: $details,
+                listed: listed, noun: Self.noun(question), cost: card.cost, state: $details,
                 hover: $hover, spare: toggleSpare, did: { tips.did($0) })
             }
           }
@@ -304,6 +304,11 @@ struct TeachView: View {
     case .process: return "program"
     case .disk: return "folder"
     }
+  }
+
+  /// What a question's details call its things. Docker's build cache isn't a folder to the owner.
+  static func noun(_ question: AutopilotQuestion) -> String {
+    AutopilotDockerCache.about(question.match) ? "cache" : noun(question.kind)
   }
 
   /// View details or Hide details, styled like Not sure — skip. Opened with nothing opened inside,
