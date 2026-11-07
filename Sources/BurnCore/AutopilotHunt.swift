@@ -33,7 +33,8 @@ extension Autopilot {
     var total = 0
     for kind in AutopilotKind.allCases {
       let mine = entries.filter { $0.item.kind == kind }
-      let waiting = mine.filter { $0.status == .unsure }.count
+      // Docker's build cache is the owner's call: the AI never judges it.
+      let waiting = mine.filter { $0.status == .unsure && !AutopilotDockerCache.isCache($0.item) }.count
       total += waiting
       let looked = seen[kind] ?? mine.count
       current.update(lane: kind.rawValue) {

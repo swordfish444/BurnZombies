@@ -30,7 +30,8 @@ public enum AutopilotSweeper {
       (snapshot.entries.filter(waitsForAI).map {
         $0.item.revision
       }.sorted()
-        + snapshot.rules.filter(\.enabled).map(\.id).sorted()
+        + snapshot.rules.filter { $0.enabled && !AutopilotDockerCache.about($0.match) }.map(\.id)
+        .sorted()
         + snapshot.questions.filter { !AutopilotDockerCache.about($0.match) }.map(\.id).sorted())
         .joined(separator: "|"))
   }

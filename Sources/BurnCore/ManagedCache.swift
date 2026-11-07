@@ -88,7 +88,8 @@ public struct BuildKitCache {
     public var requestedIDs: [String]
     public var removedIDs: [String]
     public var outcome: String
-    /// Owner cache accounting, NOT physical disk space returned to macOS.
+    /// What Docker verifiably removed. Docker Desktop gave it back to macOS within about 10 seconds
+    /// when measured, but this isn't a measure of that.
     public var cacheReleasedBytes: UInt64
     /// Deliberately nil: Docker VM allocation/trim requires separate observation.
     public var hostDiskReclaimedBytes: UInt64?

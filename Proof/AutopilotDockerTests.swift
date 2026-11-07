@@ -341,6 +341,9 @@ private func yesProof() async throws {
   cache.look(now: docker.now)
   snapshot = await autopilot.tick()
   check(snapshot.entries.allSatisfy { $0.item.path == nil && $0.status == .burned }, "nothing to do")
+  // Findings lists what burned from its receipt, in the same words.
+  let listed = try require(snapshot.entries.first, "it's listed as burned")
+  check(listed.consequence.contains("Docker"), "not called a folder: \(listed.consequence)")
   let prunes = docker.prunes.count
   _ = await autopilot.tick()
   equal(docker.prunes.count, prunes, "and nothing to burn")
@@ -434,6 +437,44 @@ private func silenceProof() async throws {
   equal(await autopilot.tick().questions.count, 1, "back with Docker")
   equal(try AutopilotStore(root: root).memory().answers, 0)
 
+  // Quit, and the owner says Yes before BZ looks again: no refusal to remember, no log line, and it
+  // burns as soon as Docker's back, not 6 hours later.
+  let asked = try require(await autopilot.tick().questions.first, "the question")
+  docker.running = false
+  _ = try await autopilot.apply(.answer(questionID: asked.id, answer: .yes, risks: asked.risks))
+  try await Task.sleep(nanoseconds: 300_000_000)
+  try assertQuiet(await autopilot.tick(), root, "a Yes while it's quit")
+  docker.running = true
+  cache.look(now: docker.now)
+  _ = await autopilot.tick()
+  equal(try AutopilotStore(root: root).receipts().first?.outcome, "burned", "back, it burns")
+  checkFalse(docker.ids.contains("cacheold0001"), "at once")
+
+  // A restart: the question stays open through the first tick, before any look has answered.
+  let again = try scratchFolder()
+  defer { try? FileManager.default.removeItem(at: again) }
+  let restarted = DockerFixture()
+  let before = AutopilotDockerCache(open: restarted.open, alive: restarted.alive)
+  before.look(now: restarted.now)
+  let first = try engine(before, root: again)
+  let open = try require(await first.tick().questions.first, "the open question")
+  let saved = try require(
+    try AutopilotStore(root: again).catalog()?.items.first(where: AutopilotDockerCache.isCache),
+    "the catalog holds it")
+  restarted.running = false  // The look it starts can't answer before the tick is over.
+  let after = AutopilotDockerCache(open: restarted.open, alive: restarted.alive, seed: saved)
+  let second = try engine(after, root: again)
+  let carried = await second.tick()
+  equal(carried.questions.map(\.id), [open.id], "still the same question")
+  equal(carried.questions.first?.asked, open.asked, "not asked again")
+  // That look finds Docker gone, and from then on BZ says nothing.
+  let seedDeadline = Date().addingTimeInterval(5)
+  while !after.items().isEmpty, Date() < seedDeadline {
+    try await Task.sleep(nanoseconds: 20_000_000)
+  }
+  equal(after.items().count, 0, "the seed goes once a look says so")
+  equal(await second.tick().questions.count, 0)
+
   // Below what's worth asking: nothing asked, as with any other leftover.
   let tiny = DockerFixture()
   tiny.rows[0].bytes = 400_000_000
@@ -498,12 +539,22 @@ private func railsProof() async throws {
   AutopilotPolicy.learn(lesson, into: &memory.rules)
   equal(memory.rules.count, 2, "the lesson stands alone")
   equal(AutopilotPolicy.decide(item, memory: memory).status, .burn)
-  // A No, or a keep about every folder, holds it.
+  // Nor does a No about other folders decide it, and no other card is about it.
   let keep = AutopilotRule(
     id: "keep-folders", kind: .disk, match: ["stale": ["week"]], verdict: .keep, source: .operator,
     title: "Keep", created: Date())
   memory.rules.append(keep)
-  equal(AutopilotPolicy.decide(item, memory: memory).status, .keep, "every keep beats every burn")
+  equal(AutopilotPolicy.decide(item, memory: memory).status, .burn, "a keep about other folders")
+  equal(AutopilotPolicy.decide(tools, memory: memory).status, .keep, "which still keeps those")
+  checkFalse(
+    AutopilotPolicy.matches(AutopilotPolicy.coverage(.disk, ["stale": ["week"]]), item),
+    "a card about folders isn't about it")
+  check(AutopilotPolicy.matches(AutopilotPolicy.coverage(.disk, question.match), item), "its own is")
+  // Its own No does, and beats its own Yes.
+  for rule in AutopilotPolicy.lessons(for: asked, verdict: .keep, created: Date(), earlier: []) {
+    memory.rules.append(rule)
+  }
+  equal(AutopilotPolicy.decide(item, memory: memory).status, .keep, "its own No holds it")
 
   // The AI's say counts for nothing here, either way.
   var judged = AutopilotMemory()
@@ -545,6 +596,32 @@ private func railsProof() async throws {
   let autopilot = try engine(cache, root: root)
   _ = await autopilot.tick()
   let store = try AutopilotStore(root: root)
+
+  // The AI can't ask about it, however it words the question.
+  for match in [question.match, ["docker": ["yes"], "stale": ["week"]]] {
+    var said = ""
+    do {
+      _ = try await autopilot.ask(
+        AutopilotQuestion(
+          kind: .disk, match: match, question: "Can I burn this?", why: "", examples: [], count: 0,
+          bytes: 0, source: "ai"))
+    } catch { said = error.localizedDescription }
+    check(said.contains("owner's call"), "the AI is told no: \(said)")
+  }
+
+  // Spare has somewhere to come back from: Never touches lists it, by name.
+  _ = try await autopilot.apply(.keep(itemID: item.id))
+  var spared = await autopilot.tick()
+  equal(spared.entries.first?.status, .keep)
+  equal(spared.keptPaths, ["Docker's build cache"], "Settings lists it")
+  equal(spared.questions.count, 0)
+  _ = try await autopilot.apply(.allowTouch(path: "Docker's build cache"))
+  spared = await autopilot.tick()
+  equal(spared.keptPaths, [])
+  equal(spared.entries.first?.status, .unsure, "taken back, BZ decides again")
+  _ = try await autopilot.apply(.keep(itemID: item.id))
+  _ = try await autopilot.apply(.unkeep(itemID: item.id))
+  equal(await autopilot.tick().keptPaths, [], "Unspare takes it back too")
 
   // The AI is refused, a judgment or not, and its verdict doesn't put the card in Needs you.
   equal(await autopilot.burn([item.id]).first?.outcome, "refused")
@@ -685,6 +762,18 @@ private func racesProof() async throws {
   equal(try AutopilotStore(root: root).impact().bytes, 14_000_000_000)
   equal(try AutopilotStore(root: root).memory().questions.count, 1, "and still no second question")
   equal(snapshot.questions.count, 0)
+
+  // A look that finishes during a burn doesn't bring back what the burn just removed.
+  (docker, cache, found) = fixture()
+  item = try require(found, "its item")
+  docker.onCommand = { [unowned docker, unowned cache] args in
+    guard args.contains("volume"), docker.prunes.isEmpty else { return }
+    docker.onCommand = nil
+    cache.look(now: docker.now)
+  }
+  receipt = cache.reclaim(item, authority: "rule:x", authorize: { true })
+  equal(receipt.outcome, "burned")
+  equal(cache.items(now: .distantPast).count, 0, "nothing stale is left to burn again")
 }
 
 private func batchesProof() {
@@ -801,6 +890,7 @@ private func wordsProof() throws {
   both.entries.append(entry)
   both.counts = ["unsure": 2]
   both.questions = [asked]
+  both.rules = [AutopilotPolicy.lesson(for: asked, verdict: .burn, created: Date())]
   equal(AutopilotSweeper.digest(both), AutopilotSweeper.digest(rest), "Docker changes no digest")
 }
 

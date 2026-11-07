@@ -11,14 +11,17 @@ public final class AutopilotDockerCache: @unchecked Sendable {
 
   /// The `folder` fact that names it.
   public static let folder = "docker-build-cache"
+  /// The named risk it carries, so that only a lesson naming it covers it.
+  static let risk = "docker"
   public static let name = "Docker's build cache"
+  /// What a burn says when Docker went away after BZ looked. Autopilot records nothing for it.
+  public static let away = "Docker isn't running, so I left its build cache alone."
   /// What its card says is safe about it.
   public static let safeLine = "Nothing uses it now. Docker makes it again when it needs it."
-  static let itemID = "disk:" + AutopilotItem.hash(folder)
+  public static let itemID = "disk:" + AutopilotItem.hash(folder)
   /// Its facts never change. Everything in it sat unused for at least two weeks, which `week` (7+
   /// days) truthfully covers, so how old it is can't put a Yes out of reach or ask a second question.
-  /// `docker` is a named risk: only a lesson that names it covers the cache.
-  static let facts = ["folder": folder, "home": "docker", "stale": "week", "docker": "yes"]
+  static let facts = ["folder": folder, "home": "docker", "stale": "week", risk: "yes"]
   /// How long it waits before asking Docker again: after an answer, and when Docker didn't answer.
   static let looksEvery: TimeInterval = 6 * 3600
   static let looksAgainAfter: TimeInterval = 3600
@@ -37,10 +40,15 @@ public final class AutopilotDockerCache: @unchecked Sendable {
   /// Changes when a burn begins and ends, so a look that overlapped one can't bring its item back.
   private var generation: UInt64 = 0
 
-  /// `open` reaches Docker, or throws when it can't. `alive` says whether its socket answers.
-  public init(open: @escaping Open, alive: @escaping @Sendable (String) -> Bool) {
+  /// `open` reaches Docker, or throws when it can't. `alive` says whether its socket answers. `seed`
+  /// is the item from before a restart: it holds until the first look answers, so a question waiting
+  /// for the owner doesn't vanish and come back each time the app starts.
+  public init(
+    open: @escaping Open, alive: @escaping @Sendable (String) -> Bool, seed: AutopilotItem? = nil
+  ) {
     self.open = open
     self.alive = alive
+    cached = seed
   }
 
   /// The running app's: the Docker on this Mac, through the checks in `BuildKitCache.live`. Only the
@@ -50,23 +58,32 @@ public final class AutopilotDockerCache: @unchecked Sendable {
       open: {
         let engine = try BuildKitCache.live(store: Store(root: root))
         return (engine, try BuildKitCache.currentTarget())
-      }, alive: { accepting($0) })
+      }, alive: { accepting($0) },
+      seed: (try? AutopilotStore(root: root).catalog())?.items.first(where: isCache))
   }
 
-  /// Whether this is Docker's build cache.
-  public static func isCache(_ item: AutopilotItem) -> Bool { item.facts["folder"] == folder }
+  /// Whether this is Docker's build cache. By its id too: what Findings lists as burned is rebuilt
+  /// from its receipt, with no facts.
+  public static func isCache(_ item: AutopilotItem) -> Bool {
+    item.id == itemID || item.facts["folder"] == folder
+  }
   /// Whether a question or lesson is about Docker's build cache alone.
   public static func about(_ match: [String: [String]]) -> Bool { match["folder"] == [folder] }
 
-  /// Where Docker lives on this Mac: Never touches on any of these, or on what holds them, covers
-  /// the cache too.
+  /// Where Docker lives on this Mac, whichever one runs it: Never touches on any of these, or on what
+  /// holds them, covers the cache too.
   static func places(home: String = NSHomeDirectory()) -> [String] {
     [
       "/Applications/Docker.app", home + "/Applications/Docker.app", home + "/.docker",
       home + "/Library/Containers/com.docker.docker",
       home + "/Library/Group Containers/group.com.docker",
+      "/Applications/OrbStack.app", home + "/.orbstack", home + "/.colima", home + "/.lima",
+      "/Applications/Rancher Desktop.app", home + "/.rd",
     ]
   }
+
+  /// What Never touches lists a keep of it by: its name, since it has no folder.
+  static func kept(_ id: String) -> String? { id == itemID ? name : nil }
 
   /// The item, when there is something old enough. Never blocks: a look that's due runs in the
   /// background, and a Docker that quit since hides it right away.
@@ -83,7 +100,9 @@ public final class AutopilotDockerCache: @unchecked Sendable {
       }
     }
     let (item, path) = lock.withLock { (cached, socketPath) }
-    guard let item, let path else { return [] }
+    guard let item else { return [] }
+    // With no socket yet, it is the item from before a restart, and the first look decides.
+    guard let path else { return [item] }
     guard alive(path) else {
       lock.withLock {
         cached = nil
@@ -158,15 +177,17 @@ public final class AutopilotDockerCache: @unchecked Sendable {
     defer {
       lock.withLock {
         generation &+= 1
+        cached = nil
         nextLook = .distantPast
       }
     }
+    // A Docker that doesn't answer before anything happened has gone away since BZ looked.
     let opened: (engine: BuildKitCache, target: BuildKitCache.Target)
-    do { opened = try open() } catch {
-      return refuse(
-        "I couldn't reach Docker, so I left its build cache alone.",
-        cause: AutopilotWorktrees.cause(of: error, at: "reaching Docker"))
-    }
+    var first: BuildKitCache.Inventory?
+    do {
+      opened = try open()
+      first = try opened.engine.inspect(target: opened.target, retention: .standard)
+    } catch { return refuse(Self.away) }
     var released: UInt64 = 0
     var stopped: (reason: String, cause: String?)?
     // What Docker kept this time doesn't get in the way of the rest.
@@ -175,7 +196,8 @@ public final class AutopilotDockerCache: @unchecked Sendable {
     let deadline = Date().addingTimeInterval(Self.burnsFor)
     repeat {
       do {
-        let inventory = try opened.engine.inspect(target: opened.target, retention: .standard)
+        let inventory = try first ?? opened.engine.inspect(target: opened.target, retention: .standard)
+        first = nil
         let order = BuildKitCache.removalOrder(inventory).filter { !tried.contains($0) }
         let ids = Array(order.prefix(Self.batch))
         if ids.isEmpty { break }

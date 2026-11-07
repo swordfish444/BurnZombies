@@ -276,7 +276,12 @@ struct TeachView: View {
       }
       let filters = AutopilotPolicy.detailFilters(listed).contains(where: \.risky)
       let bigFiles: Bool = AutopilotPolicy.bigFilesCost(question) != nil
-      tips.start(kind: question.kind, filters: filters, bigFiles: bigFiles)
+      // Docker's card has nothing to explain, and tips about folders wouldn't be about it.
+      if AutopilotDockerCache.about(question.match) {
+        tips.stop()
+      } else {
+        tips.start(kind: question.kind, filters: filters, bigFiles: bigFiles)
+      }
     }
     .onChange(of: place, initial: true) { _, now in tips.at(now) }
     .onDisappear { tips.stop() }

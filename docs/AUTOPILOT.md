@@ -161,7 +161,7 @@ Only build records nothing uses go:
 
 - Never a record a build is using, one an image shares, one of the 3 most recently used, one used in the last 14 days, or one something that has to stay is built on.
 - Never an image, container or volume. BZ checks they are all still there afterwards, and counts nothing if they aren't.
-- Only your answer decides. A Yes about other folders doesn't reach it, and the AI can't burn it or keep it. **Burn now** is yours as with anything else.
+- Only your answer decides. A Yes or a No about other folders doesn't reach it, and the AI can't burn it or keep it. **Burn now** is yours as with anything else, and **Spare** lists it under **Never touches**, where it comes off again.
 - **Never touches** on Docker stops it too: the app, `~/.docker`, Docker's data folders, or anything holding them. Look-only and Autopilot off hold it, like every burn.
 
 Your next build may take a little longer, since Docker has to make those leftovers again. Your images, containers and volumes stay. BZ asks Docker every 6 hours, because asking wakes a resting Docker, and it asks no AI.

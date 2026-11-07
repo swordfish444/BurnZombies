@@ -323,7 +323,9 @@ public enum AutopilotPolicy {
   public static func coverage(_ kind: AutopilotKind, _ match: [String: [String]]) -> AutopilotRule {
     var wide: [String: [String]] = widen(match, verdict: .burn)
     for named in namedRisks[kind] ?? [] where wide[named.fact] == nil {
-      wide[named.fact] = [named.risky, named.clear]
+      // Docker's build cache has a card of its own: no other question is about it.
+      let own: Bool = named.fact != AutopilotDockerCache.risk || AutopilotDockerCache.about(match)
+      wide[named.fact] = own ? [named.risky, named.clear] : [named.clear]
     }
     return AutopilotRule(kind: kind, match: wide, verdict: .burn, source: .operator, title: "")
   }

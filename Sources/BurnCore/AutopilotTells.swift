@@ -110,7 +110,7 @@ extension AutopilotPolicy {
     }
     return [
       .worktree: copies + big, .process: [(fact: "listening", values: ["unknown", "yes", "no"])],
-      .disk: [(fact: "docker", values: ["yes", "no"])],
+      .disk: [(fact: AutopilotDockerCache.risk, values: ["yes", "no"])],
     ]
   }()
   /// What Undo, Good call and Forget say while an Undo runs.

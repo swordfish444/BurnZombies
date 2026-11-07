@@ -280,7 +280,7 @@ extension AutopilotPolicy {
   /// reaches it, nor a starter rule: only a Yes to its own card.
   static let namedRisks: [AutopilotKind: [(fact: String, risky: String, clear: String)]] = [
     .worktree: AutopilotWorktrees.bigFileRisks.map { (fact: $0.fact, risky: "yes", clear: "no") },
-    .disk: [(fact: "docker", risky: "yes", clear: "no")],
+    .disk: [(fact: AutopilotDockerCache.risk, risky: "yes", clear: "no")],
   ]
 
   /// The named risks of a kind as a card lists them: "bigCode=yes".
@@ -295,12 +295,16 @@ extension AutopilotPolicy {
   }
 
   /// A lesson's match as it covers things: a burn that leaves out a named risk covers only things
-  /// clear of it. Keeps are as they are.
+  /// clear of it. Keeps are as they are. Docker's build cache goes further: only an answer to its own
+  /// card reaches it, whether that answer was Yes or No.
   static func effective(_ rule: AutopilotRule) -> [String: [String]] {
-    guard rule.verdict == .burn else { return rule.match }
     var match = rule.match
     for named in namedRisks[rule.kind] ?? [] where match[named.fact] == nil {
-      match[named.fact] = [named.clear]
+      if named.fact == AutopilotDockerCache.risk {
+        if !AutopilotDockerCache.about(rule.match) { match[named.fact] = [named.clear] }
+      } else if rule.verdict == .burn {
+        match[named.fact] = [named.clear]
+      }
     }
     return match
   }
