@@ -37,6 +37,7 @@ extension AutopilotPolicy {
     question.rows = rows(of: items)
     let used = items.compactMap(\.lastUsed)
     question.newest = used.count == items.count ? used.max() : nil
+    question.started = question.kind == .process ? youngestStart(items) : nil
     question.risks = risks(question.kind, items)
     question.profiles = profiles(question.kind, items)
     question.line = safeLine(question.kind, items)
@@ -45,6 +46,14 @@ extension AutopilotPolicy {
     for item in items { big += (item.bigFiles ?? []).reduce(0) { $0 + $1.bytes } }
     question.bigBytes = big > 0 ? big : nil
     if question.source == "native" { question.why = nativeWhy(question, covering: items) }
+  }
+
+  /// When the program that started last started, so "running for" holds for every one of them.
+  /// Nil when any of them has no start, or there are none.
+  static func youngestStart(_ items: [AutopilotItem]) -> Date? {
+    let starts: [Date] = items.compactMap(\.started)
+    guard !items.isEmpty, starts.count == items.count else { return nil }
+    return starts.max()
   }
 
   /// BZ's own words on why it asks: "I found 3 like this, using 2.8 GB. I back each one up first,
@@ -166,7 +175,7 @@ extension AutopilotPolicy {
   ///   since Monday" (2 to 6 days), "untouched for a week", "untouched for 2 weeks", "untouched for a
   ///   month", "untouched for 2 months", "untouched for 3+ months".
   /// - Programs: "idle for 40 minutes", "idle for an hour", "idle for 3 hours" (under 48 hours),
-  ///   "idle for 2 days".
+  ///   "idle for 2 days". A card uses these only when it has no start for them (`runningWords`).
   /// Without a date, the age the question is about in the same voice, lowercased: "unused since
   /// yesterday", "used in the last day". Programs have no such age, so they say nothing.
   public static func when(
@@ -179,6 +188,14 @@ extension AutopilotPolicy {
     case .worktree, .disk:
       return unusedWords(newest, now: now, calendar: gregorian(calendar))
     }
+  }
+
+  /// A program headline's last words when BZ knows when they started: how long the one that started
+  /// last has been running, "running for 40 minutes", "running for 23 hours", "running for 2
+  /// days". Their idle time starts over each time one wakes, so this is what grows while a card
+  /// waits.
+  public static func runningWords(since started: Date, now: Date) -> String {
+    "running for " + idleLength(now.timeIntervalSince(started))
   }
 
   /// When a copy or folder last changed, for the right side of a row: "today 9 am", "yesterday

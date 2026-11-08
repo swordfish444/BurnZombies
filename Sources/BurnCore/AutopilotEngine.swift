@@ -539,26 +539,7 @@ public actor Autopilot {
     let acted = try? store.updateMemory { memory -> Set<String> in
       AutopilotPolicy.expireTells(&memory, now: now)
       let unsure = items.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
-      for i in memory.questions.indices where memory.questions[i].isOpen {
-        let question = memory.questions[i]
-        let rule = AutopilotPolicy.coverage(question.kind, question.match)
-        let matching = unsure.filter { AutopilotPolicy.matches(rule, $0) }
-        // The numbers follow, and what the card names: the rows, when they were last used, the
-        // risks and the safe line.
-        AutopilotPolicy.refresh(&memory.questions[i], covering: matching)
-      }
-      // Once burns shrink a pattern below what a question is worth, it stops being asked.
-      memory.questions.removeAll { $0.isOpen && $0.bytes < AutopilotPolicy.worthAsking }
-      // Questions asked before these rules held follow them too: only about things that went
-      // quiet, and one open per subject, the one that frees the most.
-      memory.questions.removeAll { $0.isOpen && !AutopilotPolicy.quiet($0.kind, $0.match) }
-      var subjects = Set<String>()
-      let kept = Set(
-        memory.questions.filter(\.isOpen)
-          .sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
-          .filter { subjects.insert(AutopilotPolicy.subject($0.kind, $0.match)).inserted }
-          .map(\.id))
-      memory.questions.removeAll { $0.isOpen && !kept.contains($0.id) }
+      Self.keepCurrent(&memory, unsure: unsure)
       var acted = Set<String>()
       for var question in AutopilotPolicy.proposeQuestions(unsure, memory: memory, now: now) {
         question.guess = AutopilotPolicy.guess(question, memory: memory, reaching: unsure)
@@ -573,6 +554,70 @@ public actor Autopilot {
       return acted
     }
     return acted ?? []
+  }
+
+  /// Keeps open questions true to what is unsure now: each covers what its pattern reaches today,
+  /// with its numbers and its card's words worked out again, and one that no longer holds goes.
+  static func keepCurrent(_ memory: inout AutopilotMemory, unsure: [AutopilotItem]) {
+    for i in memory.questions.indices where memory.questions[i].isOpen {
+      let question = memory.questions[i]
+      let rule = AutopilotPolicy.coverage(question.kind, question.match)
+      let matching = unsure.filter { AutopilotPolicy.matches(rule, $0) }
+      // The numbers follow, and what the card names: the rows, when they were last used, the
+      // risks and the safe line.
+      AutopilotPolicy.refresh(&memory.questions[i], covering: matching)
+    }
+    // Once burns shrink a pattern below what a question is worth, it stops being asked.
+    memory.questions.removeAll { $0.isOpen && $0.bytes < AutopilotPolicy.worthAsking }
+    // Questions asked before these rules held follow them too: only about things that went
+    // quiet, never about every program BZ knows no family for, and one open per subject, the one
+    // that frees the most.
+    memory.questions.removeAll { $0.isOpen && !AutopilotPolicy.quiet($0.kind, $0.match) }
+    memory.questions.removeAll { $0.isOpen && AutopilotPolicy.everyUnknownProgram($0.kind, $0.match) }
+    var subjects = Set<String>()
+    let kept = Set(
+      memory.questions.filter(\.isOpen)
+        .sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
+        .filter { subjects.insert(AutopilotPolicy.subject($0.kind, $0.match)).inserted }
+        .map(\.id))
+    memory.questions.removeAll { $0.isOpen && !kept.contains($0.id) }
+  }
+
+  /// Right before Teach BZ shows a card: a program that exited, and a copy or folder deleted, since
+  /// the last look leave the catalog and their questions now, so no card is about something already
+  /// gone, and a program still running comes back as it is now. It only takes away: nothing new is
+  /// asked, judged or burned before the next look.
+  public func recheck(now: Date = Date()) async -> AutopilotSnapshot {
+    guard !ticking, !updateSuspended, let seen = catalog else { return snapshot(now: now) }
+    let running: [AutopilotItem] = await sources.processes(sources.threads())
+    // A look that ran meanwhile saw more than this: it stands.
+    guard !ticking, var current = catalog, current.observedAt == seen.observedAt else {
+      return snapshot(now: now)
+    }
+    var live: [String: AutopilotItem] = [:]
+    for item in running { live[item.id] = item }
+    let floor: UInt64 = programFloor.map { min($0, minimumBytes) } ?? minimumBytes
+    let kept: [AutopilotItem] = current.items.compactMap { item in
+      switch item.kind {
+      case .process:
+        guard let fresh = live[item.id], AutopilotPolicy.worthAssessing(fresh, minimumBytes: floor)
+        else { return nil }
+        return fresh
+      case .worktree, .disk:
+        // Docker's build cache has no folder to look for.
+        guard let path = item.path else { return item }
+        return FileManager.default.fileExists(atPath: path) ? item : nil
+      }
+    }
+    guard kept != current.items else { return snapshot(now: now) }
+    current.items = kept
+    catalog = current
+    try? store.save(catalog: current)
+    try? store.updateMemory { memory in
+      let unsure = kept.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
+      Self.keepCurrent(&memory, unsure: unsure)
+    }
+    return snapshot(now: now)
   }
 
   func why(
@@ -1088,6 +1133,11 @@ public actor Autopilot {
     guard !question.match.values.contains(where: { $0.contains("unknown") }) else {
       throw StoreError.message(
         "Leave out facts I haven't checked yet (\"unknown\"): an answer about them stops applying once they are checked."
+      )
+    }
+    guard !AutopilotPolicy.everyUnknownProgram(question.kind, question.match) else {
+      throw StoreError.message(
+        "Name the program (fact `program`) when asking about programs of family \"other\": they share nothing else, so a Yes would reach every program I don't know."
       )
     }
     let now = Date()

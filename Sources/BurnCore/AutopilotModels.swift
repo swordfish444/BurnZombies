@@ -46,11 +46,16 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
   /// A copy's unsaved files too big to back up, as the refusal that found them named them, for its
   /// card. Not a fact: the fact is `bigFiles=yes`.
   public var bigFiles: [AutopilotBigFiles]?
+  /// When a program started, so its card can say how long it has been running. Its idle time
+  /// can't: a program that wakes every few minutes, such as an emulator, never looks idle for
+  /// long. Not a fact.
+  public var started: Date?
   public init(
     id: String, kind: AutopilotKind, name: String, detail: String = "", path: String? = nil,
     bytes: UInt64 = 0, facts: [String: String], protectedReason: String? = nil,
     observedAt: Date = Date(), pid: Int32? = nil, processKey: String? = nil,
-    lastUsed: Date? = nil, title: String? = nil, branch: String? = nil, unsaved: Int? = nil
+    lastUsed: Date? = nil, title: String? = nil, branch: String? = nil, unsaved: Int? = nil,
+    started: Date? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -69,6 +74,7 @@ public struct AutopilotItem: Codable, Sendable, Identifiable, Equatable {
     self.title = title
     self.branch = branch
     self.unsaved = unsaved
+    self.started = started
     revision = Self.revision(id: id, facts: all)
   }
   public static func revision(id: String, facts: [String: String]) -> String {
@@ -177,6 +183,9 @@ public struct AutopilotQuestion: Codable, Sendable, Identifiable, Equatable {
   public var rows: [AutopilotQuestionRow]?
   /// When the most recently used of everything it covers was last used.
   public var newest: Date?
+  /// For programs: when the one that started last started, so its card says how long they have all
+  /// been running. Nil when any of them has no start, and for copies and folders.
+  public var started: Date?
   /// One sentence on what all of them share that is safe ("Their work is on GitHub."), worked out
   /// whenever the question is asked or refreshed.
   public var line: String?

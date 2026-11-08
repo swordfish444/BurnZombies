@@ -77,6 +77,13 @@ func autopilotProcessProof() async throws {
     return
   }
   equal(item.facts["orphaned"], "yes", "observed reparenting means orphaned")
+  // When it really started, for its card's "running for": the fixture started a moment ago.
+  if let started = item.started {
+    let age: TimeInterval = Date().timeIntervalSince(started)
+    check(age >= 0 && age < 120, "the program's start is its real start: \(age) s ago")
+  } else {
+    failTest("a program BZ catalogs carries when it started")
+  }
   equal(item.facts["family"], "shell")
   equal(item.facts["thread"], "none")
   equal(item.facts["listening"], "no")

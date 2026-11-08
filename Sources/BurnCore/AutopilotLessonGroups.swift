@@ -202,7 +202,14 @@ extension AutopilotPolicy {
       // Without an idle fact a lesson covers programs busy right now too.
       let idle = rule.match["idle"] ?? ["active"]
       let floor = order.firstIndex(where: idle.contains) ?? order.count
-      for family in rule.match["family"] ?? [""] {
+      // A program of no known family is named, as its question was.
+      var families: [String] = rule.match["family"] ?? [""]
+      if let programs = rule.match["program"], !programs.isEmpty,
+        families == [AutopilotPolicy.unknownFamily]
+      {
+        families = programs.map { AutopilotPolicy.unknownFamily + ":" + $0 }
+      }
+      for family in families {
         floors[family] = min(floors[family] ?? Int.max, floor)
       }
     }
@@ -226,6 +233,11 @@ extension AutopilotPolicy {
   }
 
   static func otherPrograms(_ family: String) -> String {
+    let named: String = AutopilotPolicy.unknownFamily + ":"
+    if family.hasPrefix(named) {
+      let program = String(family.dropFirst(named.count))
+      return AutopilotPolicy.programWords(program).map { $0 + " programs" } ?? "Other programs"
+    }
     switch family {
     case "": return "All programs"
     case "other": return "Other programs"

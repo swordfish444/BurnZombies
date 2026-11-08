@@ -306,6 +306,15 @@ import UserNotifications
     }
     if huntProgressVisible { refreshAutopilotForHunt() }
   }
+  /// Right before a window shows questions, BZ takes away what exited or was deleted since its last
+  /// look, so no card is about something already gone.
+  func recheckQuestions() {
+    guard let runtime = autopilotRuntime else { return }
+    Task {
+      let next = await runtime.engine.recheck()
+      if next != autopilot { autopilot = next }
+    }
+  }
   private var autopilotRefreshBusy = false
   private var autopilotRefreshed = Date.distantPast
   /// The Hunt window's questions come from the engine: what the AI asks shows while it hunts. Apart
@@ -1186,6 +1195,7 @@ import UserNotifications
   }
   func showTeach() {
     popover?.performClose(nil)
+    model.recheckQuestions()
     if teachWindow == nil {
       teachWindow = TeachView.makeWindow(model: model)
     }
@@ -1209,6 +1219,7 @@ import UserNotifications
   }
   func showHunt() {
     popover?.performClose(nil)
+    model.recheckQuestions()
     if huntWindow == nil {
       let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 948, height: 860),
