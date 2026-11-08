@@ -214,6 +214,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       let beforeLog = failures
       do { try await burnLogSnapshotProof() } catch { failTest("Burn Log: \(error)") }
       if failures == beforeLog { print("PASS Burn Log: every burn on file reaches the window") }
+      let beforeReview = failures
+      do { try await questionReviewProof() } catch { failTest("Questions stay true: \(error)") }
+      if failures == beforeReview {
+        print("PASS Questions stay true: running time, unknown programs by name, checked before shown")
+      }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }

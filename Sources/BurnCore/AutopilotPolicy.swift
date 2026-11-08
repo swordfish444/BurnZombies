@@ -140,7 +140,11 @@ public enum AutopilotPolicy {
   /// What BZ asks about, one question at a time: old copies, each kind of program and each
   /// kind of folder. A question names only its subject and how long things sat unused, so a
   /// yes covers as much as it safely can; what makes some of them riskier is counted on its card.
+  /// A program of no known family is a subject of its own, by name (`subjectMatch`).
   static let subjectFacts: [AutopilotKind: String] = [.process: "family", .disk: "folder"]
+  /// Programs BZ knows no family for. They have nothing in common but that, so each is asked about,
+  /// learned and trusted by its own name.
+  static let unknownFamily = "other"
   /// Every question states how recently things were used, and nothing in use right now is
   /// asked about until it goes quiet.
   static let recencyFacts: [AutopilotKind: String] = [
@@ -173,13 +177,40 @@ public enum AutopilotPolicy {
     }
   }
 
+  /// "process:node", "disk:node_modules", "worktree:", and for a program of no known family its
+  /// name too: "process:other:postgres". A pattern about every such program, as questions were
+  /// asked before, stays "process:other", where its scores were kept.
   public static func subject(_ kind: AutopilotKind, _ match: [String: [String]]) -> String {
-    kind.rawValue + ":" + (subjectFacts[kind].flatMap { match[$0]?.first } ?? "")
+    let named: [String: [String]] = subjectMatch(kind, match)
+    var text: String = kind.rawValue + ":" + (subjectFacts[kind].flatMap { named[$0]?.first } ?? "")
+    if let program = named["program"]?.first { text += ":" + program }
+    return text
   }
 
-  /// What a subject is called: "old project copies", "leftover Node programs".
+  /// The facts of `facts` that name its subject: the kind of program or folder, and for a program
+  /// of no known family, which program it is.
+  static func subjectMatch(_ kind: AutopilotKind, _ facts: [String: [String]]) -> [String: [String]] {
+    guard let key = subjectFacts[kind], let value = facts[key]?.first else { return [:] }
+    var match: [String: [String]] = [key: [value]]
+    if kind == .process, value == unknownFamily, let program = facts["program"]?.first,
+      !program.isEmpty
+    {
+      match["program"] = [program]
+    }
+    return match
+  }
+
+  /// A pattern about every program BZ knows no family for. Those have nothing else in common, so a
+  /// Yes or No to it would reach programs its card never showed: such a question is never asked.
+  static func everyUnknownProgram(_ kind: AutopilotKind, _ match: [String: [String]]) -> Bool {
+    kind == .process && match["family"]?.contains(unknownFamily) == true
+      && (match["program"] ?? []).isEmpty
+  }
+
+  /// What a subject is called: "old project copies", "leftover Node programs", "leftover postgres
+  /// programs".
   static func subjectNoun(_ kind: AutopilotKind, _ match: [String: [String]]) -> String {
-    noun(kind, match: subjectFacts[kind].flatMap { key in match[key].map { [key: $0] } } ?? [:]).1
+    noun(kind, match: subjectMatch(kind, match)).1
   }
 
   /// A question holds its subject while it is open, and for a day after the owner skips it.
@@ -223,19 +254,21 @@ public enum AutopilotPolicy {
         recent != "unknown", !tooRecent.contains(recent),
         subjectFacts[item.kind].map({ ![nil, "unknown"].contains(item.facts[$0]) }) ?? true
       else { continue }
-      subjects[subject(item.kind, item.facts.mapValues { [$0] }), default: []].append(item)
+      let facts: [String: [String]] = item.facts.mapValues { [$0] }
+      // A program of no known family is asked about by name; one without a name isn't asked about.
+      if everyUnknownProgram(item.kind, subjectMatch(item.kind, facts)) { continue }
+      subjects[subject(item.kind, facts), default: []].append(item)
     }
     var candidates = [AutopilotQuestion]()
     for (name, items) in subjects where !busy.contains(name) {
       let kind = items[0].kind
       guard let recency = recencyFacts[kind] else { continue }
-      var base = [String: [String]]()
-      if let key = subjectFacts[kind], let value = items[0].facts[key] { base[key] = [value] }
+      let base: [String: [String]] = subjectMatch(kind, items[0].facts.mapValues { [$0] })
       let present = Set(items.compactMap { $0.facts[recency] })
       // The broadest question not asked yet: the most recent use present and everything older.
       // An open or skipped question makes its subject busy, so only answers can rule one out.
       for recent in safety[recency] ?? [] where present.contains(recent) {
-        var match = base
+        var match: [String: [String]] = base
         match[recency] = [recent]
         let covering = items.filter { matches(coverage(kind, match), $0) }
         if answered(kind, match, covering: covering, memory: memory) { continue }
@@ -396,13 +429,14 @@ public enum AutopilotPolicy {
     func value(_ key: String) -> String? { match[key]?.first }
     switch kind {
     case .process:
+      let named: String? = program ?? value("program")
       let family =
         [
           "node": "leftover Node programs", "python": "leftover Python programs",
           "ruby": "leftover Ruby programs", "java": "leftover Java and Gradle helpers",
           "browser": "leftover robot browsers", "build": "leftover build tools",
           "shell": "leftover shell scripts",
-        ][value("family") ?? ""] ?? (program.map { "leftover \($0) programs" } ?? "leftover programs")
+        ][value("family") ?? ""] ?? (named.map { "leftover \($0) programs" } ?? "leftover programs")
       var parts = [String]()
       if value("orphaned") == "yes" { parts.append("whose app or chat already closed") }
       if value("thread") == "ended" { parts.append("from chats that already finished") }
@@ -626,7 +660,7 @@ extension AutopilotPolicy {
       return project.map { ("old copy of " + $0, "old copies of " + $0) }
         ?? ("old project copy", "old project copies")
     case .process:
-      let (one, many) = [
+      let known: (String, String)? = [
         "node": ("leftover Node program", "leftover Node programs"),
         "python": ("leftover Python program", "leftover Python programs"),
         "ruby": ("leftover Ruby program", "leftover Ruby programs"),
@@ -634,7 +668,8 @@ extension AutopilotPolicy {
         "browser": ("leftover robot browser", "leftover robot browsers"),
         "build": ("leftover build tool", "leftover build tools"),
         "shell": ("leftover script", "leftover scripts"),
-      ][value("family")] ?? ("leftover program", "leftover programs")
+      ][value("family")]
+      let (one, many) = known ?? unknownNoun(match)
       return project.map { (one + " in " + $0, many + " in " + $0) } ?? (one, many)
     case .disk:
       return [
@@ -647,6 +682,24 @@ extension AutopilotPolicy {
         AutopilotDockerCache.folder: (AutopilotDockerCache.name, AutopilotDockerCache.name),
       ][value("folder")] ?? ("folder", "folders")
     }
+  }
+
+  /// A program of no known family, by name: "leftover postgres program", or "leftover qemu
+  /// program" for qemu-system-aarch64-headless. Without a name it can say, "leftover program".
+  static func unknownNoun(_ match: [String: [String]]) -> (String, String) {
+    guard let program = match["program"]?.first, let words = programWords(program) else {
+      return ("leftover program", "leftover programs")
+    }
+    return ("leftover " + words + " program", "leftover " + words + " programs")
+  }
+
+  /// A program's name as a card says it: whole when it is short, else the part before its first
+  /// dash ("qemu" for qemu-system-aarch64-headless), else nil.
+  static func programWords(_ name: String) -> String? {
+    let limit = 20
+    if !name.isEmpty && name.count <= limit { return name }
+    let first: String = name.split(separator: "-").first.map(String.init) ?? ""
+    return first.count >= 3 && first.count <= limit ? first : nil
   }
 
   /// The facts cards and lessons name, most decisive first, with each value in two to four words.
@@ -788,7 +841,8 @@ extension AutopilotPolicy {
 
   /// The card for a question as it reads at `now`. The headline is "Burn 5 copies you used
   /// yesterday?": what it covers and when the most recently used of it was used, in calendar words
-  /// for `calendar`, so the same question reads differently tomorrow.
+  /// for `calendar`, so the same question reads differently tomorrow. Programs say how long they
+  /// have been running instead: "Burn 2 leftover Node programs running for 3 hours?".
   public static func card(
     _ question: AutopilotQuestion, now: Date = Date(), calendar: Calendar = .current
   ) -> AutopilotCard {
@@ -811,17 +865,29 @@ extension AutopilotPolicy {
         ? AutopilotDockerCache.safeLine
         : one ? "Your tools rebuild it when needed." : "Your tools rebuild them when needed."
     }
-    let age = when(
-      question.kind, newest: question.newest, match: question.match, now: now, calendar: calendar)
+    // A program's idle time starts over each time it wakes, so one that wakes every few minutes,
+    // such as an emulator, would read "idle for 21 minutes" all day. How long it has been running
+    // says how long it has been left.
+    var running: String?
+    if question.kind == .process, let started = question.started {
+      running = runningWords(since: started, now: now)
+    }
+    let age: String =
+      running
+      ?? when(
+        question.kind, newest: question.newest, match: question.match, now: now, calendar: calendar)
     let words: [String] = ["Burn", String(question.count), one ? single : plural, age]
     // There's one of it, and how old it is doesn't matter to the answer.
     let headline: String =
       AutopilotDockerCache.about(question.match)
       ? "Burn " + AutopilotDockerCache.name + "?"
       : words.filter { !$0.isEmpty }.joined(separator: " ") + "?"
-    // When the headline says how long it sat unused, the facts and cautions don't say it again.
+    // When the headline says how long it sat unused, the facts and cautions don't say it again. A
+    // program's says how long it has run, so how long it sat idle stays among its facts.
     var described = question.match
-    if !age.isEmpty, let recency = recencyFacts[question.kind] { described[recency] = nil }
+    if running == nil, !age.isEmpty, let recency = recencyFacts[question.kind] {
+      described[recency] = nil
+    }
     let shown = facts(question.kind, match: described)
     let rows = cardRows(question, now: now, calendar: calendar)
     var card = AutopilotCard(

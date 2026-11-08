@@ -314,6 +314,9 @@ public enum AutopilotProcesses {
       // Only where a robot browser is involved, so nothing else is judged anew.
       if robot != "no" { facts["robot"] = robot }
       let shown = robotRoot != nil ? o.name + " (robot)" : o.name
+      // When it started, for its card's "running for": unlike its idle time, that only grows.
+      let started: Date? =
+        o.identity.seconds > 0 ? Date(timeIntervalSince1970: Double(o.identity.seconds)) : nil
       items.append(
         AutopilotItem(
           id: "process:" + o.identity.key, kind: .process,
@@ -322,7 +325,7 @@ public enum AutopilotProcesses {
             o.name, repo: repo, facts: facts, children: tree.count, robot: robotRoot != nil),
           path: o.executable, bytes: bytes, facts: facts, protectedReason: reason,
           observedAt: o.time, pid: o.identity.pid, processKey: o.identity.key,
-          lastUsed: lastUsed))
+          lastUsed: lastUsed, started: started))
     }
     return items.sorted { $0.bytes > $1.bytes }
   }

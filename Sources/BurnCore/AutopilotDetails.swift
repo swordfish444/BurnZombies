@@ -231,6 +231,8 @@ extension AutopilotPolicy {
     case .process:
       var idle = "Not known"
       if let date = item.lastUsed { idle = String(idleText(date, now: now).dropFirst("idle ".count)) }
+      var running = "Not known"
+      if let started = item.started { running = idleLength(now.timeIntervalSince(started)) }
       let serving: Fact
       switch f["listening"] {
       case "yes": serving = Fact(label: "Serving", value: "A web page or port", risky: true)
@@ -241,6 +243,7 @@ extension AutopilotPolicy {
       if let who = f["agent"], !["", "none"].contains(who) { agent = who.capitalized }
       return [
         Fact(label: "Memory", value: roughly(item.bytes), risky: false),
+        Fact(label: "Running for", value: running, risky: false),
         Fact(label: "Idle for", value: idle, risky: false), serving,
         Fact(label: "Started by", value: agent, risky: false),
         Fact(label: "Program", value: f["program"] ?? item.name, risky: false),
