@@ -5,6 +5,8 @@ import Foundation
 public enum AutopilotPolicy {
   public static let trainingTarget = 12
   public static let aiConfidenceFloor = 0.85
+  /// Advice about current activity must be reviewed again, even if coarse facts stay the same.
+  public static let aiJudgmentLifetime: TimeInterval = 4 * 3600
   public static let maximumOpenQuestions = 3
   public static let ownerManagedPlaces: Set<String> = ["codex", "claude", "conductor"]
 
@@ -65,25 +67,46 @@ public enum AutopilotPolicy {
       && effective(rule).allSatisfy { key, values in value(item, key).map(values.contains) ?? false }
   }
 
+  /// Only native acceptance time and the current revision give AI advice a bounded lifetime.
+  public static func currentJudgment(
+    for item: AutopilotItem, memory: AutopilotMemory, now: Date = Date()
+  ) -> AutopilotJudgment? {
+    guard let judgment = memory.judgments[item.id], judgment.revision == item.revision,
+      judgment.date <= now, now.timeIntervalSince(judgment.date) < aiJudgmentLifetime
+    else { return nil }
+    return judgment
+  }
+
   /// Order: rails, the operator's own keeps, confident AI keeps, operator burn rules,
-  /// starter rules, confident AI burns for eligible items. Every keep signal beats every burn.
-  public static func decide(_ item: AutopilotItem, memory: AutopilotMemory) -> (
+  /// starter rules, confident AI burns for eligible items. Expiring a keep asks for another
+  /// review; it never silently lets a burn rule act on what the AI had held.
+  public static func decide(
+    _ item: AutopilotItem, memory: AutopilotMemory, now: Date = Date()
+  ) -> (
     status: AutopilotStatus, authority: String?
   ) {
     if item.protectedReason != nil { return (.protected, nil) }
     if neverTouched(item, memory: memory) { return (.keep, "operator") }
     if memory.keptItems.contains(item.id)
       || item.path.map({ memory.keptItems.contains("path:" + $0) }) == true
+      || AutopilotGradleCaches.keepParent(for: item).map({ parent in
+        memory.keptItems.contains("path:" + parent)
+          || memory.keptItems.contains("disk:" + AutopilotItem.hash(parent))
+      }) == true
     {
       return (.keep, "operator")
     }
     let rules = memory.rules.filter { $0.enabled && matches($0, item) }
     if let rule = rules.first(where: { $0.verdict == .keep }) { return (.keep, "rule:" + rule.id) }
     // Docker's build cache is the owner's call: the AI's verdict counts for nothing, either way.
-    let judgment = AutopilotDockerCache.isCache(item) ? nil : memory.judgments[item.id].flatMap {
+    let previous = AutopilotDockerCache.isCache(item) ? nil : memory.judgments[item.id].flatMap {
       $0.revision == item.revision && $0.confidence >= aiConfidenceFloor ? $0 : nil
     }
-    if let judgment, judgment.verdict == .keep { return (.keep, ai(judgment)) }
+    let judgment = previous.flatMap { _ in currentJudgment(for: item, memory: memory, now: now) }
+    if previous?.verdict == .keep {
+      guard let judgment else { return (.unsure, nil) }
+      return (.keep, ai(judgment))
+    }
     if let rule = rules.first(where: { $0.verdict == .burn }) { return (.burn, "rule:" + rule.id) }
     if let rule = starterRules.first(where: {
       !memory.starterDisabled.contains($0.id) && matches($0, item)

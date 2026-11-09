@@ -160,28 +160,33 @@ final class AutopilotSkipped: @unchecked Sendable {
   func get() -> [String] { lock.withLock { places } }
 }
 
-/// Measuring junk folders is slow, so the whole list is walked at most every six hours in the
-/// background and pruned immediately after a burn. A copy the inventory reports later, or dates
-/// later, is walked on its own right away: a new install's first scan reports copies over several
-/// ticks and dates each one only when it inspects it.
+/// Discovery runs in bounded background slices, preserving progress until every target has had
+/// its turn. Completed checkouts wait six hours; newly discovered or newly dated copies run on the
+/// next tick. A burn prunes the list immediately without leaving our walker inside its target.
 public final class AutopilotJunkCache: @unchecked Sendable {
   private let lock = NSLock()
   private var cached: [AutopilotItem] = []
-  private var refreshed: Date?
-  /// Copies walked since the last full walk, by record, and whether each one was dated then.
-  private var walked: [String: Bool] = [:]
+  private var cycleStarted: Date?
+  private var progress = AutopilotDisk.ScanProgress()
+  /// Inventory changes schedule work; they never certify that a checkout was fully scanned.
+  private var observed: [String: Bool] = [:]
   private var running = false
   /// Where its walk is, so a burn never finds BZ inside what it removes. Copies' age looks
   /// share it.
   public let walks = AutopilotWalks()
   private let sizer: (String, () -> Bool) -> UInt64?
+  private let scanBudget: TimeInterval
+  private let clock: () -> Date
   /// `sizer` measures one junk folder and gives up as soon as its second argument says to.
   public init(
     sizer: @escaping (String, () -> Bool) -> UInt64? = {
       AutopilotDisk.allocatedSize($0, stop: $1)
-    }
+    },
+    scanBudget: TimeInterval = 60, clock: @escaping () -> Date = Date.init
   ) {
     self.sizer = sizer
+    self.scanBudget = scanBudget
+    self.clock = clock
   }
 
   /// Runs a burn of `path` with the walk out of it. The check for programs using a folder sees
@@ -196,50 +201,51 @@ public final class AutopilotJunkCache: @unchecked Sendable {
     _ records: [WorktreeRecord], home: String, protected: ProtectedLocations,
     trail: String? = nil
   ) -> [AutopilotItem] {
-    let walk: (records: [WorktreeRecord], everything: Bool)? = lock.withLock {
+    let walk: AutopilotDisk.ScanProgress? = lock.withLock {
       guard !running else { return nil }
-      let age = refreshed.map { Date().timeIntervalSince($0) } ?? .infinity
-      let everything = age >= 6 * 3600
-      if everything { walked = [:] }
-      // Junk in a copy of unknown age never looks old, so a copy walked before it was dated is
-      // walked again once it is.
-      let unseen = records.filter { record in
-        guard let dated = walked[record.id] else { return true }
-        return !dated && Self.dated(record)
+      let now = clock()
+      if cycleStarted == nil
+        || (progress.roundFinished && cycleStarted.map({ now.timeIntervalSince($0) >= 6 * 3600 }) == true)
+      {
+        progress = AutopilotDisk.ScanProgress()
+        observed = [:]
+        cycleStarted = now
       }
-      guard everything || !unseen.isEmpty else { return nil }
+      for record in records {
+        let dated = Self.dated(record)
+        if observed[record.id] == nil || (observed[record.id] == false && dated) {
+          progress.invalidate(WorkspaceSafety.canonical(record.path))
+        }
+        observed[record.id] = dated
+      }
+      guard !progress.complete else { return nil }
       running = true
-      for record in unseen { walked[record.id] = Self.dated(record) }
-      return (unseen, everything)
+      return progress
     }
     if let walk {
-      Thread.detachNewThread { [self] in
-        // Only the full walk measures the global caches and each copy's main checkout again. A new
-        // project's main checkout has a record of its own, so it is walked with the new copies.
-        let fresh = AutopilotDisk.items(
-          worktrees: walk.records, home: home, caches: walk.everything, mains: walk.everything,
+      Thread.detachNewThread { [self, walk] in
+        var next = walk
+        let fresh = AutopilotDisk.scan(
+          worktrees: records, home: home,
           sizer: { folder in sizer(folder) { walks.wanted(folder) } }, protected: protected,
-          walks: walks, trail: trail)
-        let skipped = walks.skipped()
+          walks: walks, trail: trail, progress: &next, budget: scanBudget, clock: clock)
+        // A target skipped or left for a burn is retried after the burn releases it.
+        for path in walks.skipped() { next.invalidate(path) }
         lock.withLock {
-          if walk.everything {
-            cached = fresh
-            refreshed = Date()
-          } else {
-            let ids = Set(fresh.map(\.id))
-            var merged = cached.filter { !ids.contains($0.id) }
-            merged += fresh
-            merged.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
-            cached = merged
+          // Aggregated browser leftovers can be partial too. Keep an earlier observation
+          // until every included measurement is known, while allowing a first partial discovery.
+          let accepted = fresh.items.filter { item in
+            item.path.map { fresh.measured.contains($0) } == true
+              || !cached.contains(where: { $0.id == item.id })
           }
-          // A copy the walk skipped or left for a burn is walked again next time, in case the
-          // burn left it there.
-          for record in walk.records {
-            let path = WorkspaceSafety.canonical(record.path)
-            if skipped.contains(where: { AutopilotWalks.overlap($0, path) }) {
-              walked[record.id] = nil
-            }
+          let ids = Set(accepted.map(\.id))
+          cached.removeAll {
+            ids.contains($0.id)
+              || $0.path.map { fresh.measured.contains($0) || fresh.discarded.contains($0) } == true
           }
+          cached += accepted
+          cached.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
+          progress = next
           running = false
         }
       }

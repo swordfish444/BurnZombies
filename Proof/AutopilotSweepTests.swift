@@ -283,6 +283,23 @@ func autopilotSweepProof() async throws {
   isNil(sweep.retryAfter)
   check((sweep.lastAISweep ?? .distantPast) >= busyStart, "the sweep counts as done")
 
+  let futureRoot = directory.appendingPathComponent("future-advice")
+  try AutopilotStore(root: futureRoot).updateMemory {
+    $0.judgments[copy.id] = AutopilotJudgment(
+      itemID: copy.id, revision: copy.revision, verdict: .keep, confidence: 0.9,
+      label: "Old future-dated advice", why: "An old timestamp cannot prove progress.",
+      date: now.addingTimeInterval(86400))
+  }
+  let futureEngine = try Autopilot(root: futureRoot, sources: AutopilotSources())
+  let futureSweep = AutopilotCoordinator(
+    root: futureRoot, engine: futureEngine, configuration: { config },
+    runner: { _, _ in throw StoreError.message(AutopilotHarness.outOfTime) })
+  _ = await futureSweep.tick(now: Date(), manual: true)
+  await futureSweep.waitForAI()
+  equal(
+    await futureEngine.sweepState().failures, 1,
+    "future persisted advice cannot disguise a failed review as progress")
+
   // Ticks that pile up behind a slow catalog resume together; only one may start a sweep. On
   // a real Mac four started at once.
   let pileRoot = directory.appendingPathComponent("pile")
@@ -836,6 +853,90 @@ func autopilotSweepProof() async throws {
     "a refusal without a cause logs as before")
 
   try await aiBriefProof()
+  try await staleAutopilotAdviceProof()
+}
+
+/// A conditional keep with unchanged facts must eventually rejoin the review queue. All burns
+/// here are fake source calls; the proof never touches a real cache or process.
+private func staleAutopilotAdviceProof() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-autopilot-stale-advice-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let now = Date()
+  let cache = AutopilotItem(
+    id: "disk:gradle-fixture", kind: .disk, name: "Gradle build cache", bytes: 18 << 30,
+    facts: ["folder": "package-cache", "home": "global-cache", "stale": "month"], observedAt: now)
+  let calls = Calls()
+  let sources = AutopilotSources(
+    disk: { _ in [cache] },
+    reclaimDisk: { item, authority in
+      calls.add(item.id)
+      return AutopilotReceipt(
+        itemID: item.id, kind: item.kind, name: item.name, authority: authority,
+        outcome: "burned", detail: "Fixture only; nothing removed.", bytes: item.bytes)
+    })
+  let store = try AutopilotStore(root: root)
+  let rule = AutopilotRule(
+    id: "fixture-cache-rule", kind: .disk, match: ["folder": ["package-cache"]], verdict: .burn,
+    source: .operator, title: "Rebuildable caches")
+  try store.updateMemory {
+    $0.rules = [rule]
+    $0.judgments[cache.id] = AutopilotJudgment(
+      itemID: cache.id, revision: cache.revision, verdict: .keep, confidence: 0.95,
+      label: "Cache used this morning", why: "A build helper is still using it.",
+      date: now.addingTimeInterval(-3600))
+  }
+  let engine = try Autopilot(root: root, sources: sources)
+  let held = await engine.tick(now: now, burn: false)
+  equal(held.entries.first?.status, .keep, "fresh conditional hold is respected")
+  equal(held.entries.first?.judged, true)
+
+  // Persist an old judgment exactly as a previous installation did, then reload it.
+  let expired = now.addingTimeInterval(-AutopilotPolicy.aiJudgmentLifetime)
+  try store.updateMemory { $0.judgments[cache.id]?.date = expired }
+  let restarted = try Autopilot(root: root, sources: sources)
+  let reopened = await restarted.snapshot(now: now)
+  equal(reopened.entries.first?.status, .unsure, "restart does not preserve an expired hold")
+  equal(reopened.entries.first?.judged, false, "expired advice becomes reviewable")
+  equal(reopened.entries.first?.label, cache.name, "stale activity labels disappear")
+  checkFalse(
+    reopened.entries.first?.why.contains("build helper") == true, "stale rationale disappears")
+  var sweep = AutopilotSweepState()
+  sweep.lastAISweep = expired
+  sweep.lastAIDigest = AutopilotSweeper.digest(held)
+  check(
+    AutopilotSweeper.aiDue(sweep, snapshot: reopened, now: now, manual: false),
+    "an expired keep wakes the existing review schedule")
+  checkFalse(
+    Autopilot.executorAllowed(cache, authority: "rule:" + rule.id, root: root),
+    "expiring a keep does not grant executor authority to a matching rule")
+  equal(await restarted.burn([cache.id]).first?.outcome, "refused")
+  _ = await restarted.tick(now: now)
+  equal(calls.all, [], "native and AI burn paths both wait for fresh review")
+
+  try store.updateMemory { $0.judgments[cache.id]?.date = now.addingTimeInterval(86400) }
+  equal(
+    await restarted.snapshot(now: now).entries.first?.status, .unsure,
+    "a future persisted timestamp cannot hold the cache indefinitely")
+  let beforeAcceptance = Date()
+  _ = try await restarted.decide([
+    AutopilotJudgment(
+      itemID: cache.id, revision: "ignored", verdict: .keep, confidence: 0.95,
+      label: "Fresh inspection", why: "Checked again.", date: now.addingTimeInterval(86400))
+  ])
+  let accepted = try store.memory().judgments[cache.id]!
+  check(
+    accepted.date >= beforeAcceptance && accepted.date <= Date(),
+    "native acceptance replaces model-supplied timestamps")
+  equal(await restarted.snapshot().entries.first?.status, .keep, "fresh review can renew a hold")
+  let fresh = try await restarted.decide([
+    AutopilotJudgment(
+      itemID: cache.id, revision: "ignored", verdict: .burn, confidence: 0.95,
+      label: "Unused cache", why: "Fresh inspection found no current consumer.")
+  ])
+  equal(fresh, [cache.id], "a fresh eligible decision can release the old hold")
+  equal(await restarted.burn([cache.id]).first?.outcome, "burned")
+  equal(calls.all, [cache.id], "one authorized cleanup follows fresh review")
 }
 
 /// The AI works from the owner's lessons and says how it expects the owner to answer (spec 2.6).

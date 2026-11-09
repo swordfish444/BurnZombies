@@ -290,6 +290,72 @@ func autopilotPolicyProof() throws {
     label: "Dev server", why: "Looks like active work.")
   memory.rules = [burnAll]
   equal(AutopilotPolicy.decide(orphan, memory: memory).status, .keep, "AI keep beats burn rule")
+  let reviewedAt = Date(timeIntervalSince1970: 1_800_000_000)
+  memory.judgments[orphan.id]?.date = reviewedAt
+  let expiresAt = reviewedAt.addingTimeInterval(AutopilotPolicy.aiJudgmentLifetime)
+  equal(
+    AutopilotPolicy.decide(orphan, memory: memory, now: expiresAt.addingTimeInterval(-1)).status,
+    .keep, "AI keep remains current until its review is due")
+  equal(
+    AutopilotPolicy.decide(orphan, memory: memory, now: expiresAt).status,
+    .unsure, "expired AI keep reopens review instead of falling through to a burn rule")
+  memory.rules = []
+  memory.starterDisabled = []
+  equal(
+    AutopilotPolicy.decide(orphan, memory: memory, now: expiresAt).status,
+    .unsure, "expired AI keep still blocks a starter burn pending fresh review")
+  equal(
+    AutopilotPolicy.decide(orphan, memory: memory, now: reviewedAt.addingTimeInterval(-1)).status,
+    .unsure, "future-dated advice has no authority")
+  memory.rules = [keepAll]
+  equal(
+    AutopilotPolicy.decide(orphan, memory: memory, now: expiresAt).status,
+    .keep, "owner keep rules never expire")
+  memory.rules = []
+  memory.keptItems = [orphan.id]
+  equal(
+    AutopilotPolicy.decide(orphan, memory: memory, now: expiresAt).authority,
+    "operator", "explicit owner keeps never expire")
+  memory.keptItems = []
+  memory.starterDisabled = Set(AutopilotPolicy.starterRules.map(\.id))
+  memory.judgments[orphan.id]?.verdict = .burn
+  equal(
+    AutopilotPolicy.decide(orphan, memory: memory, now: expiresAt).status,
+    .unsure, "expired AI burn cannot authorize deletion")
+  equal(
+    AutopilotPolicy.decide(orphan, memory: memory, now: reviewedAt).status,
+    .burn, "fresh AI burn still authorizes an eligible item")
+  equal(
+    AutopilotPolicy.decide(guarded, memory: memory, now: reviewedAt).status,
+    .protected, "fresh advice never overrides current native safety")
+  var neverTouchItem = orphan
+  neverTouchItem.path = "/fixture/keep-this"
+  memory.neverTouch = ["/fixture"]
+  equal(
+    AutopilotPolicy.decide(neverTouchItem, memory: memory, now: expiresAt).authority,
+    "operator", "Never touches remains durable after AI advice expires")
+  memory = AutopilotMemory()
+
+  // Splitting a recognized cache into independent candidates must preserve old owner keeps.
+  let gradleRoot = NSHomeDirectory() + "/.gradle/caches"
+  let gradleChild = AutopilotItem(
+    id: "disk:gradle-version", kind: .disk, name: "Gradle 8.14 cache",
+    path: gradleRoot + "/8.14", bytes: 1 << 30,
+    facts: ["folder": "package-cache", "home": "global-cache", "stale": "month"])
+  for keep in ["path:" + gradleRoot, "disk:" + AutopilotItem.hash(gradleRoot)] {
+    memory.keptItems = [keep]
+    equal(
+      AutopilotPolicy.decide(gradleChild, memory: memory).authority,
+      "operator", "a prior whole-cache owner keep covers its recognized children")
+  }
+  memory.keptItems = []
+  let oldParentID = "disk:" + AutopilotItem.hash(gradleRoot)
+  memory.judgments[oldParentID] = AutopilotJudgment(
+    itemID: oldParentID, revision: "old-parent", verdict: .keep, confidence: 0.95,
+    label: "Busy cache", why: "One version was in use.")
+  equal(
+    AutopilotPolicy.decide(gradleChild, memory: memory).status, .unsure,
+    "a parent AI opinion does not hold independently reviewable children")
   memory = AutopilotMemory()
 
   // Questions cover the biggest clusters, at most three, never repeating.
