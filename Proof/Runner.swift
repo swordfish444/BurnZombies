@@ -392,6 +392,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       print("Disk worker checks: \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }
+    if CommandLine.arguments.contains("--integration-only") {
+      do { try await integration() } catch { failTest("Integration: \(error)") }
+      print("Native integration checks: \(failures) failures")
+      exit(failures == 0 ? 0 : 1)
+    }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--owner-agent-fixture" {
       do {
         try await runOwnerHarnessFixture(root: URL(fileURLWithPath: CommandLine.arguments[2]))
@@ -787,6 +792,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     }
     print("PASS agent-selected detached helpers stopped without scripted eligibility delay")
     let deadline = Date().addingTimeInterval(150)
+    var previousState = await monitor.snapshot()
     while Date() < deadline {
       try await Task.sleep(nanoseconds: 15_000_000_000)
       let state = await monitor.refresh()
@@ -795,7 +801,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       }) {
         throw StoreError.message(
           "Verification stopped without credit: "
-            + state.catalog.events.map { $0.outcome + ": " + $0.detail }.joined(separator: " "))
+            + state.catalog.events.map { $0.outcome + ": " + $0.detail }.joined(separator: " ")
+            + "; partial=\(state.partial), processes=\(state.processCount), hidden=\(state.hiddenCount), "
+            + "scanMS=\(state.scanMS), previousScanMS=\(previousState.scanMS), "
+            + "observationGap=\(state.catalog.lastSample.map { $0.timeIntervalSince(previousState.catalog.lastSample ?? $0) } ?? -1), "
+            + "error=\(state.error ?? "none")")
       }
       if state.catalog.events.count == workerCount
         && state.catalog.events.allSatisfy({ $0.outcome != "verifying" })
@@ -830,6 +840,7 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
         )
         return
       }
+      previousState = state
     }
     throw StoreError.message("Verification timed out.")
   }

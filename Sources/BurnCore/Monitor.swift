@@ -609,6 +609,9 @@ public actor Monitor {
     state.fullDiskAccess = accessCheck()
     let scan = native.scan()
     let now = Date()
+    // Pair both clocks after the scan. Mixing its first process timestamp with its finish
+    // time makes a change in scan duration look like an interruption.
+    let monotonic = Double(bz_continuous_ns()) / 1e9
     let awake = native.awakeSeconds
     let previousWall = lastWall
     let previousAwake = lastAwake
@@ -619,13 +622,13 @@ public actor Monitor {
     state.processCount = scan.observations.count
     let priorOutcomes = catalog.events.map(\.outcome)
     if scan.partial { catalog.resetContinuity() }
-    if let current = scan.observations.first?.monotonic, let previous = lastMonotonic,
-      let wall = lastWall,
-      current - previous > 75 || abs(now.timeIntervalSince(wall) - (current - previous)) > 5
+    if let previous = lastMonotonic, let wall = lastWall,
+      Verification.observationInterrupted(
+        wallSeconds: now.timeIntervalSince(wall), monotonicSeconds: monotonic - previous)
     {
       catalog.resetContinuity()
     }
-    lastMonotonic = scan.observations.first?.monotonic
+    lastMonotonic = monotonic
     lastWall = now
     do {
       let present = Set(scan.observations.map { $0.identity.key })
