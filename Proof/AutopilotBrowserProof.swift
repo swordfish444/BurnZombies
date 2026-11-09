@@ -100,6 +100,46 @@ private func waitFor(_ seconds: Double, _ condition: () -> Bool) -> Bool {
   return condition()
 }
 
+/// Failure-only evidence for a real browser: saved catalog membership and fresh native control
+/// visibility. Command-line contents stay private; only their browser fingerprint is reported.
+private func browserDiagnostic(
+  _ pid: Int32, records: [String: Record], item: AutopilotItem?, protectedPIDs: Set<Int32>
+) -> String {
+  guard let root = records.values.first(where: { $0.latest.identity.pid == pid }) else {
+    return "root=\(pid), missing from catalog"
+  }
+  let family = [root] + AutopilotProcesses.descendants(of: pid, in: records)
+  let native = Native()
+  var arguments: [Int32: [String]] = [:]
+  var clients: [Int32: Int] = [:]
+  for record in family {
+    let member = record.latest.identity.pid
+    arguments[member] = native.arguments(member)
+    clients[member] = native.clients(member)
+  }
+  let robots = AutopilotProcesses.robots(in: family, arguments: { arguments[$0] })
+  let robot = robots.browsers[pid]
+  let abandoned = robot.map {
+    AutopilotProcesses.abandoned($0, members: robots.members, clients: { clients[$0] })
+  } ?? false
+  let exempt = robot == nil || abandoned ? robots.members : []
+  let members = family.map { record in
+    let observation = record.latest
+    let member = observation.identity.pid
+    let rail = AutopilotProcesses.rail(
+      record, protectedPIDs: protectedPIDs, preferences: Preferences(),
+      robot: exempt.contains(member)) ?? "none"
+    return "pid=\(member), parent=\(observation.parent), executable=\(observation.executable), "
+      + "argv=\(arguments[member]?.count ?? -1), robotMember=\(robots.members.contains(member)), "
+      + "clients=\(clients[member].map(String.init) ?? "unknown"), rail=\(rail)"
+  }.joined(separator: " | ")
+  let facts = item?.facts.sorted { $0.key < $1.key }.map { $0.key + "=" + $0.value }
+    .joined(separator: ",") ?? "no item"
+  return "root=\(pid), freshControl=\(robot.map { String(describing: $0.control) } ?? "unknown"), "
+    + "freshAbandoned=\(abandoned), itemProtected=\(item?.protectedReason ?? "none"), "
+    + "itemFacts=[\(facts)], family=[\(members)]"
+}
+
 /// Real headless Chrome, driven over a pipe and over a port, outlives the shell that started it.
 /// Autopilot sees each as an abandoned robot browser with its helpers, a connected client keeps
 /// the port one, both burn as one tree, and the throwaway profile each left is cleared while a
@@ -226,10 +266,14 @@ func autopilotBrowserProof() async throws {
     waitFor(10) { Native().clients(ported).map { $0 > 0 } == true },
     "the accepted DevTools client is visible to the native socket probe")
   _ = await monitor.refresh()
+  let connectedRecords = await monitor.autopilotRecords()
   items = AutopilotProcesses.items(
-    await monitor.autopilotRecords(), threads: [], protectedPIDs: own, now: later)
-  checkFalse(
-    items.contains { $0.pid == ported }, "a browser something is connected to is still an app")
+    connectedRecords, threads: [], protectedPIDs: own, now: later)
+  if let connected = items.first(where: { $0.pid == ported }) {
+    failTest(
+      "a browser something is connected to is still an app; "
+        + browserDiagnostic(ported, records: connectedRecords, item: connected, protectedPIDs: own))
+  }
   // Judged before the client came, it is still left running.
   if let key = await monitor.autopilotRecords().values.first(where: {
     $0.latest.identity.pid == ported
@@ -257,20 +301,33 @@ func autopilotBrowserProof() async throws {
       return clearPasses >= 3
     }, "the DevTools client is gone and the browser family has known empty listening sockets")
   _ = await monitor.refresh()
+  let disconnectedRecords = await monitor.autopilotRecords()
   items = AutopilotProcesses.items(
-    await monitor.autopilotRecords(), threads: [], protectedPIDs: own, now: later)
+    disconnectedRecords, threads: [], protectedPIDs: own, now: later)
   guard let portItem = items.first(where: { $0.pid == ported }) else {
-    failTest("the stranded port browser is cataloged")
+    failTest(
+      "the stranded port browser is cataloged; "
+        + browserDiagnostic(ported, records: disconnectedRecords, item: nil, protectedPIDs: own))
     return
   }
   equal(portItem.facts["robot"], "abandoned", "nothing connected, throwaway profile")
-  equal(
-    AutopilotPolicy.decide(portItem, memory: AutopilotMemory()).authority,
-    "starter:starter-robot-browsers")
+  let portAuthority = AutopilotPolicy.decide(portItem, memory: AutopilotMemory()).authority
+  if portAuthority != "starter:starter-robot-browsers" {
+    failTest(
+      "stranded port browser authority=\(portAuthority ?? "none"); "
+        + browserDiagnostic(ported, records: disconnectedRecords, item: portItem, protectedPIDs: own))
+  }
   let portHelpers = family(of: ported)
-  _ = try await monitor.autopilotBurn(
-    portItem.processKey!, authority: "starter:starter-robot-browsers", label: portItem.name,
-    rationale: "Proof: nothing connected.")
+  do {
+    _ = try await monitor.autopilotBurn(
+      portItem.processKey!, authority: "starter:starter-robot-browsers", label: portItem.name,
+      rationale: "Proof: nothing connected.")
+  } catch {
+    let refusedRecords = await monitor.autopilotRecords()
+    throw StoreError.message(
+      error.localizedDescription + "; "
+        + browserDiagnostic(ported, records: refusedRecords, item: portItem, protectedPIDs: own))
+  }
   check(
     waitFor(15) { !([ported] + portHelpers).contains(where: running) },
     "the port browser and its helpers stopped")
