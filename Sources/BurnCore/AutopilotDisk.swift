@@ -188,6 +188,8 @@ public enum AutopilotDisk {
     public var items: [AutopilotItem]
     public var measured: Set<String>
     public var discarded: Set<String>
+    /// Failed targets or parent checks cannot renew an earlier observation's cleanup authority.
+    public var incomplete: Set<String>
   }
 
   /// Rebuildable folders of at least 100 MB inside live checkouts and known developer caches.
@@ -215,17 +217,24 @@ public enum AutopilotDisk {
   ) -> ScanBatch {
     let protected = protected ?? .limited(homes: [home])
     let base = WorkspaceSafety.canonical(home)
-    guard base.hasPrefix("/"), base != "/" else { return ScanBatch(items: [], measured: [], discarded: []) }
+    guard base.hasPrefix("/"), base != "/" else { return ScanBatch(items: [], measured: [], discarded: [], incomplete: []) }
     let deadline = clock().addingTimeInterval(budget)
     var found: [String: AutopilotItem] = [:]
     var measured: Set<String> = []
     var discarded: Set<String> = []
+    var incomplete: Set<String> = []
     progress.complete = false
     progress.roundFinished = false
     func batch() -> ScanBatch {
       ScanBatch(
         items: found.values.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id },
-        measured: measured, discarded: discarded)
+        measured: measured, discarded: discarded,
+        incomplete: incomplete.union(
+          progress.searches.values.flatMap { $0.failed.map(\.path) }))
+    }
+    func deferCheck(_ path: String) {
+      progress.deferred.insert(path)
+      incomplete.insert(path)
     }
 
     for cache in globalCaches where caches {
@@ -236,12 +245,14 @@ public enum AutopilotDisk {
       if cache.children {
         if progress.deferred.contains(location) { continue }
         guard var names = try? FileManager.default.contentsOfDirectory(atPath: location) else {
-          progress.deferred.insert(location)
+          progress.invalidate(location)
+          deferCheck(location)
           continue
         }
         if playwrightCaches.contains(cache.path) {
           guard let used = playwrightUsed(location, protected: protected) else {
-            progress.deferred.insert(location)
+            progress.invalidate(location)
+            deferCheck(location)
             continue
           }
           let eligible = playwrightBuilds(names, used: used)
@@ -260,14 +271,14 @@ public enum AutopilotDisk {
         guard clock() < deadline else { return batch() }
         guard refusal(target, home: base, protected: protected) == nil else { continue }
         guard walks?.enter(target) ?? true else {
-          progress.deferred.insert(target)
+          deferCheck(target)
           continue
         }
         defer { walks?.leave(target, early: walks?.wanted(target) ?? false) }
         guard let bytes = sizer(target), !(walks?.wanted(target) ?? false),
           let touched = modified(target)
         else {
-          progress.deferred.insert(target)
+          deferCheck(target)
           continue
         }
         progress.measured.insert(target)
@@ -302,7 +313,7 @@ public enum AutopilotDisk {
           if progress.deferred.contains(path) { unknownTrail = true; return nil }
           guard clock() < deadline else { pendingTrail = true; return nil }
           guard let bytes = sizer(path) else {
-            progress.deferred.insert(path)
+            deferCheck(path)
             unknownTrail = true
             return nil
           }
@@ -310,6 +321,7 @@ public enum AutopilotDisk {
           return bytes
         })
       if let item { found[item.id] = item }
+      if pendingTrail || unknownTrail { incomplete.insert(trail) }
       if !pendingTrail && !unknownTrail { measured.insert(trail) }
       if pendingTrail { return batch() }
     }
@@ -320,7 +332,7 @@ public enum AutopilotDisk {
       }
       guard clock() < deadline else { return batch() }
       guard walks?.enter(checkout.path) ?? true else {
-        progress.deferred.insert(checkout.path)
+        deferCheck(checkout.path)
         continue
       }
       var early = false
@@ -341,13 +353,13 @@ public enum AutopilotDisk {
         let searched = advanceFolders(&search, until: deadline, clock: clock, stop: away)
         progress.searches[checkout.path] = search
         guard searched else {
-          if early { progress.deferred.insert(checkout.path); continue }
+          if early { deferCheck(checkout.path); continue }
           return batch()
         }
         let folders = search.found.filter {
           refusal($0.path, home: base, protected: protected) == nil
         }
-        guard !away() else { progress.deferred.insert(checkout.path); continue }
+        guard !away() else { deferCheck(checkout.path); continue }
         // Git failure cannot make unknown files safe. Retry this checkout after unvisited ones.
         let blocked: Set<String>
         if folders.isEmpty {
@@ -355,7 +367,10 @@ public enum AutopilotDisk {
         } else if let tracked = trackedFolders(folders.map { $0.path }, in: checkout.path) {
           blocked = tracked
         } else {
-          progress.deferred.insert(checkout.path)
+          // Tracking is authority for the whole checkout. Its recovery must refresh every
+          // descendant held by this failure, including ones measured in an earlier slice.
+          progress.invalidate(checkout.path)
+          deferCheck(checkout.path)
           continue
         }
         let junk = folders.filter { !blocked.contains($0.path) && !exists($0.path + "/.git") }
@@ -363,7 +378,7 @@ public enum AutopilotDisk {
         let worked = lastWorked(
           checkout, skipping: Set(junk.map { $0.path }), now: now,
           until: Date().addingTimeInterval(max(0, deadline.timeIntervalSince(clock()))), stop: away)
-        guard !away() else { progress.deferred.insert(checkout.path); continue }
+        guard !away() else { deferCheck(checkout.path); continue }
         progress.prepared[checkout.path] = PreparedCheckout(folders: junk, worked: worked)
         if search.failed.isEmpty { progress.searches[checkout.path] = nil }
       }
@@ -374,13 +389,13 @@ public enum AutopilotDisk {
           continue
         }
         guard clock() < deadline else { return batch() }
-        guard !away() else { progress.deferred.insert(checkout.path); break }
+        guard !away() else { deferCheck(checkout.path); break }
         guard refusal(folder.path, home: base, protected: protected) == nil else {
           progress.measured.insert(folder.path)
           continue
         }
         guard let bytes = sizer(folder.path), !away(), let touched = modified(folder.path) else {
-          progress.deferred.insert(folder.path)
+          deferCheck(folder.path)
           continue
         }
         progress.measured.insert(folder.path)
@@ -402,7 +417,9 @@ public enum AutopilotDisk {
       }
       if !early && prepared.folders.allSatisfy({ progress.measured.contains($0.path) }) {
         if let search = progress.searches[checkout.path], !search.failed.isEmpty {
+          incomplete.formUnion(search.failed.map(\.path))
           progress.searches[checkout.path] = FolderSearch(pending: search.failed)
+          // The checkout waits its turn, but only failed descendants lose authority.
           progress.deferred.insert(checkout.path)
         } else {
           progress.finishedRoots.insert(checkout.path)

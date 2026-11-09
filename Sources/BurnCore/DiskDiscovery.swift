@@ -282,7 +282,9 @@ public final class DiskDiscovery: @unchecked Sendable {
   private func startLocked() {
     guard enabled, !worker, !walkTeardownFailed, !state.queue.isEmpty else { return }
     worker = true
-    DispatchQueue.global(qos: .background).async { [self] in run() }
+    // The bounded filesystem worker must make progress during sustained foreground work;
+    // background QoS can leave an already queued map waiting indefinitely to start.
+    DispatchQueue.global(qos: .utility).async { [self] in run() }
   }
   @discardableResult private func saveLocked() -> Bool {
     do {

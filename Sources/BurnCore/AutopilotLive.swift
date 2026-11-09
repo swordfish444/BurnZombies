@@ -177,6 +177,7 @@ public final class AutopilotJunkCache: @unchecked Sendable {
   private let sizer: (String, () -> Bool) -> UInt64?
   private let scanBudget: TimeInterval
   private let clock: () -> Date
+  private static let unfinished = "I haven't finished checking this folder again, so I left it alone."
   /// `sizer` measures one junk folder and gives up as soon as its second argument says to.
   public init(
     sizer: @escaping (String, () -> Bool) -> UInt64? = {
@@ -210,11 +211,16 @@ public final class AutopilotJunkCache: @unchecked Sendable {
         progress = AutopilotDisk.ScanProgress()
         observed = [:]
         cycleStarted = now
+        // Old bytes stay useful while discovery resumes, but their old age/eligibility cannot
+        // authorize cleanup before this cycle has successfully checked that target again.
+        for index in cached.indices { cached[index].protectedReason = Self.unfinished }
       }
       for record in records {
         let dated = Self.dated(record)
         if observed[record.id] == nil || (observed[record.id] == false && dated) {
-          progress.invalidate(WorkspaceSafety.canonical(record.path))
+          let path = WorkspaceSafety.canonical(record.path)
+          progress.invalidate(path)
+          hold(under: [path])
         }
         observed[record.id] = dated
       }
@@ -230,7 +236,8 @@ public final class AutopilotJunkCache: @unchecked Sendable {
           sizer: { folder in sizer(folder) { walks.wanted(folder) } }, protected: protected,
           walks: walks, trail: trail, progress: &next, budget: scanBudget, clock: clock)
         // A target skipped or left for a burn is retried after the burn releases it.
-        for path in walks.skipped() { next.invalidate(path) }
+        let skipped = walks.skipped()
+        for path in skipped { next.invalidate(path) }
         lock.withLock {
           // Aggregated browser leftovers can be partial too. Keep an earlier observation
           // until every included measurement is known, while allowing a first partial discovery.
@@ -244,6 +251,7 @@ public final class AutopilotJunkCache: @unchecked Sendable {
               || $0.path.map { fresh.measured.contains($0) || fresh.discarded.contains($0) } == true
           }
           cached += accepted
+          hold(under: fresh.incomplete.union(skipped))
           cached.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
           progress = next
           running = false
@@ -255,6 +263,18 @@ public final class AutopilotJunkCache: @unchecked Sendable {
       cached.filter {
         $0.path.map { protected.resolve($0) != nil && FileManager.default.fileExists(atPath: $0) }
           ?? false
+      }
+    }
+  }
+  /// Called with the cache lock held. Overlap also protects a browser aggregate when one of
+  /// its children is unknown. A later successful observation replaces, rather than clears, it.
+  private func hold(under paths: Set<String>) {
+    guard !paths.isEmpty else { return }
+    for index in cached.indices {
+      if let path = cached[index].path,
+        paths.contains(where: { AutopilotWalks.overlap($0, path) })
+      {
+        cached[index].protectedReason = Self.unfinished
       }
     }
   }
