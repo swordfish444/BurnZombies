@@ -81,12 +81,23 @@ import Vision
       bytesPerRow: 0, bitsPerPixel: 0), !window.isVisible, !window.isKeyWindow else { throw StoreError.message("Offscreen hunt rendering unavailable") }
     bitmap.size = host.bounds.size
     host.cacheDisplay(in: host.bounds, to: bitmap)
-    guard let cg = bitmap.cgImage, let png = bitmap.representation(using: .png, properties: [:]) else { throw StoreError.message("Hunt PNG unavailable") }
+    guard let png = bitmap.representation(using: .png, properties: [:]) else { throw StoreError.message("Hunt PNG unavailable") }
     try png.write(to: directory.appendingPathComponent(name + ".png"))
-    let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate; recognition.recognitionLanguages = ["en-US"]
-    do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([recognition]) }
-    catch { throw StoreError.message("Hunt \(name) OCR failed: \(error.localizedDescription)") }
-    let recognized = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    guard let image = NSBitmapImageRep(data: png)?.cgImage,
+      let header = image.cropping(to: CGRect(
+        x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height) * 0.2))
+    else { throw StoreError.message("Saved Hunt image unavailable") }
+    // Read the saved pixels, plus their header at a smaller scope: Vision sometimes omits
+    // the plainly visible deep-hunt notice when analyzing the entire tall window.
+    var readings: [String] = []
+    for region in [image, header] {
+      let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate; recognition.recognitionLanguages = ["en-US"]
+      recognition.minimumTextHeight = 0
+      do { try VNImageRequestHandler(cgImage: region, options: [:]).perform([recognition]) }
+      catch { throw StoreError.message("Hunt \(name) OCR failed: \(error.localizedDescription)") }
+      readings += (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    }
+    let recognized = readings.joined(separator: "\n")
     try recognized.write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
     // Vision may split tracked labels into separate observations on macOS 15.
     // Preserve its raw output, but compare words independently of OCR line breaks.

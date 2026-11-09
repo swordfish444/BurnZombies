@@ -1578,9 +1578,28 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   let note = try render(
     TeachView(model: model, confirmation: thanks), size: TeachView.size,
     name: "teach-spared-note", directory: directory)
+  // Vision can omit this readable green line when it analyzes the whole tall card. Read the
+  // confirmation body from the same saved pixels too; keep the actual wording assertion.
+  let notePNG = try Data(contentsOf: directory.appendingPathComponent("teach-spared-note.png"))
+  guard let image = NSBitmapImageRep(data: notePNG)?.cgImage,
+    let body = image.cropping(to: CGRect(
+      x: 0, y: CGFloat(image.height) * 0.5, width: CGFloat(image.width),
+      height: CGFloat(image.height) * 0.3))
+  else { throw StoreError.message("The saved confirmation body is unavailable") }
+  let bodyRequest = VNRecognizeTextRequest()
+  bodyRequest.recognitionLevel = .accurate
+  bodyRequest.recognitionLanguages = ["en-US"]
+  bodyRequest.minimumTextHeight = 0
+  try VNImageRequestHandler(cgImage: body, options: [:]).perform([bodyRequest])
+  let bodyText = (bodyRequest.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    .joined(separator: "\n")
+  try bodyText.write(
+    to: directory.appendingPathComponent("teach-spared-note-body.txt"), atomically: true,
+    encoding: .utf8)
+  let noteReading = Reading(note.raw + "\n" + bodyText)
   try check(
-    note.hasWords(of: TeachView.sparedLine(2)),
-    "The note after a Yes should say what was spared stays. OCR saw: \(note.raw)")
+    noteReading.hasWords(of: TeachView.sparedLine(2)),
+    "The note after a Yes should say what was spared stays. OCR saw: \(noteReading.raw)")
   print(
     "PASS autopilot UI Teach BZ details: \(listed.count) listed with filters, one opened (\(position)), a Spare that leaves \(left.count) on the card, a tip and the note that spared copies stay"
   )

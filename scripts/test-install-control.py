@@ -18,6 +18,8 @@ import tempfile
 from installer_signing_fixture import keychains, production_pin, signing_fixture
 
 repo = Path(__file__).resolve().parents[1]
+release_version = json.loads((repo / "packaging/mcpb/manifest.json").read_text())["version"]
+release_base = f"https://github.com/swordfish444/BurnZombies/releases/download/v{release_version}/"
 production_pin(repo / "install.sh")
 with tempfile.TemporaryDirectory(prefix="bz-install-control-") as temporary, \
         signing_fixture(Path(temporary) / "signing") as signer:
@@ -67,11 +69,11 @@ if sys.argv[1]=='start-observer' and os.environ.get('BZ_CONTROL_FAIL')=='start':
     stubs = root / "bin"
     stubs.mkdir()
     curl = stubs / "curl"
-    curl.write_text(f"#!{sys.executable}\n" + '''import os,shutil,sys
+    curl.write_text(f"#!{sys.executable}\nrelease_base={release_base!r}\n" + '''import os,shutil,sys
 from pathlib import Path
 args=sys.argv[1:]
 url=next(v for v in args if v.startswith('https://'))
-assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.18.0/')
+assert url.startswith(release_base)
 shutil.copyfile(Path(os.environ['BZ_CONTROL_REMOTE'])/url.rsplit('/',1)[1],args[args.index('-o')+1])
 ''')
     curl.chmod(0o755)
