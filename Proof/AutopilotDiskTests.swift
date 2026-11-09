@@ -15,10 +15,14 @@ func autopilotDiskProof() async throws {
   try adkThreadsProof(base: base + "/threads", now: now)
   try adkSizeProof(base: base + "/sizes")
   try adkJunkProof(base: base + "/junk", now: now)
+  try autopilotGradleCacheProof()
+  try adkScanContinuationProof(base: base + "/continuation", now: now)
   try adkBackupReasonProof(base: base + "/reasons")
   try adkCopyAgeProof(base: base + "/age", now: now)
   try adkWalkProof(base: base + "/walk", now: now)
   try await adkJunkCacheProof(base: base + "/cache", now: now)
+  try await adkJunkCacheContinuationProof(base: base + "/cache-continuation", now: now)
+  try await adkJunkCacheAuthorityProof(base: base + "/cache-authority", now: now)
   try await adkOwnWalkProof(base: base + "/walks", now: now)
 }
 
@@ -976,6 +980,326 @@ private func adkWalkProof(base: String, now: Date) throws {
   check(
     inspect(linkCopy).gaps.contains("Hardlinked files require owner handling."),
     "a hard link inside \(afterLink) stops the walk")
+}
+
+/// Each slice gets one expensive measurement. A failed early cache cannot starve later caches,
+/// the second folder inside a checkout, or the next checkout; failures remain unknown until retried.
+private func adkScanContinuationProof(base: String, now: Date) throws {
+  let home = base + "/home"
+  let caches = home + "/Library/Developer/Xcode/DerivedData"
+  let cachePaths = ["a", "b", "c"].map { caches + "/" + $0 }
+  for path in cachePaths { try adkWrite("cache", to: path + "/part") }
+  let repo = home + "/git/first"
+  let later = home + "/git/later"
+  for root in [repo, later] {
+    try adkRepository(root)
+    try adkWrite("build/\ndist/\nnode_modules/\n", to: root + "/.gitignore")
+    try adkGit(root, ["add", "."])
+    try adkGit(root, ["commit", "-m", "fixture"])
+  }
+  let folders = [repo + "/build", repo + "/dist", repo + "/node_modules", later + "/build"]
+  for path in folders { try adkWrite("output", to: path + "/part") }
+  var records = [repo, later].map { WorktreeRecord(id: $0, path: $0, repository: $0 + "/.git") }
+  for index in records.indices { records[index].main = true }
+  var clock = now
+  var calls: [String] = []
+  var discovered: Set<String> = []
+  var progress = AutopilotDisk.ScanProgress()
+  let failed = cachePaths[1]
+  for _ in 0..<20 where !progress.complete {
+    let batch = AutopilotDisk.scan(
+      worktrees: records, home: home, now: now,
+      sizer: { path in
+        calls.append(path)
+        clock = clock.addingTimeInterval(60)
+        if path == failed && calls.filter({ $0 == failed }).count == 1 { return nil }
+        return 120_000_000
+      }, progress: &progress, budget: 60, clock: { clock })
+    discovered.formUnion(batch.items.compactMap(\.path))
+    if calls.last == failed && calls.filter({ $0 == failed }).count == 1 {
+      checkFalse(batch.measured.contains(failed), "failed sizing is unknown, never a zero-byte result")
+      check(batch.incomplete.contains(failed), "failed sizing withholds old cleanup authority")
+      checkFalse(progress.complete, "a failed target does not certify a complete scan")
+    }
+  }
+  equal(
+    Array(calls.prefix(7)), cachePaths + folders,
+    "bounded slices advance through caches, multiple checkout folders and later checkouts")
+  equal(calls, cachePaths + folders + [failed], "only the failed target repeats after unvisited work")
+  equal(discovered, Set(cachePaths + folders), "completed discoveries survive every partial slice")
+  check(progress.complete, "the cycle completes only after the failed measurement succeeds")
+
+  // Exhaust the discovery candidate cap before sizing starts. The next slice must keep the
+  // directory cursor rather than certifying the first 500 folders as the whole checkout.
+  let wide = home + "/git/wide"
+  try adkRepository(wide)
+  try adkWrite("*/node_modules/\n", to: wide + "/.gitignore")
+  try adkGit(wide, ["add", ".gitignore"])
+  try adkGit(wide, ["commit", "-m", "fixture"])
+  for index in 0..<505 {
+    try adkWrite("output", to: wide + "/p\(index)/node_modules/part")
+  }
+  var wideRecord = WorktreeRecord(id: "wide", path: wide, repository: wide + "/.git")
+  wideRecord.main = true
+  var wideProgress = AutopilotDisk.ScanProgress()
+  let prefix = AutopilotDisk.scan(
+    worktrees: [wideRecord], home: home, caches: false, now: now,
+    sizer: { _ in 120_000_000 }, progress: &wideProgress)
+  check(prefix.items.isEmpty && !wideProgress.complete, "hitting the candidate cap preserves pending discovery")
+  let resumed = AutopilotDisk.scan(
+    worktrees: [wideRecord], home: home, caches: false, now: now,
+    sizer: { _ in 120_000_000 }, progress: &wideProgress)
+  equal(resumed.items.count, 505, "discovery resumes beyond its former 500-candidate prefix")
+  check(wideProgress.complete, "all discovered folders are measured before the checkout completes")
+
+  // An unreadable descendant is unknown, not an empty completed subtree. Other work still
+  // finishes, and permission recovery resumes only the failed subtree without repeating it all.
+  let hidden = repo + "/private"
+  let hiddenJunk = hidden + "/node_modules"
+  try adkWrite("output", to: hiddenJunk + "/part")
+  equal(chmod(hidden, 0), 0)
+  defer { _ = chmod(hidden, 0o755) }
+  var unreadable = AutopilotDisk.ScanProgress()
+  var measured: [String] = []
+  let partial = AutopilotDisk.scan(
+    worktrees: records, home: home, caches: false, now: now,
+    sizer: { path in measured.append(path); return 120_000_000 }, progress: &unreadable)
+  checkFalse(unreadable.complete, "unreadable descendants keep the cycle incomplete")
+  check(partial.incomplete.contains(hidden), "failed parent enumeration holds cached descendants")
+  checkFalse(partial.incomplete.contains(repo), "failed subtree does not revoke healthy sibling authority")
+  checkFalse(
+    partial.items.contains { item in
+      partial.incomplete.contains { item.path == $0 || (item.path ?? "").hasPrefix($0 + "/") }
+    }, "successful sibling observations remain actionable")
+  equal(Set(partial.items.compactMap(\.path)), Set(folders), "unreadable subtree does not hide accessible junk")
+  equal(chmod(hidden, 0o755), 0)
+  let recovered = AutopilotDisk.scan(
+    worktrees: records, home: home, caches: false, now: now,
+    sizer: { path in measured.append(path); return 120_000_000 }, progress: &unreadable)
+  equal(recovered.items.compactMap(\.path), [hiddenJunk], "readable subtree resumes at its unvisited junk")
+  equal(measured.count, folders.count + 1, "permission recovery preserves already measured targets")
+  check(unreadable.complete, "permission recovery completes the previously unknown subtree")
+  check(recovered.incomplete.isEmpty, "subtree recovery leaves no stale authority hold")
+
+  equal(chmod(repo + "/.git", 0), 0)
+  defer { _ = chmod(repo + "/.git", 0o755) }
+  var unknownGit = AutopilotDisk.ScanProgress()
+  let unchecked = AutopilotDisk.scan(
+    worktrees: records, home: home, caches: false, now: now,
+    sizer: { _ in 120_000_000 }, progress: &unknownGit)
+  equal(chmod(repo + "/.git", 0o755), 0)
+  check(unchecked.incomplete.contains(repo), "failed Git checks hold every cached descendant")
+  checkFalse(unchecked.items.contains { ($0.path ?? "").hasPrefix(repo + "/") }, "unknown tracking never renews cleanup authority")
+
+  // A successful change in eligibility is different from a failed size: stale catalog entries
+  // for now-tracked output must be removed, even though the folder still exists.
+  try adkGit(repo, ["add", "-f", "node_modules/part"])
+  var fresh = AutopilotDisk.ScanProgress()
+  let changed = AutopilotDisk.scan(
+    worktrees: records, home: home, caches: false, now: now,
+    sizer: { _ in 120_000_000 }, progress: &fresh)
+  check(changed.discarded.contains(repo + "/node_modules"), "now-tracked output explicitly expires")
+  checkFalse(changed.items.contains { $0.path == repo + "/node_modules" }, "tracked output stays protected")
+}
+
+/// Fake time makes one measurement consume the whole slice and crosses the six-hour refresh
+/// boundary before discovery finishes. Completed items must survive and later roots must run.
+private func adkJunkCacheContinuationProof(base: String, now: Date) async throws {
+  final class Measurements: @unchecked Sendable {
+    let lock = NSLock()
+    var instant: Date
+    var calls: [String] = []
+    var fail: Set<String> = []
+    var failedCalls: Set<String> = []
+    var small: Set<String> = []
+    var advance: TimeInterval
+    init(_ now: Date, advance: TimeInterval) { instant = now; self.advance = advance }
+    func clock() -> Date { lock.withLock { instant } }
+    func measure(_ path: String) -> UInt64? {
+      lock.withLock {
+        calls.append(path)
+        instant = instant.addingTimeInterval(advance)
+        if fail.contains(path) { failedCalls.insert(path); return nil }
+        return small.contains(path) ? 10 : 120_000_000
+      }
+    }
+  }
+  let home = base + "/home"
+  let cacheRoot = home + "/Library/Developer/Xcode/DerivedData"
+  let paths = [cacheRoot + "/a", cacheRoot + "/b", home + "/git/project/node_modules"]
+  for path in paths { try adkWrite("output", to: path + "/part") }
+  let repo = home + "/git/project"
+  try adkRepository(repo)
+  try adkWrite("node_modules/\n", to: repo + "/.gitignore")
+  try adkGit(repo, ["add", ".gitignore"])
+  try adkGit(repo, ["commit", "-m", "fixture"])
+  var record = WorktreeRecord(id: "project", path: repo, repository: repo + "/.git")
+  record.main = true
+  let measures = Measurements(now, advance: 7 * 3600)
+  let junk = AutopilotJunkCache(
+    sizer: { path, _ in measures.measure(path) }, scanBudget: 60, clock: { measures.clock() })
+  let state = URL(fileURLWithPath: base + "/state")
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: state, accessCheck: fixtureAccess)
+  let sources = AutopilotSources.live(
+    monitor: monitor, root: state, home: home, junk: junk,
+    recoveryKey: SymmetricKey(data: Data(repeating: 0x77, count: 32)))
+  func ask(until done: ([AutopilotItem]) -> Bool) async -> [AutopilotItem] {
+    let deadline = Date().addingTimeInterval(10)
+    var items = sources.disk([record])
+    while !done(items), Date() < deadline {
+      try? await Task.sleep(nanoseconds: 20_000_000)
+      items = sources.disk([record])
+    }
+    return items
+  }
+  var items = await ask { Set($0.compactMap(\.path)).isSuperset(of: paths) }
+  equal(
+    measures.lock.withLock { Array(measures.calls.prefix(3)) }, paths,
+    "six-hour rollover cannot reset an unfinished scan to its first cache")
+  check(Set(items.compactMap(\.path)).isSuperset(of: paths), "live cache merges completed slices")
+
+  // Finish any slice just started by the last polling tick before changing the fixture.
+  try? await Task.sleep(nanoseconds: 100_000_000)
+  measures.lock.withLock {
+    measures.advance = 60
+    measures.instant = measures.instant.addingTimeInterval(7 * 3600)
+    measures.fail = [paths[0]]
+    measures.small = [paths[1]]
+  }
+  try adkGit(repo, ["add", "-f", "node_modules/part"])
+  items = await ask { items in
+    measures.lock.withLock { measures.failedCalls.contains(paths[0]) }
+      && items.contains { $0.path == paths[0] }
+      && !items.contains { $0.path == paths[1] || $0.path == paths[2] }
+  }
+  equal(items.first { $0.path == paths[0] }?.bytes, 120_000_000, "unknown size preserves its last observation")
+  checkFalse(items.contains { $0.path == paths[1] }, "successful below-threshold sizing removes stale bytes")
+  checkFalse(items.contains { $0.path == paths[2] }, "now-tracked files disappear from the live catalog")
+  await monitor.shutdownWorktrees()
+}
+
+/// Keeping an old byte count must not keep an old cleanup decision alive. A refresh protects
+/// every previous-cycle item immediately, including targets later slices have not reached yet.
+private func adkJunkCacheAuthorityProof(base: String, now: Date) async throws {
+  final class Measurements: @unchecked Sendable {
+    let lock = NSLock()
+    var instant: Date
+    var failed: Set<String> = []
+    var failedCalls: Set<String> = []
+    init(_ now: Date) { instant = now }
+    func clock() -> Date { lock.withLock { instant } }
+    func measure(_ path: String) -> UInt64? {
+      lock.withLock {
+        instant = instant.addingTimeInterval(60)
+        if failed.contains(path) { failedCalls.insert(path); return nil }
+        return 120_000_000
+      }
+    }
+  }
+  let home = base + "/home"
+  let cacheRoot = home + "/Library/Developer/Xcode/DerivedData"
+  let repo = home + "/git/project"
+  let healthy = repo + "/DerivedData"
+  let privateRoot = repo + "/private"
+  let hidden = privateRoot + "/DerivedData"
+  let paths = ["a", "b", "c"].map { cacheRoot + "/" + $0 } + [healthy, hidden]
+  for path in paths {
+    try adkWrite("output", to: path + "/part")
+    try FileManager.default.setAttributes(
+      [.modificationDate: now.addingTimeInterval(-45 * 86_400)], ofItemAtPath: path)
+  }
+  try adkRepository(repo)
+  try adkWrite("DerivedData/\n", to: repo + "/.gitignore")
+  try adkGit(repo, ["add", ".gitignore"])
+  try adkGit(repo, ["commit", "-m", "fixture"])
+  var record = WorktreeRecord(id: "project", path: repo, repository: repo + "/.git")
+  record.main = true
+  let measures = Measurements(now)
+  let junk = AutopilotJunkCache(
+    sizer: { path, _ in measures.measure(path) }, scanBudget: 60, clock: { measures.clock() })
+  let state = URL(fileURLWithPath: base + "/state")
+  let monitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: state, accessCheck: fixtureAccess)
+  let sources = AutopilotSources.live(
+    monitor: monitor, root: state, home: home, junk: junk,
+    recoveryKey: SymmetricKey(data: Data(repeating: 0x77, count: 32)))
+  func ask(until done: ([AutopilotItem]) -> Bool) async -> [AutopilotItem] {
+    let deadline = Date().addingTimeInterval(10)
+    var items = sources.disk([record])
+    while !done(items), Date() < deadline {
+      try? await Task.sleep(nanoseconds: 20_000_000)
+      items = sources.disk([record])
+    }
+    return items
+  }
+  var items = await ask { items in
+    paths.allSatisfy { path in items.contains { $0.path == path && $0.protectedReason == nil } }
+  }
+  let rule = AutopilotRule(
+    kind: .disk, match: ["folder": ["xcode-derived"], "stale": ["month", "older"]],
+    verdict: .burn, source: .operator, title: "Old Xcode output")
+  var memory = AutopilotMemory()
+  memory.rules = [rule]
+  let old = items.first { $0.path == paths[0] }
+  equal(old?.facts["stale"], "month", "fixture begins with old output")
+  equal(old.map { AutopilotPolicy.decide($0, memory: memory).status }, .burn, "old output matches an operator burn rule")
+
+  // The files have changed, but a timed-out measurement cannot supply fresh age/eligibility.
+  try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: paths[0])
+  measures.lock.withLock {
+    measures.instant = measures.instant.addingTimeInterval(7 * 3600)
+    measures.failed = [paths[0]]
+  }
+  let pending = sources.disk([record])
+  for path in paths.dropFirst() {
+    equal(
+      pending.first { $0.path == path }.map { AutopilotPolicy.decide($0, memory: memory).status },
+      .protected, "previous-cycle items are protected before later slices reach them")
+  }
+  items = await ask { items in
+    measures.lock.withLock { measures.failedCalls.contains(paths[0]) }
+      && paths.dropFirst().allSatisfy { path in
+        items.contains { $0.path == path && $0.protectedReason == nil }
+      }
+  }
+  let unknown = items.first { $0.path == paths[0] }
+  equal(unknown?.bytes, old?.bytes, "failed refresh retains the known bytes")
+  equal(unknown?.facts["stale"], "month", "retained old facts are visibly unconfirmed")
+  equal(
+    unknown.map { AutopilotPolicy.decide($0, memory: memory).status }, .protected,
+    "failed refresh cannot retain old burn authority across successful unrelated slices")
+
+  measures.lock.withLock { measures.failed = [] }
+  items = await ask { items in
+    items.contains { $0.path == paths[0] && $0.protectedReason == nil && $0.facts["stale"] == "today" }
+  }
+  let recovered = items.first { $0.path == paths[0] }
+  equal(recovered?.protectedReason, nil, "a successful fresh observation replaces the hold")
+  equal(recovered?.facts["stale"], "today", "recovery refreshes the age fact")
+  equal(recovered.map { AutopilotPolicy.matches(rule, $0) }, false, "recent output no longer matches the old-age rule")
+  equal(recovered.map { AutopilotPolicy.decide($0, memory: memory).status }, .unsure, "recovery does not revive stale burn authority")
+  // A failed descendant listing must hold that subtree, without re-holding a sibling whose
+  // fresh check succeeded. Recovering the subtree clears its hold within the same cycle.
+  equal(chmod(privateRoot, 0), 0)
+  defer { _ = chmod(privateRoot, 0o755) }
+  measures.lock.withLock { measures.instant = measures.instant.addingTimeInterval(7 * 3600) }
+  items = await ask { items in
+    items.contains { $0.path == healthy && $0.protectedReason == nil }
+  }
+  equal(
+    items.first { $0.path == healthy }.map { AutopilotPolicy.decide($0, memory: memory).status },
+    .burn, "failed descendant enumeration leaves successfully checked sibling actionable")
+  equal(chmod(privateRoot, 0o755), 0)
+  items = await ask { items in
+    items.contains { $0.path == hidden && $0.protectedReason == nil }
+  }
+  for path in [healthy, hidden] {
+    equal(
+      items.first { $0.path == path }.map { AutopilotPolicy.decide($0, memory: memory).status },
+      .burn, "descendant recovery restores authority without waiting for the six-hour cycle")
+  }
+  await monitor.shutdownWorktrees()
 }
 
 /// Autopilot's live junk list walks every copy at most every six hours, plus each copy the

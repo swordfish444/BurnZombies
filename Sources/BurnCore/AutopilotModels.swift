@@ -131,7 +131,7 @@ public struct AutopilotRule: Codable, Sendable, Identifiable, Equatable {
   }
 }
 
-/// The AI's judgment for one exact item revision.
+/// The AI's time-limited judgment for one exact item revision. `date` is native acceptance time.
 public struct AutopilotJudgment: Codable, Sendable, Equatable {
   public var itemID: String
   public var revision: String

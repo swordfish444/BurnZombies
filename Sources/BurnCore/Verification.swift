@@ -2,6 +2,13 @@ import Foundation
 
 /// Finite, conservative receipt states. Resource absence is not a speed measurement.
 public enum Verification {
+  /// Compare clocks sampled together at successive observation boundaries. A scan's first
+  /// process timestamp is not paired with its completion wall time: changing scan cost would
+  /// otherwise look like a clock jump. Thresholds retain the conservative no-credit guard.
+  public static func observationInterrupted(wallSeconds: Double, monotonicSeconds: Double) -> Bool {
+    monotonicSeconds > 75 || abs(wallSeconds - monotonicSeconds) > 5
+  }
+
   public static func recurrence(event: CleanupEvent, observations: [Observation], parentAlive: (Member) -> Bool) -> Bool {
     observations.contains { observation in
       let started = Double(observation.identity.seconds) + Double(observation.identity.micros) / 1e6

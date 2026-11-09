@@ -28,7 +28,6 @@ public enum AutopilotDisk {
   private static let candidateLimit = 500
   /// Entries a copy's own walk may look at before its age counts as unknown.
   private static let entryBudget = 100_000
-  private static let timeBudget: TimeInterval = 60
   /// Relative to the home folder. Nothing here is ever listed or removed.
   private static let excluded = [
     "Library/Mobile Documents", "Library/Mail", "Library/Messages", "Pictures", ".ssh", ".gnupg",
@@ -45,7 +44,7 @@ public enum AutopilotDisk {
       ("Library/Caches/Homebrew", "package-cache", "Homebrew", false),
       ("Library/Caches/pip", "package-cache", "pip", false),
       (".cache/pip", "package-cache", "pip", false),
-      (".gradle/caches", "package-cache", "Gradle", false),
+      (AutopilotGradleCaches.relativePath, "package-cache", "Gradle", true),
       ("Library/Developer/CoreSimulator/Caches", "xcode-derived", "Simulator", false),
     ]
 
@@ -138,48 +137,157 @@ public enum AutopilotDisk {
     var walked: Bool
   }
 
-  /// Rebuildable folders of at least 100 MB: inside live checkouts (with `mains`, also the main
-  /// checkout each one belongs to) and, with `caches`, in the global developer caches. Nothing
-  /// outside `home`, no link, no private area, nothing Git tracks. Work stops at a time budget;
-  /// the rest comes next time. With `walks`, nothing being burned is walked: a checkout or cache
-  /// folder a burn wants is skipped, or left at the next step.
+  /// Progress belongs to one six-hour discovery cycle. No open directory handles survive a
+  /// slice: burns can still take a folder as soon as the active walk steps out of it.
+  public struct ScanProgress {
+    fileprivate var measured: Set<String> = []
+    fileprivate var finishedRoots: Set<String> = []
+    fileprivate var searches: [String: FolderSearch] = [:]
+    fileprivate var prepared: [String: PreparedCheckout] = [:]
+    /// Failed/occupied targets wait behind every not-yet-attempted target before retrying.
+    fileprivate var deferred: Set<String> = []
+    fileprivate var trailSizes: [String: UInt64] = [:]
+    var roundFinished = false
+    public fileprivate(set) var complete = false
+    public init() {}
+
+    mutating func invalidate(_ path: String) {
+      measured = measured.filter { !WorkspaceSafety.contains(path, $0) }
+      finishedRoots = finishedRoots.filter { !AutopilotWalks.overlap(path, $0) }
+      searches = searches.filter { !AutopilotWalks.overlap(path, $0.key) }
+      prepared = prepared.filter { !AutopilotWalks.overlap(path, $0.key) }
+      deferred = deferred.filter { !AutopilotWalks.overlap(path, $0) }
+      trailSizes = trailSizes.filter { !WorkspaceSafety.contains(path, $0.key) }
+      roundFinished = false
+      complete = false
+    }
+  }
+
+  fileprivate struct FolderSearch {
+    var pending: [(path: String, depth: Int)]
+    var found: [(path: String, name: String)] = []
+    var failed: [(path: String, depth: Int)] = []
+    var current: DirectoryEntries?
+  }
+
+  fileprivate struct DirectoryEntries {
+    var path: String
+    var depth: Int
+    var names: [String]
+    var index: Int = 0
+  }
+
+  fileprivate struct PreparedCheckout {
+    var folders: [(path: String, name: String)]
+    var worked: (date: Date?, old: Bool)
+  }
+
+  /// Only successfully measured targets replace an earlier observation. A failed measurement
+  /// stays unknown; a partial slice must not erase discoveries from preceding slices.
+  public struct ScanBatch {
+    public var items: [AutopilotItem]
+    public var measured: Set<String>
+    public var discarded: Set<String>
+    /// Failed targets or parent checks cannot renew an earlier observation's cleanup authority.
+    public var incomplete: Set<String>
+  }
+
+  /// Rebuildable folders of at least 100 MB inside live checkouts and known developer caches.
+  /// Call `scan` with retained progress when discovery needs more than one bounded slice.
   public static func items(
     worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), caches: Bool = true,
     mains: Bool = true, now: Date = Date(),
     sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) },
     protected: ProtectedLocations? = nil, walks: AutopilotWalks? = nil, trail: String? = nil
   ) -> [AutopilotItem] {
+    var progress = ScanProgress()
+    return scan(
+      worktrees: worktrees, home: home, caches: caches, mains: mains, now: now,
+      sizer: sizer, protected: protected, walks: walks, trail: trail, progress: &progress).items
+  }
+
+  /// Resume after the last measured folder, including inside a checkout. Budget and clock are
+  /// dependencies for deterministic proofs; the live scanner uses the unchanged one-minute cap.
+  public static func scan(
+    worktrees: [WorktreeRecord], home: String = NSHomeDirectory(), caches: Bool = true,
+    mains: Bool = true, now: Date = Date(),
+    sizer: (String) -> UInt64? = { AutopilotDisk.allocatedSize($0) },
+    protected: ProtectedLocations? = nil, walks: AutopilotWalks? = nil, trail: String? = nil,
+    progress: inout ScanProgress, budget: TimeInterval = 60, clock: () -> Date = Date.init
+  ) -> ScanBatch {
     let protected = protected ?? .limited(homes: [home])
     let base = WorkspaceSafety.canonical(home)
-    guard base.hasPrefix("/"), base != "/" else { return [] }
-    let deadline = Date().addingTimeInterval(timeBudget)
+    guard base.hasPrefix("/"), base != "/" else { return ScanBatch(items: [], measured: [], discarded: [], incomplete: []) }
+    let deadline = clock().addingTimeInterval(budget)
     var found: [String: AutopilotItem] = [:]
+    var measured: Set<String> = []
+    var discarded: Set<String> = []
+    var incomplete: Set<String> = []
+    progress.complete = false
+    progress.roundFinished = false
+    func batch() -> ScanBatch {
+      ScanBatch(
+        items: found.values.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id },
+        measured: measured, discarded: discarded,
+        incomplete: incomplete.union(
+          progress.searches.values.flatMap { $0.failed.map(\.path) }))
+    }
+    func deferCheck(_ path: String) {
+      progress.deferred.insert(path)
+      incomplete.insert(path)
+    }
 
     for cache in globalCaches where caches {
       let location = base + "/" + cache.path
-      guard Date() < deadline, refusal(location, home: base, protected: protected) == nil else {
-        continue
-      }
+      guard clock() < deadline else { return batch() }
+      guard refusal(location, home: base, protected: protected) == nil else { continue }
       var targets = [location]
       if cache.children {
-        var names = (try? FileManager.default.contentsOfDirectory(atPath: location)) ?? []
+        if progress.deferred.contains(location) { continue }
+        guard var names = try? FileManager.default.contentsOfDirectory(atPath: location) else {
+          progress.invalidate(location)
+          deferCheck(location)
+          continue
+        }
         if playwrightCaches.contains(cache.path) {
-          names =
-            playwrightUsed(location, protected: protected).map {
-              playwrightBuilds(names, used: $0)
-            } ?? []
+          guard let used = playwrightUsed(location, protected: protected) else {
+            progress.invalidate(location)
+            deferCheck(location)
+            continue
+          }
+          let eligible = playwrightBuilds(names, used: used)
+          discarded.formUnion(Set(names).subtracting(eligible).map { location + "/" + $0 })
+          names = eligible
+        } else if cache.path == AutopilotGradleCaches.relativePath {
+          let eligible = names.filter(AutopilotGradleCaches.isCacheDirectory)
+          discarded.formUnion(Set(names).subtracting(eligible).map { location + "/" + $0 })
+          discarded.insert(location)
+          names = eligible
         }
         targets = names.sorted().map { location + "/" + $0 }
       }
       for target in targets {
-        guard Date() < deadline, refusal(target, home: base, protected: protected) == nil,
-          walks?.enter(target) ?? true
-        else { continue }
-        defer { walks?.leave(target, early: false) }
-        guard let bytes = sizer(target), bytes >= minimumBytes, let touched = modified(target)
-        else { continue }
+        if progress.measured.contains(target) || progress.deferred.contains(target) { continue }
+        guard clock() < deadline else { return batch() }
+        guard refusal(target, home: base, protected: protected) == nil else { continue }
+        guard walks?.enter(target) ?? true else {
+          deferCheck(target)
+          continue
+        }
+        defer { walks?.leave(target, early: walks?.wanted(target) ?? false) }
+        guard let bytes = sizer(target), !(walks?.wanted(target) ?? false),
+          let touched = modified(target)
+        else {
+          deferCheck(target)
+          continue
+        }
+        progress.measured.insert(target)
+        measured.insert(target)
+        guard bytes >= minimumBytes else { continue }
         let child = leaf(target)
-        let name = cache.children ? child + " in " + cache.label : cache.label + " cache"
+        let name = cache.path == AutopilotGradleCaches.relativePath
+          ? (AutopilotGradleCaches.displayName(child) ?? child)
+          : (cache.children ? child + " in " + cache.label : cache.label + " cache")
         let subject = cache.children && cache.folder == "xcode-derived" ? child : cache.label
         let item = AutopilotItem(
           id: "disk:" + AutopilotItem.hash(target), kind: .disk, name: name,
@@ -192,61 +300,179 @@ public enum AutopilotDisk {
       }
     }
 
-    // What robot browsers left in the temp folder, sized with the caches.
-    if caches, let trail, Date() < deadline,
+    // Reuse measured browser leftovers too: a large temp directory must not repeatedly consume
+    // the slice before project folders get a turn. Eligibility is still checked fresh by its owner.
+    if caches, let trail {
+      guard clock() < deadline else { return batch() }
+      var pendingTrail = false
+      var unknownTrail = false
       let item = AutopilotBrowserTrail.item(
-        in: trail, now: now, minimumBytes: minimumBytes, sizer: sizer)
-    {
-      found[item.id] = item
+        in: trail, now: now, minimumBytes: minimumBytes,
+        sizer: { path in
+          if let bytes = progress.trailSizes[path] { return bytes }
+          if progress.deferred.contains(path) { unknownTrail = true; return nil }
+          guard clock() < deadline else { pendingTrail = true; return nil }
+          guard let bytes = sizer(path) else {
+            deferCheck(path)
+            unknownTrail = true
+            return nil
+          }
+          progress.trailSizes[path] = bytes
+          return bytes
+        })
+      if let item { found[item.id] = item }
+      if pendingTrail || unknownTrail { incomplete.insert(trail) }
+      if !pendingTrail && !unknownTrail { measured.insert(trail) }
+      if pendingTrail { return batch() }
     }
 
     for checkout in checkouts(worktrees, home: base, mains: mains, protected: protected) {
-      guard Date() < deadline else { break }
-      guard walks?.enter(checkout.path) ?? true else { continue }
+      if progress.finishedRoots.contains(checkout.path) || progress.deferred.contains(checkout.path) {
+        continue
+      }
+      guard clock() < deadline else { return batch() }
+      guard walks?.enter(checkout.path) ?? true else {
+        deferCheck(checkout.path)
+        continue
+      }
       var early = false
       defer { walks?.leave(checkout.path, early: early) }
-      // Whether a burn wants the walk out of this checkout. Once it does, nothing more is read.
       func away() -> Bool {
         if !early { early = walks?.wanted(checkout.path) ?? false }
         return early
       }
-      // Git is asked about the checkout, so its Git data must be within reach too.
       guard refusal(checkout.path, home: base, protected: protected) == nil,
         protected.pointerPlace(checkout.path) == nil
-      else { continue }
-      let folders = rebuildableFolders(under: checkout.path, stop: away).filter {
-        refusal($0.path, home: base, protected: protected) == nil
+      else {
+        progress.finishedRoots.insert(checkout.path)
+        continue
       }
-      guard !folders.isEmpty, !away(),
-        let blocked = trackedFolders(folders.map { $0.path }, in: checkout.path)
-      else { continue }
-      // Another repository inside a folder is somebody's project, not build output.
-      let junk = folders.filter { !blocked.contains($0.path) && !exists($0.path + "/.git") }
-      guard !junk.isEmpty else { continue }
+      if progress.prepared[checkout.path] == nil {
+        var search = progress.searches[checkout.path]
+          ?? FolderSearch(pending: [(path: checkout.path, depth: 0)])
+        let searched = advanceFolders(&search, until: deadline, clock: clock, stop: away)
+        progress.searches[checkout.path] = search
+        guard searched else {
+          if early { deferCheck(checkout.path); continue }
+          return batch()
+        }
+        let folders = search.found.filter {
+          refusal($0.path, home: base, protected: protected) == nil
+        }
+        guard !away() else { deferCheck(checkout.path); continue }
+        // Git failure cannot make unknown files safe. Retry this checkout after unvisited ones.
+        let blocked: Set<String>
+        if folders.isEmpty {
+          blocked = []
+        } else if let tracked = trackedFolders(folders.map { $0.path }, in: checkout.path) {
+          blocked = tracked
+        } else {
+          // Tracking is authority for the whole checkout. Its recovery must refresh every
+          // descendant held by this failure, including ones measured in an earlier slice.
+          progress.invalidate(checkout.path)
+          deferCheck(checkout.path)
+          continue
+        }
+        let junk = folders.filter { !blocked.contains($0.path) && !exists($0.path + "/.git") }
+        discarded.formUnion(Set(folders.map(\.path)).subtracting(junk.map(\.path)))
+        let worked = lastWorked(
+          checkout, skipping: Set(junk.map { $0.path }), now: now,
+          until: Date().addingTimeInterval(max(0, deadline.timeIntervalSince(clock()))), stop: away)
+        guard !away() else { deferCheck(checkout.path); continue }
+        progress.prepared[checkout.path] = PreparedCheckout(folders: junk, worked: worked)
+        if search.failed.isEmpty { progress.searches[checkout.path] = nil }
+      }
+      guard let prepared = progress.prepared[checkout.path] else { continue }
       let place = leaf(checkout.path)
-      let worked = lastWorked(
-        checkout, skipping: Set(junk.map { $0.path }), now: now, until: deadline, stop: away)
-      for folder in junk {
-        guard Date() < deadline, !away() else { break }
-        guard let bytes = sizer(folder.path), bytes >= minimumBytes,
-          let touched = modified(folder.path)
-        else { continue }
+      for folder in prepared.folders {
+        if progress.measured.contains(folder.path) || progress.deferred.contains(folder.path) {
+          continue
+        }
+        guard clock() < deadline else { return batch() }
+        guard !away() else { deferCheck(checkout.path); break }
+        guard refusal(folder.path, home: base, protected: protected) == nil else {
+          progress.measured.insert(folder.path)
+          continue
+        }
+        guard let bytes = sizer(folder.path), !away(), let touched = modified(folder.path) else {
+          deferCheck(folder.path)
+          continue
+        }
+        progress.measured.insert(folder.path)
+        measured.insert(folder.path)
+        guard bytes >= minimumBytes else { continue }
         let fact = rebuildable[folder.name] ?? "other"
         let inside = parent(String(folder.path.dropFirst(checkout.path.count + 1)))
         var name = folder.name + " in " + place
         if !inside.isEmpty { name += "/" + inside }
-        let newest = worked.date.map { max($0, touched) } ?? touched
+        let newest = prepared.worked.date.map { max($0, touched) } ?? touched
         let item = AutopilotItem(
           id: "disk:" + AutopilotItem.hash(folder.path), kind: .disk, name: name,
           detail: sentence(fact, subject: place), path: folder.path, bytes: bytes,
           facts: [
-            "folder": fact, "home": worked.old ? "stale-worktree" : "repo",
+            "folder": fact, "home": prepared.worked.old ? "stale-worktree" : "repo",
             "stale": AutopilotPolicy.stale(since: newest, now: now), "size": scale(bytes),
           ], observedAt: now, lastUsed: newest)
         found[item.id] = item
       }
+      if !early && prepared.folders.allSatisfy({ progress.measured.contains($0.path) }) {
+        if let search = progress.searches[checkout.path], !search.failed.isEmpty {
+          incomplete.formUnion(search.failed.map(\.path))
+          progress.searches[checkout.path] = FolderSearch(pending: search.failed)
+          // The checkout waits its turn, but only failed descendants lose authority.
+          progress.deferred.insert(checkout.path)
+        } else {
+          progress.finishedRoots.insert(checkout.path)
+        }
+        progress.prepared[checkout.path] = nil
+      }
     }
-    return found.values.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
+    // Exhaust the first attempt at every target before revisiting failures. Completion is
+    // truthful: a retryable failure is not a completed six-hour scan.
+    progress.complete = progress.deferred.isEmpty
+    progress.roundFinished = true
+    progress.deferred = []
+    return batch()
+  }
+
+  private static func advanceFolders(
+    _ search: inout FolderSearch, until deadline: Date, clock: () -> Date, stop: () -> Bool
+  ) -> Bool {
+    var listed = 0
+    let firstCount = search.found.count
+    while search.current != nil || !search.pending.isEmpty {
+      guard clock() < deadline, !stop(), listed < directoryBudget,
+        search.found.count - firstCount < candidateLimit else { return false }
+      if search.current == nil {
+        let (directory, depth) = search.pending.removeFirst()
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else {
+          search.failed.append((path: directory, depth: depth))
+          continue
+        }
+        listed += 1
+        search.current = DirectoryEntries(path: directory, depth: depth, names: names.sorted())
+      }
+      guard var current = search.current else { continue }
+      while current.index < current.names.count {
+        guard clock() < deadline, !stop(), search.found.count - firstCount < candidateLimit else {
+          search.current = current
+          return false
+        }
+        let name = current.names[current.index]
+        current.index += 1
+        guard name != ".git" else { continue }
+        let path = current.path + "/" + name
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { continue }
+        if rebuildable[name] != nil {
+          search.found.append((path: path, name: name))
+        } else if current.depth + 1 < maximumDepth && !exists(path + "/.git") {
+          search.pending.append((path: path, depth: current.depth + 1))
+        }
+      }
+      search.current = nil
+    }
+    return true
   }
 
   /// Disk space a folder really uses (allocated blocks) with the native read-only fts walker:
@@ -507,7 +733,11 @@ public enum AutopilotDisk {
     let relative = String(path.dropFirst(home.count + 1))
     for cache in globalCaches {
       let match = cache.children ? (parent(relative) == cache.path) : (relative == cache.path)
-      if match { return cache.folder }
+      if match {
+        if cache.path == AutopilotGradleCaches.relativePath,
+          !AutopilotGradleCaches.isCacheDirectory(leaf(path)) { return nil }
+        return cache.folder
+      }
     }
     guard let folder = rebuildable[leaf(path)],
       enclosingCheckout(of: path, home: home, levels: maximumDepth) != nil
@@ -521,7 +751,9 @@ public enum AutopilotDisk {
     let base = WorkspaceSafety.canonical(home)
     let relative = path.hasPrefix(base + "/") ? String(path.dropFirst(base.count + 1)) : ""
     if globalCaches.contains(where: {
-      $0.children ? parent(relative) == $0.path : relative == $0.path
+      let matches = $0.children ? parent(relative) == $0.path : relative == $0.path
+      return matches && ($0.path != AutopilotGradleCaches.relativePath
+        || AutopilotGradleCaches.isCacheDirectory(leaf(path)))
     }) {
       return true
     }

@@ -182,6 +182,29 @@ final class StorageNativeTests: TestSuite {
       "verified")
   }
   func testInterruptedVerificationGetsNoCredit() {
+    // One scan takes a second, the next eight, with the app's 15-second pause between them.
+    // Both clocks advance together throughout; the old start/end pairing fabricated 7s drift.
+    let firstStart = 100.0, firstFinish = 101.0, nextStart = 116.0, nextFinish = 124.0
+    check(
+      Verification.observationInterrupted(
+        wallSeconds: nextFinish - firstFinish, monotonicSeconds: nextStart - firstStart),
+      "mixed scan-start and completion timestamps reproduce the false interruption")
+    checkFalse(
+      Verification.observationInterrupted(
+        wallSeconds: nextFinish - firstFinish, monotonicSeconds: nextFinish - firstFinish),
+      "variable scan duration cannot interrupt paired completion clocks")
+    checkFalse(
+      Verification.observationInterrupted(wallSeconds: 75, monotonicSeconds: 75),
+      "the existing gap boundary is unchanged")
+    check(
+      Verification.observationInterrupted(wallSeconds: 76, monotonicSeconds: 76),
+      "a real observation gap still loses continuity")
+    check(
+      Verification.observationInterrupted(wallSeconds: 21, monotonicSeconds: 15),
+      "a forward wall-clock discontinuity still loses continuity")
+    check(
+      Verification.observationInterrupted(wallSeconds: 9, monotonicSeconds: 15),
+      "a backward wall-clock discontinuity still loses continuity")
     var c = Catalog()
     c.events = [
       CleanupEvent(

@@ -4,7 +4,7 @@ import Foundation
 public enum AutopilotSweeper {
   /// The review worker's own maximum: a real Mac's first sweep read for nine minutes.
   public static let aiTimeout: TimeInterval = 900
-  public static let rejudgeInterval: TimeInterval = 4 * 3600
+  public static let rejudgeInterval = AutopilotPolicy.aiJudgmentLifetime
   public static let minimumSpacing: TimeInterval = 30 * 60
   /// A new install looks every minute for its first half hour, so what its first inventory finds
   /// is burned or asked about as soon as it arrives, and its first AI sweep waits ten minutes
@@ -697,7 +697,7 @@ public actor AutopilotCoordinator {
         stopReason == "limit"
         ? "Hunt reached its spending limit after \(took) s." : "Hunt stopped after \(took) s."
     } else if failure == AutopilotHarness.outOfTime,
-      await engine.memory().judgments.values.contains(where: { $0.date >= started })
+      await engine.memory().judgments.values.contains(where: { $0.date >= started && $0.date <= now })
     {
       failure = nil
       note = "AI sweep used all its time; the next one picks up where it left off."

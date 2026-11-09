@@ -378,14 +378,14 @@ public actor Autopilot {
     var used = start
     for item in items where !spent.contains(item.id) && burning[item.id] == nil {
       // A cheap first look, on memory as the pass began.
-      guard AutopilotPolicy.decide(item, memory: early).status == .burn,
+      guard AutopilotPolicy.decide(item, memory: early, now: now).status == .burn,
         used[item.kind, default: 0] < Self.maximumBurns[item.kind, default: 0]
       else { continue }
       // Every retire needs the backup key. While it waits for the owner, old copies wait too,
       // without a receipt: the copy that ran into it says why, and the menu asks.
       if item.kind == .worktree, sources.recoveryKeyWait() != nil { continue }
       let memory = memory()
-      let decision = AutopilotPolicy.decide(item, memory: memory)
+      let decision = AutopilotPolicy.decide(item, memory: memory, now: now)
       guard decision.status == .burn, let authority = decision.authority,
         refused[Self.refusalKey(item.id, item.revision, authority)] == nil
       else { continue }
@@ -538,7 +538,9 @@ public actor Autopilot {
     guard let items = catalog?.items else { return [] }
     let acted = try? store.updateMemory { memory -> Set<String> in
       AutopilotPolicy.expireTells(&memory, now: now)
-      let unsure = items.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
+      let unsure = items.filter {
+        AutopilotPolicy.decide($0, memory: memory, now: now).status == .unsure
+      }
       Self.keepCurrent(&memory, unsure: unsure)
       var acted = Set<String>()
       for var question in AutopilotPolicy.proposeQuestions(unsure, memory: memory, now: now) {
@@ -614,7 +616,9 @@ public actor Autopilot {
     catalog = current
     try? store.save(catalog: current)
     try? store.updateMemory { memory in
-      let unsure = kept.filter { AutopilotPolicy.decide($0, memory: memory).status == .unsure }
+      let unsure = kept.filter {
+        AutopilotPolicy.decide($0, memory: memory, now: now).status == .unsure
+      }
       Self.keepCurrent(&memory, unsure: unsure)
     }
     return snapshot(now: now)
@@ -667,14 +671,14 @@ public actor Autopilot {
     var seen = Set<String>()
     for item in catalog?.items ?? [] {
       seen.insert(item.id)
-      let decision = AutopilotPolicy.decide(item, memory: memory)
+      let decision = AutopilotPolicy.decide(item, memory: memory, now: now)
       var status = decision.status
       let receipt = latest[item.id]
       if let receipt, receipt.date >= item.observedAt {
         if receipt.outcome == "failed" { status = .failed }
         if receipt.outcome == "burned" { status = .burned }
       }
-      let judgment = memory.judgments[item.id].flatMap { $0.revision == item.revision ? $0 : nil }
+      let judgment = AutopilotPolicy.currentJudgment(for: item, memory: memory, now: now)
       var entry = AutopilotEntry(
         item: item, status: status, authority: decision.authority,
         label: judgment?.label ?? item.name, why: why(item, decision, memory),
@@ -1046,6 +1050,7 @@ public actor Autopilot {
 
   /// Records AI judgments. Returns the ids that are now authorized to burn.
   public func decide(_ judgments: [AutopilotJudgment]) throws -> [String] {
+    let acceptedAt = Date()
     let items = Dictionary(
       (catalog?.items ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     var accepted = [AutopilotJudgment]()
@@ -1055,6 +1060,7 @@ public actor Autopilot {
       judgment.confidence = min(1, max(0, judgment.confidence))
       judgment.label = String(judgment.label.prefix(120))
       judgment.why = String(judgment.why.prefix(400))
+      judgment.date = acceptedAt
       accepted.append(judgment)
     }
     try store.updateMemory { memory in

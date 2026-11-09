@@ -15,6 +15,8 @@ import tempfile
 from installer_signing_fixture import production_pin, signing_fixture
 
 repo = Path(__file__).resolve().parents[1]
+release_version = json.loads((repo / "packaging/mcpb/manifest.json").read_text())["version"]
+release_base = f"https://github.com/swordfish444/BurnZombies/releases/download/v{release_version}/"
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("archive", type=Path)
 parser.add_argument("--fixture-signer", action="store_true",
@@ -45,11 +47,11 @@ with tempfile.TemporaryDirectory(prefix="bz-install-") as temp, ExitStack() as s
         (remote / "SHA256SUMS").write_text(f"{digest}  {asset}\n")
     checksum()
     stubs = root / "bin"; stubs.mkdir()
-    (stubs / "curl").write_text(f"#!{sys.executable}\n" + '''import os,sys,shutil
+    (stubs / "curl").write_text(f"#!{sys.executable}\nrelease_base={release_base!r}\n" + '''import os,sys,shutil
 from pathlib import Path
 args=sys.argv[1:]
 url=next(a for a in args if a.startswith('https://'))
-assert url.startswith('https://github.com/swordfish444/BurnZombies/releases/download/v0.18.0/')
+assert url.startswith(release_base)
 name=url.rsplit('/',1)[1]
 assert name in ('SHA256SUMS','BurnZombies-macOS-universal.tar.gz')
 shutil.copyfile(Path(os.environ['BZ_TEST_REMOTE'])/name, args[args.index('-o')+1])
