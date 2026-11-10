@@ -297,13 +297,29 @@ import MCP
         inputSchema: schema("preview_token"),
         annotations: .init(
           readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false)),
+      Tool(
+        name: "burnzombies_xray", title: "Blazer X-Ray telemetry",
+        description:
+          "Read-only computer-wide X-Ray: APFS free space and GB/hr exhaust velocity, Overdrive status, disguised build caches (DerivedData, Android SDK trees, dead agent scratch, shut-down Simulator data), and active/recent Living Zombie agent thrash (loop zombies, token vampires, focus-stealing browsers).",
+        inputSchema: empty, annotations: readOnly),
+      Tool(
+        name: "burnzombies_baton", title: "Compile cross-harness execution baton",
+        description:
+          "Compile a compact (<2.4 KB) <execution_baton> handoff capsule from a Claude Code, Codex, or Antigravity session or Git worktree, including Negative Memory of failed commands so the next agent resumes without re-scanning or repeating dead ends.",
+        inputSchema: .object([
+          "type": "object",
+          "properties": .object([
+            "target": .object(["type": "string", "minLength": 1, "maxLength": 1024])
+          ]),
+          "additionalProperties": false,
+        ]), annotations: readOnly),
     ]
     let exposed =
       reviewMode
       ? tools.filter {
         lane?.tools.contains($0.name) ?? ![
           "burnzombies_lifecycle", "burnzombies_checkpoint", "burnzombies_workspace",
-          "burnzombies_work",
+          "burnzombies_work", "burnzombies_xray", "burnzombies_baton",
         ].contains($0.name)
       } : tools
     await server.withMethodHandler(ListTools.self) { _ in .init(tools: exposed) }
@@ -322,6 +338,35 @@ import MCP
           ], isError: true)
       }
       let arguments = params.arguments ?? [:]
+      if params.name == "burnzombies_xray" {
+        guard arguments.isEmpty else {
+          throw MCPError.invalidParams("burnzombies_xray takes no arguments.")
+        }
+        let home = ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] ?? NSHomeDirectory()
+        let report = BlazerXRay.scan(home: home, root: Store.defaultRoot)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let text = String(decoding: try encoder.encode(report), as: UTF8.self)
+        return .init(content: [.text(text: text, annotations: nil, _meta: nil)], isError: false)
+      }
+      if params.name == "burnzombies_baton" {
+        guard Set(arguments.keys).isSubset(of: ["target"]),
+          arguments["target"] == nil || arguments["target"]?.stringValue != nil
+        else { throw MCPError.invalidParams("Provide optional target string only.") }
+        do {
+          let home = ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] ?? NSHomeDirectory()
+          let baton = try AgentBaton.compile(
+            target: arguments["target"]?.stringValue, home: home)
+          let encoder = JSONEncoder()
+          encoder.outputFormatting = [.sortedKeys]
+          let text = String(decoding: try encoder.encode(baton), as: UTF8.self)
+          return .init(content: [.text(text: text, annotations: nil, _meta: nil)], isError: false)
+        } catch {
+          return .init(
+            content: [.text(text: error.localizedDescription, annotations: nil, _meta: nil)],
+            isError: true)
+        }
+      }
       if params.name == "burnzombies_checkpoint" {
         guard Set(arguments.keys).isSubset(of: ["client", "tool_name"]),
           let client = arguments["client"]?.stringValue, ["codex", "claude"].contains(client),

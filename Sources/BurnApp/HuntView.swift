@@ -104,9 +104,20 @@ struct HuntView: View {
     }
   }
 
-  /// What the scene shouts for a feed line: copies, junk and programs each have their own.
+  /// What the scene shouts for a feed line: copies, junk, disguised caches and thrash zombies each have their own.
   static func celebration(for event: HuntLogEntry) -> String {
     let text = event.message
+    if text.localizedCaseInsensitiveContains("loop")
+      || text.localizedCaseInsensitiveContains("thrash")
+    {
+      return "LOOP ZOMBIE ERADICATED"
+    }
+    if text.localizedCaseInsensitiveContains("disguised")
+      || text.localizedCaseInsensitiveContains("android sdk")
+      || text.localizedCaseInsensitiveContains("simulator data")
+    {
+      return "DISGUISED CACHE VAPORIZED"
+    }
     if text.localizedCaseInsensitiveContains("worktree") || text.contains("Restore point saved") {
       return "WORKTREE ERADICATED"
     }

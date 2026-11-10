@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         assert initialized["result"]["serverInfo"]["version"] == app_version, initialized["result"]["serverInfo"]
         send("notifications/initialized", notification=True)
         tools = send("tools/list")["result"]["tools"]
-        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint", "burnzombies_work", "burnzombies_lifecycle", "burnzombies_workspace", "burnzombies_workspace_preview", "burnzombies_workspace_clean", "burnzombies_worktrees", "burnzombies_disk_decide", "burnzombies_disk_preview", "burnzombies_disk_clean", "burnzombies_disk_inspect", "burnzombies_disk_explore", "burnzombies_disk_evidence", "burnzombies_disk_recommend", "burnzombies_owner_preview", "burnzombies_owner_stop", "burnzombies_cache_preview", "burnzombies_cache_clean"}
+        assert {t["name"] for t in tools} == {"burnzombies_status", "burnzombies_inspect", "burnzombies_preview", "burnzombies_burn", "burnzombies_checkpoint", "burnzombies_work", "burnzombies_lifecycle", "burnzombies_workspace", "burnzombies_workspace_preview", "burnzombies_workspace_clean", "burnzombies_worktrees", "burnzombies_disk_decide", "burnzombies_disk_preview", "burnzombies_disk_clean", "burnzombies_disk_inspect", "burnzombies_disk_explore", "burnzombies_disk_evidence", "burnzombies_disk_recommend", "burnzombies_owner_preview", "burnzombies_owner_stop", "burnzombies_cache_preview", "burnzombies_cache_clean", "burnzombies_xray", "burnzombies_baton"}
         burn = next(t for t in tools if t["name"] == "burnzombies_burn")
         assert burn["annotations"]["destructiveHint"] is True
         def call(name, args):
@@ -69,6 +69,10 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         assert not status.get("isError")
         actual = json.loads(status["content"][0]["text"])
         assert actual["ok"] and actual["observedProcesses"] > 0 and actual["verifiedHelpers"] == 0
+        xray = call("burnzombies_xray", {})["result"]
+        assert not xray.get("isError") and "volume" in json.loads(xray["content"][0]["text"])
+        baton = call("burnzombies_baton", {"target": root})["result"]
+        assert not baton.get("isError") and "<execution_baton>" in json.loads(baton["content"][0]["text"])["markdown"]
         checkpoint = call("burnzombies_checkpoint", {"client": "codex", "tool_name": "burnzombies_status"})["result"]
         assert not checkpoint.get("isError") and json.loads(checkpoint["content"][0]["text"]) == {}
         Path(root, "review-request").write_text("requested")
@@ -169,7 +173,7 @@ with tempfile.TemporaryDirectory(prefix="bz-mcp-", dir="/tmp") as root:
         send("initialize", {"protocolVersion":"2025-11-25", "capabilities":{}, "clientInfo":{"name":"Bounded review proof","version":"1"}})
         send("notifications/initialized", notification=True)
         review_tools = {t['name'] for t in send('tools/list')['result']['tools']}
-        assert 'burnzombies_lifecycle' not in review_tools and 'burnzombies_checkpoint' not in review_tools and 'burnzombies_workspace' not in review_tools and 'burnzombies_work' not in review_tools
+        assert 'burnzombies_lifecycle' not in review_tools and 'burnzombies_checkpoint' not in review_tools and 'burnzombies_workspace' not in review_tools and 'burnzombies_work' not in review_tools and 'burnzombies_xray' not in review_tools and 'burnzombies_baton' not in review_tools
         assert 'error' in call('burnzombies_lifecycle', registration)
         assert 'error' in call('burnzombies_workspace', {'action':'create'})
         for _ in range(8):

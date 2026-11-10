@@ -43,6 +43,29 @@ do {
   switch args.first ?? "help" {
   case "version", "--version":
     print("BurnZombies \(BuildIdentity.version) (build \(BuildIdentity.build))")
+  case "xray":
+    let report = BlazerXRay.scan()
+    if args.contains("--json") {
+      try json(report)
+    } else {
+      print(BlazerXRay.formatTerminal(report))
+    }
+  case "baton":
+    let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
+    let baton = try AgentBaton.compile(target: positional.first)
+    if args.contains("--copy") {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(baton.markdown, forType: .string)
+    }
+    if args.contains("--json") {
+      try json(baton)
+    } else {
+      print(baton.markdown)
+      if args.contains("--copy") {
+        FileHandle.standardError.write(
+          Data("Copied <execution_baton> to macOS clipboard.\n".utf8))
+      }
+    }
   case "doctor":
     try await Doctor.run()
   case "--finish-update":
@@ -273,6 +296,8 @@ do {
       """
       BurnZombies \(BuildIdentity.version) (build \(BuildIdentity.build))
       version   Print this binary's version and build.
+      xray [--json]   Live Blazer X-Ray: APFS burn velocity, disguised caches & agent thrash.
+      baton [SESSION_OR_PATH] [--copy] [--json]   Compile cross-harness <execution_baton> capsule.
       doctor    Read setup, selected harness and app connectivity; never requests cleanup.
       findings [OFFSET]   Read the running app's durable findings inbox; no cleanup or grants.
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.

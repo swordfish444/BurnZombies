@@ -58,6 +58,26 @@ public enum AutopilotPolicy {
       verdict: .burn, source: .starter,
       title: "Profiles and recordings robot browsers left in the temp folder",
       created: Date(timeIntervalSinceReferenceDate: 0)),
+    AutopilotRule(
+      id: "starter-blazer-overdrive", kind: .disk,
+      match: [
+        "overdrive": ["yes"],
+        "anatomical": [
+          "disguised-derived-data", "isolated-gradle-cache", "dead-scratch", "simulator-data",
+        ],
+        "stale": ["day", "week", "month", "older"],
+      ], verdict: .burn, source: .starter,
+      title:
+        "Disguised build caches and finished agent scratch when disk hits Overdrive (< 50 GB free)",
+      created: Date(timeIntervalSinceReferenceDate: 0)),
+    AutopilotRule(
+      id: "starter-thrash-zombies", kind: .process,
+      match: [
+        "thrash": ["loop-zombie"], "orphaned": ["yes", "maybe"], "listening": ["no"],
+        "idle": ["10m", "1h", "6h", "1d"],
+      ], verdict: .burn, source: .starter,
+      title: "Loop-thrashing agent helpers stuck on repeated errors with no network port",
+      created: Date(timeIntervalSinceReferenceDate: 0)),
   ]
 
   /// Every fact of the rule has one of its values. A burn that leaves out a named risk covers only

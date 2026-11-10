@@ -7,7 +7,10 @@ final class AutopilotRuntime: Sendable {
   let coordinator: AutopilotCoordinator
   init(monitor: Monitor) throws {
     engine = try Autopilot(sources: .live(monitor: monitor, docker: .live()))
-    coordinator = AutopilotCoordinator(engine: engine)
+    coordinator = AutopilotCoordinator(
+      engine: engine,
+      failover: { AutopilotHarness.failoverConfiguration(from: $0) },
+      overdrive: { now in BlazerOverdrive.sample(now: now).overdriveActive })
     // A hunt asked for from the command line starts now, not at the next tick.
     let engine = engine
     let coordinator = coordinator

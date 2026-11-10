@@ -35,13 +35,14 @@ public enum AgentThreads {
   private static let entryLimit = 2_000
   private static let examineLimit = 20_000
 
-  /// Indexes Claude Code and Codex sessions under `home`. Bounded and read-only.
+  /// Indexes Claude Code, Codex, and Antigravity sessions under `home`. Bounded and read-only.
   public static func index(home: String = NSHomeDirectory(), now: Date = Date()) -> [AgentThread] {
     let sessions = claudeSessions(home: home)
     let live = Set(sessions.filter { $0.live }.map { $0.id })
     let all =
       sessions + claudeTranscripts(home: home, now: now, live: live)
       + codexRollouts(home: home, now: now)
+      + antigravityTranscripts(home: home, now: now)
     var seen = Set<String>()
     var threads: [AgentThread] = []
     for thread in all {
@@ -158,6 +159,43 @@ public enum AgentThreads {
           lastActive: file.modified))
     }
     return threads
+  }
+
+  /// Antigravity chats: bounded scan of `~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript.jsonl`.
+  private static func antigravityTranscripts(home: String, now: Date) -> [AgentThread] {
+    let root = home + "/.gemini/antigravity/brain"
+    guard let ids = try? FileManager.default.contentsOfDirectory(atPath: root) else {
+      return []
+    }
+    var threads: [AgentThread] = []
+    for id in ids.sorted().prefix(entryLimit) {
+      let dir = root + "/" + id
+      let transcript = dir + "/.system_generated/logs/transcript.jsonl"
+      guard isDirectory(dir), let file = regularFile(transcript),
+        now.timeIntervalSince(file.modified) <= rolloutWindow,
+        let head = readHead(transcript, limit: readLimit)
+      else { continue }
+      let cwd = antigravityCwd(head) ?? home
+      let recent = abs(now.timeIntervalSince(file.modified)) <= liveWindow
+      threads.append(
+        AgentThread(
+          id: "antigravity:" + id, agent: "antigravity", cwd: cwd, live: recent,
+          lastActive: file.modified))
+    }
+    return threads
+  }
+
+  private static func antigravityCwd(_ data: Data) -> String? {
+    let text = String(decoding: data, as: UTF8.self)
+    for marker in ["Command Working Directory: ", "\"cwd\":\"", "file://"] {
+      guard let range = text.range(of: marker) else { continue }
+      let after = text[range.upperBound...]
+      let end = after.firstIndex(where: { $0 == "\n" || $0 == "\r" || $0 == "\"" || $0 == "<" })
+        ?? after.endIndex
+      let raw = String(after[..<end]).trimmingCharacters(in: .whitespaces)
+      if raw.hasPrefix("/") && raw.count > 1 { return raw }
+    }
+    return nil
   }
 
   /// `session_meta` on the first line holds the chat id and folder; later lines are messages

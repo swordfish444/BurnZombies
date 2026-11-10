@@ -549,6 +549,11 @@ public enum AutopilotDisk {
     if item.facts["folder"] == "browser-temp" {
       return AutopilotBrowserTrail.reclaim(item, authority: authority, authorize: authorize)
     }
+    if BlazerAnatomy.isAnatomical(item) {
+      return BlazerAnatomy.reclaim(
+        item, authority: authority, home: home, inUse: inUse, protected: protected, root: root,
+        authorize: authorize)
+    }
     let folder = item.facts["folder"] ?? "other"
     let known = kinds.contains(folder)
     guard known || authority.hasPrefix("rule:") || authority == "operator" else {

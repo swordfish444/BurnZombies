@@ -219,6 +219,11 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       if failures == beforeReview {
         print("PASS Questions stay true: running time, unknown programs by name, checked before shown")
       }
+      let beforeBlazer = failures
+      do { try blazerProof() } catch { failTest("Blazer intelligence: \(error)") }
+      if failures == beforeBlazer {
+        print("PASS Blazer intelligence: Overdrive, anatomical signatures, thrash hunter, baton & failover")
+      }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
     }

@@ -26,10 +26,12 @@ extension AutopilotSources {
       processes: { threads in
         let records = await monitor.autopilotRecords()
         let preferences = await monitor.autopilotPreferences()
-        return AutopilotProcesses.items(
+        let baseItems = AutopilotProcesses.items(
           records, threads: threads, protectedPIDs: AgentSafety.ancestors(of: getpid()) ?? [],
           launchAgents: launchAgentPIDs(), claimed: await monitor.autopilotClaimedKeys(),
           preferences: preferences, home: home, protected: scope())
+        let thrash = AgentThrashScanner.scan(home: home, threads: threads, limit: 16)
+        return AgentThrashScanner.annotateProcesses(baseItems, findings: thrash)
       },
       worktreeRecords: {
         let protected = scope()
@@ -54,7 +56,7 @@ extension AutopilotSources {
         return (items, delivery)
       },
       disk: { records in
-        junk.items(records, home: home, protected: scope(), trail: trail)
+        junk.items(records, home: home, root: root, protected: scope(), trail: trail)
           + (docker?.items() ?? [])
       },
       burnProcess: { item, authority, why in
@@ -199,8 +201,8 @@ public final class AutopilotJunkCache: @unchecked Sendable {
   }
 
   func items(
-    _ records: [WorktreeRecord], home: String, protected: ProtectedLocations,
-    trail: String? = nil
+    _ records: [WorktreeRecord], home: String, root: URL = Store.defaultRoot,
+    protected: ProtectedLocations, trail: String? = nil
   ) -> [AutopilotItem] {
     let walk: AutopilotDisk.ScanProgress? = lock.withLock {
       guard !running else { return nil }
@@ -235,16 +237,36 @@ public final class AutopilotJunkCache: @unchecked Sendable {
           worktrees: records, home: home,
           sizer: { folder in sizer(folder) { walks.wanted(folder) } }, protected: protected,
           walks: walks, trail: trail, progress: &next, budget: scanBudget, clock: clock)
+        let anatomical: [AutopilotItem]
+        if next.complete {
+          let now = clock()
+          let overdrive =
+            WorkspaceSafety.canonical(home) == WorkspaceSafety.canonical(NSHomeDirectory())
+            ? BlazerOverdrive.sample(root: root, volumePath: home, now: now).overdriveActive
+            : false
+          let threads = AgentThreads.index(home: home, now: now)
+          anatomical = BlazerAnatomy.scan(
+            home: home, root: root, threads: threads, overdrive: overdrive, now: now,
+            sizer: { folder in
+              guard walks.enter(folder) else { return nil }
+              defer { walks.leave(folder, early: walks.wanted(folder)) }
+              return sizer(folder) { walks.wanted(folder) }
+            },
+            protected: protected)
+        } else {
+          anatomical = []
+        }
         // A target skipped or left for a burn is retried after the burn releases it.
         let skipped = walks.skipped()
         for path in skipped { next.invalidate(path) }
         lock.withLock {
           // Aggregated browser leftovers can be partial too. Keep an earlier observation
           // until every included measurement is known, while allowing a first partial discovery.
-          let accepted = fresh.items.filter { item in
-            item.path.map { fresh.measured.contains($0) } == true
-              || !cached.contains(where: { $0.id == item.id })
-          }
+          let accepted =
+            fresh.items.filter { item in
+              item.path.map { fresh.measured.contains($0) } == true
+                || !cached.contains(where: { $0.id == item.id })
+            } + anatomical
           let ids = Set(accepted.map(\.id))
           cached.removeAll {
             ids.contains($0.id)

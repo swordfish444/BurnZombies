@@ -14,11 +14,16 @@ public enum AutopilotSweeper {
   public static let firstSweepDelay: TimeInterval = 10 * 60
 
   /// Cataloging runs even when Autopilot is off, so the UI can show what it would burn;
-  /// the engine only burns while enabled.
-  public static func nativeDue(_ state: AutopilotSweepState, now: Date) -> Bool {
+  /// the engine only burns while enabled. In Overdrive, native sweeps accelerate to every 2 minutes.
+  public static func nativeDue(
+    _ state: AutopilotSweepState, now: Date, overdrive: Bool = false
+  ) -> Bool {
     guard let last = state.lastTick else { return true }
     if let first = state.firstTick, now.timeIntervalSince(first) < warmUp {
       return now.timeIntervalSince(last) >= warmUpInterval - 5
+    }
+    if overdrive {
+      return now.timeIntervalSince(last) >= BlazerOverdrive.overdriveIntervalSeconds - 5
     }
     return now.timeIntervalSince(last) >= Double(state.intervalMinutes * 60) - 5
   }
@@ -178,6 +183,24 @@ public enum AutopilotHarness {
     guard let chosen else { return deepModel }
     let lower = chosen.lowercased()
     return ["opus", "fable", "mythos"].contains(where: lower.contains) ? chosen : deepModel
+  }
+
+  /// Finds an installed alternate AI harness (`claude` <-> `codex`) when the primary hits a usage
+  /// or login limit, preserving launcher and MCP server paths.
+  public static func failoverConfiguration(
+    from primary: MachineReviewConfiguration,
+    detect: (String) -> String? = { MachineReviewConfiguration.detect($0) }
+  ) -> MachineReviewConfiguration? {
+    let candidates = primary.harness == "claude" ? ["codex"] : ["claude", "codex"].filter { $0 != primary.harness }
+    for alt in candidates {
+      guard let executable = detect(alt) else { continue }
+      var next = MachineReviewConfiguration(
+        harness: alt, executable: executable, launcher: primary.launcher, server: primary.server)
+      next.enabled = primary.enabled
+      next.huntIntervalHours = primary.huntIntervalHours
+      return next
+    }
+    return nil
   }
 
   public static func arguments(
@@ -432,6 +455,8 @@ public actor AutopilotCoordinator {
   public let engine: Autopilot
   let configuration: @Sendable () -> MachineReviewConfiguration?
   let runner: AutopilotRunner
+  let failover: (@Sendable (MachineReviewConfiguration) -> MachineReviewConfiguration?)?
+  let overdriveCheck: (@Sendable (Date) -> Bool)?
   var aiTask: Task<Void, Never>?
   /// Set on the first tick, before anything here can start a sweep.
   var launched = false
@@ -457,11 +482,15 @@ public actor AutopilotCoordinator {
     configuration: @escaping @Sendable () -> MachineReviewConfiguration? = {
       try? MachineReviewConfiguration.load(root: Store.defaultRoot)
     },
+    failover: (@Sendable (MachineReviewConfiguration) -> MachineReviewConfiguration?)? = nil,
+    overdrive: (@Sendable (Date) -> Bool)? = nil,
     run runner: @escaping AutopilotRunner = { try AutopilotHarness.run($0, root: $1, run: $2) }
   ) {
     self.root = root
     self.engine = engine
     self.configuration = configuration
+    self.failover = failover
+    self.overdriveCheck = overdrive
     self.runner = runner
   }
 
@@ -526,8 +555,9 @@ public actor AutopilotCoordinator {
       defer { starting = false }
       return await ownersHunt(now: now, options: asked ?? HuntOptions())
     }
+    let isOverdrive = overdriveCheck?(now) ?? false
     let snapshot =
-      manual || AutopilotSweeper.nativeDue(state, now: now)
+      manual || AutopilotSweeper.nativeDue(state, now: now, overdrive: isOverdrive)
       ? await engine.tick(now: now) : await engine.snapshot(now: now)
     let latest = await engine.sweepState()
     guard !updatingApp, aiTask == nil, !starting,
@@ -648,20 +678,37 @@ public actor AutopilotCoordinator {
         questions: snapshot.questions.count, interval: snapshot.sweep.intervalMinutes)
       return await engine.snapshot(now: now)
     }
+    let failover = failover
+    let engine = engine
     aiTask = Task.detached { [weak self] in
       let started = Date()
-      let result = Result { try runner(config, root, wired.run) }
+      var activeConfig = config
+      var result = Result { try runner(config, root, wired.run) }
+      if case .failure(let error) = result,
+        !options.deep,
+        wired.run.stopReason == nil,
+        AutopilotSweeper.accountProblem(error.localizedDescription),
+        let alt = failover?(config)
+      {
+        let switchLine =
+          "Primary AI (\(config.harnessName)) hit a usage or login limit — failing over to \(alt.harnessName)."
+        await engine.updateSweep { $0.append(switchLine) }
+        await engine.noteHunt("scanning", switchLine)
+        activeConfig = alt
+        result = Result { try runner(alt, root, wired.run) }
+      }
       wired.feed.finish()
       await wired.relay.value
       if let attempt, let store = try? Store(root: root),
         var ledger = try? ReviewLedger.load(store: store),
         let i = ledger.entries.firstIndex(where: { $0.id == attempt })
       {
+        ledger.entries[i].harness = activeConfig.harness
         ledger.entries[i].finished = Date()
         ledger.entries[i].outcome = (try? result.get()) != nil ? "completed" : "failed"
         ledger.entries[i].usage =
           (try? store.read(root.appendingPathComponent("last-review.log"), limit: 1_048_576))
-          .flatMap { ReviewUsage.parse($0, requestedModel: config.model) }
+          .flatMap { ReviewUsage.parse($0, requestedModel: activeConfig.model) }
         try? ledger.save(store: store)
       }
       await self?.finishAI(result, digest: digest, started: started, run: wired.run)
