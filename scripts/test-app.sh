@@ -21,6 +21,7 @@ step .build/debug/BurnProof --worktree-refresh-native
 step .build/debug/BurnZombiesApp --worktree-view-proof "$proof_artifacts/worktrees"
 step .build/debug/BurnZombiesApp --worktree-inventory-proof
 step .build/debug/BurnZombiesApp --findings-proof "$proof_artifacts/findings.png"
+step .build/debug/BurnZombiesApp --burn-pit-proof "$proof_artifacts/burn-pit"
 step .build/debug/BurnZombiesApp --observer-schedule-proof
 step env LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 .build/debug/BurnProof --transport
 step python3 scripts/test-mcp.py

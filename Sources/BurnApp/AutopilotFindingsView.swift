@@ -151,6 +151,11 @@ struct AutopilotFindingsView: View {
           .font(.system(size: 14)).foregroundStyle(BurnTheme.muted)
       }
       Spacer(minLength: 16)
+      Button {
+        model.openBurnPit?()
+      } label: {
+        Label("Burn Pit", systemImage: "flame")
+      }.buttonStyle(HuntPillStyle())
       if openQuestions > 0 {
         Button {
           model.openTeach?()

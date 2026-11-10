@@ -40,7 +40,7 @@
       separator: "\n")
     for control in [
       "Search findings", "Workflow rules",
-      "Worktrees", "Hunt now",
+      "Burn Pit", "Worktrees", "Hunt now",
     ] {
       guard visible.localizedCaseInsensitiveContains(control) else {
         throw StoreError.message("Large inbox clips control: " + control + "; visible: " + visible)

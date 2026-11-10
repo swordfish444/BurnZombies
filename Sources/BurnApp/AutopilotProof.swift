@@ -973,7 +973,7 @@ private func orangePixels(in name: String, directory: URL, size: NSSize, band: C
   try require(
     findings,
     [
-      "I found", "Needs you", "What is it?", "Why I think so", "If I burn it", "Technical details",
+      "I found", "Burn Pit", "Needs you", "What is it?", "Why I think so", "If I burn it", "Technical details",
     ], in: "findings")
   hint(findings, "findings", ["Leftover programs", focus.label, "Burn now", "Keep forever"])
   let needsYou = try render(

@@ -1,4 +1,4 @@
-// Throwaway visual comparison: three layouts share the same read-only snapshot.
+// Self-contained Burn Pit browser view for one read-only snapshot.
 enum BlazerMapPage {
   static let html = #"""
 <!doctype html>
@@ -7,16 +7,16 @@ enum BlazerMapPage {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>BurnZombies · Blazer Map</title>
+<title>BurnZombies · Burn Pit</title>
 </head>
 <body style="margin:0;background:#100e12">
-<div id="bz-blazer-map">
+<div id="bz-blazer-map" data-design="treemap">
 <style>
 #bz-blazer-map{--bg:#100e12;--panel:#1c181e;--raised:#262027;--line:#3a3038;--ink:#fff6ec;--muted:#c3b6bf;--ember:#ffa965;--cache:#e38a4a;--worktree:#9b96f0;--zombie:#f8768e;--folder:#76c6bd;box-sizing:border-box;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;padding:clamp(12px,2.7vw,32px);color-scheme:dark}
 #bz-blazer-map *{box-sizing:border-box}
 #bz-blazer-map [hidden]{display:none!important}
 #bz-blazer-map .bz-shell{max-width:1220px;margin:auto}
-#bz-blazer-map .bz-head,#bz-blazer-map .bz-tools,#bz-blazer-map .bz-modes,#bz-blazer-map .bz-maphead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#bz-blazer-map .bz-head,#bz-blazer-map .bz-tools,#bz-blazer-map .bz-maphead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 #bz-blazer-map .bz-brand{display:flex;align-items:center;gap:12px}
 #bz-blazer-map .bz-emblem{display:grid;place-items:center;width:38px;height:38px;background:#3c2523;border:1px solid #694232;border-radius:11px;color:var(--ember);font-size:21px}
 #bz-blazer-map .bz-kicker,#bz-blazer-map .bz-label,#bz-blazer-map .bz-table thead{color:var(--muted);font:600 11px/1.3 ui-monospace,monospace;letter-spacing:.09em;text-transform:uppercase}
@@ -62,20 +62,6 @@ enum BlazerMapPage {
 #bz-blazer-map .bz-treemap{height:296px;position:relative;background:#171319;border-radius:7px}
 #bz-blazer-map .bz-legend{display:flex;gap:7px 13px;flex-wrap:wrap;margin:8px 0;color:var(--muted);font-size:12px}
 #bz-blazer-map .bz-legend b{display:inline-flex;gap:5px;align-items:center;font-weight:500}
-#bz-blazer-map .bz-radar{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;min-height:296px;background:radial-gradient(ellipse at 48% 52%,#2d1e2c,#19151c 63%);border-radius:7px;padding:5px 10px}
-#bz-blazer-map .bz-scope{position:relative;width:100%;max-width:280px;aspect-ratio:1;margin:auto}
-#bz-blazer-map .bz-ring{position:absolute;border:1px solid #634358;border-radius:50%;inset:var(--inset);pointer-events:none}
-#bz-blazer-map .bz-axis{position:absolute;background:#5a3a4d;pointer-events:none}
-#bz-blazer-map .bz-axis.x{left:2%;right:2%;height:1px;top:50%}
-#bz-blazer-map .bz-axis.y{top:2%;bottom:2%;width:1px;left:50%}
-#bz-blazer-map .bz-contact{position:absolute;width:24px;height:24px;padding:0;display:grid;place-items:center;border:0;background:transparent;transform:translate(-50%,-50%);border-radius:50%}
-#bz-blazer-map .bz-contact:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--mark);box-shadow:0 0 9px color-mix(in srgb,var(--mark) 65%,transparent)}
-#bz-blazer-map .bz-contact[data-kind="cache"]:before{border-radius:2px}
-#bz-blazer-map .bz-contact[data-kind="zombie"]:before{border-radius:1px;transform:rotate(45deg)}
-#bz-blazer-map .bz-contact[aria-pressed="true"]{border:1px solid var(--ink);z-index:1}
-#bz-blazer-map .bz-rings{margin:0;padding:0;list-style:none;color:var(--muted);font-size:12px}
-#bz-blazer-map .bz-rings li{margin:5px 0;white-space:nowrap}
-#bz-blazer-map .bz-rings b{color:var(--ink);font-weight:600}
 #bz-blazer-map .bz-table-box{max-height:337px;min-height:292px;overflow:auto}
 #bz-blazer-map .bz-table{width:100%;border-collapse:collapse;text-align:left}
 #bz-blazer-map .bz-table thead{background:var(--panel);position:sticky;top:0;z-index:1}
@@ -88,21 +74,17 @@ enum BlazerMapPage {
 #bz-blazer-map .bz-table .bz-state{font-size:12px}
 #bz-blazer-map .bz-more{margin:8px 0}
 #bz-blazer-map .bz-empty{padding:15px;color:var(--muted)}
-#bz-blazer-map .bz-modes{justify-content:center;gap:5px;margin:13px 0}
-#bz-blazer-map .bz-modes button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 11px}
-#bz-blazer-map .bz-modes button[aria-pressed="true"]{background:var(--ember);border-color:var(--ember);color:#211612;font-weight:650}
-#bz-blazer-map .bz-modes button:hover:not([aria-pressed="true"]){background:var(--raised)}
 #bz-blazer-map .bz-coverage{margin-top:10px;color:var(--muted);font-size:12px}
 #bz-blazer-map .bz-coverage summary{cursor:pointer;width:fit-content}
 #bz-blazer-map .bz-coverage ul{padding-left:20px;margin:6px 0}
 @media(max-width:660px){#bz-blazer-map .bz-workspace{grid-template-columns:minmax(0,1fr)}#bz-blazer-map .bz-inspector{min-height:148px}#bz-blazer-map .bz-volume{gap:9px}#bz-blazer-map .bz-stamp{text-align:left}}
-@media(max-width:390px){#bz-blazer-map .bz-radar{grid-template-columns:minmax(0,1fr)}#bz-blazer-map .bz-rings{display:flex;flex-wrap:wrap;gap:3px 10px}#bz-blazer-map .bz-table td:nth-child(2),#bz-blazer-map .bz-table th:nth-child(2),#bz-blazer-map .bz-table td:nth-child(3),#bz-blazer-map .bz-table th:nth-child(3){display:none}#bz-blazer-map .bz-counter{margin-left:0}}
-@media(pointer:coarse){#bz-blazer-map .bz-modes button,#bz-blazer-map .bz-tools input,#bz-blazer-map .bz-tools select,#bz-blazer-map .bz-item{min-height:44px}}
+@media(max-width:390px){#bz-blazer-map .bz-table td:nth-child(2),#bz-blazer-map .bz-table th:nth-child(2),#bz-blazer-map .bz-table td:nth-child(3),#bz-blazer-map .bz-table th:nth-child(3){display:none}#bz-blazer-map .bz-counter{margin-left:0}}
+@media(pointer:coarse){#bz-blazer-map .bz-ledger-toggle,#bz-blazer-map .bz-tools input,#bz-blazer-map .bz-tools select,#bz-blazer-map .bz-item{min-height:44px}}
 \#(BlazerMapTheme.css)
 </style>
 <div class="bz-shell">
   <header class="bz-head">
-    <div class="bz-brand"><span class="bz-emblem" aria-hidden="true">↯</span><div><div class="bz-kicker">BurnZombies / Blazer Edition</div><h1>Zombie Map</h1></div></div>
+    <div class="bz-brand"><span class="bz-emblem" aria-hidden="true">↯</span><div><div class="bz-kicker">BurnZombies / Blazer Edition</div><h1>Burn Pit</h1></div></div>
     <div class="bz-stamp" data-slot="stamp"></div>
   </header>
   <div class="bz-volume" data-slot="volume"></div>
@@ -116,35 +98,20 @@ enum BlazerMapPage {
     <span class="bz-counter" data-slot="counter" aria-live="polite"></span>
   </div>
   <div class="bz-workspace">
-    <div class="bz-stage">
-      <section data-view="treemap" aria-label="Burn Pit"></section>
-      <section data-view="radar" aria-label="Activity Radar" hidden></section>
-      <section data-view="graveyard" aria-label="Graveyard" hidden></section>
-    </div>
+    <section class="bz-stage" data-slot="panel" aria-label="Burn Pit findings"></section>
     <aside class="bz-inspector" data-slot="inspector" aria-label="Selected evidence" aria-live="polite"></aside>
   </div>
-  <nav class="bz-modes" aria-label="Map layout">
-    <button type="button" data-cycle="-1" aria-label="Previous layout">←</button>
-    <button type="button" data-mode="treemap">Burn Pit</button>
-    <button type="button" data-mode="radar">Activity Radar</button>
-    <button type="button" data-mode="graveyard">Graveyard</button>
-    <button type="button" data-cycle="1" aria-label="Next layout">→</button>
-  </nav>
   <details class="bz-coverage"><summary>Snapshot coverage</summary><ul data-slot="notes"></ul></details>
 </div>
 <script>
 (() => {
   const root = document.getElementById('bz-blazer-map');
   const $ = name => root.querySelector('[data-slot="' + name + '"]');
-  const views = ['treemap','radar','graveyard'];
-  const panels = Object.fromEntries(views.map(key => [key,root.querySelector('[data-view="'+key+'"]')]));
-  const hostCarousel = root.querySelector('.bz-stage').classList.contains('viz-carousel');
+  const panel = $('panel');
   const snapshot = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('__BLAZER_MAP_PAYLOAD__'), c => c.charCodeAt(0))));
   const rows = new Map(snapshot.rows.map(row => [row.id,row]));
   const labels = { cache:'Cache',worktree:'Worktree',zombie:'Zombie signal',folder:'Disk folder' };
-  const requestedView = hostCarousel ? null : new URLSearchParams(location.search).get('variant');
-  let mode = views.includes(requestedView) ? requestedView : 'treemap';
-  let showLedger = requestedView === 'ledger';
+  let showLedger = new URLSearchParams(location.search).get('variant') === 'ledger';
   let selected = null, limit = 60, order = 'size', reversed = false;
   const el = (tag, klass, text) => {
     const node = document.createElement(tag);
@@ -174,8 +141,7 @@ enum BlazerMapPage {
     button.type='button';button.dataset.id=row.id;button.dataset.kind=row.kind;
     button.setAttribute('aria-label',description);
     button.setAttribute('aria-pressed',String(row.id===selected));
-    if (!hostCarousel) button.title=description;
-    else button.dataset.tooltip=description;
+    button.title=description;
     return button;
   };
   const legend = (panel,data) => {
@@ -222,7 +188,7 @@ enum BlazerMapPage {
   }
   function treemap(panel,data){
     const folders=$('filter').value==='folder';
-    head(panel,'Burn Pit',folders?'Disk folders · block area shows estimated bytes':'Caches and worktrees · block area shows estimated bytes');
+    head(panel,folders?'Disk folder allocation':'Cache and worktree allocation','Slab area shows estimated disk bytes');
     const eligible=data.filter(r=>r.diskBytes>0 && (folders?r.kind==='folder':r.kind==='cache'||r.kind==='worktree'));
     // Suppress nested and identical paths for area only. The ledger retains the underlying rows.
     const roots=[], paths=new Set();
@@ -256,89 +222,6 @@ enum BlazerMapPage {
       eligible.length>roots.length?(eligible.length-roots.length)+' overlapping paths':null].filter(Boolean);
     if(extras.length)panel.append(el('p','bz-note','See Evidence Ledger for '+extras.join(' and ')+'.'));
     return top;
-  }
-  function radar(panel,data){
-    head(panel,'Activity Radar','Inner to outer · time since last activity');
-    const known=data.filter(r=>age(r)!=null);
-    const groups=[[],[],[],[]];
-    for(const row of known.sort((a,b)=>Number(b.live)-Number(a.live)||
-        Number(b.kind==='zombie')-Number(a.kind==='zombie')||largest(a,b))){
-      const d=age(row);
-      groups[d<1?0:d<7?1:d<30?2:3].push(row);
-    }
-    if(!known.length){empty(panel,'No activity dates in this layer. Evidence Ledger keeps unknowns visible.');return [];}
-    const chart=el('div','bz-radar'),scope=el('div','bz-scope');
-    const radii=[.14,.25,.36,.46], contacts=[];
-    append(scope,el('div','bz-axis x'),el('div','bz-axis y'));
-    groups.forEach((group,index)=>{
-      const r=radii[index], ring=el('div','bz-ring');
-      ring.style.setProperty('--inset',(50-r*100)+'%');scope.append(ring);
-      const shown=group.slice(0,[4,6,8,10][index]);
-      shown.forEach((row,i)=>{
-        const theta=2*Math.PI*i/shown.length+(index+1)*.35;
-        const button=mark(row,'bz-contact',row.name+' · '+row.state+' · '+ageLabel(row));
-        button.style.left=(50+100*r*Math.cos(theta))+'%';
-        button.style.top=(50+100*r*Math.sin(theta))+'%';scope.append(button);
-        contacts.push(row);
-      });
-    });
-    const rings=el('ol','bz-rings');
-    ['Today','1–6 days','7–29 days','30+ days'].forEach((label,i)=>rings.append(
-      append(el('li',''),el('b','',label),document.createTextNode(' · '+groups[i].length))));
-    panel.append(append(chart,scope,rings));legend(panel,contacts);
-    const off=data.length-contacts.length;
-    if(off)panel.append(el('p','bz-note',off+' more in Evidence Ledger, including items with no activity date.'));
-    return contacts;
-  }
-  function graveyard(panel,data){
-    head(panel,'Graveyard','Worktrees and zombie signals by last activity');
-    const contacts=data.filter(row=>row.kind==='worktree'||row.kind==='zombie');
-    if(!contacts.length){
-      empty(panel,'No worktrees or zombie signals in this layer.');
-      return [];
-    }
-    const plots=[
-      {label:'Last 7 days',rows:[]},
-      {label:'7–29 days',rows:[]},
-      {label:'30+ days',rows:[]},
-      {label:'Unknown age',rows:[]}
-    ];
-    for(const row of contacts){
-      const days=age(row);
-      const index=days==null?3:days<7?0:days<30?1:2;
-      plots[index].rows.push(row);
-    }
-    const scene=el('div','bz-graveyard'), markers=el('div','bz-plots'), shown=[];
-    const horizon=el('div','bz-ridgeline');
-    horizon.setAttribute('aria-hidden','true');
-    for(const [index,plot] of plots.entries()){
-      const column=el('div','bz-plot');
-      const label=el('h3','bz-plot-heading',plot.label);
-      label.append(el('span','bz-plot-count',String(plot.rows.length)));
-      column.append(label);
-      // Show live signals first in the recent plot and the oldest records first in older plots.
-      const ordered=plot.rows.sort((a,b)=>{
-        if(index===0 && a.live!==b.live)return Number(b.live)-Number(a.live);
-        return (index===0?1:-1)*((age(a)??0)-(age(b)??0)) || largest(a,b);
-      });
-      if(!ordered.length)column.append(el('p','bz-plot-empty','Empty plot'));
-      for(const row of ordered.slice(0,3)){
-        const marker=mark(row,'bz-grave',row.name+' · '+labels[row.kind]+' · '+row.state+' · '+ageLabel(row));
-        const engraving=el('span','bz-engraving',row.kind==='zombie'?'◇':'†');
-        engraving.setAttribute('aria-hidden','true');
-        const status=el('span',row.live?'bz-grave-state bz-grave-live':'bz-grave-state',row.state);
-        append(marker,engraving,el('span','bz-grave-name',row.name),status);
-        column.append(marker);
-        shown.push(row);
-      }
-      markers.append(column);
-    }
-    panel.append(append(scene,horizon,markers));
-    legend(panel,shown);
-    if(contacts.length>shown.length){
-      panel.append(el('p','bz-note',(contacts.length-shown.length)+' more in Evidence Ledger.'));
-    }
-    return shown;
   }
   function ledger(panel,data){
     head(panel,'Evidence Ledger','Select any row for its source and evidence');
@@ -402,65 +285,43 @@ enum BlazerMapPage {
     inspect(rows.get(selected));
   }
   function render(){
-    const data=visible(), panel=panels[mode];panel.replaceChildren();
-    root.dataset.design=mode;
-    $('ledger').setAttribute('aria-pressed',String(showLedger));
-    const draw=showLedger?ledger:({treemap,radar,graveyard})[mode];
-    const shown=draw(panel,data);
+    const data=visible();
+    const zombieLayer=$('filter').value==='zombie';
+    const list=showLedger||zombieLayer;
+    panel.replaceChildren();
+    $('ledger').hidden=zombieLayer;
+    $('ledger').textContent=list?'Show Furnace':'Evidence Ledger';
+    $('ledger').setAttribute('aria-pressed',String(list));
+    const shown=(list?ledger:treemap)(panel,data);
     $('counter').textContent=data.length+' matching · '+shown.length+' shown';
     if(!shown.some(r=>r.id===selected))selected=shown[0]?.id??null;
     highlight();
   }
   function setURL(){
-    if(hostCarousel)return;
     try {
       const url=new URL(location.href);
-      url.searchParams.set('variant',showLedger?'ledger':mode);
+      url.searchParams.set('variant',showLedger?'ledger':'treemap');
       history.replaceState(null,'',url);
     }catch{}
   }
-  function change(next,writeURL){
-    mode=next;
-    if(writeURL)showLedger=false;
-    for(const view of views)panels[view].hidden=view!==mode;
-    for(const b of root.querySelectorAll('[data-mode]'))b.setAttribute('aria-pressed',String(b.dataset.mode===mode));
-    if(writeURL)setURL();
-    render();
-  }
-  function cycle(delta){change(views[(views.indexOf(mode)+delta+views.length)%views.length],true);}
   root.addEventListener('click',event=>{
     const button=event.target.closest('button');
     if(!button)return;
     if(button.dataset.id){selected=button.dataset.id;highlight();}
     if(button===$('ledger')){showLedger=!showLedger;setURL();render();}
-    if(!hostCarousel && button.dataset.mode)change(button.dataset.mode,true);
-    if(!hostCarousel && button.dataset.cycle)cycle(Number(button.dataset.cycle));
     if(button.dataset.order){
       reversed=order===button.dataset.order?!reversed:button.dataset.order!=='size';order=button.dataset.order;
-      render();panels[mode].querySelector('[data-order="'+order+'"]')?.focus();
+      render();panel.querySelector('[data-order="'+order+'"]')?.focus();
     }
     if(button.dataset.more){
       const index=limit;
       limit+=60;render();
-      panels[mode].querySelectorAll('button[data-id]')[index]?.focus();
+      panel.querySelectorAll('button[data-id]')[index]?.focus();
     }
   });
   for(const name of ['search','filter']) $(name).addEventListener('input',()=>{limit=60;render();});
   volume();
-  if(hostCarousel){
-    const observer=new MutationObserver(()=>{
-      const next=views.find(view=>!panels[view].hidden);
-      if(next&&next!==mode){mode=next;showLedger=false;render();}
-    });
-    views.forEach(view=>observer.observe(panels[view],{attributeFilter:['hidden']}));
-    render();
-  }else{
-    root.addEventListener('keydown',event=>{
-      if(event.altKey||event.ctrlKey||event.metaKey||event.shiftKey||event.target.matches('input,textarea,select,[contenteditable]'))return;
-      if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();cycle(event.key==='ArrowLeft'?-1:1);}
-    });
-    change(mode,false);
-  }
+  render();
 })();
 </script>
 </div>

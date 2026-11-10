@@ -353,6 +353,7 @@ import UserNotifications
   var openWorktrees: (() -> Void)?
   var openHunt: (() -> Void)?
   var openFindings: (() -> Void)?
+  var openBurnPit: (() -> Void)?
   var openAdvancedFindings: (() -> Void)?
   var openTeach: (() -> Void)?
   var openWorktreeID: ((String) -> Void)?
@@ -1071,6 +1072,8 @@ import UserNotifications
   var huntWindow: NSWindow?
   var findingsWindow: NSWindow?
   var autopilotFindingsWindow: NSWindow?
+  private var burnPitWindow: NSWindow?
+  private lazy var burnPit = BurnPitModel()
   var teachWindow: NSWindow?
   var findingNotifications: FindingNotifications?
   var model: AppModel!
@@ -1088,6 +1091,7 @@ import UserNotifications
     model.openWorktrees = { [weak self] in self?.showWorktrees() }
     model.openWorktreeID = { [weak self] id in self?.showWorktrees(selectedID: id) }
     model.openFindings = { [weak self] in self?.showFindings() }
+    model.openBurnPit = { [weak self] in self?.showBurnPit() }
     model.openAdvancedFindings = { [weak self] in self?.showAdvancedFindings() }
     model.openTeach = { [weak self] in self?.showTeach() }
     findingNotifications = FindingNotifications { [weak self] id, revision, action in
@@ -1191,6 +1195,13 @@ import UserNotifications
       findingsWindow = FindingsView.makeWindow(model: model)
     }
     findingsWindow?.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+  private func showBurnPit() {
+    popover?.performClose(nil)
+    if burnPitWindow == nil { burnPitWindow = BurnPitWindow.makeWindow(model: burnPit) }
+    burnPit.refreshIfNeeded()
+    burnPitWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
   func showTeach() {
@@ -1477,6 +1488,15 @@ MainActor.assumeIsolated {
       }
       app.run()
       exit(1)
+    }
+    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--burn-pit-proof" {
+      do {
+        try burnPitProof(output: CommandLine.arguments[2])
+        exit(0)
+      } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+      }
     }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--findings-proof" {
       do {

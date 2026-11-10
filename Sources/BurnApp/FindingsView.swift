@@ -51,6 +51,7 @@ struct FindingsView: View {
       HStack {
         Text("Findings").font(.title.bold())
         Spacer()
+        Button("Burn Pit") { model.openBurnPit?() }
         Button("Worktrees") { model.openWorktrees?() }
         Button("Hunt now") { model.requestAgentCleanup() }
       }
