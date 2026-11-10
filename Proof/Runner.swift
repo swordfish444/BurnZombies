@@ -804,13 +804,14 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       if state.catalog.events.contains(where: {
         $0.outcome != "verifying" && $0.outcome != "verified"
       }) {
+        let outcomes = state.catalog.events.map { "\($0.outcome): \($0.detail)" }.joined(separator: " ")
+        let gap = state.catalog.lastSample.map {
+          $0.timeIntervalSince(previousState.catalog.lastSample ?? $0)
+        } ?? -1
+        let visibility = "partial=\(state.partial), processes=\(state.processCount), hidden=\(state.hiddenCount)"
+        let timing = "scanMS=\(state.scanMS), previousScanMS=\(previousState.scanMS), observationGap=\(gap)"
         throw StoreError.message(
-          "Verification stopped without credit: "
-            + state.catalog.events.map { $0.outcome + ": " + $0.detail }.joined(separator: " ")
-            + "; partial=\(state.partial), processes=\(state.processCount), hidden=\(state.hiddenCount), "
-            + "scanMS=\(state.scanMS), previousScanMS=\(previousState.scanMS), "
-            + "observationGap=\(state.catalog.lastSample.map { $0.timeIntervalSince(previousState.catalog.lastSample ?? $0) } ?? -1), "
-            + "error=\(state.error ?? "none")")
+          "Verification stopped without credit: \(outcomes); \(visibility), \(timing), error=\(state.error ?? "none")")
       }
       if state.catalog.events.count == workerCount
         && state.catalog.events.allSatisfy({ $0.outcome != "verifying" })
