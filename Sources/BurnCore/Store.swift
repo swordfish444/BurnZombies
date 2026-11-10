@@ -12,6 +12,7 @@ public enum StoreError: Error, LocalizedError {
 public final class Store {
   public let root: URL
   public let leasesURL: URL
+  private let readOnly: Bool
   public static var defaultRoot: URL {
     if let path = ProcessInfo.processInfo.environment["BURNZOMBIES_HOME"] {
       return URL(fileURLWithPath: path, isDirectory: true)
@@ -20,6 +21,7 @@ public final class Store {
       .appendingPathComponent("BurnZombies", isDirectory: true)
   }
   public init(root: URL = Store.defaultRoot) throws {
+    readOnly = false
     self.root = root
     leasesURL = root.appendingPathComponent("leases", isDirectory: true)
     for url in [root, leasesURL] {
@@ -34,6 +36,16 @@ public final class Store {
       }
     }
   }
+  /// Read an existing state directory without creating it or changing permissions.
+  init(reading root: URL) throws {
+    readOnly = true
+    self.root = root
+    leasesURL = root.appendingPathComponent("leases", isDirectory: true)
+    var info = stat()
+    guard lstat(root.path, &info) == 0, info.st_uid == getuid(),
+      info.st_mode & S_IFMT == S_IFDIR
+    else { throw StoreError.message("State directory is unavailable or not an owned real directory.") }
+  }
   public func read(_ url: URL, limit: Int) throws -> Data {
     let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
     guard fd >= 0 else { throw StoreError.message("State file unavailable.") }
@@ -46,6 +58,7 @@ public final class Store {
     return try handle.read(upToCount: limit) ?? Data()
   }
   public func write(_ data: Data, to url: URL, limit: Int) throws {
+    guard !readOnly else { throw StoreError.message("State directory was opened read-only.") }
     guard data.count <= limit else {
       throw StoreError.message("Local storage budget reached; cleanup is paused.")
     }

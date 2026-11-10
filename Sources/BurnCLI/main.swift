@@ -43,6 +43,8 @@ do {
   switch args.first ?? "help" {
   case "version", "--version":
     print("BurnZombies \(BuildIdentity.version) (build \(BuildIdentity.build))")
+  case "map":
+    try BlazerMapCommand.run(Array(args.dropFirst()))
   case "xray":
     let report = BlazerXRay.scan()
     if args.contains("--json") {
@@ -296,6 +298,7 @@ do {
       """
       BurnZombies \(BuildIdentity.version) (build \(BuildIdentity.build))
       version   Print this binary's version and build.
+      map [--demo] [--json | --open]   Explore a private, read-only Blazer map snapshot.
       xray [--json]   Live Blazer X-Ray: APFS burn velocity, disguised caches & agent thrash.
       baton [SESSION_OR_PATH] [--copy] [--json]   Compile cross-harness <execution_baton> capsule.
       doctor    Read setup, selected harness and app connectivity; never requests cleanup.

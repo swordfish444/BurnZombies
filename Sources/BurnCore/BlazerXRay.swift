@@ -84,7 +84,8 @@ public enum BlazerXRay {
     home: String = NSHomeDirectory(), root: URL = Store.defaultRoot,
     tempRoots: [String]? = nil, now: Date = Date(),
     statVolume: ((String) -> (free: UInt64, total: UInt64)?)? = nil,
-    sizer: ((String) -> UInt64?)? = nil
+    sizer: ((String) -> UInt64?)? = nil, topItemLimit: Int = 8,
+    protected: ProtectedLocations? = nil
   ) -> BlazerXRayReport {
     let started = ProcessInfo.processInfo.systemUptime
     let base = WorkspaceSafety.canonical(home)
@@ -93,7 +94,7 @@ public enum BlazerXRay {
     let threads = AgentThreads.index(home: base, now: now)
     let liveCount = threads.filter(\.live).count
     let itemSizer = sizer ?? { fastSize($0, entryCap: 12_000) }
-    let protected = ProtectedLocations.current(root: root, homes: [base])
+    let protected = protected ?? ProtectedLocations.current(root: root, homes: [base])
 
     let anatomical = BlazerAnatomy.scan(
       home: base, root: root, threads: threads, tempRoots: tempRoots,
@@ -126,7 +127,7 @@ public enum BlazerXRay {
       failoverHarnesses: availableHarnesses,
       disguisedBytes: anatomical.reduce(0) { $0 + $1.bytes },
       disguisedCategories: categories,
-      topDisguisedItems: Array(anatomical.prefix(8)),
+      topDisguisedItems: Array(anatomical.prefix(max(0, topItemLimit))),
       thrashFindings: thrash)
   }
 

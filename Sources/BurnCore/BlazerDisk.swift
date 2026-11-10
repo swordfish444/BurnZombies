@@ -84,7 +84,7 @@ public enum BlazerOverdrive {
         overdriveActive: false, overdriveReason: nil)
     }
     let url = root.appendingPathComponent(fileName)
-    let store = try? Store(root: root)
+    let store = try? (persist ? Store(root: root) : Store(reading: root))
     var samples: [ExhaustSample] =
       (try? store?.read(url, limit: 65_536)).flatMap {
         try? JSONDecoder().decode([ExhaustSample].self, from: $0)
@@ -670,7 +670,7 @@ public enum BlazerAnatomy {
 
   private static func referencedRecoveryDirectories(root: URL) -> Set<String> {
     let receiptsURL = root.appendingPathComponent("autopilot/receipts.json")
-    guard let data = try? Store(root: root).read(receiptsURL, limit: 4 * 1_048_576),
+    guard let data = try? Store(reading: root).read(receiptsURL, limit: 4 * 1_048_576),
       let receipts = try? JSONDecoder().decode([AutopilotReceipt].self, from: data)
     else { return [] }
     return Set(
