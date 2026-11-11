@@ -24,6 +24,7 @@ func autopilotDiskProof() async throws {
   try await adkJunkCacheContinuationProof(base: base + "/cache-continuation", now: now)
   try await adkJunkCacheAuthorityProof(base: base + "/cache-authority", now: now)
   try await adkOwnWalkProof(base: base + "/walks", now: now)
+  try adkBuildRingsAndScratchProof(base: base + "/rings-scratch", now: now)
 }
 
 private func adkWrite(_ text: String, to path: String, modified: Date? = nil) throws {
@@ -268,6 +269,58 @@ private func adkThreadsProof(base: String, now: Date) throws {
   equal(AgentThreads.state(for: work + "/alpha", threads: threads).thread, "live", "indexed live")
   equal(AgentThreads.state(for: work + "/beta", threads: threads).thread, "ended", "indexed ended")
   equal(AgentThreads.state(for: work + "/nobody", threads: threads).thread, "none", "no thread")
+
+  // Antigravity sessions under ~/.gemini/antigravity/brain/<id>: climbs to enclosing .git,
+  // reads subagents/*.json workspaceUris, protects live chats (< 10m), and refuses symlinks.
+  let agHome = base + "/ag-home"
+  let agRepo = work + "/ag-repo"
+  let agSub = work + "/ag-sub"
+  let agEndedRepo = work + "/ag-ended"
+  try adkRepository(agRepo)
+  try fm.createDirectory(atPath: agRepo + "/nested", withIntermediateDirectories: true)
+  try adkRepository(agSub)
+  try adkRepository(agEndedRepo)
+  let agLiveBrain = agHome + "/.gemini/antigravity/brain/conv-live"
+  let agEndedBrain = agHome + "/.gemini/antigravity/brain/conv-ended"
+  try adkWrite(
+    adkJSON([
+      "tool_calls": [
+        [
+          "name": "run_command",
+          "args": ["CommandLine": "cd \(agRepo)/nested && swift test", "secret": "AG_DO_NOT_LEAK"],
+        ]
+      ]
+    ]),
+    to: agLiveBrain + "/.system_generated/logs/transcript.jsonl",
+    modified: now.addingTimeInterval(-120))
+  try adkWrite(
+    adkJSON(["workspaceUris": ["file://\(agSub)"]]),
+    to: agLiveBrain + "/.system_generated/subagents/agent-1.json",
+    modified: now.addingTimeInterval(-120))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-120)], ofItemAtPath: agLiveBrain)
+  try adkWrite(
+    adkJSON([
+      "tool_calls": [
+        ["name": "run_command", "args": ["CommandLine": "cd \(agEndedRepo) && ls"]]
+      ]
+    ]),
+    to: agEndedBrain + "/.system_generated/logs/transcript.jsonl",
+    modified: now.addingTimeInterval(-7200))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-7200)], ofItemAtPath: agEndedBrain)
+  try fm.createSymbolicLink(
+    atPath: agHome + "/.gemini/antigravity/brain/conv-symlink",
+    withDestinationPath: agLiveBrain)
+  let agThreads = AgentThreads.index(home: agHome, now: now)
+  equal(
+    AgentThreads.liveAntigravityIDs(home: agHome, now: now), ["conv-live"],
+    "only brain folders active in the last 10m are live")
+  equal(AgentThreads.state(for: agRepo, threads: agThreads).thread, "live", "climbed to .git")
+  equal(AgentThreads.state(for: agSub, threads: agThreads).thread, "live", "subagent workspaceUri")
+  equal(AgentThreads.state(for: agEndedRepo, threads: agThreads).thread, "ended", "ended brain")
+  checkFalse(agThreads.contains { $0.id.contains("conv-symlink") }, "brain symlink skipped")
+  checkFalse(String(describing: agThreads).contains("AG_DO_NOT_LEAK"), "no transcript leak")
 }
 
 private func adkSizeProof(base: String) throws {
@@ -411,7 +464,8 @@ private func adkJunkProof(base: String, now: Date) throws {
   try adkWrite(filler, to: newestPlaywright + "/chrome")
   // Playwright's own record: the one installed package uses chromium-2.
   let playwrightPackage = base + "/tools/node_modules/playwright-core"
-  try adkWrite(#"{"browsers":[{"name":"chromium","revision":"2"}]}"#, to: playwrightPackage + "/browsers.json")
+  try adkWrite(
+    #"{"browsers":[{"name":"chromium","revision":"2"}]}"#, to: playwrightPackage + "/browsers.json")
   try adkWrite(playwrightPackage, to: home + "/Library/Caches/ms-playwright/.links/one")
   try adkWrite(filler, to: home + "/Library/Caches/Yarn/v6/x")
   try adkWrite(filler, to: npm + "/content/x")
@@ -1017,7 +1071,8 @@ private func adkScanContinuationProof(base: String, now: Date) throws {
       }, progress: &progress, budget: 60, clock: { clock })
     discovered.formUnion(batch.items.compactMap(\.path))
     if calls.last == failed && calls.filter({ $0 == failed }).count == 1 {
-      checkFalse(batch.measured.contains(failed), "failed sizing is unknown, never a zero-byte result")
+      checkFalse(
+        batch.measured.contains(failed), "failed sizing is unknown, never a zero-byte result")
       check(batch.incomplete.contains(failed), "failed sizing withholds old cleanup authority")
       checkFalse(progress.complete, "a failed target does not certify a complete scan")
     }
@@ -1025,7 +1080,8 @@ private func adkScanContinuationProof(base: String, now: Date) throws {
   equal(
     Array(calls.prefix(7)), cachePaths + folders,
     "bounded slices advance through caches, multiple checkout folders and later checkouts")
-  equal(calls, cachePaths + folders + [failed], "only the failed target repeats after unvisited work")
+  equal(
+    calls, cachePaths + folders + [failed], "only the failed target repeats after unvisited work")
   equal(discovered, Set(cachePaths + folders), "completed discoveries survive every partial slice")
   check(progress.complete, "the cycle completes only after the failed measurement succeeds")
 
@@ -1045,7 +1101,9 @@ private func adkScanContinuationProof(base: String, now: Date) throws {
   let prefix = AutopilotDisk.scan(
     worktrees: [wideRecord], home: home, caches: false, now: now,
     sizer: { _ in 120_000_000 }, progress: &wideProgress)
-  check(prefix.items.isEmpty && !wideProgress.complete, "hitting the candidate cap preserves pending discovery")
+  check(
+    prefix.items.isEmpty && !wideProgress.complete,
+    "hitting the candidate cap preserves pending discovery")
   let resumed = AutopilotDisk.scan(
     worktrees: [wideRecord], home: home, caches: false, now: now,
     sizer: { _ in 120_000_000 }, progress: &wideProgress)
@@ -1063,20 +1121,31 @@ private func adkScanContinuationProof(base: String, now: Date) throws {
   var measured: [String] = []
   let partial = AutopilotDisk.scan(
     worktrees: records, home: home, caches: false, now: now,
-    sizer: { path in measured.append(path); return 120_000_000 }, progress: &unreadable)
+    sizer: { path in
+      measured.append(path)
+      return 120_000_000
+    }, progress: &unreadable)
   checkFalse(unreadable.complete, "unreadable descendants keep the cycle incomplete")
   check(partial.incomplete.contains(hidden), "failed parent enumeration holds cached descendants")
-  checkFalse(partial.incomplete.contains(repo), "failed subtree does not revoke healthy sibling authority")
+  checkFalse(
+    partial.incomplete.contains(repo), "failed subtree does not revoke healthy sibling authority")
   checkFalse(
     partial.items.contains { item in
       partial.incomplete.contains { item.path == $0 || (item.path ?? "").hasPrefix($0 + "/") }
     }, "successful sibling observations remain actionable")
-  equal(Set(partial.items.compactMap(\.path)), Set(folders), "unreadable subtree does not hide accessible junk")
+  equal(
+    Set(partial.items.compactMap(\.path)), Set(folders),
+    "unreadable subtree does not hide accessible junk")
   equal(chmod(hidden, 0o755), 0)
   let recovered = AutopilotDisk.scan(
     worktrees: records, home: home, caches: false, now: now,
-    sizer: { path in measured.append(path); return 120_000_000 }, progress: &unreadable)
-  equal(recovered.items.compactMap(\.path), [hiddenJunk], "readable subtree resumes at its unvisited junk")
+    sizer: { path in
+      measured.append(path)
+      return 120_000_000
+    }, progress: &unreadable)
+  equal(
+    recovered.items.compactMap(\.path), [hiddenJunk],
+    "readable subtree resumes at its unvisited junk")
   equal(measured.count, folders.count + 1, "permission recovery preserves already measured targets")
   check(unreadable.complete, "permission recovery completes the previously unknown subtree")
   check(recovered.incomplete.isEmpty, "subtree recovery leaves no stale authority hold")
@@ -1089,7 +1158,9 @@ private func adkScanContinuationProof(base: String, now: Date) throws {
     sizer: { _ in 120_000_000 }, progress: &unknownGit)
   equal(chmod(repo + "/.git", 0o755), 0)
   check(unchecked.incomplete.contains(repo), "failed Git checks hold every cached descendant")
-  checkFalse(unchecked.items.contains { ($0.path ?? "").hasPrefix(repo + "/") }, "unknown tracking never renews cleanup authority")
+  checkFalse(
+    unchecked.items.contains { ($0.path ?? "").hasPrefix(repo + "/") },
+    "unknown tracking never renews cleanup authority")
 
   // A successful change in eligibility is different from a failed size: stale catalog entries
   // for now-tracked output must be removed, even though the folder still exists.
@@ -1099,7 +1170,8 @@ private func adkScanContinuationProof(base: String, now: Date) throws {
     worktrees: records, home: home, caches: false, now: now,
     sizer: { _ in 120_000_000 }, progress: &fresh)
   check(changed.discarded.contains(repo + "/node_modules"), "now-tracked output explicitly expires")
-  checkFalse(changed.items.contains { $0.path == repo + "/node_modules" }, "tracked output stays protected")
+  checkFalse(
+    changed.items.contains { $0.path == repo + "/node_modules" }, "tracked output stays protected")
 }
 
 /// Fake time makes one measurement consume the whole slice and crosses the six-hour refresh
@@ -1113,13 +1185,19 @@ private func adkJunkCacheContinuationProof(base: String, now: Date) async throws
     var failedCalls: Set<String> = []
     var small: Set<String> = []
     var advance: TimeInterval
-    init(_ now: Date, advance: TimeInterval) { instant = now; self.advance = advance }
+    init(_ now: Date, advance: TimeInterval) {
+      instant = now
+      self.advance = advance
+    }
     func clock() -> Date { lock.withLock { instant } }
     func measure(_ path: String) -> UInt64? {
       lock.withLock {
         calls.append(path)
         instant = instant.addingTimeInterval(advance)
-        if fail.contains(path) { failedCalls.insert(path); return nil }
+        if fail.contains(path) {
+          failedCalls.insert(path)
+          return nil
+        }
         return small.contains(path) ? 10 : 120_000_000
       }
     }
@@ -1173,9 +1251,13 @@ private func adkJunkCacheContinuationProof(base: String, now: Date) async throws
       && items.contains { $0.path == paths[0] }
       && !items.contains { $0.path == paths[1] || $0.path == paths[2] }
   }
-  equal(items.first { $0.path == paths[0] }?.bytes, 120_000_000, "unknown size preserves its last observation")
-  checkFalse(items.contains { $0.path == paths[1] }, "successful below-threshold sizing removes stale bytes")
-  checkFalse(items.contains { $0.path == paths[2] }, "now-tracked files disappear from the live catalog")
+  equal(
+    items.first { $0.path == paths[0] }?.bytes, 120_000_000,
+    "unknown size preserves its last observation")
+  checkFalse(
+    items.contains { $0.path == paths[1] }, "successful below-threshold sizing removes stale bytes")
+  checkFalse(
+    items.contains { $0.path == paths[2] }, "now-tracked files disappear from the live catalog")
   await monitor.shutdownWorktrees()
 }
 
@@ -1192,7 +1274,10 @@ private func adkJunkCacheAuthorityProof(base: String, now: Date) async throws {
     func measure(_ path: String) -> UInt64? {
       lock.withLock {
         instant = instant.addingTimeInterval(60)
-        if failed.contains(path) { failedCalls.insert(path); return nil }
+        if failed.contains(path) {
+          failedCalls.insert(path)
+          return nil
+        }
         return 120_000_000
       }
     }
@@ -1243,7 +1328,9 @@ private func adkJunkCacheAuthorityProof(base: String, now: Date) async throws {
   memory.rules = [rule]
   let old = items.first { $0.path == paths[0] }
   equal(old?.facts["stale"], "month", "fixture begins with old output")
-  equal(old.map { AutopilotPolicy.decide($0, memory: memory).status }, .burn, "old output matches an operator burn rule")
+  equal(
+    old.map { AutopilotPolicy.decide($0, memory: memory).status }, .burn,
+    "old output matches an operator burn rule")
 
   // The files have changed, but a timed-out measurement cannot supply fresh age/eligibility.
   try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: paths[0])
@@ -1272,13 +1359,19 @@ private func adkJunkCacheAuthorityProof(base: String, now: Date) async throws {
 
   measures.lock.withLock { measures.failed = [] }
   items = await ask { items in
-    items.contains { $0.path == paths[0] && $0.protectedReason == nil && $0.facts["stale"] == "today" }
+    items.contains {
+      $0.path == paths[0] && $0.protectedReason == nil && $0.facts["stale"] == "today"
+    }
   }
   let recovered = items.first { $0.path == paths[0] }
   equal(recovered?.protectedReason, nil, "a successful fresh observation replaces the hold")
   equal(recovered?.facts["stale"], "today", "recovery refreshes the age fact")
-  equal(recovered.map { AutopilotPolicy.matches(rule, $0) }, false, "recent output no longer matches the old-age rule")
-  equal(recovered.map { AutopilotPolicy.decide($0, memory: memory).status }, .unsure, "recovery does not revive stale burn authority")
+  equal(
+    recovered.map { AutopilotPolicy.matches(rule, $0) }, false,
+    "recent output no longer matches the old-age rule")
+  equal(
+    recovered.map { AutopilotPolicy.decide($0, memory: memory).status }, .unsure,
+    "recovery does not revive stale burn authority")
   // A failed descendant listing must hold that subtree, without re-holding a sibling whose
   // fresh check succeeded. Recovering the subtree clears its hold within the same cycle.
   equal(chmod(privateRoot, 0), 0)
@@ -1477,11 +1570,13 @@ private func adkOwnWalkProof(base: String, now: Date) async throws {
   let burned = sources.retireWorktree(copyItem, "operator")
   if burned.outcome == "refused",
     burned.detail == "I could not check whether something is using it, so I left it alone.",
-    WorktreeConsumerSnapshot(roots: [retired.path]).gap != nil {
+    WorktreeConsumerSnapshot(roots: [retired.path]).gap != nil
+  {
     check(fm.fileExists(atPath: retired.path), "incomplete native visibility preserves the copy")
     print("PASS native copy cleanup held for incomplete consumer visibility")
   } else {
-    equal(burned.outcome, "burned", "the burn steps the walk out of the copy first: \(burned.detail)")
+    equal(
+      burned.outcome, "burned", "the burn steps the walk out of the copy first: \(burned.detail)")
     checkFalse(fm.fileExists(atPath: retired.path), "the copy is gone")
   }
 
@@ -1495,7 +1590,8 @@ private func adkOwnWalkProof(base: String, now: Date) async throws {
   let reclaimed = sources.reclaimDisk(junkItem, "operator")
   if reclaimed.outcome == "refused",
     reclaimed.detail == "I couldn't tell if something is using that folder, so I left it alone.",
-    WorktreeConsumerSnapshot(roots: [junkOf(cleared)]).gap != nil {
+    WorktreeConsumerSnapshot(roots: [junkOf(cleared)]).gap != nil
+  {
     check(fm.fileExists(atPath: junkOf(cleared)), "incomplete native visibility preserves the junk")
     print("PASS native junk cleanup held for incomplete consumer visibility")
   } else {
@@ -1534,4 +1630,220 @@ private func adkOwnWalkProof(base: String, now: Date) async throws {
       || (reclaimed.outcome == "burned" && listed(after, cleared)),
     "what burned is not listed: \(after.map(\.name))")
   await monitor.shutdownWorktrees()
+}
+
+private func adkBuildRingsAndScratchProof(base: String, now: Date) throws {
+  let fm = FileManager.default
+  let home = base + "/home"
+  let temp = base + "/tmp"
+  try fm.createDirectory(atPath: home, withIntermediateDirectories: true)
+  try fm.createDirectory(atPath: temp, withIntermediateDirectories: true)
+
+  // 1. SDK build snapshot rings (`~/.*/*-local`): keep newest 3 + < 7d, surface >= 7d as
+  // regenerable `build-output`, and re-verify sibling retention right before reclaim.
+  let ringRoot = home + "/.orbit/mobile-sdk-local/core-sdk"
+  func writeSnapshot(_ name: String, ageDays: Double) throws -> String {
+    let snap = ringRoot + "/" + name
+    let touched = now.addingTimeInterval(-ageDays * 86_400)
+    try adkWrite(#"{"version":"1"}"#, to: snap + "/manifest.json", modified: touched)
+    try adkWrite("// init", to: snap + "/init.gradle", modified: touched)
+    try fm.createDirectory(atPath: snap + "/consumers/app", withIntermediateDirectories: true)
+    try fm.setAttributes([.modificationDate: touched], ofItemAtPath: snap + "/consumers/app")
+    try fm.setAttributes([.modificationDate: touched], ofItemAtPath: snap)
+    return snap
+  }
+  let s1 = try writeSnapshot("snap-1", ageDays: 1)
+  let s2 = try writeSnapshot("snap-2", ageDays: 2)
+  let s3 = try writeSnapshot("snap-3", ageDays: 3)
+  let s4 = try writeSnapshot("snap-4", ageDays: 5)
+  let s5 = try writeSnapshot("snap-5", ageDays: 16)
+
+  // A second artifact whose newest 3 snapshots are all > 7 days old: all 3 stay protected.
+  let oldArtifactRoot = home + "/.orbit/mobile-sdk-local/legacy-sdk"
+  for (name, ageDays) in [("old-1", 10.0), ("old-2", 12.0), ("old-3", 14.0)] {
+    let snap = oldArtifactRoot + "/" + name
+    let touched = now.addingTimeInterval(-ageDays * 86_400)
+    try adkWrite(#"{"version":"1"}"#, to: snap + "/manifest.json", modified: touched)
+    try adkWrite("// init", to: snap + "/init.gradle", modified: touched)
+    try fm.setAttributes([.modificationDate: touched], ofItemAtPath: snap)
+  }
+
+  // Shared Gradle consumer cache inside `_shared-cache/gradle/<consumer>`: keep newest version
+  // (`9.8.2`), surface older (`8.14.5`) as regenerable `package-cache`.
+  let gradleConsumer = home + "/.orbit/mobile-sdk-local/_shared-cache/gradle/consumer-app"
+  for (ver, ageDays) in [("9.8.2", 12.0), ("8.14.5", 20.0)] {
+    let dir = gradleConsumer + "/" + ver
+    try adkWrite(
+      "lock", to: dir + "/gc.properties", modified: now.addingTimeInterval(-ageDays * 86_400))
+    try fm.setAttributes(
+      [.modificationDate: now.addingTimeInterval(-ageDays * 86_400)], ofItemAtPath: dir)
+  }
+
+  // Disguised DerivedData-* and gradle-home inside a checkout, vs unverified folder with a prefix.
+  let repo = home + "/work/orbit-ios"
+  try adkRepository(repo)
+  try adkWrite("a", to: repo + "/README.md")
+  try adkGit(repo, ["add", "."])
+  try adkGit(repo, ["commit", "-m", "init"])
+  let disguisedDD = repo + "/DerivedData-agent"
+  try adkWrite(
+    "<plist/>", to: disguisedDD + "/info.plist", modified: now.addingTimeInterval(-10 * 86_400))
+  try fm.createDirectory(
+    atPath: disguisedDD + "/Build/Intermediates.noindex", withIntermediateDirectories: true)
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-10 * 86_400)], ofItemAtPath: disguisedDD)
+  let fakeDD = repo + "/DerivedData-notes"
+  try adkWrite("keep me", to: fakeDD + "/notes.txt", modified: now.addingTimeInterval(-10 * 86_400))
+  let disguisedGradle = repo + "/gradle-home"
+  try adkWrite(
+    "cache", to: disguisedGradle + "/caches/8.14/file.bin",
+    modified: now.addingTimeInterval(-10 * 86_400))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-10 * 86_400)], ofItemAtPath: disguisedGradle)
+  let checkoutRecord = WorktreeRecord(id: "wt-orbit", path: repo, repository: repo + "/.git")
+
+  // 2. Abandoned AI scratch folders (`$TMPDIR/claude-*`, `~/.codex/artifacts`, Antigravity `scratch`).
+  let claudeBox = temp + "/claude-501"
+  let oldTask = claudeBox + "/project-a/tasks/task-old"
+  let freshTask = claudeBox + "/project-a/tasks/task-fresh"
+  try adkWrite("log", to: oldTask + "/out.txt", modified: now.addingTimeInterval(-4 * 86_400))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-4 * 86_400)], ofItemAtPath: oldTask)
+  try adkWrite("log", to: freshTask + "/out.txt", modified: now.addingTimeInterval(-3600))
+  try fm.setAttributes([.modificationDate: now.addingTimeInterval(-3600)], ofItemAtPath: freshTask)
+
+  let codexOld = home + "/.codex/artifacts/run-old"
+  let codexFresh = home + "/.codex/artifacts/run-fresh"
+  try adkWrite("blob", to: codexOld + "/dump.bin", modified: now.addingTimeInterval(-20 * 86_400))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-20 * 86_400)], ofItemAtPath: codexOld)
+  try adkWrite("blob", to: codexFresh + "/dump.bin", modified: now.addingTimeInterval(-3 * 86_400))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-3 * 86_400)], ofItemAtPath: codexFresh)
+
+  let endedBrain = home + "/.gemini/antigravity/brain/ended-conv"
+  let liveBrain = home + "/.gemini/antigravity/brain/live-conv"
+  try adkWrite(
+    "# Keep Plan", to: endedBrain + "/plan.md", modified: now.addingTimeInterval(-20 * 86_400))
+  try adkWrite(
+    "{}", to: endedBrain + "/.system_generated/logs/transcript.jsonl",
+    modified: now.addingTimeInterval(-20 * 86_400))
+  try adkWrite(
+    "scratch", to: endedBrain + "/scratch/tmp.bin",
+    modified: now.addingTimeInterval(-20 * 86_400))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-20 * 86_400)],
+    ofItemAtPath: endedBrain + "/scratch")
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-20 * 86_400)], ofItemAtPath: endedBrain)
+
+  try adkWrite("{}", to: liveBrain + "/.system_generated/logs/transcript.jsonl", modified: now)
+  try adkWrite(
+    "live-scratch", to: liveBrain + "/scratch/tmp.bin",
+    modified: now.addingTimeInterval(-20 * 86_400))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-20 * 86_400)],
+    ofItemAtPath: liveBrain + "/scratch")
+  try fm.setAttributes([.modificationDate: now], ofItemAtPath: liveBrain)
+
+  let discovered = AutopilotDisk.items(
+    worktrees: [checkoutRecord], home: home, caches: true, mains: true, now: now,
+    sizer: { _ in 180_000_000 }, trail: temp)
+  let paths = Set(discovered.compactMap(\.path))
+
+  // Verify build ring discovery & retention.
+  check(paths.contains(s5), "16-day snapshot beyond newest 3 is discovered")
+  checkFalse(
+    paths.contains(s1) || paths.contains(s2) || paths.contains(s3), "newest 3 snapshots kept")
+  checkFalse(paths.contains(s4), "< 7-day snapshot kept even beyond top 3")
+  checkFalse(
+    paths.contains(oldArtifactRoot + "/old-3"),
+    "> 7-day snapshot stays protected when among newest 3")
+  check(paths.contains(gradleConsumer + "/8.14.5"), "older shared Gradle version discovered")
+  checkFalse(paths.contains(gradleConsumer + "/9.8.2"), "newest shared Gradle version kept")
+
+  // Verify disguised checkout caches vs unverified prefix folders.
+  check(paths.contains(disguisedDD), "verified DerivedData-agent discovered")
+  check(paths.contains(disguisedGradle), "verified gradle-home discovered")
+  checkFalse(paths.contains(fakeDD), "unverified DerivedData-notes ignored")
+
+  guard let s5Item = discovered.first(where: { $0.path == s5 }),
+    let oldGradleItem = discovered.first(where: { $0.path == gradleConsumer + "/8.14.5" }),
+    let ddItem = discovered.first(where: { $0.path == disguisedDD }),
+    let ghItem = discovered.first(where: { $0.path == disguisedGradle })
+  else {
+    return failTest("expected ring and disguised items in discovered set")
+  }
+  equal(ddItem.facts["folder"], "xcode-derived")
+  equal(ghItem.facts["folder"], "package-cache")
+  check(AutopilotDisk.regenerable(s5, home: home), "ring snapshot is regenerable")
+  check(
+    AutopilotDisk.regenerable(gradleConsumer + "/8.14.5", home: home),
+    "shared Gradle cache is regenerable")
+  check(AutopilotDisk.regenerable(disguisedDD, home: home), "DerivedData-agent is regenerable")
+  check(AutopilotDisk.regenerable(disguisedGradle, home: home), "gradle-home is regenerable")
+
+  let burnedSnap = AutopilotDisk.reclaim(
+    s5Item, authority: "ai:0.95", home: home, inUse: { _ in 0 })
+  equal(burnedSnap.outcome, "burned", burnedSnap.detail)
+  checkFalse(fm.fileExists(atPath: s5), "s5 removed")
+  check(fm.fileExists(atPath: s1) && fm.fileExists(atPath: s3), "newer snapshots preserved")
+
+  // Refusal rail if someone tries to reclaim one of the newest 3 snapshots.
+  var protectedSnapItem = s5Item
+  protectedSnapItem.path = s3
+  let refusedSnap = AutopilotDisk.reclaim(
+    protectedSnapItem, authority: "ai:0.95", home: home, inUse: { _ in 0 })
+  equal(refusedSnap.outcome, "refused", "live retention rail protects top-3 snapshot")
+  check(fm.fileExists(atPath: s3))
+
+  let burnedGradle = AutopilotDisk.reclaim(
+    oldGradleItem, authority: "ai:0.95", home: home, inUse: { _ in 0 })
+  equal(burnedGradle.outcome, "burned", burnedGradle.detail)
+  checkFalse(fm.fileExists(atPath: gradleConsumer + "/8.14.5"))
+  check(fm.fileExists(atPath: gradleConsumer + "/9.8.2"))
+
+  // Verify AI scratch items & surgical reclaim.
+  let scratchItems = discovered.filter { $0.facts["folder"] == "agent-temp" }
+  equal(scratchItems.count, 3, "Claude temp, Codex artifacts, and Antigravity scratch discovered")
+  guard
+    let agScratch = scratchItems.first(where: { $0.path == home + "/.gemini/antigravity/brain" }),
+    let codexScratch = scratchItems.first(where: { $0.path == home + "/.codex/artifacts" }),
+    let claudeScratch = scratchItems.first(where: { $0.path == claudeBox })
+  else {
+    return failTest("expected all 3 agent scratch items")
+  }
+
+  // Held when open by a process.
+  let heldScratch = AutopilotAgentScratch.reclaim(
+    agScratch, authority: "starter:starter-agent-scratch", home: home, temp: temp, now: now,
+    inUse: { _ in 1 })
+  equal(heldScratch.outcome, "refused", "open file handle holds scratch folder")
+  check(fm.fileExists(atPath: endedBrain + "/scratch/tmp.bin"))
+
+  // Reclaim removes settled scratch while keeping artifacts, transcripts, recent runs, and live chats!
+  let burnedAG = AutopilotAgentScratch.reclaim(
+    agScratch, authority: "starter:starter-agent-scratch", home: home, temp: temp, now: now,
+    inUse: { _ in 0 })
+  equal(burnedAG.outcome, "burned", burnedAG.detail)
+  checkFalse(fm.fileExists(atPath: endedBrain + "/scratch"), "ended scratch removed")
+  check(fm.fileExists(atPath: endedBrain + "/plan.md"), "conversation artifact preserved")
+  check(
+    fm.fileExists(atPath: endedBrain + "/.system_generated/logs/transcript.jsonl"),
+    "transcript preserved")
+  check(fm.fileExists(atPath: liveBrain + "/scratch/tmp.bin"), "live chat scratch preserved")
+
+  let burnedCodex = AutopilotAgentScratch.reclaim(
+    codexScratch, authority: "starter:starter-agent-scratch", home: home, temp: temp, now: now,
+    inUse: { _ in 0 })
+  equal(burnedCodex.outcome, "burned", burnedCodex.detail)
+  checkFalse(fm.fileExists(atPath: codexOld), "20-day codex artifact removed")
+  check(fm.fileExists(atPath: codexFresh), "3-day codex artifact preserved")
+
+  let burnedClaude = AutopilotAgentScratch.reclaim(
+    claudeScratch, authority: "starter:starter-agent-scratch", home: home, temp: temp, now: now,
+    inUse: { _ in 0 })
+  equal(burnedClaude.outcome, "burned", burnedClaude.detail)
+  checkFalse(fm.fileExists(atPath: oldTask), "4-day claude task output removed")
+  check(fm.fileExists(atPath: freshTask), "recent claude task output preserved")
 }

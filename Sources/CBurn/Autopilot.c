@@ -60,9 +60,11 @@ static void bz_marker_visit(void *context, const char *entry, size_t length, int
     for (int i = 0; i < 2; i++) if (length >= strlen(claude[i]) && memcmp(entry, claude[i], strlen(claude[i])) == 0) *mask |= 1;
     for (int i = 0; i < 3; i++) if (length >= strlen(codex[i]) && memcmp(entry, codex[i], strlen(codex[i])) == 0) *mask |= 2;
     if (length >= 7 && memcmp(entry, "CURSOR_", 7) == 0) *mask |= 4;
+    if ((length >= 12 && memcmp(entry, "ANTIGRAVITY_", 12) == 0) ||
+        (length >= 4 && memcmp(entry, "AGY_", 4) == 0)) *mask |= 8;
 }
-// Bitmask of agent markers present in the environment: 1 Claude Code, 2 Codex, 4 Cursor.
-// Only variable names are compared; no value leaves this function.
+// Bitmask of agent markers present in the environment: 1 Claude Code, 2 Codex, 4 Cursor,
+// 8 Antigravity. Only variable names are compared; no value leaves this function.
 int bz_agent_markers(int32_t pid) {
     int mask = 0;
     return bz_procargs(pid, bz_marker_visit, &mask) == 1 ? mask : -1;

@@ -26,6 +26,8 @@ func agentSessionEnvironmentProof() throws {
     "CODEX_ESCALATE_SOCKET": root.appendingPathComponent("escalate.sock").path,
     "CURSOR_AGENT": "1",
     "VSCODE_IPC_HOOK_CLI": root.appendingPathComponent("editor.sock").path,
+    "ANTIGRAVITY_AGENT": "1",
+    "AGY_BROWSER_WS_URL": "ws://127.0.0.1:9",
   ]
   // What a person sets on purpose for their harness stays.
   let chosen = [

@@ -38,6 +38,18 @@ public enum AutopilotPolicy {
       ], verdict: .burn, source: .starter,
       title: "Leftover programs whose app or chat closed and that sat idle for 6+ hours",
       created: Date(timeIntervalSinceReferenceDate: 0)),
+    // When a known coding chat explicitly ended and its non-browser orphan helper isn't serving a
+    // port, an hour of silence is enough to stop it instead of holding gigabytes of RAM for 6 hours.
+    // Browsers follow `starter-robot-browsers` or ask the owner when not proven abandoned.
+    AutopilotRule(
+      id: "starter-ended-chat-programs", kind: .process,
+      match: [
+        "family": ["node", "python", "ruby", "java", "build", "shell", "other"],
+        "orphaned": ["yes"], "thread": ["ended"], "idle": ["1h", "6h", "1d"],
+        "listening": ["no"],
+      ], verdict: .burn, source: .starter,
+      title: "Leftover helpers from finished chats, idle 1+ hour",
+      created: Date(timeIntervalSinceReferenceDate: 0)),
     AutopilotRule(
       id: "starter-finished-copies", kind: .worktree,
       match: [
@@ -58,13 +70,19 @@ public enum AutopilotPolicy {
       verdict: .burn, source: .starter,
       title: "Profiles and recordings robot browsers left in the temp folder",
       created: Date(timeIntervalSinceReferenceDate: 0)),
+    AutopilotRule(
+      id: "starter-agent-scratch", kind: .disk, match: ["folder": ["agent-temp"]],
+      verdict: .burn, source: .starter,
+      title: "Scratch files finished AI chats left in temp folders",
+      created: Date(timeIntervalSinceReferenceDate: 0)),
   ]
 
   /// Every fact of the rule has one of its values. A burn that leaves out a named risk covers only
   /// things clear of it, and a thing without the fact is clear (`namedRisks`).
   public static func matches(_ rule: AutopilotRule, _ item: AutopilotItem) -> Bool {
     rule.kind == item.kind
-      && effective(rule).allSatisfy { key, values in value(item, key).map(values.contains) ?? false }
+      && effective(rule).allSatisfy { key, values in value(item, key).map(values.contains) ?? false
+      }
   }
 
   /// Only native acceptance time and the current revision give AI advice a bounded lifetime.
@@ -99,9 +117,12 @@ public enum AutopilotPolicy {
     let rules = memory.rules.filter { $0.enabled && matches($0, item) }
     if let rule = rules.first(where: { $0.verdict == .keep }) { return (.keep, "rule:" + rule.id) }
     // Docker's build cache is the owner's call: the AI's verdict counts for nothing, either way.
-    let previous = AutopilotDockerCache.isCache(item) ? nil : memory.judgments[item.id].flatMap {
-      $0.revision == item.revision && $0.confidence >= aiConfidenceFloor ? $0 : nil
-    }
+    let previous =
+      AutopilotDockerCache.isCache(item)
+      ? nil
+      : memory.judgments[item.id].flatMap {
+        $0.revision == item.revision && $0.confidence >= aiConfidenceFloor ? $0 : nil
+      }
     let judgment = previous.flatMap { _ in currentJudgment(for: item, memory: memory, now: now) }
     if previous?.verdict == .keep {
       guard let judgment else { return (.unsure, nil) }
@@ -212,7 +233,8 @@ public enum AutopilotPolicy {
 
   /// The facts of `facts` that name its subject: the kind of program or folder, and for a program
   /// of no known family, which program it is.
-  static func subjectMatch(_ kind: AutopilotKind, _ facts: [String: [String]]) -> [String: [String]] {
+  static func subjectMatch(_ kind: AutopilotKind, _ facts: [String: [String]]) -> [String: [String]]
+  {
     guard let key = subjectFacts[kind], let value = facts[key]?.first else { return [:] }
     var match: [String: [String]] = [key: [value]]
     if kind == .process, value == unknownFamily, let program = facts["program"]?.first,
@@ -423,14 +445,17 @@ public enum AutopilotPolicy {
     switch kind {
     case .worktree:
       found = [
-        count({ $0.facts["saved"] == "local" }, "has work only on this Mac", "have work only on this Mac"),
+        count(
+          { $0.facts["saved"] == "local" }, "has work only on this Mac",
+          "have work only on this Mac"),
         count({ $0.facts["changes"] == "small" }, "has unsaved changes", "have unsaved changes"),
         count(
           { $0.facts["changes"] == "large" }, "has lots of unsaved changes",
           "have lots of unsaved changes"),
       ]
       for risk in AutopilotWorktrees.bigFileRisks {
-        found.append(count({ $0.facts[risk.fact] == "yes" }, "has " + risk.words, "have " + risk.words))
+        found.append(
+          count({ $0.facts[risk.fact] == "yes" }, "has " + risk.words, "have " + risk.words))
       }
     case .process:
       found = [
@@ -501,7 +526,8 @@ public enum AutopilotPolicy {
         parts.append(stale)
       }
       if value("thread") == "ended" { parts.append("whose chat finished") }
-      return "Can I burn old project copies" + (parts.isEmpty ? "" : " " + parts.joined(separator: ", "))
+      return "Can I burn old project copies"
+        + (parts.isEmpty ? "" : " " + parts.joined(separator: ", "))
         + "?"
     case .disk:
       if AutopilotDockerCache.about(match) {
@@ -513,6 +539,7 @@ public enum AutopilotPolicy {
           "build-output": "build leftovers", "xcode-derived": "Xcode build leftovers",
           "package-cache": "tool caches", "python-env": "Python environments",
           "browser-temp": "what robot browsers left behind",
+          "agent-temp": "scratch files finished AI chats left behind",
         ][value("folder") ?? ""] ?? "these folders"
       let home =
         [
@@ -587,9 +614,9 @@ public enum AutopilotPolicy {
 
   /// An answer also covers strictly safer (yes) or strictly riskier (no) values of the same
   /// facts, so each answer teaches as much as it safely can.
-  public static func widen(_ match: [String: [String]], verdict: AutopilotVerdict) -> [String: [
-    String
-  ]] {
+  public static func widen(_ match: [String: [String]], verdict: AutopilotVerdict) -> [String:
+    [String]]
+  {
     var result = match
     for (key, values) in match {
       guard let order = safety[key], values.count == 1, let i = order.firstIndex(of: values[0])
@@ -702,6 +729,7 @@ extension AutopilotPolicy {
         "package-cache": ("tool cache", "tool caches"),
         "python-env": ("Python environment", "Python environments"),
         "browser-temp": ("robot-browser leftover", "robot-browser leftovers"),
+        "agent-temp": ("AI scratch leftover", "AI scratch leftovers"),
         AutopilotDockerCache.folder: (AutopilotDockerCache.name, AutopilotDockerCache.name),
       ][value("folder")] ?? ("folder", "folders")
     }
@@ -730,25 +758,55 @@ extension AutopilotPolicy {
     switch kind {
     case .worktree:
       let work: [(fact: String, words: [String: String])] = [
-        ("saved", ["merged": "Already merged", "pushed": "Saved on GitHub", "local": "Work only on this Mac"]),
-        ("changes", ["none": "No unsaved changes", "small": "Has unsaved changes", "large": "Has lots of unsaved changes"]),
+        (
+          "saved",
+          [
+            "merged": "Already merged", "pushed": "Saved on GitHub",
+            "local": "Work only on this Mac",
+          ]
+        ),
+        (
+          "changes",
+          [
+            "none": "No unsaved changes", "small": "Has unsaved changes",
+            "large": "Has lots of unsaved changes",
+          ]
+        ),
       ]
       let big: [(fact: String, words: [String: String])] = AutopilotWorktrees.bigFileRisks.map {
         risk in (fact: risk.fact, words: ["yes": "Has " + risk.words])
       }
       let rest: [(fact: String, words: [String: String])] = [
         ("stale", stalePhrases),
-        ("place", ["patrol6": "Made by Patrol6 agents", "codex": "Made by Codex", "claude": "Made by Claude", "conductor": "Made by Conductor"]),
+        (
+          "place",
+          [
+            "patrol6": "Made by Patrol6 agents", "codex": "Made by Codex",
+            "claude": "Made by Claude", "conductor": "Made by Conductor",
+          ]
+        ),
         ("thread", ["ended": "Its chat is finished"]),
       ]
       return work + big + rest
     case .process:
       return [
         ("listening", ["yes": "Still running a server", "no": "Not serving anything"]),
-        ("idle", ["active": "Still busy", "10m": "Idle 10+ minutes", "1h": "Idle 1+ hour", "6h": "Idle 6+ hours", "1d": "Idle 1+ day"]),
+        (
+          "idle",
+          [
+            "active": "Still busy", "10m": "Idle 10+ minutes", "1h": "Idle 1+ hour",
+            "6h": "Idle 6+ hours", "1d": "Idle 1+ day",
+          ]
+        ),
         ("orphaned", ["yes": "Its app is gone"]),
         ("thread", ["ended": "Its chat is finished"]),
-        ("agent", ["codex": "Started by Codex", "claude": "Started by Claude", "cursor": "Started by Cursor"]),
+        (
+          "agent",
+          [
+            "codex": "Started by Codex", "claude": "Started by Claude",
+            "cursor": "Started by Cursor", "antigravity": "Started by Antigravity",
+          ]
+        ),
       ]
     case .disk:
       return [
@@ -847,7 +905,8 @@ extension AutopilotPolicy {
   /// the way a question card says what it frees.
   public static func roughly(_ bytes: UInt64) -> String {
     bytes >= 1_000_000_000
-      ? String(format: "%.1f GB", Double(bytes) / 1e9) : String(format: "%.0f MB", Double(bytes) / 1e6)
+      ? String(format: "%.1f GB", Double(bytes) / 1e9)
+      : String(format: "%.0f MB", Double(bytes) / 1e6)
   }
 
   /// Facts that make burning riskier: work that exists nowhere else, things still in use. How

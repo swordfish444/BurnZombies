@@ -303,7 +303,8 @@ struct SettingsHome: View {
           }
         }
         SettingsLink(
-          title: "Used this week", value: AISettingsModel.about(ai.report(days: 7).total.estimatedUSD),
+          title: "Used this week",
+          value: AISettingsModel.about(ai.report(days: 7).total.estimatedUSD),
           divider: false
         ) { model.settingsPage = .aiUse }
       }
@@ -360,7 +361,8 @@ struct SettingsWindow: View {
     self.model = model
     let root =
       model.demo
-      ? FileManager.default.temporaryDirectory.appendingPathComponent("bz-demo-ai") : Store.defaultRoot
+      ? FileManager.default.temporaryDirectory.appendingPathComponent("bz-demo-ai")
+      : Store.defaultRoot
     let settings = ai ?? AISettingsModel(root: root)
     if !model.demo { settings.saved = { [weak model] in model?.reloadReviewConfiguration() } }
     _ai = StateObject(wrappedValue: settings)
@@ -547,11 +549,16 @@ struct SettingsSubpage: View {
 
   private var aiUse: some View {
     let week = ai.report(days: 7)
+    let efficiency = AutopilotTokenEfficiency(
+      ledger: ai.ledger, receipts: model.autopilot.receipts,
+      questions: model.autopilot.questions, sweep: model.autopilot.sweep)
     let money: (Double) -> String = { "$" + String(Int($0.rounded())) }
     return Group {
       heading("AI used this week", "What this would cost if you paid per use.")
       Text(money(week.total.estimatedUSD))
-        .font(.system(size: 40, weight: .semibold, design: .rounded)).foregroundStyle(BurnTheme.orange)
+        .font(.system(size: 40, weight: .semibold, design: .rounded)).foregroundStyle(
+          BurnTheme.orange
+        )
         .monospacedDigit()
       Chart(Array(week.buckets.suffix(7))) { bucket in
         BarMark(
@@ -567,12 +574,31 @@ struct SettingsSubpage: View {
       .frame(height: 110).accessibilityIdentifier("ai-use-chart")
       VStack(spacing: 0) {
         SettingsRow(title: "Today") {
-          Text(money(ai.report(days: 1).total.estimatedUSD)).font(.callout).foregroundStyle(.secondary)
+          Text(money(ai.report(days: 1).total.estimatedUSD)).font(.callout).foregroundStyle(
+            .secondary)
         }
         SettingsRow(title: "This month", divider: false) {
-          Text(money(ai.report(days: 30).total.estimatedUSD)).font(.callout).foregroundStyle(.secondary)
+          Text(money(ai.report(days: 30).total.estimatedUSD)).font(.callout).foregroundStyle(
+            .secondary)
         }
       }.background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+      SettingsCard(title: "Token efficiency") {
+        SettingsRow(title: "Freed by rules (0 tokens)") {
+          Text(AutopilotPolicy.format(efficiency.freeBytes))
+            .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+        }
+        SettingsRow(title: "Freed by AI sweeps") {
+          Text(AutopilotPolicy.format(efficiency.aiBytes))
+            .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+        }
+        SettingsRow(title: "Noisy sweeps skipped", divider: false) {
+          Text("\(efficiency.skippedSweeps)")
+            .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+        }
+      }.accessibilityIdentifier("ai-token-efficiency")
+      Text(efficiency.statusLine)
+        .font(.caption).foregroundStyle(efficiency.leanBudget ? BurnTheme.orange : .secondary)
+        .fixedSize(horizontal: false, vertical: true)
       Text("On a Claude or ChatGPT plan, it comes out of your plan instead.")
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }

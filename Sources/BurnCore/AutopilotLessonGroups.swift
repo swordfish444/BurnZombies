@@ -58,6 +58,7 @@ extension AutopilotPolicy {
     "node_modules": "node_modules", "build-output": "build folders",
     "xcode-derived": "Xcode build folders", "package-cache": "tool caches",
     "python-env": "Python environments", "browser-temp": "robot-browser leftovers",
+    "agent-temp": "AI scratch leftovers",
   ]
 
   /// The most recent use a lesson covers, when it pins recency: its first recency value in

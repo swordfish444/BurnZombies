@@ -38,7 +38,7 @@ public struct AutopilotProcessProbe: Sendable {
 public enum AutopilotProcesses {
   static let protectedNames: Set<String> = [
     "launchd", "kernel_task", "login", "WindowServer", "sshd", "ssh-agent", "gpg-agent",
-    "security", "op", "codex", "claude", "gemini", "copilot", "cursor-agent", "burnzombies",
+    "security", "op", "codex", "claude", "gemini", "agy", "copilot", "cursor-agent", "burnzombies",
     "burnzombies-mcp", "BurnZombiesApp", "tmux", "screen", "mosh-server", "caffeinate",
   ]
   static let systemPrefixes = [
@@ -127,9 +127,10 @@ public enum AutopilotProcesses {
   public static func family(_ executable: String) -> String {
     let path = executable.lowercased()
     let name = (path as NSString).lastPathComponent
-    if ["node", "nodejs", "bun", "deno", "npm", "npx", "pnpm", "yarn", "tsx", "ts-node",
-      "next-server"].contains(name)
-    {
+    if [
+      "node", "nodejs", "bun", "deno", "npm", "npx", "pnpm", "yarn", "tsx", "ts-node",
+      "next-server",
+    ].contains(name) {
       return "node"
     }
     if name.hasPrefix("python") || ["uvicorn", "gunicorn", "pytest", "uv", "celery"].contains(name)
@@ -144,10 +145,11 @@ public enum AutopilotProcesses {
     {
       return "browser"
     }
-    if ["esbuild", "swc", "tsc", "cargo", "rustc", "clang", "swift-frontend", "swift-build",
+    if [
+      "esbuild", "swc", "tsc", "cargo", "rustc", "clang", "swift-frontend", "swift-build",
       "xcodebuild", "make", "cmake", "ninja", "go", "watchman", "turbo", "sourcekit-lsp",
-      "gopls", "rust-analyzer"].contains(name)
-    {
+      "gopls", "rust-analyzer",
+    ].contains(name) {
       return "build"
     }
     if ["sh", "bash", "zsh", "fish", "dash"].contains(name) { return "shell" }
@@ -245,9 +247,10 @@ public enum AutopilotProcesses {
         tree = descendants(of: o.identity.pid, in: records)
         robots = Self.robots(in: [record] + tree, arguments: probe.arguments)
       }
-      let abandoned = robotRoot.map {
-        Self.abandoned($0, members: robots.members, clients: probe.clients)
-      } ?? false
+      let abandoned =
+        robotRoot.map {
+          Self.abandoned($0, members: robots.members, clients: probe.clients)
+        } ?? false
       var reason = rail(
         record, protectedPIDs: protectedPIDs, preferences: preferences, now: now, home: home,
         robot: abandoned)
@@ -295,7 +298,8 @@ public enum AutopilotProcesses {
       }()
       let leaderGone =
         o.pgid.map { $0 > 1 && $0 != o.identity.pid && !probe.alive($0) } ?? false
-      let orphaned = robot == "abandoned" || record.orphanSince != nil || leaderGone ? "yes" : "maybe"
+      let orphaned =
+        robot == "abandoned" || record.orphanSince != nil || leaderGone ? "yes" : "maybe"
       let quiet = members.map { idleSince($0, now: now) }.min() ?? 0
       // The whole tree was last used when its busiest member was; the same moment `quiet` counts
       // from, kept as a date so it doesn't move with `now`.

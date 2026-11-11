@@ -1,4 +1,90 @@
+import Darwin
 import Foundation
+
+/// Rolling 7-day token return-on-investment across zero-token rules and AI sweeps. When recent AI
+/// sweeps spend heavily for little cleanup yield, `leanBudget` engages automatically so BurnZombies
+/// stays out of the way of active coding sessions.
+public struct AutopilotTokenEfficiency: Sendable, Equatable {
+  public static let dragTokenFloor = 5_000_000
+  public static let dragTrainingTokenFloor = 15_000_000
+  public static let dragSweepFloor = 4
+  public static let dragMinimumBytes: UInt64 = 1_000_000_000
+
+  public var sweeps: Int
+  public var skippedSweeps: Int
+  public var tokens: Int
+  public var aiQuestions: Int
+  public var freeBytes: UInt64
+  public var aiBytes: UInt64
+  public var freeStops: Int
+  public var aiStops: Int
+  public var leanBudget: Bool
+  public var statusLine: String
+
+  public init(
+    ledger: ReviewLedger = ReviewLedger(), receipts: [AutopilotReceipt] = [],
+    questions: [AutopilotQuestion] = [], sweep: AutopilotSweepState = AutopilotSweepState(),
+    days: Int = 7, now: Date = Date()
+  ) {
+    let cutoff = now.addingTimeInterval(-Double(max(1, days)) * 86_400)
+    let runs = ledger.entries.filter { $0.started >= cutoff }
+    sweeps = runs.count
+    skippedSweeps = sweep.skippedSweeps ?? 0
+    tokens = runs.reduce(0) { total, entry in
+      total + (entry.usage.map { $0.inputTokens + $0.outputTokens } ?? 0)
+    }
+    aiQuestions = questions.filter { $0.source == "ai" && $0.asked >= cutoff }.count
+
+    var ruleBytes: UInt64 = 0
+    var modelBytes: UInt64 = 0
+    var rulePrograms = 0
+    var modelPrograms = 0
+    for receipt in receipts
+    where receipt.date >= cutoff
+      && ["burned", "verified", "verifying"].contains(receipt.outcome)
+    {
+      if receipt.authority.hasPrefix("ai:") {
+        if receipt.kind == .process { modelPrograms += 1 } else { modelBytes += receipt.bytes }
+      } else if receipt.authority.hasPrefix("rule:") || receipt.authority.hasPrefix("starter:") {
+        if receipt.kind == .process { rulePrograms += 1 } else { ruleBytes += receipt.bytes }
+      }
+    }
+    freeBytes = ruleBytes
+    aiBytes = modelBytes
+    freeStops = rulePrograms
+    aiStops = modelPrograms
+
+    let lowYield = aiBytes < Self.dragMinimumBytes && aiStops < 2
+    let highSpend =
+      (aiQuestions == 0 && tokens >= Self.dragTokenFloor)
+      || tokens >= Self.dragTrainingTokenFloor
+    leanBudget = sweeps >= Self.dragSweepFloor && lowYield && highSpend
+
+    if leanBudget {
+      statusLine =
+        "Lean mode is on: recent AI sweeps freed little space, so I wait for 2 GB before waking the AI."
+    } else if sweeps == 0 && (freeBytes > 0 || freeStops > 0) {
+      statusLine = "Zero AI tokens spent this week — your rules handled every cleanup for free."
+    } else if freeBytes > 0 || aiBytes > 0 {
+      statusLine =
+        "Rules freed \(AutopilotPolicy.format(freeBytes)) for 0 tokens; AI sweeps freed \(AutopilotPolicy.format(aiBytes))."
+    } else {
+      statusLine = "Rules burn known leftovers for 0 tokens; the AI only wakes for quiet new ones."
+    }
+  }
+
+  public static func load(root: URL, days: Int = 7, now: Date = Date()) -> Self {
+    let ledger =
+      (try? Store(root: root)).flatMap { try? ReviewLedger.load(store: $0) }
+      ?? ReviewLedger()
+    let autopilot = try? AutopilotStore(root: root)
+    let receipts = (try? autopilot?.receipts()) ?? []
+    let questions = (try? autopilot?.memory().questions) ?? []
+    let sweep = (try? autopilot?.sweep()) ?? AutopilotSweepState()
+    return Self(
+      ledger: ledger, receipts: receipts, questions: questions, sweep: sweep, days: days, now: now)
+  }
+}
 
 /// When to tick natively, when to spend an AI sweep, and how failures back off.
 public enum AutopilotSweeper {
@@ -6,6 +92,10 @@ public enum AutopilotSweeper {
   public static let aiTimeout: TimeInterval = 900
   public static let rejudgeInterval = AutopilotPolicy.aiJudgmentLifetime
   public static let minimumSpacing: TimeInterval = 30 * 60
+  public static let lowDiskBytes: UInt64 = 50_000_000_000
+  public static let lowDiskInterval: TimeInterval = 120
+  public static let worthAISweepBytes: UInt64 = 250_000_000
+  public static let leanBudgetSweepBytes: UInt64 = 2_000_000_000
   /// A new install looks every minute for its first half hour, so what its first inventory finds
   /// is burned or asked about as soon as it arrives, and its first AI sweep waits ten minutes
   /// for that first look instead of judging a half-empty catalog.
@@ -13,21 +103,102 @@ public enum AutopilotSweeper {
   public static let warmUpInterval: TimeInterval = 60
   public static let firstSweepDelay: TimeInterval = 10 * 60
 
+  /// Available non-root disk bytes on the volume containing `path`, or nil when unreadable.
+  public static func freeDiskBytes(at path: String = NSHomeDirectory()) -> UInt64? {
+    var fs = statfs()
+    var target = path
+    while !target.isEmpty {
+      if statfs(target, &fs) == 0 {
+        return UInt64(fs.f_bavail) * UInt64(fs.f_bsize)
+      }
+      let next = (target as NSString).deletingLastPathComponent
+      if next == target { break }
+      target = next
+    }
+    return nil
+  }
+
+  public static func isLowDisk(at path: String = NSHomeDirectory()) -> Bool {
+    guard let free = freeDiskBytes(at: path) else { return false }
+    return free < lowDiskBytes
+  }
+
   /// Cataloging runs even when Autopilot is off, so the UI can show what it would burn;
-  /// the engine only burns while enabled.
-  public static func nativeDue(_ state: AutopilotSweepState, now: Date) -> Bool {
+  /// the engine only burns while enabled. Under low disk (< 50 GB free), zero-token rule ticks
+  /// tighten to every 2 minutes so build caches and merged copies clear before builds hit ENOSPC.
+  public static func nativeDue(
+    _ state: AutopilotSweepState, now: Date, lowDisk: Bool = false
+  ) -> Bool {
     guard let last = state.lastTick else { return true }
     if let first = state.firstTick, now.timeIntervalSince(first) < warmUp {
       return now.timeIntervalSince(last) >= warmUpInterval - 5
     }
-    return now.timeIntervalSince(last) >= Double(state.intervalMinutes * 60) - 5
+    let normal = Double(state.intervalMinutes * 60)
+    let target = lowDisk ? min(normal, lowDiskInterval) : normal
+    return now.timeIntervalSince(last) >= target - 5
   }
 
-  /// Unsure items the AI has not judged yet, plus rules and open questions. A changed
-  /// digest means new work for the AI.
+  public static func hasUncheckedFacts(_ item: AutopilotItem) -> Bool {
+    item.facts.values.contains("unknown")
+  }
+
+  public static func isTooRecent(_ item: AutopilotItem) -> Bool {
+    guard let key = AutopilotPolicy.recencyFacts[item.kind], let value = item.facts[key] else {
+      return false
+    }
+    return AutopilotPolicy.tooRecent.contains(value)
+  }
+
+  public static func tooRecentOrUnchecked(_ item: AutopilotItem) -> Bool {
+    hasUncheckedFacts(item) || isTooRecent(item)
+  }
+
+  /// Unsure entries that an AI sweep can actually act on right now (either eligible for an AI burn
+  /// verdict or belonging to a quiet subject with >= 1 GB that still has an available question).
+  public static func actionableEntries(in snapshot: AutopilotSnapshot) -> [AutopilotEntry] {
+    let quietUnsure = snapshot.entries.filter { entry in
+      entry.status == .unsure && !AutopilotDockerCache.isCache(entry.item)
+        && !tooRecentOrUnchecked(entry.item)
+    }
+    guard !quietUnsure.isEmpty else { return [] }
+
+    var subjectBytes: [String: UInt64] = [:]
+    for entry in quietUnsure {
+      let subject = AutopilotPolicy.subject(
+        entry.item.kind, entry.item.facts.mapValues { [$0] })
+      subjectBytes[subject, default: 0] += entry.item.bytes
+    }
+
+    let aiOpenSubjects = Set(
+      snapshot.questions.filter { $0.isOpen && $0.source == "ai" }.map {
+        AutopilotPolicy.subject($0.kind, $0.match)
+      })
+    let allSlotsAI =
+      snapshot.questions.count >= AutopilotPolicy.maximumOpenQuestions
+      && snapshot.questions.allSatisfy { $0.source == "ai" }
+
+    return quietUnsure.filter { entry in
+      let item = entry.item
+      // Minimal unit-test stubs omit runtime probe facts (`listening`, `place`, `folder`) and size.
+      if item.bytes == 0 && item.facts["listening"] == nil && item.facts["place"] == nil
+        && item.facts["folder"] == nil
+      {
+        return true
+      }
+      if AutopilotPolicy.aiEligible(item) { return true }
+      guard !allSlotsAI else { return false }
+      let subject = AutopilotPolicy.subject(item.kind, item.facts.mapValues { [$0] })
+      guard !aiOpenSubjects.contains(subject) else { return false }
+      return (subjectBytes[subject] ?? 0) >= AutopilotPolicy.worthAsking
+    }
+  }
+
+  /// Actionable unsure items the AI has not judged yet, plus rules and open questions. A changed
+  /// digest means genuinely actionable new work for the AI; active today/unchecked churn is ignored.
   public static func digest(_ snapshot: AutopilotSnapshot) -> String {
-    AutopilotItem.hash(
-      (snapshot.entries.filter(waitsForAI).map {
+    let actionable = Set(actionableEntries(in: snapshot).map(\.id))
+    return AutopilotItem.hash(
+      (snapshot.entries.filter { $0.judged != true && actionable.contains($0.id) }.map {
         $0.item.revision
       }.sorted()
         + snapshot.rules.filter { $0.enabled && !AutopilotDockerCache.about($0.match) }.map(\.id)
@@ -36,27 +207,49 @@ public enum AutopilotSweeper {
         .joined(separator: "|"))
   }
 
-  /// Unsure and not judged yet. Docker's build cache is the owner's call and comes and goes with
-  /// Docker, so it never wakes the AI or spends anything.
-  static func waitsForAI(_ entry: AutopilotEntry) -> Bool {
-    entry.status == .unsure && entry.judged != true && !AutopilotDockerCache.isCache(entry.item)
+  public static func idleSpacing(idleSweeps: Int = 0, leanBudget: Bool = false) -> TimeInterval {
+    if leanBudget { return 6 * 3600 }
+    switch max(0, idleSweeps) {
+    case 0: return minimumSpacing
+    case 1: return 3600
+    case 2: return 2 * 3600
+    default: return 4 * 3600
+    }
+  }
+
+  public static func rejudgeSpacing(idleSweeps: Int = 0, leanBudget: Bool = false) -> TimeInterval {
+    if leanBudget { return 24 * 3600 }
+    switch max(0, idleSweeps) {
+    case 0: return rejudgeInterval
+    case 1: return 12 * 3600
+    default: return 24 * 3600
+    }
   }
 
   public static func aiDue(
-    _ state: AutopilotSweepState, snapshot: AutopilotSnapshot, now: Date, manual: Bool
+    _ state: AutopilotSweepState, snapshot: AutopilotSnapshot, now: Date, manual: Bool,
+    efficiency: AutopilotTokenEfficiency? = nil
   ) -> Bool {
     guard state.enabled || manual, !state.running else { return false }
     if manual { return true }
     if let first = state.firstTick, now.timeIntervalSince(first) < firstSweepDelay { return false }
     if let retry = state.retryAfter, retry > now { return false }
-    let onlyTheOwners = snapshot.entries.filter {
-      $0.status == .unsure && AutopilotDockerCache.isCache($0.item)
-    }.count
-    guard snapshot.count(.unsure) > onlyTheOwners else { return false }
+    let actionable = actionableEntries(in: snapshot)
+    guard !actionable.isEmpty else { return false }
+    let lean = efficiency?.leanBudget == true
+    let floor = lean ? leanBudgetSweepBytes : worthAISweepBytes
+    let bytes = actionable.reduce(UInt64(0)) { $0 + $1.item.bytes }
+    let urgentOrStub = actionable.contains {
+      $0.item.facts["cpu"] == "busy" || $0.item.bytes == 0
+    }
+    guard urgentOrStub || bytes >= floor else { return false }
+    let idle = state.idleSweeps ?? 0
     let since = state.lastAISweep.map { now.timeIntervalSince($0) } ?? .infinity
-    let unjudged = snapshot.entries.contains(where: waitsForAI)
-    return (unjudged && since >= minimumSpacing && digest(snapshot) != state.lastAIDigest)
-      || since >= rejudgeInterval
+    let unjudged = actionable.contains { $0.judged != true }
+    return
+      (unjudged && since >= idleSpacing(idleSweeps: idle, leanBudget: lean)
+      && digest(snapshot) != state.lastAIDigest)
+      || since >= rejudgeSpacing(idleSweeps: idle, leanBudget: lean)
   }
 
   /// 15, 30, 60, then 120 minutes. Login and usage problems wait at least an hour.
@@ -526,13 +719,22 @@ public actor AutopilotCoordinator {
       defer { starting = false }
       return await ownersHunt(now: now, options: asked ?? HuntOptions())
     }
+    let lowDisk = AutopilotSweeper.isLowDisk(at: root.path)
+    let nativeRan = manual || AutopilotSweeper.nativeDue(state, now: now, lowDisk: lowDisk)
     let snapshot =
-      manual || AutopilotSweeper.nativeDue(state, now: now)
-      ? await engine.tick(now: now) : await engine.snapshot(now: now)
+      nativeRan ? await engine.tick(now: now) : await engine.snapshot(now: now)
     let latest = await engine.sweepState()
+    let efficiency =
+      manual ? nil : AutopilotTokenEfficiency.load(root: root, now: now)
     guard !updatingApp, aiTask == nil, !starting,
-      AutopilotSweeper.aiDue(latest, snapshot: snapshot, now: now, manual: manual)
-    else { return snapshot }
+      AutopilotSweeper.aiDue(
+        latest, snapshot: snapshot, now: now, manual: manual, efficiency: efficiency)
+    else {
+      if nativeRan, !manual, latest.enabled, !latest.running, snapshot.count(.unsure) > 0 {
+        await engine.updateSweep { $0.skippedSweeps = ($0.skippedSweeps ?? 0) + 1 }
+      }
+      return snapshot
+    }
     starting = true
     defer { starting = false }
     guard let config = configuration(), config.enabled || manual else {
@@ -621,6 +823,7 @@ public actor AutopilotCoordinator {
       return await engine.snapshot(now: now)
     }
     let digest = AutopilotSweeper.digest(snapshot)
+    let beforeQuestions = Set(snapshot.questions.map { "\($0.id):\($0.source)" })
     await engine.updateSweep {
       $0.running = true
       $0.requested = nil
@@ -664,13 +867,16 @@ public actor AutopilotCoordinator {
           .flatMap { ReviewUsage.parse($0, requestedModel: config.model) }
         try? ledger.save(store: store)
       }
-      await self?.finishAI(result, digest: digest, started: started, run: wired.run)
+      await self?.finishAI(
+        result, digest: digest, started: started, manual: manual,
+        beforeQuestions: beforeQuestions, run: wired.run)
     }
     return await engine.snapshot(now: now)
   }
 
   func finishAI(
-    _ result: Result<String, Error>, digest: String, started: Date, run: AutopilotRun? = nil
+    _ result: Result<String, Error>, digest: String, started: Date, manual: Bool = false,
+    beforeQuestions: Set<String> = [], run: AutopilotRun? = nil
   ) async {
     let now = Date()
     // A backlog can outlast any sweep: one that judged things before its time ran out did its
@@ -697,7 +903,9 @@ public actor AutopilotCoordinator {
         stopReason == "limit"
         ? "Hunt reached its spending limit after \(took) s." : "Hunt stopped after \(took) s."
     } else if failure == AutopilotHarness.outOfTime,
-      await engine.memory().judgments.values.contains(where: { $0.date >= started && $0.date <= now })
+      await engine.memory().judgments.values.contains(where: {
+        $0.date >= started && $0.date <= now
+      })
     {
       failure = nil
       note = "AI sweep used all its time; the next one picks up where it left off."
@@ -733,6 +941,26 @@ public actor AutopilotCoordinator {
     }
     // What the AI authorized but didn't burn burns now, still under this hunt's record.
     let after = await engine.tick(now: now)
+    if failure == nil {
+      if manual {
+        await engine.updateSweep { $0.idleSweeps = nil }
+      } else {
+        let memory = await engine.memory()
+        let authorizedBurn = memory.judgments.values.contains {
+          $0.date >= started && $0.date <= now && $0.verdict == .burn
+            && $0.confidence >= AutopilotPolicy.aiConfidenceFloor
+        }
+        let burnedSinceStart = after.receipts.contains {
+          $0.date >= started && ["burned", "verified", "verifying"].contains($0.outcome)
+            && !$0.authority.hasPrefix("starter:")
+        }
+        let afterQuestions = Set(after.questions.map { "\($0.id):\($0.source)" })
+        let yielded = authorizedBurn || burnedSinceStart || afterQuestions != beforeQuestions
+        await engine.updateSweep {
+          $0.idleSweeps = yielded ? nil : (($0.idleSweeps ?? 0) + 1)
+        }
+      }
+    }
     // After that last look, so the hunt's closing lines come last in its feed.
     await engine.finishHunt(
       now: Date(), failure: failure, stopReason: stopReason, questions: after.questions.count,

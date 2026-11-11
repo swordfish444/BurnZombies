@@ -1,11 +1,11 @@
 import Darwin
 import Foundation
 
-/// One agent chat (Claude Code or Codex session) and the folder it works in. Threads let
-/// Autopilot tell a helper or copy whose chat is still alive from one whose chat ended.
+/// One agent chat (Claude Code, Codex or Antigravity session) and the folder it works in. Threads
+/// let Autopilot tell a helper or copy whose chat is still alive from one whose chat ended.
 public struct AgentThread: Codable, Sendable, Equatable {
   public var id: String
-  /// `claude` or `codex`.
+  /// `claude`, `codex` or `antigravity`.
   public var agent: String
   public var cwd: String
   public var live: Bool
@@ -35,19 +35,41 @@ public enum AgentThreads {
   private static let entryLimit = 2_000
   private static let examineLimit = 20_000
 
-  /// Indexes Claude Code and Codex sessions under `home`. Bounded and read-only.
+  /// Indexes Claude Code, Codex and Antigravity sessions under `home`. Bounded and read-only.
   public static func index(home: String = NSHomeDirectory(), now: Date = Date()) -> [AgentThread] {
     let sessions = claudeSessions(home: home)
     let live = Set(sessions.filter { $0.live }.map { $0.id })
     let all =
       sessions + claudeTranscripts(home: home, now: now, live: live)
       + codexRollouts(home: home, now: now)
+      + antigravitySessions(home: home, now: now)
     var seen = Set<String>()
     var threads: [AgentThread] = []
     for thread in all {
       if seen.insert(thread.id).inserted { threads.append(thread) }
     }
     return threads
+  }
+
+  /// Brain folder ids of Antigravity conversations active within `liveWindow`.
+  public static func liveAntigravityIDs(home: String = NSHomeDirectory(), now: Date = Date())
+    -> Set<String>
+  {
+    let root = home + "/.gemini/antigravity/brain"
+    guard isDirectory(root),
+      let folders = try? FileManager.default.contentsOfDirectory(atPath: root)
+    else { return [] }
+    var active = Set<String>()
+    for folder in folders.sorted().prefix(entryLimit) {
+      let brain = root + "/" + folder
+      guard isDirectory(brain), isDirectory(brain + "/.system_generated"),
+        isDirectory(brain + "/.system_generated/logs"),
+        let file = regularFile(brain + "/.system_generated/logs/transcript.jsonl"),
+        abs(now.timeIntervalSince(file.modified)) <= liveWindow
+      else { continue }
+      active.insert(folder)
+    }
+    return active
   }
 
   /// `live` when a live thread works inside `path`, `ended` when only finished threads did,
@@ -158,6 +180,135 @@ public enum AgentThreads {
           lastActive: file.modified))
     }
     return threads
+  }
+
+  /// Antigravity chats: brain transcripts changed in the last 30 days, bounded and link-free.
+  private static func antigravitySessions(home: String, now: Date) -> [AgentThread] {
+    let root = home + "/.gemini/antigravity/brain"
+    guard isDirectory(root),
+      let folders = try? FileManager.default.contentsOfDirectory(atPath: root)
+    else { return [] }
+    var candidates: [(folder: String, transcript: String, modified: Date)] = []
+    for folder in folders.sorted().prefix(entryLimit) {
+      let brain = root + "/" + folder
+      let generated = brain + "/.system_generated"
+      let logs = generated + "/logs"
+      let transcript = logs + "/transcript.jsonl"
+      guard isDirectory(brain), isDirectory(generated), isDirectory(logs),
+        let file = regularFile(transcript),
+        now.timeIntervalSince(file.modified) <= rolloutWindow
+      else { continue }
+      candidates.append((folder: folder, transcript: transcript, modified: file.modified))
+    }
+    candidates.sort { $0.modified > $1.modified }
+    var threads: [AgentThread] = []
+    for entry in candidates.prefix(rolloutLimit) {
+      let brain = root + "/" + entry.folder
+      let workspaces = antigravityWorkspaces(brain: brain, transcript: entry.transcript, home: home)
+      guard !workspaces.isEmpty else { continue }
+      let recent = abs(now.timeIntervalSince(entry.modified)) <= liveWindow
+      for (index, cwd) in workspaces.enumerated() {
+        let suffix = index == 0 ? "" : "#\(index + 1)"
+        threads.append(
+          AgentThread(
+            id: "antigravity:" + entry.folder + suffix, agent: "antigravity", cwd: cwd,
+            live: recent, lastActive: entry.modified))
+      }
+    }
+    return threads
+  }
+
+  private static func antigravityWorkspaces(brain: String, transcript: String, home: String)
+    -> [String]
+  {
+    var found: [String] = []
+    func accept(_ raw: String, allowFile: Bool = false) {
+      guard let clean = validWorkspace(raw, home: home, allowFile: allowFile) else { return }
+      if !found.contains(clean), found.count < 4 { found.append(clean) }
+    }
+    let subagents = brain + "/.system_generated/subagents"
+    if isDirectory(subagents),
+      let names = try? FileManager.default.contentsOfDirectory(atPath: subagents)
+    {
+      for name in names.sorted().prefix(8) where name.hasSuffix(".json") {
+        guard let data = readHead(subagents + "/" + name, limit: 16_384),
+          let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          let uris = object["workspaceUris"] as? [String]
+        else { continue }
+        for uri in uris {
+          if uri.hasPrefix("file:///"), let url = URL(string: uri) { accept(url.path) }
+        }
+      }
+    }
+    if let data = readHead(transcript, limit: readLimit) {
+      for line in data.split(separator: 10, omittingEmptySubsequences: true) {
+        guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else {
+          continue
+        }
+        if let cwd = object["cwd"] as? String { accept(cwd) }
+        guard let calls = object["tool_calls"] as? [[String: Any]] else { continue }
+        for call in calls {
+          guard let args = call["args"] as? [String: Any] else { continue }
+          for key in ["cwd", "DirectoryPath", "SearchPath"] {
+            if let path = args[key] as? String { accept(path) }
+          }
+          if let path = args["Path"] as? String { accept(path, allowFile: true) }
+          if let command = args["CommandLine"] as? String, let cd = leadingCdPath(command) {
+            accept(cd)
+          }
+        }
+      }
+    }
+    return found
+  }
+
+  private static func leadingCdPath(_ command: String) -> String? {
+    let trimmed = command.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix("cd ") else { return nil }
+    let rest = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
+    guard !rest.isEmpty else { return nil }
+    if rest.first == "\"" || rest.first == "'" {
+      let quote = rest.first!
+      let body = rest.dropFirst()
+      guard let end = body.firstIndex(of: quote) else { return nil }
+      return String(body[..<end])
+    }
+    let token = rest.prefix { !$0.isWhitespace && $0 != ";" && $0 != "&" && $0 != "|" }
+    return token.isEmpty ? nil : String(token)
+  }
+
+  private static func validWorkspace(_ raw: String, home: String, allowFile: Bool = false)
+    -> String?
+  {
+    guard raw.hasPrefix("/"), raw != "/", !raw.contains("\n"), !raw.contains("\r"),
+      !raw.contains("\0")
+    else { return nil }
+    var candidate = raw
+    while candidate.count > 1 && candidate.hasSuffix("/") { candidate.removeLast() }
+    for internalDir in ["/.gemini/", "/.claude/projects/", "/.codex/sessions/"] {
+      if candidate.hasPrefix(home + internalDir)
+        || candidate == home + String(internalDir.dropLast())
+      {
+        return nil
+      }
+    }
+    if !isDirectory(candidate) {
+      guard allowFile, regularFile(candidate) != nil else { return nil }
+      let parent = (candidate as NSString).deletingLastPathComponent
+      guard parent.hasPrefix("/"), parent != "/", isDirectory(parent) else { return nil }
+      candidate = parent
+    }
+    if candidate == home { return nil }
+    // Climb to an enclosing git checkout when inside one so worktree and process paths match.
+    var cursor = candidate
+    for _ in 0..<12 where cursor.count > 1 && cursor != home {
+      var gitInfo = stat()
+      if lstat(cursor + "/.git", &gitInfo) == 0 { return cursor }
+      let next = (cursor as NSString).deletingLastPathComponent
+      if next == cursor || next == "/" { break }
+      cursor = next
+    }
+    return candidate
   }
 
   /// `session_meta` on the first line holds the chat id and folder; later lines are messages

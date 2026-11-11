@@ -1,6 +1,6 @@
 # Reclaim the leftovers. Keep the work.
 
-> **This cleaner is off since v0.17.0.** Autopilot does the cleaning, [Docker's build cache](AUTOPILOT.md#dockers-build-cache) included, and **Settings → Never touches** holds what you protect. Its daily cap, free-space goal and retention settings went with it. What follows is kept for the record.
+> **This cleaner is off since v0.17.0.** Autopilot does the cleaning — including [Docker's build cache](AUTOPILOT.md#dockers-build-cache), local SDK build snapshot rings (`~/.*/*-local`), disguised Xcode/Gradle checkout caches, and settled AI scratch folders — and **Settings → Never touches** holds what you protect. Its daily cap, free-space goal and retention settings went with it. What follows is kept for the record.
 
 **Settings → Disk cleanup** starts collapsed and in **Recommend** mode. A read-only storage map covers accessible home storage, Applications, Library and private system data. It follows actual directory sizes, independently of cleanup roots or output-folder names. Native code measures facts; your existing harness investigates what produced the storage and recommends what to do.
 

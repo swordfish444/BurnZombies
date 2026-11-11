@@ -854,6 +854,185 @@ func autopilotSweepProof() async throws {
 
   try await aiBriefProof()
   try await staleAutopilotAdviceProof()
+  try await leanAutopilotGovernorProof()
+}
+
+/// Token-efficiency governor, low-disk native cadence, zero-yield backoff, and unsure payload hygiene.
+private func leanAutopilotGovernorProof() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-autopilot-governor-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let now = Date()
+
+  // Legacy sweep.json without idleSweeps / skippedSweeps decodes cleanly.
+  let legacyData = Data(
+    #"{"enabled":true,"running":false,"intervalMinutes":15,"failures":0,"log":[]}"#.utf8)
+  let legacyState = try JSONDecoder().decode(AutopilotSweepState.self, from: legacyData)
+  isNil(legacyState.idleSweeps)
+  isNil(legacyState.skippedSweeps)
+
+  // Low-disk pressure (< 50 GB) tightens zero-token rule ticks from 15 minutes to 2 minutes.
+  var diskState = AutopilotSweepState()
+  diskState.lastTick = now.addingTimeInterval(-60)
+  checkFalse(AutopilotSweeper.nativeDue(diskState, now: now, lowDisk: true), "1m < 2m low-disk")
+  diskState.lastTick = now.addingTimeInterval(-120)
+  check(AutopilotSweeper.nativeDue(diskState, now: now, lowDisk: true), "2m low-disk is due")
+  checkFalse(AutopilotSweeper.nativeDue(diskState, now: now, lowDisk: false), "normal waits 15m")
+
+  // Actionable gate & stakes floor: active/today, unchecked facts, < 250 MB single items, and
+  // < 1 GB owner-managed copies never wake the AI.
+  func snap(_ items: [AutopilotItem]) -> AutopilotSnapshot {
+    var s = AutopilotSnapshot()
+    s.entries = items.map {
+      AutopilotEntry(
+        item: $0, status: .unsure, authority: nil, label: $0.name, why: "", consequence: "")
+    }
+    s.counts = ["unsure": items.count]
+    return s
+  }
+  let todayCopy = AutopilotItem(
+    id: "worktree:today", kind: .worktree, name: "today", bytes: 2_000_000_000,
+    facts: [
+      "place": "other", "saved": "pushed", "changes": "none", "stale": "today", "inUse": "no",
+      "thread": "none",
+    ])
+  let activeProc = AutopilotItem(
+    id: "process:active", kind: .process, name: "active", bytes: 2_000_000_000,
+    facts: [
+      "family": "node", "orphaned": "yes", "thread": "none", "idle": "active", "listening": "no",
+    ])
+  let uncheckedCopy = AutopilotItem(
+    id: "worktree:unk", kind: .worktree, name: "unk", bytes: 2_000_000_000,
+    facts: [
+      "place": "other", "saved": "unknown", "changes": "none", "stale": "month", "inUse": "no",
+      "thread": "none",
+    ])
+  let smallCache = AutopilotItem(
+    id: "disk:small", kind: .disk, name: "small", bytes: 150_000_000,
+    facts: ["folder": "package-cache", "home": "global-cache", "stale": "month"])
+  let smallCodex = AutopilotItem(
+    id: "worktree:codex1", kind: .worktree, name: "codex1", bytes: 500_000_000,
+    facts: [
+      "place": "codex", "saved": "pushed", "changes": "none", "stale": "week", "inUse": "no",
+      "thread": "none",
+    ])
+  let readySweep = AutopilotSweepState()
+  checkFalse(
+    AutopilotSweeper.aiDue(
+      readySweep, snapshot: snap([todayCopy, activeProc, uncheckedCopy, smallCache, smallCodex]),
+      now: now, manual: false),
+    "noisy or sub-floor items never wake a background AI sweep")
+
+  let mediumCache = AutopilotItem(
+    id: "disk:med", kind: .disk, name: "med", bytes: 350_000_000,
+    facts: ["folder": "package-cache", "home": "global-cache", "stale": "month"])
+  check(
+    AutopilotSweeper.aiDue(readySweep, snapshot: snap([mediumCache]), now: now, manual: false),
+    "350 MB aiEligible cache wakes normal background AI sweep")
+
+  let codexPair = [
+    smallCodex,
+    AutopilotItem(
+      id: "worktree:codex2", kind: .worktree, name: "codex2", bytes: 600_000_000,
+      facts: smallCodex.facts),
+  ]
+  check(
+    AutopilotSweeper.aiDue(readySweep, snapshot: snap(codexPair), now: now, manual: false),
+    ">= 1 GB quiet owner-managed subject wakes AI to refine question")
+
+  // Token-efficiency ROI & Lean Budget Mode.
+  var ledger = ReviewLedger()
+  for day in [1, 2, 3, 4] {
+    _ = ledger.reserve(
+      harness: "claude", evidenceCount: 1, now: now.addingTimeInterval(-Double(day) * 86_400))
+    ledger.entries[ledger.entries.count - 1].usage = ReviewUsage.parse(
+      Data(
+        #"{"type":"bz.usage","model":"claude-sonnet-4-5","usage":{"input_tokens":1500000,"cached_input_tokens":0,"output_tokens":50000}}"#
+          .utf8))
+  }
+  let ruleReceipt = AutopilotReceipt(
+    itemID: "disk:r", kind: .disk, name: "DerivedData", authority: "starter:starter-dead-caches",
+    outcome: "burned", detail: "", bytes: 20_000_000_000, date: now.addingTimeInterval(-3600))
+  let leanEff = AutopilotTokenEfficiency(
+    ledger: ledger, receipts: [ruleReceipt], questions: [], sweep: AutopilotSweepState(), now: now)
+  check(leanEff.leanBudget, "4 sweeps spending > 5M tokens with 0 AI yield engages Lean Budget")
+  equal(leanEff.freeBytes, 20_000_000_000)
+  check(leanEff.statusLine.contains("Lean mode is on"), leanEff.statusLine)
+  checkFalse(
+    AutopilotSweeper.aiDue(
+      readySweep, snapshot: snap([mediumCache]), now: now, manual: false, efficiency: leanEff),
+    "Lean Budget holds sweeps under 2 GB")
+  check(
+    AutopilotSweeper.aiDue(
+      readySweep, snapshot: snap([mediumCache]), now: now, manual: true, efficiency: leanEff),
+    "Manual Hunt Zombies always runs immediately even in Lean Budget")
+  let bigCache = AutopilotItem(
+    id: "disk:big", kind: .disk, name: "big", bytes: 2_500_000_000,
+    facts: ["folder": "package-cache", "home": "global-cache", "stale": "month"])
+  var leanSpaced = AutopilotSweepState()
+  leanSpaced.lastAISweep = now.addingTimeInterval(-2 * 3600)
+  checkFalse(
+    AutopilotSweeper.aiDue(
+      leanSpaced, snapshot: snap([bigCache]), now: now, manual: false, efficiency: leanEff),
+    "Lean Budget spaces sweeps to 6 hours")
+  leanSpaced.lastAISweep = now.addingTimeInterval(-6 * 3600 - 1)
+  check(
+    AutopilotSweeper.aiDue(
+      leanSpaced, snapshot: snap([bigCache]), now: now, manual: false, efficiency: leanEff),
+    "Lean Budget wakes after 6 hours when >= 2 GB actionable space is at stake")
+  let aiReceipt = AutopilotReceipt(
+    itemID: "disk:ai", kind: .disk, name: "Gradle", authority: "ai:0.95", outcome: "burned",
+    detail: "", bytes: 2_000_000_000, date: now.addingTimeInterval(-600))
+  let healthyEff = AutopilotTokenEfficiency(
+    ledger: ledger, receipts: [ruleReceipt, aiReceipt], questions: [],
+    sweep: AutopilotSweepState(), now: now)
+  checkFalse(healthyEff.leanBudget, "AI reclaiming >= 1 GB exits Lean Budget automatically")
+
+  // Zero-yield backoff (`idleSweeps`), skipped-sweep accounting, and owner answer reset.
+  let govRoot = root.appendingPathComponent("coord")
+  let config = MachineReviewConfiguration(
+    harness: "claude", executable: "/bin/claude", launcher: "/bin/bz", server: "/bin/bz-mcp")
+  let quietBigCopy = AutopilotItem(
+    id: "worktree:quiet-big", kind: .worktree, name: "atlas-old", bytes: 1_500_000_000,
+    facts: [
+      "place": "other", "saved": "pushed", "changes": "none", "stale": "older", "inUse": "no",
+      "thread": "none",
+    ])
+  let govEngine = try Autopilot(
+    root: govRoot,
+    sources: AutopilotSources(
+      worktrees: { _, _, d in ([todayCopy, uncheckedCopy, quietBigCopy], d) }))
+  _ = try await govEngine.apply(.setStarter(ruleID: "starter-finished-copies", enabled: false))
+  // End warm-up so background sweeps run on standard timing.
+  try AutopilotStore(root: govRoot).updateSweep {
+    $0.firstTick = now.addingTimeInterval(-3600)
+    $0.lastTick = now.addingTimeInterval(-1800)
+  }
+  let coord = AutopilotCoordinator(
+    root: govRoot, engine: govEngine, configuration: { config }, runner: { _, _ in "{}" })
+  _ = await coord.tick(now: now)
+  await coord.waitForAI()
+  equal(
+    await govEngine.sweepState().idleSweeps, 1, "zero-yield background sweep increments idleSweeps")
+  equal(AutopilotSweeper.idleSpacing(idleSweeps: 1, leanBudget: false), 3600)
+  equal(AutopilotSweeper.rejudgeSpacing(idleSweeps: 1, leanBudget: false), 12 * 3600)
+
+  // catalogPage(status: "unsure") strips active/today and unknown-fact items from the AI payload.
+  let unsurePage = await govEngine.catalogPage(status: "unsure", kind: nil, offset: 0, limit: 50)
+  equal(unsurePage.summary["skippedActiveOrToday"], "1")
+  equal(unsurePage.summary["skippedUnchecked"], "1")
+  equal(unsurePage.items.map(\.id), [quietBigCopy.id])
+  let allPage = await govEngine.catalogPage(status: nil, kind: nil, offset: 0, limit: 50)
+  equal(allPage.items.count, 3, "unfiltered catalog keeps every item")
+
+  // Answering a question resets idleSweeps so newly uncovered work isn't penalized.
+  let postTick = await govEngine.snapshot(now: now)
+  if let q = postTick.questions.first {
+    _ = try await govEngine.apply(.answer(questionID: q.id, answer: .no))
+    isNil(await govEngine.sweepState().idleSweeps)
+  } else {
+    failTest("expected native question for quietBigCopy")
+  }
 }
 
 /// A conditional keep with unchanged facts must eventually rejoin the review queue. All burns

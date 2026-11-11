@@ -29,7 +29,8 @@ func autopilotPolicyProof() throws {
       "place": "patrol6", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
       "thread": "none",
     ])
-  let rebuildable = junk("c", ["folder": "node_modules", "home": "stale-worktree", "stale": "month"])
+  let rebuildable = junk(
+    "c", ["folder": "node_modules", "home": "stale-worktree", "stale": "month"])
   var memory = AutopilotMemory()
 
   // A fresh install starts with Autopilot on and burning; look-only is only ever asked for.
@@ -100,7 +101,9 @@ func autopilotPolicyProof() throws {
   let many = (0..<30).map { copy("many\($0)", finishedFacts, bytes: 150_000_000) }
   let few = (0..<2).map { copy("few\($0)", pushedFacts, bytes: 5_000_000_000) }
   let crumbs = (0..<5).map {
-    junk("crumbs\($0)", ["folder": "node_modules", "home": "repo", "stale": "month"], bytes: 150_000_000)
+    junk(
+      "crumbs\($0)", ["folder": "node_modules", "home": "repo", "stale": "month"],
+      bytes: 150_000_000)
   }
   // A question reads as a short headline, what it frees, a few short facts and one line
   // of reassurance: little to read and easy to decide.
@@ -178,17 +181,26 @@ func autopilotPolicyProof() throws {
     (0..<6).map {
       copy(
         "merged-\($0)",
-        ["place": "sibling", "saved": "merged", "changes": "none", "stale": "day", "thread": "none"])
+        [
+          "place": "sibling", "saved": "merged", "changes": "none", "stale": "day",
+          "thread": "none",
+        ])
     }
     + (0..<3).map {
       copy(
         "pushed-\($0)",
-        ["place": "patrol6", "saved": "pushed", "changes": "none", "stale": "week", "thread": "none"])
+        [
+          "place": "patrol6", "saved": "pushed", "changes": "none", "stale": "week",
+          "thread": "none",
+        ])
     }
     + (0..<2).map {
       copy(
         "draft-\($0)",
-        ["place": "other", "saved": "local", "changes": "small", "stale": "month", "thread": "none"])
+        [
+          "place": "other", "saved": "local", "changes": "small", "stale": "month",
+          "thread": "none",
+        ])
     }
   let single = AutopilotPolicy.proposeQuestions(mixed, memory: AutopilotMemory())
   equal(single.count, 1, "old project copies get one question")
@@ -404,7 +416,10 @@ func autopilotPolicyProof() throws {
     "no second question about copies an open question covers")
   var busy = unsure
   busy.append(
-    copy("today", ["place": "patrol6", "saved": "local", "changes": "none", "stale": "today", "thread": "none"]))
+    copy(
+      "today",
+      ["place": "patrol6", "saved": "local", "changes": "none", "stale": "today", "thread": "none"])
+  )
   check(
     AutopilotPolicy.proposeQuestions([busy.last!], memory: AutopilotMemory()).isEmpty,
     "nothing touched today is asked about")
@@ -518,4 +533,60 @@ func autopilotPolicyProof() throws {
 
   autopilotDetailsProof()
   try bigFilesPolicyProof()
+  leanStarterPolicyProof()
+}
+
+private func leanStarterPolicyProof() {
+  let memory = AutopilotMemory()
+  // Ended-chat orphans idle 1 hour (with no server socket) burn via the faster starter rule,
+  // while 6h+ ended-chat orphans keep their existing starter authority and listening servers wait.
+  let hourOrphan = process(
+    "hour-orphan",
+    [
+      "family": "node", "orphaned": "yes", "thread": "ended", "idle": "1h", "listening": "no",
+      "agent": "antigravity",
+    ])
+  equal(AutopilotPolicy.decide(hourOrphan, memory: memory).status, .burn)
+  equal(
+    AutopilotPolicy.decide(hourOrphan, memory: memory).authority,
+    "starter:starter-ended-chat-programs")
+  var tenMinutes = hourOrphan
+  tenMinutes.facts["idle"] = "10m"
+  equal(
+    AutopilotPolicy.decide(tenMinutes, memory: memory).status, .unsure,
+    "10-minute idle orphan waits")
+  var listeningHour = hourOrphan
+  listeningHour.facts["listening"] = "yes"
+  equal(
+    AutopilotPolicy.decide(listeningHour, memory: memory).status, .unsure,
+    "listening server waits for owner or rule")
+  var nonRobotBrowser = hourOrphan
+  nonRobotBrowser.facts["family"] = "browser"
+  equal(
+    AutopilotPolicy.decide(nonRobotBrowser, memory: memory).status, .unsure,
+    "non-abandoned browser at 1h asks the owner instead of bypassing robot-browser switches")
+
+  // Settled AI scratch leftovers burn via starter rule without adding a question.
+  let scratch = junk(
+    "agent-scratch", ["folder": "agent-temp", "home": "temp", "stale": "week"])
+  equal(AutopilotPolicy.decide(scratch, memory: memory).status, .burn)
+  equal(
+    AutopilotPolicy.decide(scratch, memory: memory).authority, "starter:starter-agent-scratch")
+
+  // Plain-English labels cover Antigravity and AI scratch leftovers.
+  let agyQuestion = AutopilotQuestion(
+    kind: .process, match: ["family": ["node"], "agent": ["antigravity"], "idle": ["1d"]],
+    question: "", why: "", examples: [], count: 1, bytes: 1_500_000_000)
+  check(AutopilotPolicy.ruleTitle(agyQuestion, answer: .yes).contains("Started by Antigravity"))
+  check(
+    AutopilotPolicy.wording(
+      kind: .disk, match: ["folder": ["agent-temp"], "stale": ["week"]]
+    ).contains("scratch files finished AI chats left behind"),
+    "agent-temp wording")
+  let scratchQuestion = AutopilotQuestion(
+    kind: .disk, match: ["folder": ["agent-temp"], "stale": ["week"]],
+    question: "", why: "", examples: [], count: 1, bytes: 1_500_000_000)
+  check(
+    AutopilotPolicy.ruleTitle(scratchQuestion, answer: .yes).contains("AI scratch leftovers"),
+    "agent-temp ruleTitle")
 }
