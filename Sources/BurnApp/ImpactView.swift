@@ -173,7 +173,8 @@ struct BurnStatus: View {
       if let retry = sweep.retryAfter, retry > Date() { return "Autopilot on · AI waiting" }
       // Without Full Disk Access Autopilot skips only the places macOS protects; the banner says
       // so in plain words, and once it's dismissed the status keeps saying it.
-      return model.accessReady || model.showsAccessBanner ? "Autopilot on" : "Autopilot on · limited"
+      return model.accessReady || model.showsAccessBanner
+        ? "Autopilot on" : "Autopilot on · limited"
     }
     if !model.accessReady { return "Setup required" }
     if model.state.error != nil { return "Needs attention" }
@@ -199,7 +200,8 @@ struct BurnStatus: View {
           .frame(width: compact ? 12 : 16, height: compact ? 12 : 16)
       }
       Text(status).font(.system(size: compact ? 13 : 18))
-        .foregroundStyle(showsSwitch && !model.autopilot.sweep.enabled ? BurnTheme.muted : Color(white: 0.82))
+        .foregroundStyle(
+          showsSwitch && !model.autopilot.sweep.enabled ? BurnTheme.muted : Color(white: 0.82))
       Button {
         if !model.accessReady && !model.autopilotAvailable {
           model.openFullDiskAccessSettings()
@@ -261,7 +263,8 @@ struct AutopilotSwitch: View {
       .help(
         on
           ? "Turn Autopilot off. BZ stops burning on its own until you turn it back on."
-          : "Turn Autopilot on. BZ burns what's safe and asks about the rest.")
+          : "Turn Autopilot on. BZ burns what's safe and asks about the rest."
+      )
       .accessibilityRepresentation {
         Toggle("Autopilot", isOn: Binding(get: { on }, set: { if $0 != on { toggle() } }))
       }
@@ -329,18 +332,12 @@ struct MiniImpactView: View {
         Text("BURNZOMBIES").font(BurnTheme.display(22)).tracking(0.25)
         Spacer(minLength: 8)
         Button {
-          model.quit()
-        } label: {
-          Image(systemName: "power").font(.system(size: 15, weight: .semibold)).foregroundStyle(.gray)
-            .frame(width: 24, height: 32).contentShape(Rectangle())
-        }.buttonStyle(.plain).clickPointer().help("Quit BurnZombies").accessibilityLabel("Quit")
-          .accessibilityIdentifier("quit")
-        Button {
           model.openSettings?()
         } label: {
           Image(systemName: "gearshape.fill").font(.system(size: 20)).foregroundStyle(.gray)
             .frame(width: 28, height: 32).contentShape(Rectangle())
         }.clickPointer().help("Settings").accessibilityLabel("Settings")
+          .accessibilityIdentifier("settings")
       }.frame(height: 36)
       BurnStatus(model: model, compact: true).frame(height: 22).padding(.top, 9)
       if model.autopilotAvailable, !model.autopilot.questions.isEmpty {
@@ -494,7 +491,8 @@ struct MiniImpactView: View {
     let asking: Bool = model.autopilot.recoveryKey?.asking == true
     let waiting: UInt64 = waitingForKey
     let header: String =
-      waiting > 0 ? "\(ImpactNumbers.bytes(waiting)) WAITS FOR YOUR OK" : "OLD COPIES WAIT FOR YOUR OK"
+      waiting > 0
+      ? "\(ImpactNumbers.bytes(waiting)) WAITS FOR YOUR OK" : "OLD COPIES WAIT FOR YOUR OK"
     return VStack(alignment: .leading, spacing: 8) {
       Text(header).font(.system(size: 10.5, weight: .bold)).tracking(0.3)
         .foregroundStyle(BurnTheme.orange).lineLimit(1).minimumScaleFactor(0.8)
@@ -511,7 +509,8 @@ struct MiniImpactView: View {
           Text("Allow").font(.system(size: 12.5, weight: .bold))
             .foregroundStyle(Color.black.opacity(0.86)).padding(.horizontal, 14).frame(height: 32)
             .background(
-              BurnTheme.orange.opacity(asking ? 0.45 : 1), in: RoundedRectangle(cornerRadius: 9))
+              BurnTheme.orange.opacity(asking ? 0.45 : 1), in: RoundedRectangle(cornerRadius: 9)
+            )
             .contentShape(RoundedRectangle(cornerRadius: 9))
         }.clickPointer().disabled(asking)
           .help("macOS asks whether BZ may use its backup key, so it can back up old copies")
@@ -530,8 +529,10 @@ struct MiniImpactView: View {
         .foregroundStyle(BurnTheme.orange)
       HStack(spacing: 12) {
         VStack(alignment: .leading, spacing: 4) {
-          Text(wouldBurn > 0 ? "I'd burn \(ImpactNumbers.bytes(wouldBurn))." : "Nothing to burn yet.")
-            .font(.system(size: 13, weight: .semibold))
+          Text(
+            wouldBurn > 0 ? "I'd burn \(ImpactNumbers.bytes(wouldBurn))." : "Nothing to burn yet."
+          )
+          .font(.system(size: 13, weight: .semibold))
           Button {
             model.openFindings?()
           } label: {
@@ -784,7 +785,9 @@ struct ImpactWindowView: View {
     let now = Date()
     let start = period.start(now: now, calendar: .current)
     for row in logRows {
-      if let finished = row.finishedAt, finished >= start, finished <= now { return (row, finished) }
+      if let finished = row.finishedAt, finished >= start, finished <= now {
+        return (row, finished)
+      }
     }
     return nil
   }
