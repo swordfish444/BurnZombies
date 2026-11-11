@@ -956,7 +956,8 @@ import UserNotifications
   func setAutopilot(enabled: Bool) {
     let before = autopilot.sweep.enabled
     autopilot.sweep.enabled = enabled
-    sendAutopilot(.setEnabled(enabled), local: { $0.sweep.enabled = enabled }) { [weak self] reason in
+    sendAutopilot(.setEnabled(enabled), local: { $0.sweep.enabled = enabled }) {
+      [weak self] reason in
       if reason != nil { self?.autopilot.sweep.enabled = before }
     }
   }
@@ -1061,9 +1062,12 @@ import UserNotifications
   }
 }
 
-@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
   var item: NSStatusItem!
   var popover: NSPopover!
+  private var statusMenuOpened = false
+  var quitAction: (() -> Void)?
   var window: NSWindow?
   var worktreeWindow: NSWindow?
   var settingsWindow: NSWindow?
@@ -1102,7 +1106,8 @@ import UserNotifications
     item.button?.toolTip = "BurnZombies"
     item.button?.setAccessibilityLabel("BurnZombies")
     item.button?.target = self
-    item.button?.action = #selector(toggle)
+    item.button?.action = #selector(statusItemClicked(_:))
+    item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
     popover = NSPopover()
     popover.behavior = .transient
     popover.contentSize = MiniImpactView.size
@@ -1203,7 +1208,7 @@ import UserNotifications
     NSApp.activate(ignoringOtherApps: true)
   }
   func showSettings() {
-    popover.performClose(nil)
+    popover?.performClose(nil)
     if settingsWindow == nil {
       let w = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 440, height: 660), styleMask: [.titled, .closable],
@@ -1256,6 +1261,74 @@ import UserNotifications
     if let window = notification.object as? NSWindow, window === huntWindow {
       model.setHuntProgressVisible(
         window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible))
+    }
+  }
+  static func isStatusContextClick(_ event: NSEvent?) -> Bool {
+    guard let event else { return false }
+    switch event.type {
+    case .rightMouseUp, .rightMouseDown:
+      return true
+    case .leftMouseUp, .leftMouseDown:
+      return event.modifierFlags.contains(.control)
+    default:
+      return false
+    }
+  }
+  func makeStatusMenu() -> NSMenu {
+    let menu = NSMenu(title: "BurnZombies")
+    menu.delegate = self
+    let settings = NSMenuItem(
+      title: "Settings…", action: #selector(openSettingsFromStatusMenu), keyEquivalent: ",")
+    settings.target = self
+    menu.addItem(settings)
+    menu.addItem(.separator())
+    let quit = NSMenuItem(
+      title: "Quit BurnZombies", action: #selector(quitFromStatusMenu), keyEquivalent: "q")
+    quit.target = self
+    menu.addItem(quit)
+    return menu
+  }
+  @objc func statusItemClicked(_ sender: Any?) {
+    handleStatusItemClick(event: NSApp.currentEvent)
+  }
+  func handleStatusItemClick(
+    event: NSEvent?, presentMenu: ((NSMenu) -> Void)? = nil, togglePopover: (() -> Void)? = nil
+  ) {
+    if Self.isStatusContextClick(event) {
+      popover?.performClose(nil)
+      let menu = makeStatusMenu()
+      if let presentMenu {
+        presentMenu(menu)
+      } else {
+        statusMenuOpened = false
+        item.menu = menu
+        item.button?.performClick(nil)
+        if !statusMenuOpened { item.menu = nil }
+      }
+    } else if let togglePopover {
+      togglePopover()
+    } else {
+      toggle()
+    }
+  }
+  func menuWillOpen(_ menu: NSMenu) {
+    if item?.menu === menu { statusMenuOpened = true }
+  }
+  func menuDidClose(_ menu: NSMenu) {
+    if item?.menu === menu {
+      item.menu = nil
+      statusMenuOpened = false
+    }
+  }
+  @objc func openSettingsFromStatusMenu() {
+    model?.openSettings?()
+  }
+  @objc func quitFromStatusMenu() {
+    popover?.performClose(nil)
+    if let quitAction {
+      quitAction()
+    } else {
+      model.quit()
     }
   }
   @objc func toggle() {

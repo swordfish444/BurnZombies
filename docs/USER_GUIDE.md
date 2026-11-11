@@ -12,7 +12,7 @@ BZ watches every program your macOS user runs, across every project, terminal, a
 
 ## Menu bar and impact
 
-Click the skull in the menu bar. Autopilot is on from the start; the small switch beside **Autopilot on** turns it off and back on. The **Today**, **7 days** and **All time** tabs switch its four totals. **Impact** opens the bigger view, **Findings** shows what BZ found and burned, and **Burn Log** lists every burn, newest first, with the day: programs, old copies and junk folders. The gear opens **Settings**. **Hunt Zombies** starts an AI sweep now; while it runs, **Hunting Zombies →** opens the live hunt scene and activity log. No restart or special setup needed.
+Click the skull in the menu bar. Autopilot is on from the start; the small switch beside **Autopilot on** turns it off and back on. The **Today**, **7 days** and **All time** tabs switch its four totals. **Impact** opens the bigger view, **Findings** shows what BZ found and burned, and **Burn Log** lists every burn, newest first, with the day: programs, old copies and junk folders. The gear opens **Settings**, or right-click the skull in the menu bar for **Settings…** and **Quit BurnZombies**. **Hunt Zombies** starts an AI sweep now; while it runs, **Hunting Zombies →** opens the live hunt scene and activity log. No restart or special setup needed.
 
 ## AI sweeps
 
