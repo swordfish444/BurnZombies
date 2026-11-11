@@ -56,7 +56,8 @@
     guard ai.brainTag == "custom", ai.customBrain.contains("a-model-from-the-command-line") else {
       throw fail("A model set elsewhere should say so")
     }
-    guard !FileManager.default.fileExists(atPath: aiRoot.appendingPathComponent("review-request").path)
+    guard
+      !FileManager.default.fileExists(atPath: aiRoot.appendingPathComponent("review-request").path)
     else { throw fail("Settings started a review") }
     setenv("BURNZOMBIES_HARNESS_DIRS", "/nonexistent", 1)
     setenv("PATH", "/nonexistent", 1)
@@ -64,7 +65,8 @@
     guard none.noAIInstalled, none.choices == ["off"] else {
       throw fail("With no AI, Settings should say none was found")
     }
-    print("PASS AI rows: installed choices, off and back, how smart, a model set elsewhere, none found")
+    print(
+      "PASS AI rows: installed choices, off and back, how smart, a model set elsewhere, none found")
 
     // What the AI used, in numbers anyone can read.
     let store = try Store(root: aiRoot)
@@ -87,17 +89,33 @@
       throw fail("Today, this week and this month: \(today), \(week), \(month)")
     }
     let usageModel = AppModel(demo: true)
+    usageModel.autopilot.sweep.skippedSweeps = 14
     usageModel.settingsPage = .aiUse
     let usagePage = NSHostingView(
-      rootView: SettingsSubpage(model: usageModel, ai: ai).frame(width: 440, height: 560)
+      rootView: SettingsSubpage(model: usageModel, ai: ai).frame(width: 440, height: 660)
         .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
-    usagePage.frame = NSRect(x: 0, y: 0, width: 440, height: 560)
+    usagePage.frame = NSRect(x: 0, y: 0, width: 440, height: 660)
     usagePage.layoutSubtreeIfNeeded()
-    if let bitmap = usagePage.bitmapImageRepForCachingDisplay(in: usagePage.bounds) {
-      usagePage.cacheDisplay(in: usagePage.bounds, to: bitmap)
-      try bitmap.representation(using: .png, properties: [:])?.write(
-        to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension(
-          "ai-use.png"))
+    guard let usageBitmap = usagePage.bitmapImageRepForCachingDisplay(in: usagePage.bounds) else {
+      throw fail("AI use render unavailable")
+    }
+    usagePage.cacheDisplay(in: usagePage.bounds, to: usageBitmap)
+    try usageBitmap.representation(using: .png, properties: [:])?.write(
+      to: URL(fileURLWithPath: output).deletingPathExtension().appendingPathExtension("ai-use.png"))
+    if let usageImage = usageBitmap.cgImage {
+      let usageOCR = VNRecognizeTextRequest()
+      usageOCR.recognitionLevel = .accurate
+      usageOCR.recognitionLanguages = ["en-US"]
+      try VNImageRequestHandler(cgImage: usageImage, options: [:]).perform([usageOCR])
+      let usageText = (usageOCR.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        .joined(separator: "\n")
+      guard usageText.contains("Token efficiency"),
+        usageText.contains("Freed by rules"),
+        usageText.contains("Noisy sweeps skipped")
+      else { throw fail("Token efficiency card missing or clipped: \(usageText)") }
+    }
+    guard NSApp.windows.allSatisfy({ !$0.isVisible && !$0.isKeyWindow }) else {
+      throw fail("AI use proof showed a window")
     }
     guard AISettingsModel.about(0) == "$0", AISettingsModel.about(0.2) == "Under $1",
       AISettingsModel.about(75.01) == "About $75"
@@ -124,7 +142,8 @@
     guard levels.autopilotLevel == .askFirst else {
       throw fail("The popup's switch should come back to the level you chose")
     }
-    print("PASS one Autopilot choice: all four levels both ways, and the popup's switch returns to it")
+    print(
+      "PASS one Autopilot choice: all four levels both ways, and the popup's switch returns to it")
 
     // While the AI waits, the words say what's true: rules keep burning.
     var waiting = AutopilotSweepState()
@@ -163,7 +182,8 @@
     guard AutopilotText.when(sunday, now: friday, calendar: calendar).hasPrefix("Sunday 2") else {
       throw fail("Sunday reads \(AutopilotText.when(sunday, now: friday, calendar: calendar))")
     }
-    print("PASS AI waiting: plain reasons, and the status line no longer says paused while rules burn")
+    print(
+      "PASS AI waiting: plain reasons, and the status line no longer says paused while rules burn")
 
     // One notification for new questions, none for ones already told.
     var question = AutopilotQuestion(
@@ -178,7 +198,8 @@
     guard AutopilotText.questionAlert([question], told: ["q1"]) == nil else {
       throw fail("A question already told shouldn't notify again")
     }
-    guard AutopilotText.questionAlert([question, second], told: ["q1"])?.title == "BZ has 2 questions"
+    guard
+      AutopilotText.questionAlert([question, second], told: ["q1"])?.title == "BZ has 2 questions"
     else { throw fail("A new question should count them all") }
     guard AutopilotText.questionAlert([], told: []) == nil else {
       throw fail("No questions, no notification")
@@ -189,7 +210,8 @@
     tap.notificationAction(id: FindingNotifications.questionID, revision: "", action: "review")
     RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     guard opened == 1 else { throw fail("Tapping the notification should open Teach BZ") }
-    print("PASS question notifications: one for what's new, what it frees, and a tap opens Teach BZ")
+    print(
+      "PASS question notifications: one for what's new, what it frees, and a tap opens Teach BZ")
 
     // Everything the owner kept reads as one list, and each comes off the way it went on.
     let list = AppModel(demo: true)
@@ -229,7 +251,8 @@
         throw fail("Access render unavailable")
       }
       accessHost.cacheDisplay(in: accessHost.bounds, to: bitmap)
-      guard let image = bitmap.cgImage, let png = bitmap.representation(using: .png, properties: [:])
+      guard let image = bitmap.cgImage,
+        let png = bitmap.representation(using: .png, properties: [:])
       else { throw fail("Access PNG unavailable") }
       let label = accessState == .required ? "required" : "unknown"
       try png.write(

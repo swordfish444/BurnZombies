@@ -110,8 +110,10 @@ func autopilotProcessProof() async throws {
 
   // A helper a working chat still claims is protected.
   let claimed = AutopilotProcesses.items(
-    records, threads: [], protectedPIDs: own, claimed: Set(records.values.filter { $0.latest.identity.pid == fixture.children[0] }.map(\.id)))
-    .first { $0.pid == fixture.shell }
+    records, threads: [], protectedPIDs: own,
+    claimed: Set(records.values.filter { $0.latest.identity.pid == fixture.children[0] }.map(\.id))
+  )
+  .first { $0.pid == fixture.shell }
   equal(claimed?.protectedReason, "A chat said it still needs this.")
 
   // Rails: macOS, harnesses and real apps are protected; automation browsers are not.
@@ -169,7 +171,9 @@ func autopilotProcessProof() async throws {
   check(gone, "orphan tree exited after SIGTERM")
   _ = await monitor.refresh()
   let outcome = await monitor.autopilotOutcome(event)
-  check(["verifying", "verified"].contains(outcome?.outcome ?? ""), "receipt \(String(describing: outcome))")
+  check(
+    ["verifying", "verified"].contains(outcome?.outcome ?? ""),
+    "receipt \(String(describing: outcome))")
   do {
     _ = try await monitor.autopilotBurn(
       key, authority: "starter:test", label: item.name, rationale: "Again.")
@@ -194,7 +198,9 @@ func autopilotProcessProof() async throws {
       [o.identity.key: r], threads: [], protectedPIDs: [], probe: quiet
     ).first
   }
-  equal(found(cpu: 0.4)?.facts["idle"], "1d", "under a second of CPU in three days: idle since it started")
+  equal(
+    found(cpu: 0.4)?.facts["idle"], "1d",
+    "under a second of CPU in three days: idle since it started")
   equal(found(cpu: 120)?.facts["idle"], "active", "real work since it started: watch it first")
   equal(found(cpu: 0.4, busy: Date())?.facts["idle"], "active", "seen busy just now")
 
@@ -251,8 +257,30 @@ func autopilotProcessProof() async throws {
   equal(named?.facts["repo"], "api")
   equal(named?.name, "node in api")
   isNil(named?.title)
-  guard let named, let asked = AutopilotPolicy.proposeQuestions([named], memory: AutopilotMemory()).first
+  guard let named,
+    let asked = AutopilotPolicy.proposeQuestions([named], memory: AutopilotMemory()).first
   else { return failTest("a question about the program in a project") }
   equal(asked.rows?.map(\.title), ["node in api"], "the row is the program's name")
   equal(asked.rows?.map(\.subtitle), ["started by Codex"])
+
+  // Antigravity harness binary is protected, and child processes carrying ANTIGRAVITY_ / AGY_
+  // environment variable names are tagged as started by Antigravity without reading secret values.
+  check(rail("/usr/local/bin/agy") != nil, "agy harness is protected")
+  let agyChild = Process()
+  agyChild.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+  agyChild.arguments = ["--passive-child"]
+  var childEnv = ProcessInfo.processInfo.environment.filter {
+    !$0.key.hasPrefix("CLAUDE") && !$0.key.hasPrefix("CODEX") && !$0.key.hasPrefix("CURSOR")
+      && !$0.key.hasPrefix("ANTIGRAVITY") && !$0.key.hasPrefix("AGY_")
+  }
+  childEnv["ANTIGRAVITY_AGENT"] = "1"
+  childEnv["AGY_SECRET_TOKEN"] = "DO_NOT_LEAK_ENV_VALUE"
+  agyChild.environment = childEnv
+  try agyChild.run()
+  defer {
+    if agyChild.isRunning { agyChild.terminate() }
+    agyChild.waitUntilExit()
+  }
+  usleep(100_000)
+  equal(Native().agent(agyChild.processIdentifier), "antigravity", "ANTIGRAVITY_ env name detected")
 }

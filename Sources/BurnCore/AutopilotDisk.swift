@@ -50,7 +50,9 @@ public enum AutopilotDisk {
 
   /// Where Playwright keeps its browsers, relative to the home folder. Beside them are profiles
   /// its tools keep, logins included (`mcp-chrome`, `daemon`), which are never listed.
-  static let playwrightCaches: Set<String> = ["Library/Caches/ms-playwright", ".cache/ms-playwright"]
+  static let playwrightCaches: Set<String> = [
+    "Library/Caches/ms-playwright", ".cache/ms-playwright",
+  ]
 
   /// Every name Playwright has given a browser folder (its registry's
   /// `allDownloadableDirectoriesThatEverExisted`).
@@ -203,7 +205,8 @@ public enum AutopilotDisk {
     var progress = ScanProgress()
     return scan(
       worktrees: worktrees, home: home, caches: caches, mains: mains, now: now,
-      sizer: sizer, protected: protected, walks: walks, trail: trail, progress: &progress).items
+      sizer: sizer, protected: protected, walks: walks, trail: trail, progress: &progress
+    ).items
   }
 
   /// Resume after the last measured folder, including inside a checkout. Budget and clock are
@@ -217,7 +220,9 @@ public enum AutopilotDisk {
   ) -> ScanBatch {
     let protected = protected ?? .limited(homes: [home])
     let base = WorkspaceSafety.canonical(home)
-    guard base.hasPrefix("/"), base != "/" else { return ScanBatch(items: [], measured: [], discarded: [], incomplete: []) }
+    guard base.hasPrefix("/"), base != "/" else {
+      return ScanBatch(items: [], measured: [], discarded: [], incomplete: [])
+    }
     let deadline = clock().addingTimeInterval(budget)
     var found: [String: AutopilotItem] = [:]
     var measured: Set<String> = []
@@ -285,7 +290,8 @@ public enum AutopilotDisk {
         measured.insert(target)
         guard bytes >= minimumBytes else { continue }
         let child = leaf(target)
-        let name = cache.path == AutopilotGradleCaches.relativePath
+        let name =
+          cache.path == AutopilotGradleCaches.relativePath
           ? (AutopilotGradleCaches.displayName(child) ?? child)
           : (cache.children ? child + " in " + cache.label : cache.label + " cache")
         let subject = cache.children && cache.folder == "xcode-derived" ? child : cache.label
@@ -300,8 +306,45 @@ public enum AutopilotDisk {
       }
     }
 
-    // Reuse measured browser leftovers too: a large temp directory must not repeatedly consume
-    // the slice before project folders get a turn. Eligibility is still checked fresh by its owner.
+    if caches {
+      guard clock() < deadline else { return batch() }
+      let rings = AutopilotBuildRings.discover(home: base, now: now, protected: protected)
+      discarded.formUnion(rings.discarded)
+      for ringTarget in rings.targets {
+        if progress.measured.contains(ringTarget.path)
+          || progress.deferred.contains(ringTarget.path)
+        {
+          continue
+        }
+        guard clock() < deadline else { return batch() }
+        guard refusal(ringTarget.path, home: base, protected: protected) == nil else { continue }
+        guard walks?.enter(ringTarget.path) ?? true else {
+          deferCheck(ringTarget.path)
+          continue
+        }
+        defer { walks?.leave(ringTarget.path, early: walks?.wanted(ringTarget.path) ?? false) }
+        guard let bytes = sizer(ringTarget.path), !(walks?.wanted(ringTarget.path) ?? false) else {
+          deferCheck(ringTarget.path)
+          continue
+        }
+        progress.measured.insert(ringTarget.path)
+        measured.insert(ringTarget.path)
+        guard bytes >= minimumBytes else { continue }
+        let item = AutopilotItem(
+          id: "disk:" + AutopilotItem.hash(ringTarget.path), kind: .disk, name: ringTarget.name,
+          detail: sentence(ringTarget.folder, subject: ringTarget.subject), path: ringTarget.path,
+          bytes: bytes,
+          facts: [
+            "folder": ringTarget.folder, "home": "global-cache",
+            "stale": AutopilotPolicy.stale(since: ringTarget.modified, now: now),
+            "size": scale(bytes),
+          ], observedAt: now, lastUsed: ringTarget.modified)
+        found[item.id] = item
+      }
+    }
+
+    // Reuse measured browser and agent scratch leftovers too: a large temp directory must not
+    // repeatedly consume the slice before project folders get a turn.
     if caches, let trail {
       guard clock() < deadline else { return batch() }
       var pendingTrail = false
@@ -310,8 +353,14 @@ public enum AutopilotDisk {
         in: trail, now: now, minimumBytes: minimumBytes,
         sizer: { path in
           if let bytes = progress.trailSizes[path] { return bytes }
-          if progress.deferred.contains(path) { unknownTrail = true; return nil }
-          guard clock() < deadline else { pendingTrail = true; return nil }
+          if progress.deferred.contains(path) {
+            unknownTrail = true
+            return nil
+          }
+          guard clock() < deadline else {
+            pendingTrail = true
+            return nil
+          }
           guard let bytes = sizer(path) else {
             deferCheck(path)
             unknownTrail = true
@@ -326,8 +375,47 @@ public enum AutopilotDisk {
       if pendingTrail { return batch() }
     }
 
+    if caches {
+      guard clock() < deadline else { return batch() }
+      var pendingScratch = false
+      var unknownScratch = Set<String>()
+      let scratch = AutopilotAgentScratch.items(
+        home: base, temp: trail, now: now, minimumBytes: minimumBytes,
+        sizer: { path in
+          if let bytes = progress.trailSizes[path] { return bytes }
+          if progress.deferred.contains(path) {
+            unknownScratch.insert(path)
+            return nil
+          }
+          guard clock() < deadline else {
+            pendingScratch = true
+            return nil
+          }
+          guard let bytes = sizer(path) else {
+            deferCheck(path)
+            unknownScratch.insert(path)
+            return nil
+          }
+          progress.trailSizes[path] = bytes
+          return bytes
+        })
+      for item in scratch.items { found[item.id] = item }
+      if pendingScratch {
+        incomplete.formUnion(scratch.measured)
+        return batch()
+      }
+      for root in scratch.measured {
+        if unknownScratch.contains(where: { AutopilotWalks.overlap(root, $0) }) {
+          incomplete.insert(root)
+        } else {
+          measured.insert(root)
+        }
+      }
+    }
+
     for checkout in checkouts(worktrees, home: base, mains: mains, protected: protected) {
-      if progress.finishedRoots.contains(checkout.path) || progress.deferred.contains(checkout.path) {
+      if progress.finishedRoots.contains(checkout.path) || progress.deferred.contains(checkout.path)
+      {
         continue
       }
       guard clock() < deadline else { return batch() }
@@ -348,18 +436,25 @@ public enum AutopilotDisk {
         continue
       }
       if progress.prepared[checkout.path] == nil {
-        var search = progress.searches[checkout.path]
+        var search =
+          progress.searches[checkout.path]
           ?? FolderSearch(pending: [(path: checkout.path, depth: 0)])
         let searched = advanceFolders(&search, until: deadline, clock: clock, stop: away)
         progress.searches[checkout.path] = search
         guard searched else {
-          if early { deferCheck(checkout.path); continue }
+          if early {
+            deferCheck(checkout.path)
+            continue
+          }
           return batch()
         }
         let folders = search.found.filter {
           refusal($0.path, home: base, protected: protected) == nil
         }
-        guard !away() else { deferCheck(checkout.path); continue }
+        guard !away() else {
+          deferCheck(checkout.path)
+          continue
+        }
         // Git failure cannot make unknown files safe. Retry this checkout after unvisited ones.
         let blocked: Set<String>
         if folders.isEmpty {
@@ -378,7 +473,10 @@ public enum AutopilotDisk {
         let worked = lastWorked(
           checkout, skipping: Set(junk.map { $0.path }), now: now,
           until: Date().addingTimeInterval(max(0, deadline.timeIntervalSince(clock()))), stop: away)
-        guard !away() else { deferCheck(checkout.path); continue }
+        guard !away() else {
+          deferCheck(checkout.path)
+          continue
+        }
         progress.prepared[checkout.path] = PreparedCheckout(folders: junk, worked: worked)
         if search.failed.isEmpty { progress.searches[checkout.path] = nil }
       }
@@ -389,7 +487,10 @@ public enum AutopilotDisk {
           continue
         }
         guard clock() < deadline else { return batch() }
-        guard !away() else { deferCheck(checkout.path); break }
+        guard !away() else {
+          deferCheck(checkout.path)
+          break
+        }
         guard refusal(folder.path, home: base, protected: protected) == nil else {
           progress.measured.insert(folder.path)
           continue
@@ -401,7 +502,7 @@ public enum AutopilotDisk {
         progress.measured.insert(folder.path)
         measured.insert(folder.path)
         guard bytes >= minimumBytes else { continue }
-        let fact = rebuildable[folder.name] ?? "other"
+        let fact = matchedRebuildable(path: folder.path, name: folder.name) ?? "other"
         let inside = parent(String(folder.path.dropFirst(checkout.path.count + 1)))
         var name = folder.name + " in " + place
         if !inside.isEmpty { name += "/" + inside }
@@ -442,7 +543,8 @@ public enum AutopilotDisk {
     let firstCount = search.found.count
     while search.current != nil || !search.pending.isEmpty {
       guard clock() < deadline, !stop(), listed < directoryBudget,
-        search.found.count - firstCount < candidateLimit else { return false }
+        search.found.count - firstCount < candidateLimit
+      else { return false }
       if search.current == nil {
         let (directory, depth) = search.pending.removeFirst()
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else {
@@ -464,7 +566,7 @@ public enum AutopilotDisk {
         let path = current.path + "/" + name
         var info = stat()
         guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { continue }
-        if rebuildable[name] != nil {
+        if matchedRebuildable(path: path, name: name) != nil {
           search.found.append((path: path, name: name))
         } else if current.depth + 1 < maximumDepth && !exists(path + "/.git") {
           search.pending.append((path: path, depth: current.depth + 1))
@@ -549,6 +651,10 @@ public enum AutopilotDisk {
     if item.facts["folder"] == "browser-temp" {
       return AutopilotBrowserTrail.reclaim(item, authority: authority, authorize: authorize)
     }
+    if item.facts["folder"] == "agent-temp" {
+      return AutopilotAgentScratch.reclaim(
+        item, authority: authority, home: home, authorize: authorize)
+    }
     let folder = item.facts["folder"] ?? "other"
     let known = kinds.contains(folder)
     guard known || authority.hasPrefix("rule:") || authority == "operator" else {
@@ -560,6 +666,9 @@ public enum AutopilotDisk {
     }
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
     if let reason = playwrightRefusal(path, home: base, protected: protected) {
+      return refuse(reason)
+    }
+    if let reason = AutopilotBuildRings.refusal(path, home: base, protected: protected) {
       return refuse(reason)
     }
     var originalIdentity = stat()
@@ -591,6 +700,9 @@ public enum AutopilotDisk {
     }
     // One last look right before removing it.
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
+    if let reason = AutopilotBuildRings.refusal(path, home: base, protected: protected) {
+      return refuse(reason)
+    }
     guard known else {
       do {
         try keepingParentTime(of: path) {
@@ -630,6 +742,9 @@ public enum AutopilotDisk {
       }
     }
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
+    if let reason = AutopilotBuildRings.refusal(path, home: base, protected: protected) {
+      return refuse(reason)
+    }
     var currentIdentity = stat()
     guard lstat(path, &currentIdentity) == 0, currentIdentity.st_ino == originalIdentity.st_ino,
       currentIdentity.st_dev == originalIdentity.st_dev
@@ -727,19 +842,70 @@ public enum AutopilotDisk {
       + ", which macOS protects, so I left it alone. Turn on Full Disk Access to let me check it."
   }
 
+  /// Exact rebuildable folder names, plus agent-isolated Xcode DerivedData (`DerivedData-*`,
+  /// `.derivedData*`) and Gradle homes (`gradle-home`, `.gradle-*`) verified by native markers.
+  static func matchedRebuildable(path: String, name: String) -> String? {
+    if let known = rebuildable[name] { return known }
+    if (name.hasPrefix("DerivedData-") || name == ".derivedData" || name.hasPrefix(".derivedData-"))
+      && isXcodeDerivedData(path)
+    {
+      return "xcode-derived"
+    }
+    if (name == "gradle-home" || name == ".gradle-home" || name.hasPrefix(".gradle-"))
+      && isGradleHome(path)
+    {
+      return "package-cache"
+    }
+    return nil
+  }
+
+  private static func isXcodeDerivedData(_ path: String) -> Bool {
+    func regular(_ relative: String) -> Bool {
+      let target = path + "/" + relative
+      var info = stat()
+      return target == WorkspaceSafety.canonical(target) && lstat(target, &info) == 0
+        && info.st_mode & S_IFMT == S_IFREG
+    }
+    func directory(_ relative: String) -> Bool {
+      let target = path + "/" + relative
+      var info = stat()
+      return target == WorkspaceSafety.canonical(target) && lstat(target, &info) == 0
+        && info.st_mode & S_IFMT == S_IFDIR
+    }
+    let hasPlist = regular("info.plist") || regular("Info.plist")
+    let hasBuildTree =
+      directory("Build/Intermediates.noindex") || directory("ModuleCache.noindex")
+      || directory("Index.noindex") || directory("Logs/Build")
+    return hasPlist || (directory("Build") && hasBuildTree)
+  }
+
+  private static func isGradleHome(_ path: String) -> Bool {
+    let caches = path + "/caches"
+    var info = stat()
+    guard caches == WorkspaceSafety.canonical(caches), lstat(caches, &info) == 0,
+      info.st_mode & S_IFMT == S_IFDIR,
+      let names = try? FileManager.default.contentsOfDirectory(atPath: caches)
+    else { return false }
+    return names.contains(where: AutopilotGradleCaches.isCacheDirectory)
+  }
+
   /// The `folder` fact a live path earns by its place (global caches) or by its name inside a
   /// checkout, or nil when it is not a known rebuildable kind. `home` must be canonical.
   private static func recognized(_ path: String, home: String) -> String? {
+    if let ringFolder = AutopilotBuildRings.recognized(path, home: home) { return ringFolder }
     let relative = String(path.dropFirst(home.count + 1))
     for cache in globalCaches {
       let match = cache.children ? (parent(relative) == cache.path) : (relative == cache.path)
       if match {
         if cache.path == AutopilotGradleCaches.relativePath,
-          !AutopilotGradleCaches.isCacheDirectory(leaf(path)) { return nil }
+          !AutopilotGradleCaches.isCacheDirectory(leaf(path))
+        {
+          return nil
+        }
         return cache.folder
       }
     }
-    guard let folder = rebuildable[leaf(path)],
+    guard let folder = matchedRebuildable(path: path, name: leaf(path)),
       enclosingCheckout(of: path, home: home, levels: maximumDepth) != nil
     else { return nil }
     return folder
@@ -749,15 +915,27 @@ public enum AutopilotDisk {
   /// generic build/dist folders stay eligible but their uncertain bytes get encrypted recovery.
   public static func regenerable(_ path: String, home: String = NSHomeDirectory()) -> Bool {
     let base = WorkspaceSafety.canonical(home)
+    if AutopilotBuildRings.regenerable(path, home: base) { return true }
     let relative = path.hasPrefix(base + "/") ? String(path.dropFirst(base.count + 1)) : ""
     if globalCaches.contains(where: {
       let matches = $0.children ? parent(relative) == $0.path : relative == $0.path
-      return matches && ($0.path != AutopilotGradleCaches.relativePath
-        || AutopilotGradleCaches.isCacheDirectory(leaf(path)))
+      return matches
+        && ($0.path != AutopilotGradleCaches.relativePath
+          || AutopilotGradleCaches.isCacheDirectory(leaf(path)))
     }) {
       return true
     }
     let folder = leaf(path)
+    if (folder == "DerivedData" || folder.hasPrefix("DerivedData-") || folder == ".derivedData"
+      || folder.hasPrefix(".derivedData-")) && isXcodeDerivedData(path)
+    {
+      return true
+    }
+    if (folder == ".gradle" || folder == "gradle-home" || folder == ".gradle-home"
+      || folder.hasPrefix(".gradle-")) && isGradleHome(path)
+    {
+      return true
+    }
     let parentPath = parent(path)
     func regular(_ relative: String) -> Bool {
       let target = path + "/" + relative
@@ -929,7 +1107,7 @@ public enum AutopilotDisk {
         let path = directory + "/" + name
         var info = stat()
         guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { continue }
-        if rebuildable[name] != nil {
+        if matchedRebuildable(path: path, name: name) != nil {
           found.append((path: path, name: name))
         } else if depth + 1 < maximumDepth && !exists(path + "/.git") {
           queue.append((path: path, depth: depth + 1))

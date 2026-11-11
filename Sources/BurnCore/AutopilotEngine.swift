@@ -575,7 +575,9 @@ public actor Autopilot {
     // quiet, never about every program BZ knows no family for, and one open per subject, the one
     // that frees the most.
     memory.questions.removeAll { $0.isOpen && !AutopilotPolicy.quiet($0.kind, $0.match) }
-    memory.questions.removeAll { $0.isOpen && AutopilotPolicy.everyUnknownProgram($0.kind, $0.match) }
+    memory.questions.removeAll {
+      $0.isOpen && AutopilotPolicy.everyUnknownProgram($0.kind, $0.match)
+    }
     var subjects = Set<String>()
     let kept = Set(
       memory.questions.filter(\.isOpen)
@@ -800,6 +802,7 @@ public actor Autopilot {
           AutopilotPolicy.carryTallies(&memory)
         }
       }
+      try? store.updateSweep { $0.idleSweeps = nil }
       let acted = refreshQuestions(now: now, acting: burnsOnItsOwn())
       // Show the answer right away; matching items, and anything BZ just answered itself, burn in
       // the background.
@@ -1000,6 +1003,22 @@ public actor Autopilot {
       (status == nil || status == "all" || entry.status.rawValue == status)
         && (kind == nil || entry.item.kind.rawValue == kind)
     }
+    var skippedRecent = 0
+    var skippedUnchecked = 0
+    if status == "unsure" {
+      entries = entries.filter { entry in
+        if AutopilotDockerCache.isCache(entry.item) { return false }
+        if AutopilotSweeper.hasUncheckedFacts(entry.item) {
+          skippedUnchecked += 1
+          return false
+        }
+        if AutopilotSweeper.isTooRecent(entry.item) {
+          skippedRecent += 1
+          return false
+        }
+        return true
+      }
+    }
     let order: [AutopilotStatus] = [.unsure, .burn, .keep, .failed, .protected, .burned]
     entries.sort {
       let a = order.firstIndex(of: $0.status) ?? 9
@@ -1013,6 +1032,8 @@ public actor Autopilot {
     summary["answers"] = String(snap.answers)
     summary["coverage"] = String(format: "%.2f", snap.coverage)
     summary["totalItems"] = String(entries.count)
+    if skippedRecent > 0 { summary["skippedActiveOrToday"] = String(skippedRecent) }
+    if skippedUnchecked > 0 { summary["skippedUnchecked"] = String(skippedUnchecked) }
     if snap.sweep.lookOnly == true { summary["lookOnly"] = "true" }
     return AutopilotCatalogPage(
       summary: summary, rules: snap.rules, lessons: AutopilotPolicy.catalogLessons(memory),
@@ -1135,7 +1156,9 @@ public actor Autopilot {
     guard
       !AutopilotDockerCache.about(question.match),
       question.match[AutopilotDockerCache.risk] == nil
-    else { throw StoreError.message("Docker's build cache is the owner's call. BZ asks them itself.") }
+    else {
+      throw StoreError.message("Docker's build cache is the owner's call. BZ asks them itself.")
+    }
     guard !question.match.values.contains(where: { $0.contains("unknown") }) else {
       throw StoreError.message(
         "Leave out facts I haven't checked yet (\"unknown\"): an answer about them stops applying once they are checked."

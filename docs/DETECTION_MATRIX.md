@@ -4,7 +4,7 @@ The agent harness owns abandonment decisions. Resource use, age, executable name
 
 | Situation | Agent responsibility | Native behavior |
 |---|---|---|
-| Finished/cancelled disposable job | Establish exact ownership, no consumers, and which helpers remain | Fresh identity preview, then one SIGTERM attempt within authorization |
+| Finished/cancelled disposable job | Establish exact ownership, no consumers, and which helpers remain | Fresh identity preview (with Claude Code, Codex and Antigravity session liveness checks), then one SIGTERM attempt within authorization |
 | Idle pool, browser or dev server | Determine whether a live task still needs it | Never automatically classified as abandoned |
 | Unknown ownership | Leave running; identify missing evidence | No independent kill decision |
 | True OS zombie | Investigate its parent and supported reap/teardown path | Child signaling refused; an exited child has no live workload to reclaim |

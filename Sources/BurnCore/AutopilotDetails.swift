@@ -96,7 +96,9 @@ extension AutopilotPolicy {
   /// The filters a details list offers: everything, each kind of risk found in it, then what the
   /// owner spared. Each says how many it shows.
   public static func detailFilters(_ details: [AutopilotDetail]) -> [AutopilotDetailFilter] {
-    var filters = [AutopilotDetailFilter(id: "all", label: "All", count: details.count, risky: false)]
+    var filters = [
+      AutopilotDetailFilter(id: "all", label: "All", count: details.count, risky: false)
+    ]
     let risks: [(id: String, label: String)] = [
       ("local", "Only on this Mac"), ("unsaved", "Unsaved changes"), ("big", "Big files"),
       ("serving", "Still serving"),
@@ -105,18 +107,21 @@ extension AutopilotPolicy {
     for risk in risks {
       let count = details.filter { $0.tags.contains { $0.filter == risk.id } }.count
       if count > 0 {
-        filters.append(AutopilotDetailFilter(id: risk.id, label: risk.label, count: count, risky: true))
+        filters.append(
+          AutopilotDetailFilter(id: risk.id, label: risk.label, count: count, risky: true))
       }
     }
     let spared = details.filter(\.spared).count
     if spared > 0 {
-      filters.append(AutopilotDetailFilter(id: "spared", label: "Spared", count: spared, risky: false))
+      filters.append(
+        AutopilotDetailFilter(id: "spared", label: "Spared", count: spared, risky: false))
     }
     return filters
   }
 
   /// What a filter shows; "all" or a filter nobody knows shows everything.
-  public static func filtered(_ details: [AutopilotDetail], by filter: String) -> [AutopilotDetail] {
+  public static func filtered(_ details: [AutopilotDetail], by filter: String) -> [AutopilotDetail]
+  {
     switch filter {
     case "all": return details
     case "spared": return details.filter(\.spared)
@@ -130,13 +135,17 @@ extension AutopilotPolicy {
     let item = entry.item
     let title = String((item.title ?? item.name).prefix(rowTitleLimit))
     var when = ""
-    if let used = item.lastUsed { when = timeWords(used, kind: item.kind, now: now, calendar: calendar) }
+    if let used = item.lastUsed {
+      when = timeWords(used, kind: item.kind, now: now, calendar: calendar)
+    }
     var tags = detailTags(item)
     if entry.status == .failed {
-      tags.insert(AutopilotDetail.Tag(text: "Failed last time", risky: true, filter: "failed"), at: 0)
+      tags.insert(
+        AutopilotDetail.Tag(text: "Failed last time", risky: true, filter: "failed"), at: 0)
     }
     return AutopilotDetail(
-      entry: entry, title: title, subtitle: subtitle(of: item), size: roughly(item.bytes), when: when,
+      entry: entry, title: title, subtitle: subtitle(of: item), size: roughly(item.bytes),
+      when: when,
       tags: tags, facts: detailFacts(item, now: now, calendar: calendar),
       consequence: consequence(item), spared: isSpared(entry))
   }
@@ -148,7 +157,9 @@ extension AutopilotPolicy {
     var tags: [Tag] = []
     switch item.kind {
     case .worktree:
-      if f["saved"] == "local" { tags.append(Tag(text: "Only on this Mac", risky: true, filter: "local")) }
+      if f["saved"] == "local" {
+        tags.append(Tag(text: "Only on this Mac", risky: true, filter: "local"))
+      }
       if f["saved"] == "unknown" {
         tags.append(Tag(text: "Saving not checked", risky: true, filter: "unchecked"))
       }
@@ -158,17 +169,25 @@ extension AutopilotPolicy {
       if f["changes"] == "unknown" {
         tags.append(Tag(text: "Changes not checked", risky: true, filter: "unchecked"))
       }
-      if f["inUse"] == "unknown" { tags.append(Tag(text: "Use not checked", risky: true, filter: "unchecked")) }
+      if f["inUse"] == "unknown" {
+        tags.append(Tag(text: "Use not checked", risky: true, filter: "unchecked"))
+      }
       if AutopilotWorktrees.holdsBigFiles(item) {
         // What a Yes deletes for good: big unsaved files no backup holds.
         let big: UInt64 = (item.bigFiles ?? []).reduce(0) { $0 + $1.bytes }
         let words: String = big > 0 ? roughly(big) + " not backed up" : "Big files not backed up"
         tags.append(Tag(text: words, risky: true, filter: "big"))
       }
-      if tags.isEmpty, f["saved"] == "merged" { tags.append(Tag(text: "Merged", risky: false, filter: nil)) }
-      if tags.isEmpty, f["saved"] == "pushed" { tags.append(Tag(text: "On GitHub", risky: false, filter: nil)) }
+      if tags.isEmpty, f["saved"] == "merged" {
+        tags.append(Tag(text: "Merged", risky: false, filter: nil))
+      }
+      if tags.isEmpty, f["saved"] == "pushed" {
+        tags.append(Tag(text: "On GitHub", risky: false, filter: nil))
+      }
     case .process:
-      if f["listening"] == "yes" { tags.append(Tag(text: "Still serving", risky: true, filter: "serving")) }
+      if f["listening"] == "yes" {
+        tags.append(Tag(text: "Still serving", risky: true, filter: "serving"))
+      }
       if f["listening"] == "unknown" {
         tags.append(Tag(text: "Serving not checked", risky: true, filter: "unchecked"))
       }
@@ -178,23 +197,30 @@ extension AutopilotPolicy {
         tags.append(Tag(text: "Its app is gone", risky: false, filter: nil))
       }
     case .disk:
-      tags.append(
-        f["folder"] == "browser-temp"
-          ? Tag(text: "Its browsers are gone", risky: false, filter: nil)
-          : Tag(text: "Rebuilds itself", risky: false, filter: nil))
+      let label: String
+      switch f["folder"] {
+      case "browser-temp": label = "Its browsers are gone"
+      case "agent-temp": label = "Its chats are finished"
+      default: label = "Rebuilds itself"
+      }
+      tags.append(Tag(text: label, risky: false, filter: nil))
     }
     return tags
   }
 
   /// "6 unsaved files" when Git said how many, else the size of the bucket.
   static func unsavedWords(_ item: AutopilotItem) -> String {
-    if let count = item.unsaved, count > 0 { return "\(count) unsaved " + (count == 1 ? "file" : "files") }
+    if let count = item.unsaved, count > 0 {
+      return "\(count) unsaved " + (count == 1 ? "file" : "files")
+    }
     return item.facts["changes"] == "large" ? "Lots of unsaved changes" : "Unsaved changes"
   }
 
   /// The labeled facts the hover card and the opened page show, the riskiest worded so they stand
   /// out. Only what BZ knows: an unchecked fact says so.
-  static func detailFacts(_ item: AutopilotItem, now: Date, calendar: Calendar) -> [AutopilotDetail.Fact] {
+  static func detailFacts(_ item: AutopilotItem, now: Date, calendar: Calendar) -> [AutopilotDetail
+    .Fact]
+  {
     typealias Fact = AutopilotDetail.Fact
     let f = item.facts
     var used = "Not known"
@@ -213,7 +239,9 @@ extension AutopilotPolicy {
       case "none": unsaved = Fact(label: "Unsaved changes", value: "None", risky: false)
       case "small", "large":
         var words = f["changes"] == "large" ? "Lots of files" : "A few files"
-        if let count = item.unsaved, count > 0 { words = "\(count) " + (count == 1 ? "file" : "files") }
+        if let count = item.unsaved, count > 0 {
+          words = "\(count) " + (count == 1 ? "file" : "files")
+        }
         unsaved = Fact(label: "Unsaved changes", value: words, risky: true)
       default: unsaved = Fact(label: "Unsaved changes", value: "Not checked yet", risky: true)
       }
@@ -230,7 +258,9 @@ extension AutopilotPolicy {
       return facts
     case .process:
       var idle = "Not known"
-      if let date = item.lastUsed { idle = String(idleText(date, now: now).dropFirst("idle ".count)) }
+      if let date = item.lastUsed {
+        idle = String(idleText(date, now: now).dropFirst("idle ".count))
+      }
       var running = "Not known"
       if let started = item.started { running = idleLength(now.timeIntervalSince(started)) }
       let serving: Fact
@@ -278,6 +308,7 @@ extension AutopilotPolicy {
     case "package-cache": return "Package cache"
     case "python-env": return "Python environment"
     case "browser-temp": return "Robot-browser leftovers"
+    case "agent-temp": return "AI scratch leftovers"
     case .some(let other) where !other.isEmpty && other != "other":
       return capitalized(other.replacingOccurrences(of: "-", with: " "))
     default: return "Folder"

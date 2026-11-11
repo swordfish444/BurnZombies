@@ -1,12 +1,12 @@
 # Autopilot
 
-BurnZombies cleans up on its own. It looks for three kinds of leftovers right away, then every minute for its first half hour and every 15 minutes after that. It burns the ones it is sure about and asks you a tiny yes/no question when it isn't. Each answer teaches it a lesson. After about a dozen answers it handles nearly everything without you.
+BurnZombies cleans up on its own. It looks for three kinds of leftovers right away, then every minute for its first half hour and every 15 minutes after that (every 2 minutes when free disk drops below 50 GB). It burns the ones it is sure about and asks you a tiny yes/no question when it isn't. Each answer teaches it a lesson. After about a dozen answers it handles nearly everything without you.
 
 | Leftover | What it is | What "burn" does |
 | --- | --- | --- |
 | **Zombies** | Programs whose app or chat is gone: test runners, build watchers, robot browsers, dev servers from finished chats. | A graceful stop (SIGTERM) for the program and everything it started. Never a force-kill. |
 | **Old copies** | Git worktrees you or your agents made and stopped using. | Every commit and local change is saved in a restore point inside the repository, then the folder is removed. **Restore** puts it back. |
-| **Junk folders** | Rebuildable output: `node_modules`, build folders, Xcode DerivedData, tool caches, Playwright browser builds that no installed Playwright uses (never a profile), and what robot browsers left in your temp folder. | The folder is deleted. Your tools rebuild it when needed. |
+| **Junk folders** | Rebuildable output: `node_modules`, build folders, Xcode DerivedData (including `DerivedData-*`), Gradle caches (including `gradle-home` and local SDK build rings), Playwright browser builds that no installed Playwright uses (never a profile), robot-browser temp folders, and old AI scratch folders. | The folder is deleted. Your tools rebuild it when needed. |
 | **[Docker's build cache](#dockers-build-cache)** | Old leftovers from Docker builds that nothing uses. | Docker removes them, one exact record at a time, and makes them again when a build needs them. |
 
 ## How it decides
@@ -21,10 +21,12 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
 4. **Starter rules** burn the obvious from the first minute (with look-only, once you start burning). Switch each off in **Settings → Burns without asking**:
    - robot browsers nothing can drive anymore, idle for 10+ minutes. A robot browser is one Playwright, Puppeteer, chromedriver or an MCP server started: it has a control pipe, or a debugging port plus automation signs (headless, a fake keychain, WebDriver flags or a throwaway profile). Nothing can drive it once the program that started it is gone and it was driven over a pipe, or it has a throwaway profile and nothing is connected to its port. Its helpers go with it. A pipe-driven one goes even while a chat works in its folder: that chat can't reach it, and it holds the profile the chat's next browser needs. The browser you use never has these flags, so it stays protected;
    - programs still driving a robot browser (a Playwright CLI daemon, an MCP server, a test runner) an hour after the chat that worked in their folder ended, when they serve no network port;
+   - programs whose chat is finished, idle for 1+ hour, with no open port;
    - programs whose app or chat is gone, idle for 6+ hours, with no open port. A program that has barely used the CPU since it started counts as idle from its start, so old leftovers go right away;
    - old copies already merged, unchanged and untouched for a month (not ones made by Codex, Claude or Conductor). They are always backed up first;
    - rebuildable folders (`node_modules`, build output, Xcode build folders) inside copies untouched for two weeks;
-   - the throwaway profiles and recordings robot browsers leave in your temp folder (`playwright_chromiumdev_profile-…`, `playwright-artifacts-…`, `puppeteer_dev_chrome_profile-…`, chromedriver's `.org.chromium.Chromium.…`), once they add up to 100 MB. Each must be untouched for an hour, unlocked by a running browser and unused by any program when it is removed.
+   - the throwaway profiles and recordings robot browsers leave in your temp folder (`playwright_chromiumdev_profile-…`, `playwright-artifacts-…`, `puppeteer_dev_chrome_profile-…`, chromedriver's `.org.chromium.Chromium.…`), once they add up to 100 MB. Each must be untouched for an hour, unlocked by a running browser and unused by any program when it is removed;
+   - old AI scratch leftovers (`$TMPDIR/claude-*` untouched for 2+ days, `~/.codex/{artifacts,session-artifacts,task-artifacts}` untouched for 2+ weeks, and `scratch` / `browser_sandbox` inside finished Antigravity chats untouched for 2+ weeks; transcripts and conversation files stay untouched).
 5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor. Docker's build cache is never its call.
 6. Everything else is **unsure** and becomes a question.
 
@@ -144,12 +146,12 @@ Under **All caught up!** in **Teach BZ**, a few plain counts, each shown once it
 
 Native code catalogs and applies rules without any model. With Claude Code or Codex signed in, BurnZombies also runs short AI sweeps in the background. Only Claude Code and Codex run sweeps.
 
-- **When.** The first starts about 10 minutes after install, once the first look is complete. After that, a sweep runs when there is something new to judge, at most every 30 minutes, and rechecks every 4 hours. **Hunt Zombies** in the menu bar starts one right away.
+- **When.** The first starts about 10 minutes after install, once the first look is complete. After that, a background sweep wakes only when at least 250 MB of quiet, actionable items (or a program keeping a CPU busy) wait for judgment — active/today items and items with unfinished native checks are skipped so they never waste tokens. Sweeps that find nothing to burn or ask back off (`30m → 1h → 2h → 4h`, and `4h → 12h → 24h` for rechecks). If recent sweeps spend heavily while freeing under 1 GB, **Lean mode** turns on automatically (`2 GB` minimum, `6h` spacing) until AI sweeps start paying off again. **Hunt Zombies** in the menu bar always starts one right away.
 - **What it uses.** Claude Code uses Sonnet at medium thinking by default, whatever your own Claude Code settings say; Codex uses its own default. Change it with **How smart** in **Settings**.
 - **What it can do.** Six tools (catalog, inspect, decide, burn, ask, report), plus reading project files to understand what something is. It has no shell, and the app re-checks every burn.
 - **How long.** A few minutes, capped at 15. A sweep that runs out of time after judging things counts as done, and the next picks up the rest.
 - **Failures** back off 15 → 30 → 60 → 120 minutes (at least an hour after a login or usage-limit problem). The loop never stops for good, and your rules keep working while the AI is unavailable.
-- **Cost.** Roughly $0.30–$1.20 a sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Used this week** shows what sweeps used.
+- **Cost and token efficiency.** Roughly $0.30–$1.20 a sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Used this week** shows what sweeps used alongside **Token efficiency**: space freed by rules for 0 tokens, space freed by AI sweeps, noisy sweeps skipped, and whether Lean mode is active.
 
 Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). The switch beside **Autopilot on** in the menu, or **Off** in **Settings**, turns Autopilot, AI included, off. **Which AI → Off** in **Settings** turns off only the AI.
 

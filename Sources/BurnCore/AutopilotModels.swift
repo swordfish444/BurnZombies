@@ -569,6 +569,10 @@ public struct AutopilotSweepState: Codable, Sendable, Equatable {
   /// When a usage limit the AI hit comes back, if it said.
   public var limitResetsAt: Date?
   public var running = false
+  /// Consecutive background AI sweeps that yielded neither an authorized burn nor a new question.
+  public var idleSweeps: Int?
+  /// Background AI sweep checks skipped because nothing actionable met the stakes or budget gate.
+  public var skippedSweeps: Int?
   /// Set by "Hunt now" from the CLI or MCP; the coordinator starts an AI sweep next tick.
   public var requested: Bool?
   /// A deep hunt asked for from the command line, with its spending limit in US dollars.

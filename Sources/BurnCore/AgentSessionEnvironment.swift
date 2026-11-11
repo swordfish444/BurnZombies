@@ -16,9 +16,10 @@ public enum AgentSessionEnvironment {
     "CURSOR_AGENT", "CURSOR_TRACE_ID",
   ]
   /// Families only a session or its host sets. `VSCODE_` holds the editor's IPC handles in a
-  /// Cursor or VS Code terminal.
+  /// Cursor or VS Code terminal; `ANTIGRAVITY_` and `AGY_` hold Antigravity session state.
   static let prefixes = [
     "CLAUDE_CODE_", "CLAUDE_AGENT_SDK_", "MCP_", "CODEX_NETWORK_PROXY_", "VSCODE_",
+    "ANTIGRAVITY_", "AGY_",
   ]
   /// Set on purpose to pick an account, a cloud provider or a certificate. They share a
   /// session's prefix but stay.
