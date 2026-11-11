@@ -1,10 +1,11 @@
 import Darwin
 import Foundation
 
-/// Local SDK build snapshot rings and isolated shared Gradle caches under developer dot-stores
-/// (`~/.*/*-local`). Keeps the newest 3 snapshots per artifact (and anything under 7 days old),
-/// plus the newest Gradle version directory per consumer, while surfacing older multi-hundred-MB
-/// leftovers under existing `build-output` and `package-cache` subjects.
+/// Local SDK build snapshot rings, retired SDK archives, and isolated shared Gradle caches under
+/// developer dot-stores (`~/.*/*-local` and `~/.*/*-retired`). Keeps the newest 3 snapshots per
+/// artifact in live `*-local` rings (and anything under 7 days old), plus the newest Gradle version
+/// directory per consumer, while surfacing older multi-hundred-MB leftovers under existing
+/// `build-output` and `package-cache` subjects.
 public enum AutopilotBuildRings {
   public static let keepSnapshots = 3
   public static let minimumAge: TimeInterval = 7 * 86_400
@@ -43,12 +44,52 @@ public enum AutopilotBuildRings {
         let dotChildren = try? FileManager.default.contentsOfDirectory(atPath: dotPath)
       else { continue }
 
-      for ring in dotChildren.sorted().prefix(entryLimit) where ring.hasSuffix("-local") {
+      for ring in dotChildren.sorted().prefix(entryLimit)
+      where ring.hasSuffix("-local") || ring.hasSuffix("-retired") {
         let ringPath = dotPath + "/" + ring
         guard validDirectory(ringPath, home: base, protected: protected),
           !exists(ringPath + "/.git"),
           let ringEntries = try? FileManager.default.contentsOfDirectory(atPath: ringPath)
         else { continue }
+
+        if ring.hasSuffix("-retired") {
+          for entry in ringEntries.sorted().prefix(entryLimit) where !entry.hasPrefix(".") {
+            let entryPath = ringPath + "/" + entry
+            guard validDirectory(entryPath, home: base, protected: protected),
+              !exists(entryPath + "/.git")
+            else { continue }
+            if isRetiredArchive(entryPath), let touched = retiredModified(entryPath) {
+              if now.timeIntervalSince(touched) < minimumAge {
+                discarded.insert(entryPath)
+              } else {
+                targets.append(
+                  Target(
+                    path: entryPath, folder: "build-output",
+                    name: "Retired SDK archive \(shortLabel(entry)) in \(ring)", subject: ring,
+                    modified: touched))
+              }
+            } else if let children = try? FileManager.default.contentsOfDirectory(atPath: entryPath)
+            {
+              for child in children.sorted().prefix(entryLimit) where !child.hasPrefix(".") {
+                let childPath = entryPath + "/" + child
+                guard validDirectory(childPath, home: base, protected: protected),
+                  !exists(childPath + "/.git"), isRetiredArchive(childPath),
+                  let touched = retiredModified(childPath)
+                else { continue }
+                if now.timeIntervalSince(touched) < minimumAge {
+                  discarded.insert(childPath)
+                } else {
+                  targets.append(
+                    Target(
+                      path: childPath, folder: "build-output",
+                      name: "Retired \(entry) snapshot \(shortLabel(child)) in \(ring)",
+                      subject: entry, modified: touched))
+                }
+              }
+            }
+          }
+          continue
+        }
 
         for entry in ringEntries.sorted().prefix(entryLimit) where !entry.hasPrefix(".") {
           let entryPath = ringPath + "/" + entry
@@ -82,6 +123,9 @@ public enum AutopilotBuildRings {
     switch parsed {
     case .snapshot(let snapshotPath, _, _):
       return isSnapshot(snapshotPath) ? "build-output" : nil
+    case .retired(let retiredPath):
+      return validPlainDirectory(retiredPath, home: base) && isRetiredArchive(retiredPath)
+        ? "build-output" : nil
     case .gradle(let entryPath, _, let entry):
       guard validPlainDirectory(entryPath, home: base),
         AutopilotGradleCaches.isCacheDirectory(entry) || entry == "build-cache"
@@ -106,7 +150,7 @@ public enum AutopilotBuildRings {
       separator: "/", omittingEmptySubsequences: false
     ).map(String.init)
     guard parts.count >= 2, parts[0].hasPrefix("."), !excludedDots.contains(parts[0].lowercased()),
-      parts[1].hasSuffix("-local")
+      parts[1].hasSuffix("-local") || parts[1].hasSuffix("-retired")
     else { return nil }
 
     guard let parsed = parseRingPath(path, home: base) else {
@@ -114,6 +158,17 @@ public enum AutopilotBuildRings {
     }
 
     switch parsed {
+    case .retired(let retiredPath):
+      guard validDirectory(retiredPath, home: base, protected: protected),
+        isRetiredArchive(retiredPath), let touched = retiredModified(retiredPath)
+      else {
+        return "That folder doesn't look like a retired local SDK archive, so I left it alone."
+      }
+      if now.timeIntervalSince(touched) < minimumAge {
+        return "That retired local SDK build was touched in the last week, so I left it alone."
+      }
+      return nil
+
     case .snapshot(let snapshotPath, let artifactPath, _):
       guard validDirectory(snapshotPath, home: base, protected: protected),
         isSnapshot(snapshotPath), let touched = snapshotModified(snapshotPath)
@@ -164,6 +219,7 @@ public enum AutopilotBuildRings {
 
   private enum RingEntry {
     case snapshot(path: String, artifactPath: String, artifact: String)
+    case retired(path: String)
     case gradle(path: String, consumerPath: String, entry: String)
   }
 
@@ -172,12 +228,24 @@ public enum AutopilotBuildRings {
     let parts = String(path.dropFirst(home.count + 1)).split(
       separator: "/", omittingEmptySubsequences: false
     ).map(String.init)
-    guard parts.count >= 4, parts[0].hasPrefix("."), parts[0].count > 1,
-      !excludedDots.contains(parts[0].lowercased()), parts[1].hasSuffix("-local")
+    guard parts.count >= 3, parts[0].hasPrefix("."), parts[0].count > 1,
+      !excludedDots.contains(parts[0].lowercased())
     else { return nil }
 
     let ringPath = home + "/" + parts[0] + "/" + parts[1]
     guard !exists(ringPath + "/.git") else { return nil }
+
+    if parts[1].hasSuffix("-retired") {
+      if parts.count == 3, !parts[2].hasPrefix(".") {
+        return .retired(path: path)
+      }
+      if parts.count == 4, !parts[2].hasPrefix("."), !parts[3].hasPrefix(".") {
+        return .retired(path: path)
+      }
+      return nil
+    }
+
+    guard parts.count >= 4, parts[1].hasSuffix("-local") else { return nil }
 
     if parts[2] == "_shared-cache" {
       guard parts.count == 6, parts[3] == "gradle", !parts[4].isEmpty, !parts[5].isEmpty else {
@@ -338,6 +406,33 @@ public enum AutopilotBuildRings {
 
   private static func hasArtifactExtension(_ name: String) -> Bool {
     name.hasSuffix(".pom") || name.hasSuffix(".aar") || name.hasSuffix(".jar")
+  }
+
+  private static func isRetiredArchive(_ path: String) -> Bool {
+    guard !exists(path + "/.git"), !exists(path + "/HEAD"), !exists(path + "/config") else {
+      return false
+    }
+    if isSnapshot(path) { return true }
+    let manifests = path + "/manifests"
+    guard plainDirectory(path + "/objects"), plainDirectory(manifests),
+      let files = try? FileManager.default.contentsOfDirectory(atPath: manifests)
+    else { return false }
+    return files.prefix(64).contains {
+      $0.hasSuffix(".json") && regularFile(manifests + "/" + $0)
+    }
+  }
+
+  private static func retiredModified(_ path: String) -> Date? {
+    if isSnapshot(path) { return snapshotModified(path) }
+    guard var newest = modified(path) else { return nil }
+    let manifests = path + "/manifests"
+    if let touched = modified(manifests) { newest = max(newest, touched) }
+    if let files = try? FileManager.default.contentsOfDirectory(atPath: manifests) {
+      for file in files.prefix(64) where file.hasSuffix(".json") {
+        if let touched = modified(manifests + "/" + file) { newest = max(newest, touched) }
+      }
+    }
+    return newest
   }
 
   /// Newest modification across the snapshot root, its manifest, and immediate consumer folders.

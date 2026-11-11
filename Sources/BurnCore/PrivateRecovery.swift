@@ -302,11 +302,15 @@ public enum PrivateRecovery {
       if file.kind != "link", chmod(target, mode_t(file.mode)) != 0 {
         throw StoreError.message("Cannot restore permissions.")
       }
-      for (name, value) in file.attributes ?? [:] {
+      for (name, value) in file.attributes ?? [:]
+      where !WorktreeInspection.ignoredSystemAttributes.contains(name) {
         let code = value.withUnsafeBytes {
           setxattr(target, name, $0.baseAddress, value.count, 0, XATTR_NOFOLLOW)
         }
-        guard code == 0 else { throw StoreError.message("Cannot restore file attributes.") }
+        if code != 0 {
+          if errno == EPERM && name.hasPrefix("com.apple.") { continue }
+          throw StoreError.message("Cannot restore file attributes.")
+        }
       }
       var times = [
         timespec(tv_sec: 0, tv_nsec: Int(UTIME_OMIT)),

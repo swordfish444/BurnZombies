@@ -456,9 +456,21 @@ public enum AutopilotHarness {
   /// streams: what it says and spends reaches `run.events` while it works, and BZ stops it at the
   /// run's limit even before Claude's own check does. Stopping the run ends the whole group.
   public static func run(
-    _ c: MachineReviewConfiguration, root: URL, run: AutopilotRun = AutopilotRun(),
+    _ initial: MachineReviewConfiguration, root: URL, run: AutopilotRun = AutopilotRun(),
     timeout: TimeInterval? = nil
   ) throws -> String {
+    var c = initial
+    if !FileManager.default.isExecutableFile(atPath: c.executable),
+      let detected = MachineReviewConfiguration.detect(c.harness)
+    {
+      c.executable = detected
+      if var saved = try? MachineReviewConfiguration.load(root: root), saved.harness == c.harness,
+        saved.executable != detected
+      {
+        saved.executable = detected
+        try? saved.save(root: root)
+      }
+    }
     let deep = run.options.deep
     let store = try Store(root: root)
     let directory = root.appendingPathComponent(
@@ -624,6 +636,7 @@ public actor AutopilotCoordinator {
   let root: URL
   public let engine: Autopilot
   let configuration: @Sendable () -> MachineReviewConfiguration?
+  let detectHarness: @Sendable (String) -> String?
   let runner: AutopilotRunner
   var aiTask: Task<Void, Never>?
   /// Set on the first tick, before anything here can start a sweep.
@@ -650,11 +663,15 @@ public actor AutopilotCoordinator {
     configuration: @escaping @Sendable () -> MachineReviewConfiguration? = {
       try? MachineReviewConfiguration.load(root: Store.defaultRoot)
     },
+    detectHarness: @escaping @Sendable (String) -> String? = {
+      MachineReviewConfiguration.detect($0)
+    },
     run runner: @escaping AutopilotRunner = { try AutopilotHarness.run($0, root: $1, run: $2) }
   ) {
     self.root = root
     self.engine = engine
     self.configuration = configuration
+    self.detectHarness = detectHarness
     self.runner = runner
   }
 
@@ -664,10 +681,13 @@ public actor AutopilotCoordinator {
     configuration: @escaping @Sendable () -> MachineReviewConfiguration? = {
       try? MachineReviewConfiguration.load(root: Store.defaultRoot)
     },
+    detectHarness: @escaping @Sendable (String) -> String? = {
+      MachineReviewConfiguration.detect($0)
+    },
     runner: @escaping @Sendable (MachineReviewConfiguration, URL) throws -> String
   ) {
     self.init(
-      root: root, engine: engine, configuration: configuration,
+      root: root, engine: engine, configuration: configuration, detectHarness: detectHarness,
       run: { config, root, _ in try runner(config, root) })
   }
 
@@ -677,6 +697,82 @@ public actor AutopilotCoordinator {
   /// A run that ends having spent this share of its limit ended for the limit.
   static let nearLimit = 0.9
   static let chooseAI = "Choose an AI in Settings to judge new things."
+
+  func alternateConfiguration(
+    for primary: MachineReviewConfiguration
+  ) -> MachineReviewConfiguration? {
+    let other: String
+    switch primary.harness {
+    case "claude": other = "codex"
+    case "codex": other = "claude"
+    default: return nil
+    }
+    guard let executable = detectHarness(other) else { return nil }
+    var alt = MachineReviewConfiguration(
+      harness: other, executable: executable, launcher: primary.launcher, server: primary.server)
+    alt.enabled = primary.enabled
+    alt.huntIntervalHours = primary.huntIntervalHours
+    return alt
+  }
+
+  /// Self-heals quota or login lockouts across installed harnesses (`claude` ↔ `codex`) and
+  /// returns to the owner's configured primary once `primaryBlockedUntil` passes.
+  func reconcileFailover(now: Date, deep: Bool) async {
+    let current = await engine.sweepState()
+    if let until = current.primaryBlockedUntil, now >= until {
+      await engine.updateSweep {
+        $0.failoverHarness = nil
+        $0.primaryBlockedUntil = nil
+        if let resets = $0.limitResetsAt, now >= resets { $0.limitResetsAt = nil }
+      }
+      return
+    }
+    let primary = configuration()
+    if let fh = current.failoverHarness {
+      if fh == primary?.harness || detectHarness(fh) == nil {
+        await engine.updateSweep {
+          $0.failoverHarness = nil
+          $0.primaryBlockedUntil = nil
+        }
+      }
+      return
+    }
+    guard !deep, let primary, primary.enabled || current.requested == true,
+      let alt = alternateConfiguration(for: primary),
+      let retry = current.retryAfter, retry > now,
+      (current.limitResetsAt ?? .distantPast) > now
+        || AutopilotSweeper.accountProblem(current.lastError ?? "")
+    else { return }
+    let blockedUntil = current.limitResetsAt ?? retry
+    await engine.updateSweep {
+      $0.failoverHarness = alt.harness
+      $0.primaryBlockedUntil = blockedUntil
+      $0.limitResetsAt = nil
+      $0.retryAfter = nil
+      $0.failures = 0
+      $0.lastError = nil
+      $0.append(
+        "\(primary.harnessName) hit a usage or login limit, so I switched to \(alt.harnessName) until it resets."
+      )
+    }
+  }
+
+  func recordFailover(
+    from primary: MachineReviewConfiguration, to fallback: MachineReviewConfiguration,
+    blockedUntil: Date
+  ) async {
+    await engine.updateSweep {
+      $0.failoverHarness = fallback.harness
+      $0.primaryBlockedUntil = blockedUntil
+      $0.limitResetsAt = nil
+      $0.append(
+        "\(primary.harnessName) hit a usage or login limit, so I switched to \(fallback.harnessName) until it resets."
+      )
+    }
+    await engine.noteHunt(
+      "scanning",
+      "\(primary.harnessName) hit a limit; switching to \(fallback.harnessName).")
+  }
 
   /// A native tick when one is due, and an AI sweep when there is something new to judge. A hunt
   /// the owner asked for (`manual`, or `options`) starts at once when nothing else runs.
@@ -708,10 +804,19 @@ public actor AutopilotCoordinator {
         try? stale.save(Store(root: root))
       }
     }
-    let state = await engine.sweepState()
+    var state = await engine.sweepState()
+    if aiTask == nil, !starting, state.running {
+      await engine.updateSweep {
+        $0.running = false
+        $0.append("Recovered a stuck AI sweep state.")
+      }
+      state = await engine.sweepState()
+    }
     // A deep hunt asked for from the command line waits in the sweep state, like "hunt now".
     let asked = requested ?? state.requestedDeep.map { HuntOptions(deep: true, limitUSD: $0) }
     let manual = requestedNow || state.requested == true || asked != nil
+    await reconcileFailover(now: now, deep: asked?.deep == true)
+    state = await engine.sweepState()
     // The owner's hunt records from its first look, so what their rules burn on the way in shows
     // in its feed.
     if manual, aiTask == nil, !starting, !state.running {
@@ -797,11 +902,26 @@ public actor AutopilotCoordinator {
   }
 
   func launch(
-    _ config: MachineReviewConfiguration, wired: Wired, snapshot: AutopilotSnapshot, now: Date,
-    manual: Bool
+    _ primaryConfig: MachineReviewConfiguration, wired: Wired, snapshot: AutopilotSnapshot,
+    now: Date, manual: Bool
   ) async -> AutopilotSnapshot {
     if updatingApp { wired.run.stop("stopped") }
     let options = wired.run.options
+    let sweepBefore = await engine.sweepState()
+    let (config, isFailover): (MachineReviewConfiguration, Bool) = {
+      guard !options.deep, let fh = sweepBefore.failoverHarness,
+        (sweepBefore.primaryBlockedUntil ?? .distantPast) > now, fh != primaryConfig.harness,
+        let exe = detectHarness(fh)
+      else { return (primaryConfig, false) }
+      var alt = MachineReviewConfiguration(
+        harness: fh, executable: exe, launcher: primaryConfig.launcher, server: primaryConfig.server
+      )
+      alt.enabled = primaryConfig.enabled
+      alt.huntIntervalHours = primaryConfig.huntIntervalHours
+      return (alt, true)
+    }()
+    let fallback =
+      (!isFailover && !options.deep) ? alternateConfiguration(for: primaryConfig) : nil
     let waiting = await engine.startLanes()
     await engine.noteHunt(
       "scanning",
@@ -853,20 +973,56 @@ public actor AutopilotCoordinator {
     }
     aiTask = Task.detached { [weak self] in
       let started = Date()
-      let result = Result { try runner(config, root, wired.run) }
-      wired.feed.finish()
-      await wired.relay.value
-      if let attempt, let store = try? Store(root: root),
-        var ledger = try? ReviewLedger.load(store: store),
-        let i = ledger.entries.firstIndex(where: { $0.id == attempt })
-      {
+      func finalizeLedger(
+        _ entryID: UUID?, model: String?, succeeded: Bool
+      ) {
+        guard let entryID, let store = try? Store(root: root),
+          var ledger = try? ReviewLedger.load(store: store),
+          let i = ledger.entries.firstIndex(where: { $0.id == entryID })
+        else { return }
         ledger.entries[i].finished = Date()
-        ledger.entries[i].outcome = (try? result.get()) != nil ? "completed" : "failed"
+        ledger.entries[i].outcome = succeeded ? "completed" : "failed"
         ledger.entries[i].usage =
           (try? store.read(root.appendingPathComponent("last-review.log"), limit: 1_048_576))
-          .flatMap { ReviewUsage.parse($0, requestedModel: config.model) }
+          .flatMap { ReviewUsage.parse($0, requestedModel: model) }
         try? ledger.save(store: store)
       }
+      var result = Result { try runner(config, root, wired.run) }
+      finalizeLedger(attempt, model: config.model, succeeded: (try? result.get()) != nil)
+      if case .failure(let error) = result, let fallback, wired.run.stopReason == nil,
+        error.localizedDescription != AutopilotHarness.limitReached,
+        error.localizedDescription != AutopilotHarness.stoppedByOwner
+      {
+        let failTime = Date()
+        let log = try? Store(root: root).read(
+          root.appendingPathComponent("last-review.log"), limit: 1_048_576)
+        let resets = log.flatMap { AutopilotSweeper.limitReset(in: $0, now: failTime) }
+        if resets != nil || AutopilotSweeper.accountProblem(error.localizedDescription) {
+          let blockedUntil =
+            resets
+            ?? failTime.addingTimeInterval(
+              AutopilotSweeper.backoff(failures: 1, accountProblem: true))
+          await self?.recordFailover(
+            from: config, to: fallback, blockedUntil: blockedUntil)
+          let fallbackAttempt: UUID? = {
+            guard let store = try? Store(root: root),
+              var ledger = try? ReviewLedger.load(store: store)
+            else { return nil }
+            let id = ledger.reserve(
+              harness: fallback.harness, evidenceCount: waiting, now: failTime,
+              model: fallback.model)
+            try? ledger.save(store: store)
+            return id
+          }()
+          try? FileManager.default.removeItem(
+            at: root.appendingPathComponent("last-review.log"))
+          result = Result { try runner(fallback, root, wired.run) }
+          finalizeLedger(
+            fallbackAttempt, model: fallback.model, succeeded: (try? result.get()) != nil)
+        }
+      }
+      wired.feed.finish()
+      await wired.relay.value
       await self?.finishAI(
         result, digest: digest, started: started, manual: manual,
         beforeQuestions: beforeQuestions, run: wired.run)

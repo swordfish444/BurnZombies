@@ -1220,6 +1220,174 @@ private func aiBriefProof() async throws {
   let (maybeOK, maybeJSON) = await askEngine.handle(maybe)
   check(maybeOK, "an odd guess is ignored: \(maybeJSON)")
   checkFalse(maybeJSON.contains("\"guess\""), "and no guess is recorded: \(maybeJSON)")
+
+  // Progressive refusal backoff (6h -> 24h -> 7d) + fresh retry on app build upgrade.
+  final class RefusalCounter: @unchecked Sendable {
+    let lock = NSLock()
+    var count = 0
+    func bump() -> Int {
+      lock.withLock {
+        count += 1
+        return count
+      }
+    }
+    var value: Int { lock.withLock { count } }
+  }
+  let refusalCounter = RefusalCounter()
+  let nestedJunk = AutopilotItem(
+    id: "disk:nested-hold", kind: .disk, name: "dist in atlas", path: "/tmp/atlas/dist",
+    bytes: 800_000_000,
+    facts: [
+      "folder": "build-output", "home": "stale-worktree", "stale": "month", "size": "medium",
+    ])
+  let backoffRoot = root.appendingPathComponent("refusal-backoff")
+  let backoffEngine = try Autopilot(
+    root: backoffRoot,
+    sources: AutopilotSources(
+      disk: { _ in [nestedJunk] },
+      reclaimDisk: { item, authority in
+        _ = refusalCounter.bump()
+        return .refused(
+          item, authority: authority,
+          "There is another project folder inside it that I can't back up, so I left it alone.")
+      }))
+  let r0 = Date(timeIntervalSince1970: 1_800_000_000)
+  _ = await backoffEngine.tick(now: r0)
+  equal(refusalCounter.value, 1, "attempt 1 refused")
+  _ = await backoffEngine.tick(now: r0.addingTimeInterval(2 * 3600))
+  equal(refusalCounter.value, 1, "still waiting inside initial 6h refusal window")
+  let r1 = r0.addingTimeInterval(6 * 3600 + 60)
+  _ = await backoffEngine.tick(now: r1)
+  equal(refusalCounter.value, 2, "retried once after 6h")
+  _ = await backoffEngine.tick(now: r1.addingTimeInterval(10 * 3600))
+  equal(refusalCounter.value, 2, "second refusal escalated to 24h instead of 6h")
+  let r2 = r1.addingTimeInterval(24 * 3600 + 60)
+  _ = await backoffEngine.tick(now: r2)
+  equal(refusalCounter.value, 3, "retried after 24h")
+  _ = await backoffEngine.tick(now: r2.addingTimeInterval(3 * 86_400))
+  equal(refusalCounter.value, 3, "third refusal escalated to 7d")
+  await backoffEngine.updateSweep { $0.lastBuild = "0" }
+  _ = await backoffEngine.tick(now: r2.addingTimeInterval(3 * 86_400 + 60))
+  equal(refusalCounter.value, 4, "upgrading BurnZombies resets pre-upgrade refusal hold once")
+  equal(await backoffEngine.sweepState().lastBuild, BuildIdentity.build)
+
+  // Self-healing AI harness failover (Claude <-> Codex) mid-sweep, on pre-existing lockout, and
+  // automatic return to primary once primaryBlockedUntil passes — with zero ping-pong on dual failure.
+  final class HarnessTrace: @unchecked Sendable {
+    let lock = NSLock()
+    var calls: [String] = []
+    var codexFails = false
+    func record(_ h: String) { lock.withLock { calls.append(h) } }
+    var snapshot: [String] { lock.withLock { calls } }
+  }
+  let failoverRoot = root.appendingPathComponent("failover")
+  let unsureCopy = AutopilotItem(
+    id: "worktree:failover-copy", kind: .worktree, name: "orbit-feature", bytes: 900_000_000,
+    facts: [
+      "place": "other", "saved": "pushed", "changes": "none", "stale": "week", "inUse": "no",
+      "thread": "none",
+    ])
+  let failoverEngine = try Autopilot(
+    root: failoverRoot,
+    sources: AutopilotSources(worktrees: { _, _, d in ([unsureCopy], d) }))
+  _ = try await failoverEngine.apply(.setStarter(ruleID: "starter-finished-copies", enabled: false))
+  let primaryConfig: MachineReviewConfiguration = {
+    var c = MachineReviewConfiguration(
+      harness: "claude", executable: "/usr/bin/true", launcher: "/usr/bin/true",
+      server: "/usr/bin/true")
+    c.model = "claude-sonnet-4-6"
+    return c
+  }()
+  let trace = HarnessTrace()
+  let resetTime = Date().addingTimeInterval(3 * 3600)
+  let failoverCoord = AutopilotCoordinator(
+    root: failoverRoot, engine: failoverEngine,
+    configuration: { primaryConfig },
+    detectHarness: { name in
+      (name == "codex" || name == "claude") ? "/usr/bin/true" : nil
+    },
+    run: { cfg, stateRoot, _ in
+      trace.record(cfg.harness)
+      if cfg.harness == "claude" {
+        let event =
+          "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"resetsAt\":\(Int(resetTime.timeIntervalSince1970))}}\n"
+        try Store(root: stateRoot).write(
+          Data(event.utf8), to: stateRoot.appendingPathComponent("last-review.log"), limit: 65536)
+        throw StoreError.message("The AI sweep stopped early (exit 1).")
+      }
+      equal(cfg.model, nil, "primary model is not leaked across harness providers")
+      if trace.lock.withLock({ trace.codexFails }) {
+        throw StoreError.message("The AI needs attention (login or usage limit).")
+      }
+      return "{}"
+    })
+  let fNow = Date()
+  _ = await failoverCoord.tick(now: fNow, manual: true)
+  await failoverCoord.waitForAI()
+  equal(
+    trace.snapshot, ["claude", "codex"],
+    "mid-sweep quota failure fails over immediately to installed alternate harness")
+  var fSweep = await failoverEngine.sweepState()
+  equal(fSweep.failoverHarness, "codex")
+  equal(fSweep.failures, 0, "successful failover clears failure count")
+  isNil(fSweep.retryAfter)
+  check((fSweep.primaryBlockedUntil ?? .distantPast) > fNow.addingTimeInterval(2 * 3600))
+
+  // While primaryBlockedUntil is in the future, sweeps go directly to Codex without knocking on Claude.
+  _ = await failoverCoord.tick(now: fNow.addingTimeInterval(600), manual: true)
+  await failoverCoord.waitForAI()
+  equal(trace.snapshot, ["claude", "codex", "codex"], "active failover skips blocked primary")
+
+  // If fallback also fails, it backs off cleanly without ping-ponging back to blocked primary.
+  trace.lock.withLock { trace.codexFails = true }
+  _ = await failoverCoord.tick(now: fNow.addingTimeInterval(1200), manual: true)
+  await failoverCoord.waitForAI()
+  equal(trace.snapshot, ["claude", "codex", "codex", "codex"], "no ping-pong back to primary")
+  fSweep = await failoverEngine.sweepState()
+  equal(fSweep.failures, 1, "dual failure records backoff")
+  check((fSweep.retryAfter ?? .distantPast) > fNow.addingTimeInterval(1200), "dual failure waits")
+  _ = await failoverCoord.tick(now: fNow.addingTimeInterval(1500))
+  await failoverCoord.waitForAI()
+  equal(trace.snapshot.count, 4, "dual failure respects retryAfter on scheduled ticks")
+
+  // Once primaryBlockedUntil passes, coordinator returns to the owner's configured primary!
+  trace.lock.withLock { trace.codexFails = false }
+  _ = await failoverCoord.tick(now: resetTime.addingTimeInterval(60))
+  fSweep = await failoverEngine.sweepState()
+  isNil(fSweep.failoverHarness)
+  isNil(fSweep.primaryBlockedUntil)
+
+  // Pre-existing v0.19.0 lockout in sweep.json self-heals on the very first tick after upgrade!
+  let preLockedRoot = root.appendingPathComponent("prelocked")
+  let preLockedEngine = try Autopilot(
+    root: preLockedRoot,
+    sources: AutopilotSources(worktrees: { _, _, d in ([unsureCopy], d) }))
+  _ = try await preLockedEngine.apply(
+    .setStarter(ruleID: "starter-finished-copies", enabled: false))
+  let preLockNow = Date()
+  await preLockedEngine.updateSweep {
+    $0.firstTick = preLockNow.addingTimeInterval(-3600)
+    $0.lastTick = preLockNow.addingTimeInterval(-1800)
+    $0.lastError = "The AI sweep stopped early (exit 1)."
+    $0.limitResetsAt = preLockNow.addingTimeInterval(7200)
+    $0.retryAfter = preLockNow.addingTimeInterval(7200)
+    $0.failures = 1
+  }
+  let preLockedCalls = Calls()
+  let preLockedCoord = AutopilotCoordinator(
+    root: preLockedRoot, engine: preLockedEngine,
+    configuration: { primaryConfig },
+    detectHarness: { name in name == "codex" ? "/usr/bin/true" : nil },
+    runner: { cfg, _ in
+      preLockedCalls.add(cfg.harness)
+      return "{}"
+    })
+  _ = await preLockedCoord.tick(now: preLockNow)
+  await preLockedCoord.waitForAI()
+  equal(
+    preLockedCalls.all, ["codex"],
+    "pre-existing primary rate-limit hold self-healed onto Codex on first tick")
+  equal(await preLockedEngine.sweepState().failoverHarness, "codex")
 }
 
 /// A private app-side endpoint for the MCP protocol proof: an Autopilot engine with

@@ -3,13 +3,21 @@ import Darwin
 import Foundation
 
 /// Scratch folders finished AI coding chats leave behind: `$TMPDIR/claude-*` sandboxes untouched
-/// for 2+ days, `~/.codex/{artifacts,session-artifacts,task-artifacts}/*` untouched for 14+ days,
-/// and `~/.gemini/antigravity/brain/<id>/{scratch,browser_sandbox}` for non-live chats untouched
-/// for 14+ days. Transcripts, conversation artifacts, and live sessions are never touched.
+/// for 2+ days, `~/.codex/{artifacts,session-artifacts,task-artifacts}/*` untouched for 3+ days,
+/// `~/.*` developer dot-store `task-artifacts/*` untouched for 7+ days, and
+/// `~/.gemini/antigravity/brain/<id>/{scratch,browser_sandbox}` for non-live chats untouched for
+/// 14+ days. Transcripts, conversation artifacts, and live sessions are never touched.
 public enum AutopilotAgentScratch {
   public static let tempSettle: TimeInterval = 2 * 86_400
+  public static let codexSettle: TimeInterval = 3 * 86_400
+  public static let dotTaskSettle: TimeInterval = 7 * 86_400
   public static let homeSettle: TimeInterval = 14 * 86_400
   private static let entryLimit = 2_000
+  private static let dotLimit = 500
+  private static let excludedTaskDots: Set<String> = [
+    ".trash", ".ssh", ".gnupg", ".local", ".claude", ".codex", ".gemini", ".git", ".npm",
+    ".cache", ".gradle", ".config", ".cups",
+  ]
   private static let codexStores = [
     (relative: ".codex/artifacts", name: "Codex scratch leftovers"),
     (relative: ".codex/session-artifacts", name: "Codex session scratch leftovers"),
@@ -67,7 +75,7 @@ public enum AutopilotAgentScratch {
     for store in codexStores {
       let root = baseHome + "/" + store.relative
       guard plainOwnedDirectory(root) else { continue }
-      let entries = childLeftovers(in: root, settle: homeSettle, now: now, sizer: sizer)
+      let entries = childLeftovers(in: root, settle: codexSettle, now: now, sizer: sizer)
       measured.insert(root)
       let bytes = entries.reduce(0) { $0 + $1.bytes }
       guard !entries.isEmpty, bytes >= minimumBytes, let newest = entries.map(\.changed).max()
@@ -78,13 +86,41 @@ public enum AutopilotAgentScratch {
           id: "disk:" + AutopilotItem.hash(root + "#agent-scratch"), kind: .disk,
           name: store.name,
           detail:
-            "\(count) scratch folder\(count == 1 ? "" : "s") finished Codex chats left behind. Nothing has used \(count == 1 ? "it" : "them") for 2+ weeks.",
+            "\(count) scratch folder\(count == 1 ? "" : "s") finished Codex chats left behind. Nothing has used \(count == 1 ? "it" : "them") for 3+ days.",
           path: root, bytes: bytes,
           facts: [
             "folder": "agent-temp", "home": "temp",
             "stale": AutopilotPolicy.stale(since: newest, now: now),
             "size": AutopilotDisk.scale(bytes),
           ], observedAt: now, lastUsed: newest))
+    }
+
+    if let homeEntries = try? FileManager.default.contentsOfDirectory(atPath: baseHome) {
+      for dot in homeEntries.sorted().prefix(dotLimit)
+      where dot.hasPrefix(".") && dot.count > 1 && !excludedTaskDots.contains(dot.lowercased()) {
+        let dotPath = baseHome + "/" + dot
+        guard plainOwnedDirectory(dotPath), !exists(dotPath + "/.git") else { continue }
+        let taskRoot = dotPath + "/task-artifacts"
+        guard plainOwnedDirectory(taskRoot), !exists(taskRoot + "/.git") else { continue }
+        let entries = childLeftovers(in: taskRoot, settle: dotTaskSettle, now: now, sizer: sizer)
+        measured.insert(taskRoot)
+        let bytes = entries.reduce(0) { $0 + $1.bytes }
+        guard !entries.isEmpty, bytes >= minimumBytes, let newest = entries.map(\.changed).max()
+        else { continue }
+        let count = entries.count
+        result.append(
+          AutopilotItem(
+            id: "disk:" + AutopilotItem.hash(taskRoot + "#agent-scratch"), kind: .disk,
+            name: "Task scratch leftovers (\(dot))",
+            detail:
+              "\(count) task scratch folder\(count == 1 ? "" : "s") finished agent runs left in \(dot)/task-artifacts. Nothing has used \(count == 1 ? "it" : "them") for a week.",
+            path: taskRoot, bytes: bytes,
+            facts: [
+              "folder": "agent-temp", "home": "temp",
+              "stale": AutopilotPolicy.stale(since: newest, now: now),
+              "size": AutopilotDisk.scale(bytes),
+            ], observedAt: now, lastUsed: newest))
+      }
     }
 
     let brainRoot = baseHome + "/.gemini/antigravity/brain"
@@ -143,9 +179,13 @@ public enum AutopilotAgentScratch {
       liveSkip = AgentThreads.liveAntigravityIDs(home: baseHome, now: now)
       candidates = antigravityLeftovers(home: baseHome, now: now, liveIDs: liveSkip)
     } else if codexStores.contains(where: { baseHome + "/" + $0.relative == path }) {
-      settle = homeSettle
+      settle = codexSettle
       removeContainerWhenWhole = false
-      candidates = childLeftovers(in: path, settle: homeSettle, now: now)
+      candidates = childLeftovers(in: path, settle: codexSettle, now: now)
+    } else if isDotTaskArtifacts(path, home: baseHome) {
+      settle = dotTaskSettle
+      removeContainerWhenWhole = false
+      candidates = childLeftovers(in: path, settle: dotTaskSettle, now: now)
     } else {
       let resolvedTemp = (temp ?? AutopilotBrowserTrail.temporaryFolder()).map(
         WorkspaceSafety.canonical)
@@ -301,6 +341,19 @@ public enum AutopilotAgentScratch {
     let rest = target.dropFirst(prefix.count)
     guard let slash = rest.firstIndex(of: "/") else { return nil }
     return String(rest[..<slash])
+  }
+
+  private static func isDotTaskArtifacts(_ path: String, home: String) -> Bool {
+    guard path.hasPrefix(home + "/") else { return false }
+    let parts = String(path.dropFirst(home.count + 1)).split(
+      separator: "/", omittingEmptySubsequences: false
+    ).map(String.init)
+    guard parts.count == 2, parts[0].hasPrefix("."), parts[0].count > 1,
+      !excludedTaskDots.contains(parts[0].lowercased()), parts[1] == "task-artifacts"
+    else { return false }
+    let dotPath = home + "/" + parts[0]
+    return plainOwnedDirectory(dotPath) && !exists(dotPath + "/.git")
+      && plainOwnedDirectory(path) && !exists(path + "/.git")
   }
 
   private static func settled(_ path: String, settle: TimeInterval, now: Date) -> Date? {

@@ -1714,12 +1714,34 @@ private func adkBuildRingsAndScratchProof(base: String, now: Date) throws {
 
   let codexOld = home + "/.codex/artifacts/run-old"
   let codexFresh = home + "/.codex/artifacts/run-fresh"
-  try adkWrite("blob", to: codexOld + "/dump.bin", modified: now.addingTimeInterval(-20 * 86_400))
+  try adkWrite("blob", to: codexOld + "/dump.bin", modified: now.addingTimeInterval(-5 * 86_400))
   try fm.setAttributes(
-    [.modificationDate: now.addingTimeInterval(-20 * 86_400)], ofItemAtPath: codexOld)
-  try adkWrite("blob", to: codexFresh + "/dump.bin", modified: now.addingTimeInterval(-3 * 86_400))
+    [.modificationDate: now.addingTimeInterval(-5 * 86_400)], ofItemAtPath: codexOld)
+  try adkWrite("blob", to: codexFresh + "/dump.bin", modified: now.addingTimeInterval(-86_400))
   try fm.setAttributes(
-    [.modificationDate: now.addingTimeInterval(-3 * 86_400)], ofItemAtPath: codexFresh)
+    [.modificationDate: now.addingTimeInterval(-86_400)], ofItemAtPath: codexFresh)
+
+  let dotTaskOld = home + "/.orbit/task-artifacts/task-old"
+  let dotTaskFresh = home + "/.orbit/task-artifacts/task-fresh"
+  try adkWrite(
+    "trace", to: dotTaskOld + "/events.json", modified: now.addingTimeInterval(-10 * 86_400))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-10 * 86_400)], ofItemAtPath: dotTaskOld)
+  try adkWrite(
+    "trace", to: dotTaskFresh + "/events.json", modified: now.addingTimeInterval(-2 * 86_400))
+  try fm.setAttributes(
+    [.modificationDate: now.addingTimeInterval(-2 * 86_400)], ofItemAtPath: dotTaskFresh)
+
+  let retiredOld = home + "/.orbit/sdk-retired/2026-10-27"
+  let retiredFresh = home + "/.orbit/sdk-retired/2026-11-09"
+  for (retiredPath, age) in [(retiredOld, -14 * 86_400.0), (retiredFresh, -2 * 86_400.0)] {
+    let stamp = now.addingTimeInterval(age)
+    try adkWrite("obj", to: retiredPath + "/objects/ab12", modified: stamp)
+    try adkWrite("{\"v\":1}", to: retiredPath + "/manifests/core.json", modified: stamp)
+    try fm.setAttributes([.modificationDate: stamp], ofItemAtPath: retiredPath + "/objects")
+    try fm.setAttributes([.modificationDate: stamp], ofItemAtPath: retiredPath + "/manifests")
+    try fm.setAttributes([.modificationDate: stamp], ofItemAtPath: retiredPath)
+  }
 
   let endedBrain = home + "/.gemini/antigravity/brain/ended-conv"
   let liveBrain = home + "/.gemini/antigravity/brain/live-conv"
@@ -1761,6 +1783,8 @@ private func adkBuildRingsAndScratchProof(base: String, now: Date) throws {
     "> 7-day snapshot stays protected when among newest 3")
   check(paths.contains(gradleConsumer + "/8.14.5"), "older shared Gradle version discovered")
   checkFalse(paths.contains(gradleConsumer + "/9.8.2"), "newest shared Gradle version kept")
+  check(paths.contains(retiredOld), ">= 7-day retired SDK archive discovered")
+  checkFalse(paths.contains(retiredFresh), "< 7-day retired SDK archive kept")
 
   // Verify disguised checkout caches vs unverified prefix folders.
   check(paths.contains(disguisedDD), "verified DerivedData-agent discovered")
@@ -1805,14 +1829,31 @@ private func adkBuildRingsAndScratchProof(base: String, now: Date) throws {
 
   // Verify AI scratch items & surgical reclaim.
   let scratchItems = discovered.filter { $0.facts["folder"] == "agent-temp" }
-  equal(scratchItems.count, 3, "Claude temp, Codex artifacts, and Antigravity scratch discovered")
+  equal(
+    scratchItems.count, 4,
+    "Claude temp, Codex artifacts, dot-store task-artifacts, and Antigravity scratch discovered")
   guard
     let agScratch = scratchItems.first(where: { $0.path == home + "/.gemini/antigravity/brain" }),
     let codexScratch = scratchItems.first(where: { $0.path == home + "/.codex/artifacts" }),
-    let claudeScratch = scratchItems.first(where: { $0.path == claudeBox })
+    let dotTaskScratch = scratchItems.first(
+      where: { $0.path == home + "/.orbit/task-artifacts" }),
+    let claudeScratch = scratchItems.first(where: { $0.path == claudeBox }),
+    let retiredItem = discovered.first(where: { $0.path == retiredOld })
   else {
-    return failTest("expected all 3 agent scratch items")
+    return failTest("expected all 4 agent scratch items and retired SDK archive")
   }
+  equal(retiredItem.facts["folder"], "build-output")
+  check(AutopilotDisk.regenerable(retiredOld, home: home), "retired SDK archive is regenerable")
+  let burnedRetired = AutopilotDisk.reclaim(
+    retiredItem, authority: "ai:0.95", home: home, inUse: { _ in 0 })
+  equal(burnedRetired.outcome, "burned", burnedRetired.detail)
+  checkFalse(fm.fileExists(atPath: retiredOld), "14-day retired SDK archive removed")
+  var freshRetiredItem = retiredItem
+  freshRetiredItem.path = retiredFresh
+  let refusedFreshRetired = AutopilotDisk.reclaim(
+    freshRetiredItem, authority: "ai:0.95", home: home, inUse: { _ in 0 })
+  equal(refusedFreshRetired.outcome, "refused", "recent retired SDK archive protected")
+  check(fm.fileExists(atPath: retiredFresh))
 
   // Held when open by a process.
   let heldScratch = AutopilotAgentScratch.reclaim(
@@ -1837,8 +1878,15 @@ private func adkBuildRingsAndScratchProof(base: String, now: Date) throws {
     codexScratch, authority: "starter:starter-agent-scratch", home: home, temp: temp, now: now,
     inUse: { _ in 0 })
   equal(burnedCodex.outcome, "burned", burnedCodex.detail)
-  checkFalse(fm.fileExists(atPath: codexOld), "20-day codex artifact removed")
-  check(fm.fileExists(atPath: codexFresh), "3-day codex artifact preserved")
+  checkFalse(fm.fileExists(atPath: codexOld), "5-day codex artifact removed")
+  check(fm.fileExists(atPath: codexFresh), "1-day codex artifact preserved")
+
+  let burnedDotTask = AutopilotAgentScratch.reclaim(
+    dotTaskScratch, authority: "starter:starter-agent-scratch", home: home, temp: temp, now: now,
+    inUse: { _ in 0 })
+  equal(burnedDotTask.outcome, "burned", burnedDotTask.detail)
+  checkFalse(fm.fileExists(atPath: dotTaskOld), "10-day dot task artifact removed")
+  check(fm.fileExists(atPath: dotTaskFresh), "2-day dot task artifact preserved")
 
   let burnedClaude = AutopilotAgentScratch.reclaim(
     claudeScratch, authority: "starter:starter-agent-scratch", home: home, temp: temp, now: now,
@@ -1846,4 +1894,101 @@ private func adkBuildRingsAndScratchProof(base: String, now: Date) throws {
   equal(burnedClaude.outcome, "burned", burnedClaude.detail)
   checkFalse(fm.fileExists(atPath: oldTask), "4-day claude task output removed")
   check(fm.fileExists(atPath: freshTask), "recent claude task output preserved")
+
+  // 3. Cold-start multi-slice AutopilotJunkCache self-continues without waiting 15m per slice.
+  final class SliceBox: @unchecked Sendable {
+    let lock = NSLock()
+    var instant: Date
+    var completedCalls = 0
+    init(_ start: Date) { self.instant = start }
+    func measure() -> UInt64 {
+      lock.withLock {
+        instant = instant.addingTimeInterval(65)
+        return 300_000_000
+      }
+    }
+    func clock() -> Date { lock.withLock { instant } }
+  }
+  let sliceBox = SliceBox(now)
+  let sliceHome = base + "/slice-home"
+  let sliceCacheRoot = sliceHome + "/Library/Developer/Xcode/DerivedData"
+  let slicePaths = [sliceCacheRoot + "/a", sliceCacheRoot + "/b", sliceCacheRoot + "/c"]
+  for path in slicePaths {
+    try adkWrite("output", to: path + "/part", modified: now.addingTimeInterval(-30 * 86_400))
+    try fm.setAttributes(
+      [.modificationDate: now.addingTimeInterval(-30 * 86_400)], ofItemAtPath: path)
+  }
+  // Each measurement advances the mock scan clock by 65s (> 60s scanBudget), forcing 3 separate slices.
+  let sliceCache = AutopilotJunkCache(
+    sizer: { _, _ in sliceBox.measure() },
+    scanBudget: 60, slicePause: 0.02,
+    onFirstRoundComplete: {
+      sliceBox.lock.withLock { sliceBox.completedCalls += 1 }
+    },
+    clock: { sliceBox.clock() })
+  let sliceState = URL(fileURLWithPath: base + "/slice-state")
+  let sliceMonitor = try Monitor(
+    legacyAuthority: true, discoveryHome: nil, root: sliceState, accessCheck: fixtureAccess)
+  let sliceSources = AutopilotSources.live(
+    monitor: sliceMonitor, root: sliceState, home: sliceHome, junk: sliceCache)
+  // Single cold-start call — no polling loop triggering extra slices!
+  _ = sliceSources.disk([])
+  let sliceDeadline = Date().addingTimeInterval(4.0)
+  while Date() < sliceDeadline {
+    if sliceBox.lock.withLock({ sliceBox.completedCalls >= 1 }) { break }
+    Thread.sleep(forTimeInterval: 0.02)
+  }
+  let firstRoundCallbacks = sliceBox.lock.withLock { sliceBox.completedCalls }
+  equal(firstRoundCallbacks, 1, "onFirstRoundComplete fired once when cold-start round finished")
+  let sliceDiscovered = Set(sliceSources.disk([]).compactMap { $0.path })
+  check(
+    sliceDiscovered.isSuperset(of: slicePaths),
+    "single cold-start call self-continued across all 3 slices: \(sliceDiscovered)")
+
+  // A round that finishes within budget while clearing(path) holds one folder for an active burn
+  // must NOT spin in a continuous slicePause loop fighting the burn.
+  let quietMeasures = Calls()
+  let quietCache = AutopilotJunkCache(
+    sizer: { path, _ in
+      quietMeasures.add(path)
+      return 300_000_000
+    },
+    scanBudget: 60, slicePause: 0.02, clock: { now })
+  let quietSources = AutopilotSources.live(
+    monitor: sliceMonitor, root: sliceState, home: sliceHome, junk: quietCache)
+  quietCache.clearing(slicePaths[0]) {
+    _ = quietSources.disk([])
+    Thread.sleep(forTimeInterval: 0.25)
+  }
+  equal(
+    quietMeasures.all.count, 2,
+    "finished round with an active burn does not loop continuously: \(quietMeasures.all)")
+
+  // 4. Kernel-managed SIP/TCC extended attributes are ignored while custom xattrs round-trip.
+  check(WorktreeInspection.ignoredSystemAttributes.contains("com.apple.provenance"))
+  check(WorktreeInspection.ignoredSystemAttributes.contains("com.apple.macl"))
+  let xattrSource = base + "/xattr-src"
+  let xattrFile = xattrSource + "/artifact.txt"
+  try adkWrite("payload", to: xattrFile, modified: now)
+  let customValue = Data("custom-tag".utf8)
+  let setRC = customValue.withUnsafeBytes { raw in
+    setxattr(xattrFile, "org.burnzombies.proof", raw.baseAddress, raw.count, 0, XATTR_NOFOLLOW)
+  }
+  equal(setRC, 0, "setxattr custom attribute succeeded")
+  let (inspectedFiles, _) = try WorktreeInspection.files(xattrSource)
+  guard let fileRecord = inspectedFiles.first(where: { $0.path == "artifact.txt" }) else {
+    return failTest("expected artifact.txt in WorktreeInspection.files")
+  }
+  let attrs = fileRecord.attributes ?? [:]
+  check(
+    attrs.keys.allSatisfy {
+      !WorktreeInspection.ignoredSystemAttributes.contains($0)
+    }, "kernel-managed attributes excluded from snapshot")
+  equal(attrs["org.burnzombies.proof"], customValue)
+  let xattrKey = SymmetricKey(data: Data(repeating: 0x74, count: 32))
+  let xattrStore = base + "/xattr-store"
+  try fm.createDirectory(atPath: xattrStore, withIntermediateDirectories: true)
+  let captured = try PrivateRecovery.capture(
+    xattrSource, root: URL(fileURLWithPath: xattrStore), key: xattrKey)
+  try PrivateRecovery.validate(captured, key: xattrKey)
 }

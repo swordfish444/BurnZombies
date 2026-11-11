@@ -73,7 +73,8 @@ enum AutopilotText {
     if burn > 0 {
       clauses.append(
         snapshot.sweep.lookOnly == true
-          ? "I'd burn \(number(burn)) once you start burning" : "I'll burn \(number(burn)) on my own")
+          ? "I'd burn \(number(burn)) once you start burning"
+          : "I'll burn \(number(burn)) on my own")
     }
     if keeping > 0 { clauses.append("I'm keeping \(number(keeping))") }
     clauses.append(help > 0 ? "I need your help with \(number(help))" : "nothing needs your help")
@@ -122,7 +123,8 @@ enum AutopilotText {
   /// One plain sentence while the AI can't help, for the top of Settings. Nil when all is well.
   static func aiProblem(_ sweep: AutopilotSweepState, harness: String?, now: Date) -> String? {
     guard sweep.enabled, let back = aiBack(sweep, now: now) else { return nil }
-    let name = harness == "codex" ? "Codex" : "Claude"
+    let active = sweep.failoverHarness ?? harness
+    let name = active == "codex" ? "Codex" : "Claude"
     if let limit = sweep.limitResetsAt, limit > now {
       return "AI is out of \(name) usage until \(back). Your rules still burn."
     }

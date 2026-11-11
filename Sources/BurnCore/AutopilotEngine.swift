@@ -201,8 +201,13 @@ public actor Autopilot {
     ticking = true
     defer { ticking = false }
     try? store.updateSweep {
-      if $0.lastTick == nil { $0.firstTick = now }
+      if $0.lastTick == nil {
+        $0.firstTick = now
+      } else if $0.lastBuild != BuildIdentity.build {
+        $0.refusalsResetAt = now
+      }
       $0.lastTick = now
+      $0.lastBuild = BuildIdentity.build
     }
     // During a hunt, the window watches this look count up as each part of it finishes.
     if hunt != nil {
@@ -291,28 +296,47 @@ public actor Autopilot {
       }.map(\.itemID))
   }
 
-  /// A refusal stands for the facts and authority it saw until either changes or a while
+  /// Progressive backoff when the exact same `(itemID, revision, authority)` keeps refusing:
+  /// 6 hours on the first refusal, 24 hours on the second, then 7 days until facts or rules change.
+  public static func refusalBackoff(attempts: Int) -> TimeInterval {
+    switch max(1, attempts) {
+    case 1: return retryRefusalsAfter
+    case 2: return 4 * retryRefusalsAfter
+    default: return 28 * retryRefusalsAfter
+    }
+  }
+
+  struct StandingRefusal: Sendable {
+    let receipt: AutopilotReceipt
+    let retryAt: Date
+  }
+
+  /// A refusal stands for the facts and authority it saw until either changes or a progressive wait
   /// passes. Keyed by `refusalKey`; the latest refusal says why. A check for programs using the
   /// item that couldn't finish says nothing about the item, so the next look tries once more;
   /// a second one stands like any other.
   /// `keyWaits`: old copies wait for the owner to allow the backup key. A refusal for the key
   /// stands only that long; once the key reads, its copy is tried at the next pass.
-  static func standingRefusals(_ receipts: [AutopilotReceipt], now: Date, keyWaits: Bool)
-    -> [String: AutopilotReceipt]
-  {
-    var standing = [String: AutopilotReceipt]()
+  static func standingRefusals(
+    _ receipts: [AutopilotReceipt], now: Date, keyWaits: Bool, resetAfter: Date? = nil
+  ) -> [String: StandingRefusal] {
+    var latest = [String: StandingRefusal]()
+    var counts = [String: Int]()
     var unchecked = Set<String>()
-    for r in receipts
-    where r.outcome == "refused" && now.timeIntervalSince(r.date) < retryRefusalsAfter {
+    for r in receipts where r.outcome == "refused" && r.date <= now {
+      if let resetAfter, r.date < resetAfter { continue }
       guard let revision = r.revision else { continue }
       if !keyWaits && r.detail == AutopilotRecoveryKey.refusal { continue }
       // One from before refusals named big files names none: trying again names them.
       if r.bigFiles == nil && AutopilotWorktrees.unnamedBigFiles.contains(r.detail) { continue }
       let key = refusalKey(r.itemID, revision, r.authority)
       if uncheckedUse.contains(r.detail), unchecked.insert(key).inserted { continue }
-      standing[key] = r
+      let attempt = (counts[key] ?? 0) + 1
+      counts[key] = attempt
+      latest[key] = StandingRefusal(
+        receipt: r, retryAt: r.date.addingTimeInterval(refusalBackoff(attempts: attempt)))
     }
-    return standing
+    return latest.filter { $0.value.retryAt > now }
   }
 
   static let uncheckedUse: Set<String> = [
@@ -324,11 +348,10 @@ public actor Autopilot {
   }
 
   /// What the AI hears about an item waiting after a refusal, instead of a fresh try.
-  static func waiting(after refusal: AutopilotReceipt, now: Date) -> String {
-    let retry = refusal.date.addingTimeInterval(retryRefusalsAfter)
-    let when = RelativeDateTimeFormatter().localizedString(for: retry, relativeTo: now)
+  static func waiting(after refusal: StandingRefusal, now: Date) -> String {
+    let when = RelativeDateTimeFormatter().localizedString(for: refusal.retryAt, relativeTo: now)
     return
-      "Waiting after a refusal: \(refusal.detail) I'll try again \(when), or sooner if it changes."
+      "Waiting after a refusal: \(refusal.receipt.detail) I'll try again \(when), or sooner if it changes."
   }
 
   /// Look-only holds every burn BZ would make on its own. A sweep state it can't read holds them
@@ -374,7 +397,8 @@ public actor Autopilot {
     let receipts = (try? store.receipts()) ?? []
     let spent = spent(receipts)
     let refused = Self.standingRefusals(
-      receipts, now: now, keyWaits: sources.recoveryKeyWait() != nil)
+      receipts, now: now, keyWaits: sources.recoveryKeyWait() != nil,
+      resetAfter: (try? store.sweep())?.refusalsResetAt)
     var used = start
     for item in items where !spent.contains(item.id) && burning[item.id] == nil {
       // A cheap first look, on memory as the pass began.
@@ -392,7 +416,8 @@ public actor Autopilot {
       let latest = (try? store.receipts()) ?? []
       if self.spent(latest).contains(item.id) { continue }
       // Only burns count toward the bound; a refusal frees nothing.
-      let receipt = await execute(item, authority: authority, why: why(item, decision, memory))
+      let receipt = await execute(
+        item, authority: authority, why: why(item, decision, memory), now: now)
       if receipt.outcome != "refused" { used[item.kind, default: 0] += 1 }
     }
     refreshTells(settling: settling)
@@ -413,7 +438,9 @@ public actor Autopilot {
     }
   }
 
-  func execute(_ item: AutopilotItem, authority: String, why: String) async -> AutopilotReceipt {
+  func execute(
+    _ item: AutopilotItem, authority: String, why: String, now: Date? = nil
+  ) async -> AutopilotReceipt {
     guard !updateSuspended else {
       return .refused(
         item, authority: authority, "BurnZombies is updating. Your rules and decisions stay saved.")
@@ -472,6 +499,7 @@ public actor Autopilot {
     case .disk:
       receipt = await Task.detached { sources.reclaimDisk(item, authority) }.value
     }
+    if let now { receipt.date = now }
     // Docker went away since BZ looked. That's no refusal to wait out or to mention: BZ says nothing
     // while Docker isn't running, and this burns once it's back.
     if receipt.detail == AutopilotDockerCache.away { return receipt }
@@ -998,7 +1026,8 @@ public actor Autopilot {
     let snap = snapshot(now: now)
     let memory = memory()
     let refused = Self.standingRefusals(
-      (try? store.receipts()) ?? [], now: now, keyWaits: sources.recoveryKeyWait() != nil)
+      (try? store.receipts()) ?? [], now: now, keyWaits: sources.recoveryKeyWait() != nil,
+      resetAfter: snap.sweep.refusalsResetAt)
     var entries = snap.entries.filter { entry in
       (status == nil || status == "all" || entry.status.rawValue == status)
         && (kind == nil || entry.item.kind.rawValue == kind)
@@ -1134,7 +1163,10 @@ public actor Autopilot {
       let now = Date()
       let key = Self.refusalKey(item.id, item.revision, authority)
       let keyWaits = sources.recoveryKeyWait() != nil
-      if let refusal = Self.standingRefusals(stored, now: now, keyWaits: keyWaits)[key] {
+      let resetAfter = (try? store.sweep())?.refusalsResetAt
+      if let refusal = Self.standingRefusals(
+        stored, now: now, keyWaits: keyWaits, resetAfter: resetAfter)[key]
+      {
         let reason = Self.waiting(after: refusal, now: now)
         receipts.append(.refused(item, authority: authority, reason))
         continue
