@@ -552,7 +552,7 @@ public enum AutopilotWorktrees {
     // Submodule content lives inside the worktree's own Git folder and goes with it.
     step = Step.submodules
     let links = try gitlinks(path, environment: [:])
-    if let reason = try submoduleRefusal(path, links: links, depth: 0) {
+    if let reason = try submoduleRefusal(path, links: links, common: common, depth: 0) {
       throw Refusal(reason)
     }
 
@@ -735,9 +735,10 @@ public enum AutopilotWorktrees {
       .map { String($0.dropLast("/Local State".count)) }.filter(profile)
     // Git names a folder it ignores as one entry, so those are searched on disk. The search only
     // finds profiles; one it can't reach is backed up with the rest of the folder.
-    let ignored = (try? WorktreeGit.run(
-      path, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
-      seconds: 60)) ?? Data()
+    let ignored =
+      (try? WorktreeGit.run(
+        path, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+        seconds: 60)) ?? Data()
     let skipped = generated.union(found)
     var pending = ignored.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
       .filter { $0.hasSuffix("/") }.map { String($0.dropLast()) }
@@ -853,9 +854,9 @@ public enum AutopilotWorktrees {
   }
 
   /// A reason to keep the copy when a checked-out submodule has work that exists only here.
-  private static func submoduleRefusal(_ worktree: String, links: [String], depth: Int) throws
-    -> String?
-  {
+  private static func submoduleRefusal(
+    _ worktree: String, links: [String], common: String, depth: Int
+  ) throws -> String? {
     if depth > 3 { return "It has projects inside projects inside projects, so I left it alone." }
     for link in links {
       let directory = worktree + "/" + link
@@ -867,17 +868,84 @@ public enum AutopilotWorktrees {
         return "A project inside it has changes that are not saved, so I left it alone."
       }
       let sub = try line(directory, ["rev-parse", "--verify", "HEAD^{commit}"])
-      let remote = try lines(
-        directory, ["for-each-ref", "--contains=" + sub, "--format=%(refname)", "refs/remotes"])
-      if remote.isEmpty {
+      guard
+        try submoduleSaved(
+          directory: directory, sub: sub, link: link, worktree: worktree, common: common)
+      else {
         return "A project inside it has work that only exists here, so I left it alone."
       }
       let nested = try gitlinks(directory, environment: [:])
-      if let reason = try submoduleRefusal(directory, links: nested, depth: depth + 1) {
+      let nestedCommon = WorkspaceSafety.canonical(
+        try line(directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
+      if let reason = try submoduleRefusal(
+        directory, links: nested, common: nestedCommon, depth: depth + 1)
+      {
         return reason
       }
     }
     return nil
+  }
+
+  /// Linked worktrees often keep frozen per-worktree module gitdirs or fetch pinned gitlinks by SHA
+  /// without updating local `refs/remotes/*`. Check the submodule's own remotes first, then the
+  /// parent repository's shared module store, then an upstream default-branch gitlink pin when the
+  /// submodule has no unpushed local branches.
+  private static func submoduleSaved(
+    directory: String, sub: String, link: String, worktree: String, common: String
+  ) throws -> Bool {
+    let ownRemote = try lines(
+      directory, ["for-each-ref", "--contains=" + sub, "--format=%(refname)", "refs/remotes"])
+    if !ownRemote.isEmpty { return true }
+
+    if common.hasSuffix("/.git") {
+      let mainRoot = (common as NSString).deletingLastPathComponent
+      let mainSub = mainRoot + "/" + link
+      if entryExists(mainSub + "/.git"),
+        let sharedRemote = try? lines(
+          mainSub, ["for-each-ref", "--contains=" + sub, "--format=%(refname)", "refs/remotes"]),
+        !sharedRemote.isEmpty
+      {
+        return true
+      }
+    }
+    let moduleDir = common + "/modules/" + link
+    if entryExists(moduleDir + "/HEAD"),
+      let moduleRemote = try? lines(
+        worktree,
+        [
+          "--git-dir=" + moduleDir, "for-each-ref", "--contains=" + sub, "--format=%(refname)",
+          "refs/remotes",
+        ]),
+      !moduleRemote.isEmpty
+    {
+      return true
+    }
+
+    let localHeads = try lines(directory, ["for-each-ref", "--format=%(objectname)", "refs/heads"])
+    for headCommit in Set(localHeads) where !headCommit.isEmpty {
+      let containing = try lines(
+        directory,
+        ["for-each-ref", "--contains=" + headCommit, "--format=%(refname)", "refs/remotes"])
+      if containing.isEmpty { return false }
+    }
+
+    var upstreamRefs: [String] = []
+    if let originHead = try? line(worktree, ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]),
+      originHead.hasPrefix("refs/remotes/")
+    {
+      upstreamRefs.append(originHead)
+    }
+    upstreamRefs += ["refs/remotes/origin/main", "refs/remotes/origin/master"]
+    let existingUpstream = Set(
+      (try? lines(worktree, ["for-each-ref", "--format=%(refname)"] + upstreamRefs)) ?? [])
+    for ref in upstreamRefs where existingUpstream.contains(ref) {
+      if let treeEntry = try? line(worktree, ["ls-tree", ref, "--", link]),
+        treeEntry == "160000 commit \(sub)\t\(link)"
+      {
+        return true
+      }
+    }
+    return false
   }
 
   private static func entryExists(_ path: String) -> Bool {

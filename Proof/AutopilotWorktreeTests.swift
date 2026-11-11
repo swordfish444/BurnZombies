@@ -896,7 +896,8 @@ private func apBigFilesRetire(_ world: APWorld) throws {
     try apRestore(receipt)
     equal(apRead(copy + "/tools/balance.ts"), "export const damage = 7\n", "the new script is back")
     equal(apRead(copy + "/tmp/results.json"), "{\"wins\": 3}\n", "and the small result")
-    checkFalse(apExists(copy + "/tmp/checkouts"), "the checkouts aren't, ignored files in them neither")
+    checkFalse(
+      apExists(copy + "/tmp/checkouts"), "the checkouts aren't, ignored files in them neither")
   } else {
     failTest("the burn left no way to restore it")
   }
@@ -954,7 +955,9 @@ private func apBigFilesRetire(_ world: APWorld) throws {
   try big(mixed + "/qa/recordings/take.mp4", megabytes: 600)
   let newKind = try burn(mixed, known: ["bigCode"], "rule:lesson")
   equal(newKind.outcome, "refused", "big videos the lesson never covered keep the copy")
-  equal(newKind.bigFiles?.map(\.risks), [["bigCode"], ["bigMedia"]], "both kinds are named, biggest first")
+  equal(
+    newKind.bigFiles?.map(\.risks), [["bigCode"], ["bigMedia"]],
+    "both kinds are named, biggest first")
   check(apExists(mixed + "/tmp/checkouts/c1/game.ts"), "and nothing is gone")
 }
 
@@ -1000,6 +1003,22 @@ private func apSubmoduleProof(_ world: APWorld) throws {
   check(apExists(copy + "/.gitmodules"), "the copy with a submodule is back")
   let head = try apLine(copy, ["rev-parse", "HEAD"])
   equal(head, receipt.restore?.head, "restored at the saved commit")
+
+  // A linked worktree whose per-worktree submodule gitdir never fetched remotes still retires
+  // cleanly when the main checkout's submodule (and upstream default branch) has the detached commit.
+  let staleSubCopy = try world.addWorktree("withsub-stale-remotes", branch: "feature-sub-stale")
+  try apGit(staleSubCopy, ["submodule", "update", "--init"])
+  try apGit(staleSubCopy + "/libs/lib", ["update-ref", "-d", "refs/remotes/origin/main"])
+  _ = try? apGit(staleSubCopy + "/libs/lib", ["update-ref", "-d", "refs/remotes/origin/HEAD"])
+  _ = try? apGit(staleSubCopy + "/libs/lib", ["branch", "-D", "main"])
+  let staleSubItem = try apItem(staleSubCopy, world, cache: &cache)
+  let staleSubReceipt = apRetire(
+    staleSubItem, authority: "operator", root: world.state, inUse: { _ in 0 })
+  equal(
+    staleSubReceipt.outcome, "burned",
+    "detached submodule commit saved in main checkout remotes retires cleanly: "
+      + staleSubReceipt.detail)
+  checkFalse(apExists(staleSubCopy), "linked worktree with stale submodule remotes removed")
 }
 
 // MARK: What the backup walks
@@ -1020,7 +1039,8 @@ private func apPnpmRetire(_ world: APWorld) throws {
     try apWrite(store + "/left-pad@1.3.0/node_modules/left-pad/package.json", "{}\n")
     try apWrite(store + "/@proof+util@2.0.0/node_modules/@proof/util/package.json", "{}\n")
     try fm.createSymbolicLink(
-      atPath: modules + "/left-pad", withDestinationPath: ".pnpm/left-pad@1.3.0/node_modules/left-pad")
+      atPath: modules + "/left-pad",
+      withDestinationPath: ".pnpm/left-pad@1.3.0/node_modules/left-pad")
     try fm.createDirectory(atPath: modules + "/@proof", withIntermediateDirectories: false)
     try fm.createSymbolicLink(
       atPath: modules + "/@proof/util",
@@ -1097,7 +1117,8 @@ private func apPlainRefusals(_ world: APWorld) throws {
   // A project inside the copy, as when one session's checkout holds another's.
   let holder = try world.addWorktree("holder", branch: "feature-holder")
   try apGit(holder, ["init", "-q", "inner"])
-  let nested = try apExpectRefusal(world, try apItem(holder, world, cache: &cache), "project inside")
+  let nested = try apExpectRefusal(
+    world, try apItem(holder, world, cache: &cache), "project inside")
   equal(
     nested.detail,
     "There is another project folder inside it that I can't back up, so I left it alone.")
@@ -1137,7 +1158,8 @@ private func apCleanCause(_ cause: String?, _ path: String, _ label: String) {
   checkFalse(text.isEmpty, label + ": no cause was recorded")
   checkFalse(text.contains(path), label + ": the cause names the copy's folder: " + text)
   checkFalse(
-    text.contains((path as NSString).lastPathComponent), label + ": the cause names the copy: "
+    text.contains((path as NSString).lastPathComponent),
+    label + ": the cause names the copy: "
       + text)
 }
 
@@ -1502,8 +1524,9 @@ private func apBlockedKeyRetire(_ world: APWorld) throws {
   let item = try apItem(path, world, cache: &cache)
   equal(item.facts["saved"], "merged", "the waiting copy is otherwise ready to retire")
   let refs = try apGit(world.main, ["for-each-ref", "refs/burnzombies/retired/"])
-  let archives = (try? FileManager.default.contentsOfDirectory(
-    atPath: world.state.appendingPathComponent("private-recovery").path)) ?? []
+  let archives =
+    (try? FileManager.default.contentsOfDirectory(
+      atPath: world.state.appendingPathComponent("private-recovery").path)) ?? []
   let answer = DispatchSemaphore(value: 0)
   defer { answer.signal() }
   let bound: TimeInterval = 0.5
@@ -1526,8 +1549,9 @@ private func apBlockedKeyRetire(_ world: APWorld) throws {
   equal(
     try apGit(world.main, ["for-each-ref", "refs/burnzombies/retired/"]), refs,
     "no restore point was made")
-  let after = (try? FileManager.default.contentsOfDirectory(
-    atPath: world.state.appendingPathComponent("private-recovery").path)) ?? []
+  let after =
+    (try? FileManager.default.contentsOfDirectory(
+      atPath: world.state.appendingPathComponent("private-recovery").path)) ?? []
   equal(after.sorted(), archives.sorted(), "no archive was started")
 }
 

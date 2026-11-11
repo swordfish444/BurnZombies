@@ -218,6 +218,11 @@ public struct WorktreeFile: Codable, Equatable, Sendable {
 }
 
 public enum WorktreeInspection {
+  /// Kernel-managed macOS provenance/TCC tags that user-space cannot set during restore and macOS
+  /// stamps on newly created files itself. Skipping them prevents false attribute-mismatch loops.
+  public static let ignoredSystemAttributes: Set<String> = [
+    "com.apple.provenance", "com.apple.macl",
+  ]
   /// The gap a copy gets when the consumer check can't see every program.
   static let consumerGap = "Complete same-user cwd/file-handle visibility is unavailable."
   public static func identity(_ path: String) throws -> WorktreeIdentity {
@@ -355,6 +360,7 @@ public enum WorktreeInspection {
           guard let name = String(bytes: bytes, encoding: .utf8) else {
             throw StoreError.message("Unsupported attribute name.")
           }
+          if ignoredSystemAttributes.contains(name) { continue }
           let size = getxattr(url.path, name, nil, 0, 0, XATTR_NOFOLLOW)
           guard size >= 0, size <= 1_048_576, attributeBytes + size <= 33_554_432 else {
             throw StoreError.message("Extended attributes exceed bounded recovery support.")

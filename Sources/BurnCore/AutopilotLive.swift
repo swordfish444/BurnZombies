@@ -9,7 +9,8 @@ extension AutopilotSources {
   /// comes only from the running app, so no proof reaches the Mac's real Docker.
   public static func live(
     monitor: Monitor, root: URL = Store.defaultRoot, home: String = NSHomeDirectory(),
-    junk: AutopilotJunkCache = AutopilotJunkCache(), recoveryKey: SymmetricKey? = nil,
+    junk: AutopilotJunkCache = AutopilotJunkCache(),
+    recoveryKey: SymmetricKey? = nil,
     keys: AutopilotRecoveryKey = .shared, docker: AutopilotDockerCache? = nil
   ) -> AutopilotSources {
     // Kept with Autopilot's state, so a restart doesn't size and date every copy again.
@@ -162,31 +163,48 @@ final class AutopilotSkipped: @unchecked Sendable {
 
 /// Discovery runs in bounded background slices, preserving progress until every target has had
 /// its turn. Completed checkouts wait six hours; newly discovered or newly dated copies run on the
-/// next tick. A burn prunes the list immediately without leaving our walker inside its target.
+/// next tick. When `slicePause` is set, unfinished rounds self-continue after a brief breather so
+/// cold-start scans complete in minutes instead of waiting 15 minutes between slices.
 public final class AutopilotJunkCache: @unchecked Sendable {
+  private struct ScanContext {
+    var records: [WorktreeRecord]
+    var home: String
+    var protected: ProtectedLocations
+    var trail: String?
+  }
+  public static let maxContinuousSlices = 15
   private let lock = NSLock()
   private var cached: [AutopilotItem] = []
   private var cycleStarted: Date?
   private var progress = AutopilotDisk.ScanProgress()
   /// Inventory changes schedule work; they never certify that a checkout was fully scanned.
   private var observed: [String: Bool] = [:]
+  private var latestContext: ScanContext?
+  private var firstRoundNotified = false
   private var running = false
   /// Where its walk is, so a burn never finds BZ inside what it removes. Copies' age looks
   /// share it.
   public let walks = AutopilotWalks()
   private let sizer: (String, () -> Bool) -> UInt64?
   private let scanBudget: TimeInterval
+  private let slicePause: TimeInterval?
+  private let onFirstRoundComplete: (@Sendable () -> Void)?
   private let clock: () -> Date
-  private static let unfinished = "I haven't finished checking this folder again, so I left it alone."
+  private static let unfinished =
+    "I haven't finished checking this folder again, so I left it alone."
   /// `sizer` measures one junk folder and gives up as soon as its second argument says to.
   public init(
     sizer: @escaping (String, () -> Bool) -> UInt64? = {
       AutopilotDisk.allocatedSize($0, stop: $1)
     },
-    scanBudget: TimeInterval = 60, clock: @escaping () -> Date = Date.init
+    scanBudget: TimeInterval = 60, slicePause: TimeInterval? = nil,
+    onFirstRoundComplete: (@Sendable () -> Void)? = nil,
+    clock: @escaping () -> Date = Date.init
   ) {
     self.sizer = sizer
     self.scanBudget = scanBudget
+    self.slicePause = slicePause
+    self.onFirstRoundComplete = onFirstRoundComplete
     self.clock = clock
   }
 
@@ -202,11 +220,28 @@ public final class AutopilotJunkCache: @unchecked Sendable {
     _ records: [WorktreeRecord], home: String, protected: ProtectedLocations,
     trail: String? = nil
   ) -> [AutopilotItem] {
-    let walk: AutopilotDisk.ScanProgress? = lock.withLock {
-      guard !running else { return nil }
+    lock.withLock {
+      latestContext = ScanContext(records: records, home: home, protected: protected, trail: trail)
+    }
+    startSliceIfNeeded(remainingContinuations: slicePause == nil ? 0 : Self.maxContinuousSlices - 1)
+    // A folder listed before Full Disk Access was turned off is not looked at now.
+    return lock.withLock {
+      cached.filter {
+        $0.path.map { protected.resolve($0) != nil && FileManager.default.fileExists(atPath: $0) }
+          ?? false
+      }
+    }
+  }
+
+  private func startSliceIfNeeded(remainingContinuations: Int) {
+    let scheduled: (walk: AutopilotDisk.ScanProgress, context: ScanContext)? = lock.withLock {
+      guard !running, let context = latestContext,
+        FileManager.default.fileExists(atPath: context.home)
+      else { return nil }
       let now = clock()
       if cycleStarted == nil
-        || (progress.roundFinished && cycleStarted.map({ now.timeIntervalSince($0) >= 6 * 3600 }) == true)
+        || (progress.roundFinished
+          && cycleStarted.map({ now.timeIntervalSince($0) >= 6 * 3600 }) == true)
       {
         progress = AutopilotDisk.ScanProgress()
         observed = [:]
@@ -215,7 +250,7 @@ public final class AutopilotJunkCache: @unchecked Sendable {
         // authorize cleanup before this cycle has successfully checked that target again.
         for index in cached.indices { cached[index].protectedReason = Self.unfinished }
       }
-      for record in records {
+      for record in context.records {
         let dated = Self.dated(record)
         if observed[record.id] == nil || (observed[record.id] == false && dated) {
           let path = WorkspaceSafety.canonical(record.path)
@@ -226,43 +261,49 @@ public final class AutopilotJunkCache: @unchecked Sendable {
       }
       guard !progress.complete else { return nil }
       running = true
-      return progress
+      return (progress, context)
     }
-    if let walk {
-      Thread.detachNewThread { [self, walk] in
-        var next = walk
-        let fresh = AutopilotDisk.scan(
-          worktrees: records, home: home,
-          sizer: { folder in sizer(folder) { walks.wanted(folder) } }, protected: protected,
-          walks: walks, trail: trail, progress: &next, budget: scanBudget, clock: clock)
-        // A target skipped or left for a burn is retried after the burn releases it.
-        let skipped = walks.skipped()
-        for path in skipped { next.invalidate(path) }
-        lock.withLock {
-          // Aggregated browser leftovers can be partial too. Keep an earlier observation
-          // until every included measurement is known, while allowing a first partial discovery.
-          let accepted = fresh.items.filter { item in
-            item.path.map { fresh.measured.contains($0) } == true
-              || !cached.contains(where: { $0.id == item.id })
-          }
-          let ids = Set(accepted.map(\.id))
-          cached.removeAll {
-            ids.contains($0.id)
-              || $0.path.map { fresh.measured.contains($0) || fresh.discarded.contains($0) } == true
-          }
-          cached += accepted
-          hold(under: fresh.incomplete.union(skipped))
-          cached.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
-          progress = next
-          running = false
+    guard let (walk, context) = scheduled else { return }
+    Thread.detachNewThread { [self, walk, context, remainingContinuations] in
+      var next = walk
+      let fresh = AutopilotDisk.scan(
+        worktrees: context.records, home: context.home,
+        sizer: { folder in sizer(folder) { walks.wanted(folder) } }, protected: context.protected,
+        walks: walks, trail: context.trail, progress: &next, budget: scanBudget, clock: clock)
+      // Self-continue only when the scan genuinely paused because its slice budget expired, not
+      // when a finished round politely stepped out of a folder currently being burned.
+      let hitBudget = !next.roundFinished
+      let skipped = walks.skipped()
+      for path in skipped { next.invalidate(path) }
+      let (notify, shouldContinue): ((@Sendable () -> Void)?, Bool) = lock.withLock {
+        // Aggregated browser leftovers can be partial too. Keep an earlier observation
+        // until every included measurement is known, while allowing a first partial discovery.
+        let accepted = fresh.items.filter { item in
+          item.path.map { fresh.measured.contains($0) } == true
+            || !cached.contains(where: { $0.id == item.id })
         }
+        let ids = Set(accepted.map(\.id))
+        cached.removeAll {
+          ids.contains($0.id)
+            || $0.path.map { fresh.measured.contains($0) || fresh.discarded.contains($0) } == true
+        }
+        cached += accepted
+        hold(under: fresh.incomplete.union(skipped))
+        cached.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.id < $1.id }
+        progress = next
+        running = false
+        var callback: (@Sendable () -> Void)?
+        if !firstRoundNotified && next.roundFinished {
+          firstRoundNotified = true
+          callback = onFirstRoundComplete
+        }
+        let more = slicePause != nil && remainingContinuations > 0 && hitBudget
+        return (callback, more)
       }
-    }
-    // A folder listed before Full Disk Access was turned off is not looked at now.
-    return lock.withLock {
-      cached.filter {
-        $0.path.map { protected.resolve($0) != nil && FileManager.default.fileExists(atPath: $0) }
-          ?? false
+      notify?()
+      if shouldContinue, let pause = slicePause {
+        Thread.sleep(forTimeInterval: max(0.01, pause))
+        startSliceIfNeeded(remainingContinuations: remainingContinuations - 1)
       }
     }
   }

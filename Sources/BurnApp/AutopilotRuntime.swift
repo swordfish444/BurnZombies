@@ -6,11 +6,20 @@ final class AutopilotRuntime: Sendable {
   let engine: Autopilot
   let coordinator: AutopilotCoordinator
   init(monitor: Monitor) throws {
-    engine = try Autopilot(sources: .live(monitor: monitor, docker: .live()))
+    final class WakeBox: @unchecked Sendable {
+      let lock = NSLock()
+      var wake: (@Sendable () -> Void)?
+      func fire() { lock.withLock { wake }?() }
+    }
+    let wakeBox = WakeBox()
+    let junk = AutopilotJunkCache(slicePause: 1.5) { wakeBox.fire() }
+    engine = try Autopilot(sources: .live(monitor: monitor, junk: junk, docker: .live()))
     coordinator = AutopilotCoordinator(engine: engine)
-    // A hunt asked for from the command line starts now, not at the next tick.
+    // A hunt asked for from the command line, or a cold-start disk scan finishing its first round,
+    // wakes Autopilot right away instead of waiting for the next 15-minute timer.
     let engine = engine
     let coordinator = coordinator
+    wakeBox.lock.withLock { wakeBox.wake = { Task { _ = await engine.tick() } } }
     Task { await engine.onRequest { Task { await coordinator.tick() } } }
   }
   /// Native tick when due, plus an AI sweep when there is something new to judge. A hunt the owner

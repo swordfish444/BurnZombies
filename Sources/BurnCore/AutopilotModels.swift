@@ -568,6 +568,14 @@ public struct AutopilotSweepState: Codable, Sendable, Equatable {
   public var lastError: String?
   /// When a usage limit the AI hit comes back, if it said.
   public var limitResetsAt: Date?
+  /// Alternate installed AI (`codex` or `claude`) handling sweeps while the primary AI is limited.
+  public var failoverHarness: String?
+  /// When the primary AI's usage or login hold ends so BurnZombies returns to it automatically.
+  public var primaryBlockedUntil: Date?
+  /// Build number that last ticked, so upgrading BurnZombies resets stale pre-upgrade refusal holds.
+  public var lastBuild: String?
+  /// Refusals older than this came from an earlier build and get one fresh check after an update.
+  public var refusalsResetAt: Date?
   public var running = false
   /// Consecutive background AI sweeps that yielded neither an authorized burn nor a new question.
   public var idleSweeps: Int?
