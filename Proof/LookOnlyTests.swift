@@ -32,7 +32,7 @@ func lookOnlyProof() async throws {
   let copy = AutopilotItem(
     id: "worktree:c", kind: .worktree, name: "atlas-fix", bytes: 2 << 30,
     facts: [
-      "place": "patrol6", "saved": "pushed", "changes": "none", "stale": "older", "inUse": "no",
+      "place": "agent", "saved": "pushed", "changes": "none", "stale": "older", "inUse": "no",
       "thread": "none",
     ])
   let sources = AutopilotSources(

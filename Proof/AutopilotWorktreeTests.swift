@@ -176,10 +176,12 @@ private func apDirectProof() {
   equal(plain.facts["inUse"], "no")
   equal(plain.facts["size"], "small")
   for (path, place) in [
-    ("/bz-test/.patrol6/worktrees/abc/project", "patrol6"),
+    ("/bz-test/.agents/worktrees/abc/project", "agent"),
+    ("/bz-test/.aider/worktrees/fix-auth", "agent"),
     ("/bz-test/.codex/worktrees/1a2b/project", "codex"),
     ("/bz-test/.claude/worktrees/feature", "claude"),
     ("/bz-test/.claude-worktrees/feature", "claude"),
+    ("/bz-test/.cursor/worktrees/feature", "cursor"),
     ("/bz-test/conductor/workspaces/project/lima", "conductor"),
     ("/bz-test/git/project-feature", "sibling"),
     ("/Volumes/Work/project-feature", "other"),
@@ -334,12 +336,12 @@ private func apDirectProof() {
 
   // A plain sentence.
   var gps = record(
-    "gps", path: "/bz-test/git/p6-bodycam-gps", repository: "/bz-test/git/p6-bodycam/.git")
+    "gps", path: "/bz-test/git/mobile-app-gps", repository: "/bz-test/git/mobile-app/.git")
   gps.branch = "refs/heads/fix-gps"
   gps.lastFileChange = now.addingTimeInterval(-65 * 86_400)
   gps.lastCommitAt = now.addingTimeInterval(-66 * 86_400)
   equal(
-    one(gps).detail, "Copy of p6-bodycam on fix-gps — merged, untouched for 2 months.",
+    one(gps).detail, "Copy of mobile-app on fix-gps — merged, untouched for 2 months.",
     "detail sentence")
 }
 

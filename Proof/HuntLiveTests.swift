@@ -9,7 +9,8 @@ func huntLiveProof() async throws {
   // with every content block as running totals, so a message counts once, at its latest.
   let usage1 =
     #""usage":{"input_tokens":2,"cache_creation_input_tokens":42940,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":42940},"output_tokens":6,"service_tier":"standard"}"#
-  let usage1Later = usage1.replacingOccurrences(of: #""output_tokens":6"#, with: #""output_tokens":40"#)
+  let usage1Later = usage1.replacingOccurrences(
+    of: #""output_tokens":6"#, with: #""output_tokens":40"#)
   let stream = [
     #"{"type":"system","subtype":"init","session_id":"s"}"#,
     #"{"type":"assistant","message":{"id":"m1","model":"claude-sonnet-5-5","content":[{"type":"thinking","thinking":"hidden"}],"#
@@ -26,8 +27,11 @@ func huntLiveProof() async throws {
   let cut = bytes.count / 3
   var events = reader.read(bytes.prefix(cut)) + reader.read(bytes.dropFirst(cut))
   events += reader.finish()
-  equal(events.compactMap { if case .text(let t) = $0 { return t } else { return nil } }, ["Biggest first."])
-  equal(reader.tokens, (2 + 42940 + 40) + (5 + 42940 + 20), "each message counts once, at its latest")
+  equal(
+    events.compactMap { if case .text(let t) = $0 { return t } else { return nil } },
+    ["Biggest first."])
+  equal(
+    reader.tokens, (2 + 42940 + 40) + (5 + 42940 + 20), "each message counts once, at its latest")
   check((reader.estimatedUSD ?? 0) > 0, "priced at API rates")
   check(events.contains(.result(usd: 0.123, limitReached: false, isError: false)), "result")
   var capped = AutopilotStreamReader()
@@ -115,7 +119,7 @@ func huntLiveProof() async throws {
   let copy = AutopilotItem(
     id: "worktree:c", kind: .worktree, name: "atlas-fix", bytes: 2 << 30,
     facts: [
-      "place": "patrol6", "saved": "pushed", "changes": "none", "stale": "older", "inUse": "no",
+      "place": "agent", "saved": "pushed", "changes": "none", "stale": "older", "inUse": "no",
       "thread": "none",
     ])
   let sources = AutopilotSources(

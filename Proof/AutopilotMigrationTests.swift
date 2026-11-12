@@ -82,9 +82,74 @@ func migrationProof() async throws {
 
   try roundTripProof()
   try migrationStoreProof(v1)
+  try legacyPlaceMigrationProof()
   try await tallyEngineProof()
   try await firstTickProof()
   try await restoreSeededProof()
+}
+
+/// Retired custom-harness `place` tags in saved `memory.json` files normalize to `"agent"` while
+/// preserving `formerIDs`, tallies, and receipt attribution without re-prompting the owner.
+private func legacyPlaceMigrationProof() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "bz-autopilot-legacy-place-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let store = try AutopilotStore(root: root)
+
+  var legacyQuestion = AutopilotQuestion(
+    kind: .worktree,
+    match: [
+      "changes": ["unknown", "none"], "inUse": ["unknown", "no"], "place": ["legacy-harness"],
+      "saved": ["pushed", "merged"], "stale": ["unknown"], "thread": ["none"],
+    ],
+    question: "", why: "", examples: [], count: 5, bytes: 8_000_000_000, source: "ai")
+  legacyQuestion.id = "q-legacy"
+  legacyQuestion.answer = .yes
+  legacyQuestion.answered = Date(timeIntervalSinceReferenceDate: 815_350_000)
+
+  let legacyRule = AutopilotRule(
+    kind: .worktree,
+    match: [
+      "changes": ["unknown", "none"], "inUse": ["unknown", "no"], "place": ["legacy-harness"],
+      "saved": ["pushed", "merged"], "stale": ["unknown"], "thread": ["none", "ended"],
+    ],
+    verdict: .burn, source: .operator,
+    title: "Burn: Old project copies · Saved on GitHub",
+    created: Date(timeIntervalSinceReferenceDate: 815_350_000), questionID: "q-legacy")
+
+  var saved = AutopilotMemory()
+  saved.version = 2
+  saved.questions = [legacyQuestion]
+  saved.rules = [legacyRule]
+  saved.tallies = [legacyRule.id: AutopilotTally(count: 4, bytes: 12_000_000_000, undone: 0)]
+  try JSONEncoder().encode(saved).write(to: store.directory.appendingPathComponent("memory.json"))
+
+  let loaded = try store.memory()
+  equal(loaded.version, 2)
+  equal(loaded.questions.first?.match["place"], ["agent"])
+  equal(loaded.rules.count, 1)
+  guard let upgraded = loaded.rules.first else { return failTest("expected migrated rule") }
+  equal(upgraded.match["place"], ["agent"])
+  equal(
+    upgraded.title,
+    "Burn: Old project copies · Saved on GitHub · Made by background agents")
+  check(upgraded.formerIDs?.contains(legacyRule.id) == true, "formerIDs retains legacy rule id")
+  equal(
+    AutopilotPolicy.lessonID(forAuthority: "rule:" + legacyRule.id, rules: loaded.rules),
+    upgraded.id, "receipts carrying the legacy rule id still map to the upgraded rule")
+  equal(
+    loaded.tallies[upgraded.id],
+    AutopilotTally(count: 4, bytes: 12_000_000_000, undone: 0),
+    "tallies carry over to the upgraded rule id")
+  isNil(loaded.tallies[legacyRule.id])
+
+  let item = AutopilotItem(
+    id: "worktree:agent-copy", kind: .worktree, name: "agent-copy", bytes: 2_000_000_000,
+    facts: [
+      "place": "agent", "saved": "pushed", "changes": "none", "stale": "unknown",
+      "inUse": "no", "thread": "none",
+    ])
+  equal(AutopilotPolicy.decide(item, memory: loaded).status, .burn)
 }
 
 /// A version-1 file migrates when the engine starts, before a tick changes any receipt, so a stop
@@ -403,7 +468,8 @@ private func tallyEngineProof() async throws {
     examples: [], count: 1, bytes: 1_000_000_000)
   try store.updateMemory { $0.questions.append(wider) }
   _ = try await engine.apply(.answer(questionID: wider.id, answer: .yes))
-  let widerID = TeachLessons.id(.worktree, ["saved": ["merged"], "stale": TeachLessons.ages], .burn)
+  let widerID = TeachLessons.id(
+    .worktree, ["saved": ["merged"], "stale": TeachLessons.ages], .burn)
   var tallies = try store.memory().tallies
   equal(
     tallies[widerID], AutopilotTally(count: 1, bytes: 3_000_000_000, undone: 1),

@@ -17,7 +17,7 @@ private func quietCopy(
 ) -> AutopilotItem {
   let days: Double = stale == "month" ? 40 : 10
   let facts: [String: String] = [
-    "repo": "web-app", "place": "patrol6", "saved": "pushed", "changes": changes,
+    "repo": "web-app", "place": "agent", "saved": "pushed", "changes": changes,
     "stale": stale, "inUse": "no", "thread": "none",
   ]
   return AutopilotItem(

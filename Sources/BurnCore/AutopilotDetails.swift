@@ -293,7 +293,8 @@ extension AutopilotPolicy {
     switch place {
     case "claude": return "Claude Code worktree"
     case "codex": return "Codex worktree"
-    case "patrol6": return "Patrol6 worktree"
+    case "cursor": return "Cursor worktree"
+    case "agent": return "Agent worktree"
     case "conductor": return "Conductor workspace"
     case "sibling": return "Next to its project"
     default: return "Elsewhere on this Mac"

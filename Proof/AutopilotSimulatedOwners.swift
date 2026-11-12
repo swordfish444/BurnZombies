@@ -65,7 +65,7 @@ func ownerItems(round: Int, now: Date) -> [AutopilotItem] {
   let changes: [String] = ["none", "small", "none", "large"]
   let stale: [String] = ["day", "week", "month", "older", "today"]
   let repos: [String] = ["web-app", "api", "docs", "mobile"]
-  let places: [String] = ["patrol6", "sibling", "codex", "claude", "other"]
+  let places: [String] = ["agent", "sibling", "codex", "claude", "other"]
   var items: [AutopilotItem] = []
   for i in 0..<5 {
     let n: Int = round * 5 + i
@@ -465,7 +465,7 @@ func cleanFirstItems(round: Int, now: Date) -> [AutopilotItem] {
   var items: [AutopilotItem] = usual.filter { $0.kind != .worktree }
   for (name, saved, age) in clean {
     let facts: [String: String] = [
-      "repo": "web-app", "place": "patrol6", "saved": saved, "changes": "none", "stale": age,
+      "repo": "web-app", "place": "agent", "saved": saved, "changes": "none", "stale": age,
       "inUse": "no", "thread": "none",
     ]
     items.append(

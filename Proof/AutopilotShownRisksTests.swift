@@ -18,7 +18,7 @@ private func agedCopy(
   AutopilotItem(
     id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
     facts: [
-      "repo": "web-app", "place": "patrol6", "saved": saved, "changes": changes, "stale": "week",
+      "repo": "web-app", "place": "agent", "saved": saved, "changes": changes, "stale": "week",
       "inUse": inUse, "thread": "none",
     ], lastUsed: now.addingTimeInterval(-10 * 86_400))
 }

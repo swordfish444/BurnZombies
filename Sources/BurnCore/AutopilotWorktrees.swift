@@ -155,15 +155,31 @@ public enum AutopilotWorktrees {
 
   private static func placeFact(_ record: WorktreeRecord) -> String {
     let path = record.path.lowercased()
-    if path.contains("/.patrol6/worktrees/") { return "patrol6" }
     if path.contains("/.codex/worktrees/") { return "codex" }
     if path.contains("/.claude/worktrees/") || path.contains("/.claude-worktrees/") {
       return "claude"
     }
+    if path.contains("/.cursor/worktrees/") { return "cursor" }
     if path.contains("/conductor/") { return "conductor" }
+    if isDotAgentWorktree(path) { return "agent" }
     let parent = (record.path as NSString).deletingLastPathComponent
     let mainParent = (mainCheckout(record) as NSString).deletingLastPathComponent
     return parent == mainParent ? "sibling" : "other"
+  }
+
+  private static func isDotAgentWorktree(_ lowercasedPath: String) -> Bool {
+    let parts = lowercasedPath.split(separator: "/", omittingEmptySubsequences: true)
+    guard parts.count >= 3 else { return false }
+    let excluded: Set<Substring> = ["..", ".git", ".trash", ".ssh", ".gnupg"]
+    for index in 0..<(parts.count - 2) {
+      let folder = parts[index]
+      if folder.hasPrefix("."), folder.count > 1, !excluded.contains(folder),
+        parts[index + 1] == "worktrees"
+      {
+        return true
+      }
+    }
+    return false
   }
 
   private static func branchName(_ record: WorktreeRecord) -> String? {

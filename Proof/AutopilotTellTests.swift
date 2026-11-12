@@ -87,7 +87,7 @@ func weekCopy(
   AutopilotItem(
     id: "worktree:" + name, kind: .worktree, name: name, bytes: bytes,
     facts: [
-      "repo": "web-app", "place": "patrol6", "saved": "local", "changes": changes,
+      "repo": "web-app", "place": "agent", "saved": "local", "changes": changes,
       "stale": stale, "inUse": "no", "thread": "none",
     ], lastUsed: now.addingTimeInterval(-10 * 86_400),
     title: name.replacingOccurrences(of: "-", with: " "))
@@ -607,11 +607,12 @@ private func askActProof() async throws {
   let docs = AutopilotItem(
     id: "worktree:docs-draft", kind: .worktree, name: "docs-draft", bytes: 400_000_000,
     facts: [
-      "repo": "docs", "place": "patrol6", "saved": "local", "changes": "large", "stale": "week",
+      "repo": "docs", "place": "agent", "saved": "local", "changes": "large", "stale": "week",
       "inUse": "no", "thread": "none",
     ])
   let farWorld = TellWorld(copies: threeCopies(now) + [docs])
-  let (farEngine, farStore, farRoot) = try tellEngine("ask-reach", farWorld, trustedCopies(now: now))
+  let (farEngine, farStore, farRoot) = try tellEngine(
+    "ask-reach", farWorld, trustedCopies(now: now))
   defer { try? FileManager.default.removeItem(at: farRoot) }
   let first = await farEngine.tick(now: now)
   check(first.tells.isEmpty, "BZ isn't sure of its own question: unsaved work never said yes to")

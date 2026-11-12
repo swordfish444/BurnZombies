@@ -146,11 +146,12 @@ public actor WorktreeService {
         atPath: store.root.appendingPathComponent("disk-policy.json").path)
       ? ((try? DiskPolicy.load(Store(root: store.root)).roots) ?? []) : []
     let known = [
-      ".codex/worktrees", ".claude/worktrees", ".cursor/worktrees", ".patrol6/worktrees", "git",
-      "Developer",
+      ".codex/worktrees", ".claude/worktrees", ".cursor/worktrees", ".claude-worktrees", "git",
+      "Developer", "Projects", "Code", "repos", "src", "workspace",
     ]
     .map { home.appendingPathComponent($0).path }
-    for path in diskRoots + known {
+    let discovered = dotWorktreeRoots(in: home)
+    for path in diskRoots + known + discovered {
       // Whether a protected folder exists is checked once access allows it.
       guard let canonical = protected.resolve(path) else { continue }
       var directory: ObjCBool = false
@@ -167,6 +168,19 @@ public actor WorktreeService {
     try policy.validate()
     if policy.revision != old { try store.put(policy, kind: "policy", id: "current") }
   }
+  /// Any `~/.<tool>/worktrees` store created by an agent harness in the home folder.
+  private static func dotWorktreeRoots(in home: URL) -> [String] {
+    let skipped: Set<String> = [".trash", ".ssh", ".gnupg", ".git"]
+    guard let entries = try? FileManager.default.contentsOfDirectory(atPath: home.path) else {
+      return []
+    }
+    return entries.sorted().compactMap { name in
+      guard name.hasPrefix("."), name.count > 1, !skipped.contains(name.lowercased()) else {
+        return nil
+      }
+      return home.appendingPathComponent(name).appendingPathComponent("worktrees").path
+    }
+  }
   func refreshDiscoveryRoots() throws {
     if let home = discoveryHome { try Self.seedRoots(store: store, home: home, protected: scope()) }
   }
@@ -178,7 +192,8 @@ public actor WorktreeService {
   /// What this service may look at now: everything with verified Full Disk Access, otherwise
   /// all but the places macOS protects. Native consumer checks follow the same decision.
   func scope() -> ProtectedLocations {
-    let protected = ProtectedLocations(access: access(), homes: discoveryHome.map { [$0.path] } ?? [])
+    let protected = ProtectedLocations(
+      access: access(), homes: discoveryHome.map { [$0.path] } ?? [])
     protected.guardNativeChecks()
     return protected
   }

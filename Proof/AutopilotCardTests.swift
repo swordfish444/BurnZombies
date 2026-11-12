@@ -519,11 +519,11 @@ private func rowsAndLinesProof() {
   // An older question says what it did before, except how long it sat unused: that is in the
   // headline now.
   let agent = AutopilotQuestion(
-    kind: .worktree, match: ["saved": ["pushed"], "stale": ["week"], "place": ["patrol6"]],
+    kind: .worktree, match: ["saved": ["pushed"], "stale": ["week"], "place": ["agent"]],
     question: "", why: "", examples: [], count: 92, bytes: 14_390_000_000)
   let agentCard = AutopilotPolicy.card(agent, now: cardNow, calendar: utc)
   equal(agentCard.headline, "Burn 92 copies unused for a week?")
-  equal(agentCard.facts, ["Saved on GitHub", "Made by Patrol6 agents"])
+  equal(agentCard.facts, ["Saved on GitHub", "Made by background agents"])
   equal(agentCard.more, 92, "no rows to show, all of them more")
 }
 
@@ -535,7 +535,8 @@ private func humanizeProof() {
   equal(AutopilotPolicy.humanize(branch: "feature/add_dark_mode"), "add dark mode")
   equal(AutopilotPolicy.humanize(branch: "users/dev/fix-bug"), "fix bug", "after the last slash")
   equal(AutopilotPolicy.humanize(branch: "main"), "main")
-  equal(AutopilotPolicy.humanize(branch: "fix--login__selector"), "fix login selector", "runs collapse")
+  equal(
+    AutopilotPolicy.humanize(branch: "fix--login__selector"), "fix login selector", "runs collapse")
   equal(AutopilotPolicy.humanize(branch: "x/-fix-"), "fix", "no spaces at either end")
   equal(AutopilotPolicy.humanize(branch: "/"), nil)
   equal(AutopilotPolicy.humanize(branch: ""), nil)

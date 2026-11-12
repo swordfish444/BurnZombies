@@ -5,16 +5,23 @@ public enum Demo {
     var state = ViewState()
     state.processCount = 128
     let today = calendar.startOfDay(for: now)
-    addBurn(in: &state.catalog, count: 512, memory: 24_000_000_000, cpu: 15 * 3600,
+    addBurn(
+      in: &state.catalog, count: 512, memory: 24_000_000_000, cpu: 15 * 3600,
       date: calendar.date(byAdding: .day, value: -12, to: today)!)
-    addBurn(in: &state.catalog, count: 240, memory: 12_000_000_000, cpu: 7.5 * 3600,
+    addBurn(
+      in: &state.catalog, count: 240, memory: 12_000_000_000, cpu: 7.5 * 3600,
       date: calendar.date(byAdding: .day, value: -3, to: today)!)
-    addBurn(in: &state.catalog, count: 110, memory: 5_200_000_000, cpu: 3.8 * 3600 - 60,
+    addBurn(
+      in: &state.catalog, count: 110, memory: 5_200_000_000, cpu: 3.8 * 3600 - 60,
       date: today)
     recordBurn(in: &state.catalog, now: max(today, now.addingTimeInterval(-120)))
     addWorkspaces(in: &state.catalog, count: 4, disk: 2_100_000_000, date: today)
-    addWorkspaces(in: &state.catalog, count: 8, disk: 4_700_000_000, date: calendar.date(byAdding: .day, value: -3, to: today)!)
-    addWorkspaces(in: &state.catalog, count: 6, disk: 3_200_000_000, date: calendar.date(byAdding: .day, value: -12, to: today)!)
+    addWorkspaces(
+      in: &state.catalog, count: 8, disk: 4_700_000_000,
+      date: calendar.date(byAdding: .day, value: -3, to: today)!)
+    addWorkspaces(
+      in: &state.catalog, count: 6, disk: 3_200_000_000,
+      date: calendar.date(byAdding: .day, value: -12, to: today)!)
     return state
   }
 
@@ -23,21 +30,31 @@ public enum Demo {
     addBurn(in: &catalog, count: 18, memory: 1_200_000_000, cpu: 60, date: now)
   }
 
-  private static func addWorkspaces(in catalog: inout Catalog, count: Int, disk: UInt64, date: Date) {
+  private static func addWorkspaces(in catalog: inout Catalog, count: Int, disk: UInt64, date: Date)
+  {
     for _ in 0..<count {
-      let receipt = WorkspaceReceipt(id: UUID(), workspaceID: UUID().uuidString,
-        identity: .init(path: "/example/disposable-worktree", common: "/example/repo/.git", gitDirectory: "/example/repo/.git/worktrees/example", device: 0, inode: 0),
-        label: "Completed task worktree", head: String(repeating: "0", count: 40), recoveryRef: "refs/burnzombies/worktrees/example",
-        date: date, verifiedAt: date, outcome: "verified", diskReclaimedBytes: disk / UInt64(count), detail: "In-memory preview receipt.")
+      let receipt = WorkspaceReceipt(
+        id: UUID(), workspaceID: UUID().uuidString,
+        identity: .init(
+          path: "/example/disposable-worktree", common: "/example/repo/.git",
+          gitDirectory: "/example/repo/.git/worktrees/example", device: 0, inode: 0),
+        label: "Completed task worktree", head: String(repeating: "0", count: 40),
+        recoveryRef: "refs/burnzombies/worktrees/example",
+        date: date, verifiedAt: date, outcome: "verified", diskReclaimedBytes: disk / UInt64(count),
+        detail: "In-memory preview receipt.")
       catalog.workspaceReceipts = (catalog.workspaceReceipts ?? []) + [receipt]
     }
     catalog.lifetimeWorktreesCleaned = (catalog.lifetimeWorktreesCleaned ?? 0) + count
     catalog.lifetimeDiskReclaimedBytes = (catalog.lifetimeDiskReclaimedBytes ?? 0) + disk
   }
 
-  private static func addBurn(in catalog: inout Catalog, count: Int, memory: UInt64, cpu: Double, date: Date) {
-    var event = CleanupEvent(leaseID: UUID(), label: "Disposable helpers", date: date,
-      targets: [], residentBefore: memory, outcome: "verified", detail: "In-memory preview receipt.")
+  private static func addBurn(
+    in catalog: inout Catalog, count: Int, memory: UInt64, cpu: Double, date: Date
+  ) {
+    var event = CleanupEvent(
+      leaseID: UUID(), label: "Disposable helpers", date: date,
+      targets: [], residentBefore: memory, outcome: "verified", detail: "In-memory preview receipt."
+    )
     event.verifiedCount = count
     event.verificationDate = date
     event.cpuSecondsSavedEstimate = cpu
@@ -98,7 +115,7 @@ public enum Demo {
     ) -> AutopilotItem {
       let name: String = repo + "-" + key
       let facts: [String: String] = [
-        "place": "patrol6", "repo": repo, "saved": saved, "changes": "none", "stale": stale,
+        "place": "agent", "repo": repo, "saved": saved, "changes": "none", "stale": stale,
         "thread": "none", "inUse": "no", "size": "medium",
       ]
       return make(
@@ -178,7 +195,7 @@ public enum Demo {
       detail: "A spare copy of api called fix-login.", path: "/example/work/api-fix-login",
       bytes: 3_400_000_000,
       facts: [
-        "place": "patrol6", "repo": "api", "saved": "merged", "changes": "none",
+        "place": "agent", "repo": "api", "saved": "merged", "changes": "none",
         "stale": "older", "thread": "none", "inUse": "no", "size": "large",
       ])
     let payments = make(
@@ -203,7 +220,9 @@ public enum Demo {
       .disk, "packages", "node_modules",
       detail: "Packages downloaded for a project. They download again when needed.",
       path: "/example/work/api-fix-login/node_modules", bytes: 1_800_000_000,
-      facts: ["folder": "node_modules", "home": "stale-worktree", "stale": "older", "size": "large"])
+      facts: [
+        "folder": "node_modules", "home": "stale-worktree", "stale": "older", "size": "large",
+      ])
     let orbitBuild = make(
       .disk, "orbit-derived", "Orbit-DerivedData",
       detail: "Files Xcode made while building the Orbit app.",
@@ -367,7 +386,8 @@ public enum Demo {
         why: "You told me to delete downloaded packages like these, and tools rebuild them."),
       entry(
         orbitBuild, .unsure, nil, label: "Xcode build leftovers (Orbit)",
-        why: "Xcode rebuilds these on its own, but they're shared across your Mac, so I want to ask first."
+        why:
+          "Xcode rebuilds these on its own, but they're shared across your Mac, so I want to ask first."
       ),
       entry(
         atlasBuild, .unsure, nil, label: "Xcode build leftovers (Atlas)",
@@ -389,7 +409,9 @@ public enum Demo {
     sweep.lastAISweep = now.addingTimeInterval(-47 * 60)
     sweep.append("Burned 3 old project copies on my own.", date: learned.tell.date)
     sweep.append("Burned 1 leftover program.", date: now.addingTimeInterval(-25 * 60))
-    sweep.append("Could not burn 1 junk folder; something was using it.", date: now.addingTimeInterval(-9 * 60))
+    sweep.append(
+      "Could not burn 1 junk folder; something was using it.", date: now.addingTimeInterval(-9 * 60)
+    )
 
     // Newest first, the way the engine hands them over.
     var receipts: [AutopilotReceipt] = [leftoversReceipt, gradleReceipt]

@@ -18,9 +18,9 @@ extension AutopilotPolicy {
 
   /// The pattern without its identity facts, when it pins recency. Without known recency a
   /// general pattern would cover things used an hour ago, so the pattern stays as it is.
-  public static func generalize(_ kind: AutopilotKind, _ match: [String: [String]]) -> [String: [
-    String
-  ]] {
+  public static func generalize(_ kind: AutopilotKind, _ match: [String: [String]]) -> [String:
+    [String]]
+  {
     guard pinsRecency(kind, match) else { return match }
     return match.filter { !identityFacts.contains($0.key) }
   }
@@ -270,26 +270,105 @@ extension AutopilotPolicy {
     return byID
   }
 
+  /// Canonical `place` values emitted by `AutopilotWorktrees`. Any retired custom-harness tag saved
+  /// in earlier `memory.json` files maps to `"agent"` while keeping `formerIDs` and tallies intact.
+  static let knownPlaces: Set<String> = [
+    "agent", "codex", "claude", "cursor", "conductor", "sibling", "other", "unknown",
+  ]
+
+  static func canonicalPlaces(_ values: [String]) -> [String] {
+    var out: [String] = []
+    for value in values {
+      let mapped = knownPlaces.contains(value) ? value : "agent"
+      if !out.contains(mapped) { out.append(mapped) }
+    }
+    return out
+  }
+
+  public static func normalizePlaces(_ memory: AutopilotMemory) -> AutopilotMemory {
+    let hasLegacyQuestion = memory.questions.contains {
+      $0.kind == .worktree && ($0.match["place"]?.contains { !knownPlaces.contains($0) } ?? false)
+    }
+    let hasLegacyRule = memory.rules.contains {
+      $0.kind == .worktree && ($0.match["place"]?.contains { !knownPlaces.contains($0) } ?? false)
+    }
+    guard hasLegacyQuestion || hasLegacyRule else { return memory }
+
+    var result = memory
+    for index in result.questions.indices where result.questions[index].kind == .worktree {
+      guard let places = result.questions[index].match["place"] else { continue }
+      let mapped = canonicalPlaces(places)
+      guard mapped != places else { continue }
+      result.questions[index].match["place"] = mapped
+      if result.questions[index].source == "native" && !result.questions[index].question.isEmpty {
+        result.questions[index].question = wording(
+          kind: .worktree, match: result.questions[index].match)
+      }
+    }
+
+    let asked = questionsByID(result.questions)
+    var deduplicated: [AutopilotRule] = []
+    for var rule in result.rules {
+      if rule.kind == .worktree, let places = rule.match["place"] {
+        let mapped = canonicalPlaces(places)
+        if mapped != places {
+          let oldID = rule.id
+          rule.match["place"] = mapped
+          let newID =
+            AutopilotRule.key(kind: rule.kind, match: rule.match) + ":" + rule.verdict.rawValue
+          if newID != oldID {
+            rule.formerIDs = adding([oldID], to: rule.formerIDs, except: newID)
+            rule.id = newID
+          }
+          if rule.source == .operator {
+            if let qid = rule.questionID, let question = asked[qid] {
+              rule.title = lessonTitle(rule, question: question)
+            } else {
+              let fallback = AutopilotQuestion(
+                kind: rule.kind, match: rule.match, question: "", why: "", examples: [], count: 2,
+                bytes: 0)
+              rule.title = ruleTitle(fallback, answer: rule.verdict == .burn ? .yes : .no)
+            }
+          }
+        }
+      }
+      if let existing = deduplicated.firstIndex(where: { $0.id == rule.id }) {
+        deduplicated[existing].from = adding(
+          questionIDs(rule), to: deduplicated[existing].from,
+          except: deduplicated[existing].questionID)
+        deduplicated[existing].formerIDs = adding(
+          rule.formerIDs ?? [], to: deduplicated[existing].formerIDs,
+          except: deduplicated[existing].id)
+      } else {
+        deduplicated.append(rule)
+      }
+    }
+    result.rules = deduplicated
+    carryTallies(&result)
+    return result
+  }
+
   /// Version 1 → 2:
   /// - regeneralize operator rules whose question pins recency (new id; old id goes to formerIDs);
   /// - absorb with learn();
   /// - seed tallies from receipts;
   /// - seed scores from AutopilotEval.replay(memory.questions).scores.
-  /// Version >= 2 returns its input unchanged.
+  /// Version >= 2 normalizes any legacy custom-harness `place` values and otherwise returns unchanged.
   public static func migrate(_ memory: AutopilotMemory, receipts: [AutopilotReceipt])
     -> AutopilotMemory
   {
-    guard memory.version < 2 else { return memory }
-    var result = memory
+    let normalized = normalizePlaces(memory)
+    guard normalized.version < 2 else { return normalized }
+    var result = normalized
     result.version = 2
-    let asked = questionsByID(memory.questions)
+    let asked = questionsByID(result.questions)
     var rules: [AutopilotRule] = []
-    for rule in memory.rules { learn(regeneralized(rule, asked: asked), into: &rules) }
+    for rule in result.rules { learn(regeneralized(rule, asked: asked), into: &rules) }
     result.rules = rules
     // Seeded from the receipts once; from now on burns count as they are recorded.
     result.tallies = [:]
     for receipt in receipts { tally(receipt, into: &result) }
-    if result.scores.isEmpty { result.scores = AutopilotEval.replay(memory.questions).scores }
+    if result.scores.isEmpty { result.scores = AutopilotEval.replay(result.questions).scores }
     return result
   }
 

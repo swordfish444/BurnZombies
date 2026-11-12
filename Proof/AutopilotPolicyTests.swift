@@ -26,7 +26,7 @@ func autopilotPolicyProof() throws {
   let finished = copy(
     "b",
     [
-      "place": "patrol6", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+      "place": "agent", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
       "thread": "none",
     ])
   let rebuildable = junk(
@@ -108,14 +108,14 @@ func autopilotPolicyProof() throws {
   // A question reads as a short headline, what it frees, a few short facts and one line
   // of reassurance: little to read and easy to decide.
   let agentCopies = AutopilotQuestion(
-    kind: .worktree, match: ["saved": ["pushed"], "stale": ["week"], "place": ["patrol6"]],
-    question: "Can I burn old project copies made by Patrol6 agents?", why: "", examples: [],
+    kind: .worktree, match: ["saved": ["pushed"], "stale": ["week"], "place": ["agent"]],
+    question: "Can I burn old project copies made by background agents?", why: "", examples: [],
     count: 92, bytes: 14_390_000_000)
   let copiesCard = AutopilotPolicy.card(agentCopies)
   equal(copiesCard.headline, "Burn 92 copies unused for a week?")
   equal(copiesCard.frees, "Frees 14.4 GB")
   equal(
-    copiesCard.facts, ["Saved on GitHub", "Made by Patrol6 agents"],
+    copiesCard.facts, ["Saved on GitHub", "Made by background agents"],
     "how long they sat unused is in the headline")
   equal(copiesCard.note, "Each one is backed up first, so you can undo it.")
   equal([copiesCard.yes, copiesCard.no], ["Yes, burn them", "No, keep them"])
@@ -144,7 +144,7 @@ func autopilotPolicyProof() throws {
   equal(cachesCard.note, "Your tools rebuild them when needed.")
   equal(
     AutopilotPolicy.ruleTitle(agentCopies, answer: .yes),
-    "Burn: Old project copies · Saved on GitHub · Unused for a week · Made by Patrol6 agents")
+    "Burn: Old project copies · Saved on GitHub · Unused for a week · Made by background agents")
   equal(
     AutopilotPolicy.ruleTitle(lonelyServer, answer: .no),
     "Keep: Leftover Node programs · Still running a server · Idle 1+ day")
@@ -190,7 +190,7 @@ func autopilotPolicyProof() throws {
       copy(
         "pushed-\($0)",
         [
-          "place": "patrol6", "saved": "pushed", "changes": "none", "stale": "week",
+          "place": "agent", "saved": "pushed", "changes": "none", "stale": "week",
           "thread": "none",
         ])
     }
@@ -377,7 +377,7 @@ func autopilotPolicyProof() throws {
       copy(
         "local-\(i)",
         [
-          "place": "patrol6", "saved": "local", "changes": "none", "stale": "older",
+          "place": "agent", "saved": "local", "changes": "none", "stale": "older",
           "thread": "ended", "inUse": "no",
         ], bytes: 2 << 30))
   }
@@ -418,7 +418,7 @@ func autopilotPolicyProof() throws {
   busy.append(
     copy(
       "today",
-      ["place": "patrol6", "saved": "local", "changes": "none", "stale": "today", "thread": "none"])
+      ["place": "agent", "saved": "local", "changes": "none", "stale": "today", "thread": "none"])
   )
   check(
     AutopilotPolicy.proposeQuestions([busy.last!], memory: AutopilotMemory()).isEmpty,

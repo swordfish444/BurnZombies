@@ -75,12 +75,26 @@ func usefulDiscoveryProof() async throws {
     root: root, visibility: { _ in 0 }, access: fixtureAccess, discoveryHome: home)
   equal(try await first.snapshot().policy.roots.count, 0)
   let late = home.appendingPathComponent(".codex/worktrees")
-  try FileManager.default.createDirectory(at: late, withIntermediateDirectories: true)
+  let customHarness = home.appendingPathComponent(".aider/worktrees")
+  let projects = home.appendingPathComponent("Projects")
+  let sshWorktrees = home.appendingPathComponent(".ssh/worktrees")
+  for folder in [late, customHarness, projects, sshWorktrees] {
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+  }
   _ = try await first.tick()
   let runtimeRoots = try await first.snapshot().policy.roots
   check(
     runtimeRoots.contains(WorkspaceSafety.canonical(late.path)),
     "Runtime tick missed the newly created harness root")
+  check(
+    runtimeRoots.contains(WorkspaceSafety.canonical(customHarness.path)),
+    "Runtime tick missed an arbitrary ~/.<tool>/worktrees root")
+  check(
+    runtimeRoots.contains(WorkspaceSafety.canonical(projects.path)),
+    "Runtime tick missed a standard ~/Projects root")
+  checkFalse(
+    runtimeRoots.contains(WorkspaceSafety.canonical(sshWorktrees.path)),
+    "Private ~/.ssh folder must never be seeded as a worktree root")
   print(
     "PASS runtime observer discovers a harness root created after launch without restart or Hunt")
   let second = try WorktreeService(

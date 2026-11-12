@@ -58,7 +58,8 @@ func simulatedOwnersProof() async throws {
   report(seasoned, "with history")
   learns(seasoned, "with history")
   check(
-    seasoned.tells > 0, "liberal with history: BZ tells the owner what it did on its own by round 8")
+    seasoned.tells > 0, "liberal with history: BZ tells the owner what it did on its own by round 8"
+  )
   guard let undone = seasoned.undone else {
     return failTest("liberal with history: a tell to undo in round 6")
   }
@@ -282,7 +283,7 @@ func lessonsProof() async throws {
   let elsewhere = copy(
     "web-app-fix",
     [
-      "repo": "web-app", "place": "patrol6", "saved": "merged", "stale": "week",
+      "repo": "web-app", "place": "agent", "saved": "merged", "stale": "week",
       "changes": "none", "inUse": "no", "thread": "none",
     ])
   let decided = AutopilotPolicy.decide(elsewhere, memory: memory)

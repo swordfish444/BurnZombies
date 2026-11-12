@@ -63,7 +63,8 @@ private func bigFilesChoiceProof() {
   let script = AutopilotWorktrees.bigFiles(
     [file("qa/run.mp4", 600), file("qa/index.js", 0.001)], entries: ["qa/"])
   equal(script.first?.kind, "videos", "a tiny script isn't a kind the card names")
-  equal(script.first?.risks, ["bigCode", "bigMedia"], "but it is code a Yes to videos never covers")
+  equal(
+    script.first?.risks, ["bigCode", "bigMedia"], "but it is code a Yes to videos never covers")
   let unnamed = AutopilotWorktrees.bigFiles(
     [file("lab/a.ipynb", 300), file("lab/b.png", 250)], entries: ["lab/"])
   equal(unnamed.first?.kind, "images and other files", "other files come last")
@@ -162,7 +163,7 @@ func bigFilesPolicyProof() throws {
   let finished = AutopilotItem(
     id: "worktree:finished", kind: .worktree, name: "finished", bytes: 1_400_000_000,
     facts: [
-      "place": "patrol6", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+      "place": "agent", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
       "thread": "none", "bigArchives": "yes",
     ])
   equal(
@@ -190,16 +191,23 @@ func bigFilesPolicyProof() throws {
   equal(question.risks, ["bigCode=yes", "changes=large"])
   equal(question.bigBytes, 914_000_000)
   let card = AutopilotPolicy.card(question, now: now)
-  check(card.cautions.contains("1 has big unsaved code files"), "the card names the kind: \(card.cautions)")
-  let cost = "A Yes deletes its 914 MB of big unsaved files for good. Undo won't bring these back; everything else in it is backed up first."
+  check(
+    card.cautions.contains("1 has big unsaved code files"),
+    "the card names the kind: \(card.cautions)")
+  let cost =
+    "A Yes deletes its 914 MB of big unsaved files for good. Undo won't bring these back; everything else in it is backed up first."
   equal(card.cost, cost)
   equal(card.note, cost, "it is never \"so you can undo it\"")
   let changed: String = AutopilotPolicy.clock(
     now.addingTimeInterval(-26 * 86_400), now: now, calendar: .current)
   equal(card.rows.first?.details, ["tmp/checkouts · 914 MB of TypeScript files · " + changed])
-  equal(AutopilotPolicy.card(answered(AutopilotQuestion(
-    kind: .worktree, match: week, question: "q", why: "", examples: [], count: 1,
-    bytes: 1_000_000_000), .skip, now: now)).cost, nil, "a card without big files has no cost line")
+  equal(
+    AutopilotPolicy.card(
+      answered(
+        AutopilotQuestion(
+          kind: .worktree, match: week, question: "q", why: "", examples: [], count: 1,
+          bytes: 1_000_000_000), .skip, now: now)
+    ).cost, nil, "a card without big files has no cost line")
 
   // The tips above such a card never say it can be undone.
   let tips: [AutopilotTip] = AutopilotPolicy.tips(for: .worktree, filters: true, bigFiles: true)
@@ -207,7 +215,8 @@ func bigFilesPolicyProof() throws {
   checkFalse(
     tips.contains { $0.text.contains("undo it") || $0.id == "unsaved" },
     "and none says they can be undone or backed up")
-  equal(AutopilotPolicy.tips(for: .worktree, filters: true).first?.id, "backup", "as other cards' do")
+  equal(
+    AutopilotPolicy.tips(for: .worktree, filters: true).first?.id, "backup", "as other cards' do")
 
   // View details names them too, with a filter of their own.
   let shownEntry = AutopilotEntry(
@@ -218,7 +227,8 @@ func bigFilesPolicyProof() throws {
   let tag: AutopilotDetail.Tag? = listed.first?.tags.first { $0.filter == "big" }
   equal(tag?.text, "914 MB not backed up")
   equal(tag?.risky, true)
-  let notKept: [String] = (listed.first?.facts ?? []).filter { $0.label == "Not backed up" }.map(\.value)
+  let notKept: [String] = (listed.first?.facts ?? []).filter { $0.label == "Not backed up" }.map(
+    \.value)
   equal(notKept, ["tmp/checkouts · 914 MB of TypeScript files · " + changed])
   check(
     AutopilotPolicy.detailFilters(listed).contains { $0.id == "big" && $0.label == "Big files" },
@@ -230,7 +240,8 @@ func bigFilesPolicyProof() throws {
   // A card about several copies puts the ones with big files first and says what they cost together.
   var bigger = gameCopy("bigger", now: now)
   bigger.bytes = 3_000_000_000
-  let both = AutopilotPolicy.proposeQuestions([bigger, carried], memory: AutopilotMemory(), now: now)
+  let both = AutopilotPolicy.proposeQuestions(
+    [bigger, carried], memory: AutopilotMemory(), now: now)
   if let two = both.first {
     let shown = AutopilotPolicy.card(two, now: now)
     equal(shown.rows.map(\.title), ["checkouts", "bigger"], "big files first, though it's smaller")
@@ -320,10 +331,13 @@ func bigFilesPolicyProof() throws {
 
   // The replay knows the card was about big files: the older lesson didn't settle it.
   let replay = AutopilotEval.replay([doneSinceYesterday(now), yes])
-  equal(replay.steps.map(\.outcome), ["asked", "asked"], "big files are asked about in the replay too")
+  equal(
+    replay.steps.map(\.outcome), ["asked", "asked"], "big files are asked about in the replay too")
 
   // The question's own words never promise an undo it can't keep.
-  check(question.why.hasSuffix("except its big unsaved files, which a Yes deletes for good."), question.why)
+  check(
+    question.why.hasSuffix("except its big unsaved files, which a Yes deletes for good."),
+    question.why)
   check(
     AutopilotPolicy.proposeQuestions([bigger], memory: AutopilotMemory(), now: now).first?.why
       .hasSuffix("so you can undo it.") == true, "a card without big files still can")
@@ -371,7 +385,9 @@ func bigFilesPolicyProof() throws {
     AutopilotWorktrees.dropsBigFiles(media, authority: "rule:x", files: [code]),
     "not while the copy is known only for videos")
   media.facts["bigCode"] = "yes"
-  check(AutopilotWorktrees.dropsBigFiles(media, authority: "rule:x", files: [code]), "but once both are")
+  check(
+    AutopilotWorktrees.dropsBigFiles(media, authority: "rule:x", files: [code]), "but once both are"
+  )
 
   // Retire drops them only for every kind the copy was known to hold, under a lesson.
   let both2 = [checkoutsFolder(now), recordingsFolder(now)]
@@ -480,14 +496,16 @@ private func askedNotRetried(_ name: String) async throws -> (
   equal(waiting?.status, .unsure, "\(name): the copy waits unsure")
   equal(waiting?.item.facts["bigCode"], "yes")
   equal(
-    waiting?.why, "It has big files that aren't saved anywhere else, so I won't burn it without your OK.",
+    waiting?.why,
+    "It has big files that aren't saved anywhere else, so I won't burn it without your OK.",
     "\(name): and says why, promising no question")
   guard let question = look.questions.first(where: { $0.kind == .worktree }) else {
     failTest("\(name): the owner is asked about it")
     throw StoreError.message("no question")
   }
   equal(question.risks, ["bigCode=yes", "changes=large"])
-  equal(question.rows?.first?.bigFiles?.map(\.path), ["tmp/checkouts"], "\(name): its card names them")
+  equal(
+    question.rows?.first?.bigFiles?.map(\.path), ["tmp/checkouts"], "\(name): its card names them")
   // Six hours on, nothing has tried it again.
   _ = await engine.tick(now: now.addingTimeInterval(7 * 3600))
   equal(world.tried("worktree:checkouts"), 1, "\(name): nothing tries it again")
@@ -513,7 +531,8 @@ private func bigFilesYesProof() async throws {
   _ = await run.engine.tick(now: run.now.addingTimeInterval(8 * 3600 + 900))
   await eventually { run.world.burns.all.contains("worktree:checkouts-2") }
   check(
-    run.world.dropped.all.contains("worktree:checkouts-2"), "the next copy like it burns on its own")
+    run.world.dropped.all.contains("worktree:checkouts-2"), "the next copy like it burns on its own"
+  )
   let after = await run.engine.tick(now: run.now.addingTimeInterval(9 * 3600))
   checkFalse(after.questions.contains { $0.kind == .worktree }, "and nobody is asked about it")
 

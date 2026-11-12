@@ -26,7 +26,7 @@ private func keepUncheckedProof() async throws {
     AutopilotItem(
       id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
       facts: [
-        "repo": "web-app", "place": "patrol6", "saved": saved, "changes": changes,
+        "repo": "web-app", "place": "agent", "saved": saved, "changes": changes,
         "stale": "week", "inUse": inUse, "thread": "none",
       ], lastUsed: now.addingTimeInterval(-10 * 86_400))
   }
@@ -82,7 +82,7 @@ private func answerRisksProof() async throws {
     AutopilotItem(
       id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
       facts: [
-        "repo": "web-app", "place": "patrol6", "saved": "pushed", "changes": changes,
+        "repo": "web-app", "place": "agent", "saved": "pushed", "changes": changes,
         "stale": "week", "inUse": "no", "thread": "none",
       ], lastUsed: now.addingTimeInterval(-10 * 86_400))
   }
@@ -108,7 +108,8 @@ private func answerRisksProof() async throws {
   let (clean, cleanStore, cleanRoot, cleanCard) = try await yes("yes-clean", cleanWorld)
   defer { try? FileManager.default.removeItem(at: cleanRoot) }
   equal(cleanCard.risks, [], "the card showed no risk")
-  guard let cleanLesson = try cleanStore.memory().rules.first(where: { $0.questionID == cleanCard.id })
+  guard
+    let cleanLesson = try cleanStore.memory().rules.first(where: { $0.questionID == cleanCard.id })
   else { return failTest("the clean Yes teaches a lesson") }
   equal(cleanLesson.match["changes"], ["none"], "nothing unsaved")
   equal(cleanLesson.match["saved"], ["pushed", "merged"], "work on GitHub")
@@ -142,7 +143,8 @@ private func answerRisksProof() async throws {
   smallWorld.add(aged("half-done", changes: "small"))
   smallWorld.add(aged("rewrite", changes: "large"))
   _ = await small.tick(now: now.addingTimeInterval(60))
-  check(smallWorld.burns.all.contains("worktree:half-done"), "a later copy with small changes burns")
+  check(
+    smallWorld.burns.all.contains("worktree:half-done"), "a later copy with small changes burns")
   checkFalse(
     smallWorld.burns.all.contains("worktree:rewrite"), "a later copy with large changes doesn't")
 
@@ -302,7 +304,7 @@ private func reaskProof() async throws {
     AutopilotItem(
       id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
       facts: [
-        "repo": "web-app", "place": "patrol6", "saved": "pushed", "changes": changes,
+        "repo": "web-app", "place": "agent", "saved": "pushed", "changes": changes,
         "stale": "week", "inUse": "no", "thread": "none",
       ], lastUsed: now.addingTimeInterval(-10 * 86_400))
   }
@@ -413,7 +415,7 @@ private func keepNewRisksProof() async throws {
     AutopilotItem(
       id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
       facts: [
-        "repo": "web-app", "place": "patrol6", "saved": saved, "changes": changes,
+        "repo": "web-app", "place": "agent", "saved": saved, "changes": changes,
         "stale": "week", "inUse": "no", "thread": "none",
       ], lastUsed: now.addingTimeInterval(-10 * 86_400))
   }
@@ -422,7 +424,8 @@ private func keepNewRisksProof() async throws {
       aged("fix-login", saved: "pushed", changes: "none"),
       aged("dark-mode", saved: "merged", changes: "none"),
     ])
-  let (copyEngine, copyStore, copyRoot) = try tellEngine("keep-two-risks", copies, AutopilotMemory())
+  let (copyEngine, copyStore, copyRoot) = try tellEngine(
+    "keep-two-risks", copies, AutopilotMemory())
   defer { try? FileManager.default.removeItem(at: copyRoot) }
   guard let first = await copyEngine.tick(now: now).questions.first(where: { $0.kind == .worktree })
   else { return failTest("a question about the clean copies") }
@@ -484,7 +487,7 @@ private func keepEveryMemberProof() async throws {
     AutopilotItem(
       id: "worktree:" + name, kind: .worktree, name: name, bytes: 600_000_000,
       facts: [
-        "repo": "web-app", "place": "patrol6", "saved": saved, "changes": changes,
+        "repo": "web-app", "place": "agent", "saved": saved, "changes": changes,
         "stale": "week", "inUse": "no", "thread": "none",
       ], lastUsed: now.addingTimeInterval(-10 * 86_400))
   }
@@ -586,4 +589,3 @@ private func keepEveryMemberProof() async throws {
   check(actWorld.burns.all.contains("worktree:tidy"), "a clean copy at that age still burns")
   equal(status(after, "draft-c"), .keep, "a copy with work only on this Mac at that age is kept")
 }
-
