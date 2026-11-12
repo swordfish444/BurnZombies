@@ -8,7 +8,7 @@ public enum AutopilotPolicy {
   /// Advice about current activity must be reviewed again, even if coarse facts stay the same.
   public static let aiJudgmentLifetime: TimeInterval = 4 * 3600
   public static let maximumOpenQuestions = 3
-  public static let ownerManagedPlaces: Set<String> = ["codex", "claude", "conductor"]
+  public static let ownerManagedPlaces: Set<String> = ["codex", "claude", "cursor", "conductor"]
 
   /// Safe floor that works before the operator answers anything. Each can be switched off.
   public static let starterRules: [AutopilotRule] = [
@@ -54,7 +54,7 @@ public enum AutopilotPolicy {
       id: "starter-finished-copies", kind: .worktree,
       match: [
         "saved": ["merged"], "changes": ["none"], "stale": ["month", "older"], "inUse": ["no"],
-        "thread": ["ended", "none"], "place": ["patrol6", "sibling", "other"],
+        "thread": ["ended", "none"], "place": ["agent", "sibling", "other"],
       ], verdict: .burn, source: .starter,
       title: "Old copies already merged, with no changes, untouched for a month",
       created: Date(timeIntervalSinceReferenceDate: 0)),
@@ -504,7 +504,8 @@ public enum AutopilotPolicy {
     case .worktree:
       var parts = [String]()
       if let place = [
-        "patrol6": "made by Patrol6 agents", "codex": "made by Codex", "claude": "made by Claude",
+        "agent": "made by background agents", "codex": "made by Codex",
+        "claude": "made by Claude", "cursor": "made by Cursor",
         "conductor": "made by Conductor", "sibling": "next to your main projects",
       ][value("place") ?? ""] {
         parts.append(place)
@@ -781,8 +782,9 @@ extension AutopilotPolicy {
         (
           "place",
           [
-            "patrol6": "Made by Patrol6 agents", "codex": "Made by Codex",
-            "claude": "Made by Claude", "conductor": "Made by Conductor",
+            "agent": "Made by background agents", "codex": "Made by Codex",
+            "claude": "Made by Claude", "cursor": "Made by Cursor",
+            "conductor": "Made by Conductor",
           ]
         ),
         ("thread", ["ended": "Its chat is finished"]),

@@ -47,7 +47,8 @@ private struct DetailsWorld {
   let login = detailsCopy(
     "fix-login", bytes: 2_000_000_000, used: detailsDate(4, 17), saved: "local", changes: "small",
     unsaved: 6)
-  let dark = detailsCopy("dark-mode", bytes: 1_500_000_000, used: detailsDate(3, 16), saved: "merged")
+  let dark = detailsCopy(
+    "dark-mode", bytes: 1_500_000_000, used: detailsDate(3, 16), saved: "merged")
   let footer = detailsCopy(
     "tidy-footer", bytes: 1_000_000_000, used: detailsDate(2, 9), changes: "unknown")
   let spared = detailsCopy("keep-me", bytes: 900_000_000, used: detailsDate(1, 12))
@@ -92,10 +93,14 @@ private func detailsListProof() {
     world.question, entries: world.entries, now: detailsNow, calendar: detailsCalendar)
   equal(
     details.map(\.id),
-    ["worktree:fix-login", "worktree:dark-mode", "worktree:tidy-footer", "worktree:keep-me",
-      "worktree:retry-me"],
+    [
+      "worktree:fix-login", "worktree:dark-mode", "worktree:tidy-footer", "worktree:keep-me",
+      "worktree:retry-me",
+    ],
     "details: the question's copies and the spared one, biggest first")
-  equal(details.filter(\.spared).map(\.id), ["worktree:keep-me"], "details: only the owner's keep is spared")
+  equal(
+    details.filter(\.spared).map(\.id), ["worktree:keep-me"],
+    "details: only the owner's keep is spared")
   equal(
     details.filter { !$0.spared }.count, world.question.count,
     "details: what isn't spared is what the question counts")
@@ -107,7 +112,8 @@ private func detailsListProof() {
     AutopilotPolicy.filtered(details, by: "local").map(\.id), ["worktree:fix-login"],
     "filter: work only on this Mac")
   equal(
-    AutopilotPolicy.filtered(details, by: "spared").map(\.id), ["worktree:keep-me"], "filter: spared")
+    AutopilotPolicy.filtered(details, by: "spared").map(\.id), ["worktree:keep-me"],
+    "filter: spared")
   equal(AutopilotPolicy.filtered(details, by: "all").count, 5, "filter: all")
   let noneSpared = details.map { detail -> AutopilotDetail in
     var unspared = detail
@@ -201,8 +207,10 @@ private func tipDeckProof() {
   let copies = AutopilotPolicy.tips(for: .worktree, filters: true)
   equal(
     copies.map(\.id),
-    ["backup", "local", "unsaved", "safe", "teach", "skip", "details", "hover", "spare", "flip",
-      "filters"])
+    [
+      "backup", "local", "unsaved", "safe", "teach", "skip", "details", "hover", "spare", "flip",
+      "filters",
+    ])
   equal(copies.first?.text, "Every copy is backed up before it burns, so you can undo it.")
   checkFalse(
     AutopilotPolicy.tips(for: .worktree, filters: false).contains { $0.id == "filters" },
@@ -239,7 +247,8 @@ private func tipDeckProof() {
     last = id
   }
   check(
-    shuffled.shown.values.allSatisfy { $0 <= AutopilotTipDeck.showsEach }, "each tip within its limit")
+    shuffled.shown.values.allSatisfy { $0 <= AutopilotTipDeck.showsEach },
+    "each tip within its limit")
 
   let skip = copies.filter { $0.id == "skip" }
   var single = AutopilotTipDeck(tips: skip)
@@ -263,7 +272,7 @@ func spareEngineProof() async throws {
     let folder = folders.appendingPathComponent(name)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let facts: [String: String] = [
-      "repo": "web-app", "place": "patrol6", "saved": saved, "changes": "none", "stale": "week",
+      "repo": "web-app", "place": "agent", "saved": saved, "changes": "none", "stale": "week",
       "inUse": "no", "thread": "none",
     ]
     return AutopilotItem(
@@ -293,7 +302,8 @@ func spareEngineProof() async throws {
     .answer(questionID: asked.id, answer: .yes, risks: drawn.risks), now: now)
   await eventually { world.burns.all.count == 2 }
   equal(
-    Set(world.burns.all), ["worktree:fix-login", "worktree:dark-mode"], "spare: the Yes burns the two")
+    Set(world.burns.all), ["worktree:fix-login", "worktree:dark-mode"],
+    "spare: the Yes burns the two")
   let after = await engine.tick(now: now.addingTimeInterval(60))
   checkFalse(world.burns.all.contains("worktree:wip-search"), "spare: never the spared copy")
   equal(

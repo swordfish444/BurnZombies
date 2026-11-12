@@ -54,8 +54,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>BurnZombies</string>
 <key>CFBundleExecutable</key><string>BurnZombiesApp</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.19.2</string>
-<key>CFBundleVersion</key><string>92</string>
+<key>CFBundleShortVersionString</key><string>0.19.3</string>
+<key>CFBundleVersion</key><string>93</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

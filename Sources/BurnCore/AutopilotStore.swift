@@ -82,7 +82,11 @@ public final class AutopilotStore: @unchecked Sendable {
   /// so the tallies were just counted from receipts.json. Call with `lock` held.
   private func loadMemory() throws -> (memory: AutopilotMemory, seeded: Bool) {
     let memory = try load("memory.json", limit: 8 << 20, empty: AutopilotMemory())
-    guard memory.version < 2 else { return (memory, false) }
+    if memory.version >= 2 {
+      let normalized = AutopilotPolicy.normalizePlaces(memory)
+      if normalized != memory { try? save(normalized, "memory.json", limit: 8 << 20) }
+      return (normalized, false)
+    }
     let receipts: [AutopilotReceipt]
     do {
       receipts = try load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())

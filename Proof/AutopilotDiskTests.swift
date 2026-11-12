@@ -396,8 +396,8 @@ private func adkJunkProof(base: String, now: Date) throws {
   let fm = FileManager.default
   let day: TimeInterval = 86_400
   let home = base + "/home"
-  let repo = home + "/git/p6-bodycam"
-  let old = home + "/git/p6-bodycam-old"
+  let repo = home + "/git/mobile-app"
+  let old = home + "/git/mobile-app-old"
   let external = base + "/external"
   let derived = home + "/Library/Developer/Xcode/DerivedData"
   let playwright = home + "/Library/Caches/ms-playwright/chromium-1"
@@ -547,9 +547,9 @@ private func adkJunkProof(base: String, now: Date) throws {
     item(npm)?.facts, disk("package-cache", "global-cache", "today", "medium"), "npm cache")
   let nodes = item(old + "/node_modules")
   equal(nodes?.id, "disk:" + AutopilotItem.hash(old + "/node_modules"), "item id")
-  equal(nodes?.name, "node_modules in p6-bodycam-old", "item name")
+  equal(nodes?.name, "node_modules in mobile-app-old", "item name")
   equal(
-    nodes?.detail, "Downloaded packages for p6-bodycam-old. npm rebuilds them when needed.",
+    nodes?.detail, "Downloaded packages for mobile-app-old. npm rebuilds them when needed.",
     "item detail")
   equal(nodes?.bytes, 3_000_000_000, "item bytes come from the sizer")
   func touched(_ path: String) -> Date? {
@@ -573,9 +573,9 @@ private func adkJunkProof(base: String, now: Date) throws {
   check(items.allSatisfy { $0.lastUsed != nil }, "every folder has a date")
   check(items.allSatisfy { $0.title == nil }, "folders are named by what they are")
   equal(
-    item(old + "/packages/web/node_modules")?.name, "node_modules in p6-bodycam-old/packages/web",
+    item(old + "/packages/web/node_modules")?.name, "node_modules in mobile-app-old/packages/web",
     "nested item name")
-  equal(item(repo + "/dist")?.name, "dist in p6-bodycam", "main checkout item name")
+  equal(item(repo + "/dist")?.name, "dist in mobile-app", "main checkout item name")
   let excludedFolders: [String] = [
     ssh, cloud, outside, old + "/tools", old + "/build", old + "/vendor", old + "/a",
     repo + "/build", home + "/.gradle", old + "/node_modules/pkg",
@@ -733,7 +733,7 @@ private func adkJunkProof(base: String, now: Date) throws {
 
   // Clearing junk must not make the copy it sits in look worked in today: removing a folder
   // stamps its parent with the current time. On a real Mac two quiet copies looked used today.
-  let quiet = home + "/git/p6-bodycam-quiet"
+  let quiet = home + "/git/mobile-app-quiet"
   try adkGit(repo, ["worktree", "add", "--detach", quiet])
   for relative in ["node_modules/pkg/index.js", "packages/web/node_modules/dep/index.js"] {
     try adkWrite(filler, to: quiet + "/" + relative)
@@ -1991,4 +1991,40 @@ private func adkBuildRingsAndScratchProof(base: String, now: Date) throws {
   let captured = try PrivateRecovery.capture(
     xattrSource, root: URL(fileURLWithPath: xattrStore), key: xattrKey)
   try PrivateRecovery.validate(captured, key: xattrKey)
+
+  // 5. Universal developer global caches (uv, pnpm, Bun, Cargo, CocoaPods, Go) are recognized,
+  // regenerable, and reclaimed without backup snapshot bloat.
+  let universalHome = base + "/universal-home"
+  let universalCaches: [(relative: String, folder: String, name: String)] = [
+    (".cache/uv", "package-cache", "uv cache"),
+    ("Library/pnpm/store", "package-cache", "pnpm cache"),
+    (".bun/install/cache", "package-cache", "Bun cache"),
+    (".cargo/registry/cache", "package-cache", "Cargo cache"),
+    ("Library/Caches/CocoaPods", "package-cache", "CocoaPods cache"),
+    ("Library/Caches/go-build", "build-output", "Go cache"),
+  ]
+  for entry in universalCaches {
+    try adkWrite(
+      "cached-artifact", to: universalHome + "/" + entry.relative + "/blob.bin", modified: now)
+  }
+  let universalItems = AutopilotDisk.items(
+    worktrees: [], home: universalHome, caches: true, mains: false, now: now,
+    sizer: { _ in 250_000_000 })
+  for entry in universalCaches {
+    let fullPath = WorkspaceSafety.canonical(universalHome) + "/" + entry.relative
+    guard let found = universalItems.first(where: { $0.path == fullPath }) else {
+      return failTest("expected universal cache item at \(fullPath)")
+    }
+    equal(found.name, entry.name)
+    equal(found.facts["folder"], entry.folder)
+    equal(found.facts["home"], "global-cache")
+    check(
+      AutopilotDisk.regenerable(fullPath, home: universalHome), "regenerable: \(entry.relative)")
+    let receipt = AutopilotDisk.reclaim(
+      found, authority: "rule:universal", home: universalHome, inUse: { _ in 0 },
+      root: URL(fileURLWithPath: base + "/universal-store"))
+    equal(receipt.outcome, "burned", "reclaim \(entry.name): \(receipt.detail)")
+    isNil(receipt.restore)
+    checkFalse(fm.fileExists(atPath: fullPath), "\(entry.name) removed from disk")
+  }
 }
