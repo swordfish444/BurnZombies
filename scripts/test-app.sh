@@ -32,6 +32,7 @@ step python3 scripts/test-machine-setup.py
 step .build/debug/BurnZombiesApp --settings-proof "$proof_artifacts/settings.png"
 step .build/debug/BurnZombiesApp --settings-layout-proof "$proof_artifacts/settings-layout"
 step .build/debug/BurnProof --app-updates
+step python3 scripts/test-app-termination.py
 step .build/debug/BurnZombiesApp --about-proof "$proof_artifacts/about"
 step .build/debug/BurnZombiesApp --access-banner-proof "$proof_artifacts/access-banner"
 # scripts/test.sh --full already covers security boundaries and every Autopilot
