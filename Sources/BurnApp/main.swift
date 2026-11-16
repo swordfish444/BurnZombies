@@ -386,6 +386,7 @@ import UserNotifications
   private var timer: Timer?
   private var observationSuspended = false
   private var observationStopped = false
+  private(set) var readyToTerminate = false
   private var notificationPermissionError: String?
   private var notificationDeliveryInFlight = false
   #if DEBUG
@@ -701,6 +702,7 @@ import UserNotifications
     observationStopped = true
     timer?.invalidate()
     await monitor?.shutdownWorktrees()
+    readyToTerminate = true
   }
   func suspend() {
     observationSuspended = true
@@ -1029,8 +1031,14 @@ import UserNotifications
       do { try await monitor?.checkpoint() } catch {
         message = "Could not save state: \(error.localizedDescription)"
       }
-      NSApp.terminate(nil)
+      await terminateAfterShutdown()
     }
+  }
+  func terminateAfterShutdown() async {
+    // AppKit's terminateLater loop cannot run the MainActor cleanup task when terminate()
+    // is called from an existing MainActor task. Finish that work before entering AppKit.
+    await shutdownWorktrees()
+    NSApp.terminate(nil)
   }
   lazy var appUpdates = AppUpdateSettingsModel(
     // Settings' header reads this. A demo has no update history, and proofs stay out of real state.
@@ -1050,7 +1058,7 @@ import UserNotifications
       request.reopenSettings = NSApp.isActive
       try request.save()
       try await AppUpdateHandoff.launch(request)
-      NSApp.terminate(nil)
+      await self.terminateAfterShutdown()
     } catch {
       await self.monitor?.resumeAfterAppUpdateFailure()
       await self.autopilotRuntime?.coordinator.resumeAfterAppUpdateFailure()
@@ -1354,6 +1362,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     return false
   }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    if model.readyToTerminate { return .terminateNow }
+    // External quit/logout requests still wait for cleanup through AppKit's reply protocol.
     Task {
       await model.shutdownWorktrees()
       sender.reply(toApplicationShouldTerminate: true)
@@ -1509,6 +1519,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 MainActor.assumeIsolated {
   let app = NSApplication.shared
   #if DEBUG
+    if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--termination-proof" {
+      app.setActivationPolicy(.prohibited)
+      let proof = AppTerminationProof(
+        mode: CommandLine.arguments[2], output: CommandLine.arguments[3])
+      app.delegate = proof
+      withExtendedLifetime(proof) { app.run() }
+      exit(1)
+    }
     if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--about-proof" {
       app.setActivationPolicy(.prohibited)
       Task { @MainActor in
