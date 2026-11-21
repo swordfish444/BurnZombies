@@ -452,6 +452,65 @@ public enum AutopilotHarness {
     }
   }
 
+  /// Claude CLI stores a per-cwd project cache under `~/Library/Caches/claude-cli-nodejs` where
+  /// non-alphanumeric characters become `-`. Because each sweep uses a one-shot `autopilot-run-<UUID>`
+  /// directory, remove that exact cache directory on exit and prune any older orphans.
+  public static func claudeRunCacheDirectory(
+    for directory: URL, home: String = FileManager.default.homeDirectoryForCurrentUser.path
+  ) -> URL {
+    let canonical = WorkspaceSafety.canonical(directory.path)
+    let encoded = String(
+      canonical.unicodeScalars.map { scalar in
+        switch scalar.value {
+        case 48...57, 65...90, 97...122, 45:
+          return Character(scalar)
+        default:
+          return "-"
+        }
+      })
+    return URL(fileURLWithPath: home, isDirectory: true)
+      .appendingPathComponent("Library/Caches/claude-cli-nodejs", isDirectory: true)
+      .appendingPathComponent(encoded, isDirectory: true)
+  }
+
+  /// Removes orphaned `~/Library/Caches/claude-cli-nodejs/*-autopilot-run-<UUID>` directories left
+  /// by completed or interrupted sweeps once past `graceAge`.
+  @discardableResult
+  public static func pruneClaudeRunCaches(
+    home: String = FileManager.default.homeDirectoryForCurrentUser.path,
+    root: URL = Store.defaultRoot, graceAge: TimeInterval = 3600, now: Date = Date()
+  ) -> Int {
+    let cacheRoot = URL(fileURLWithPath: home, isDirectory: true)
+      .appendingPathComponent("Library/Caches/claude-cli-nodejs", isDirectory: true)
+    var rootStat = stat()
+    guard lstat(cacheRoot.path, &rootStat) == 0, (rootStat.st_mode & S_IFMT) == S_IFDIR,
+      let names = try? FileManager.default.contentsOfDirectory(atPath: cacheRoot.path)
+    else { return 0 }
+    let marker = "-autopilot-run-"
+    var removed = 0
+    for name in names {
+      guard let range = name.range(of: marker, options: .backwards) else { continue }
+      let suffix = String(name[range.upperBound...])
+      guard suffix.count == 36, UUID(uuidString: suffix) != nil else { continue }
+      let activeDir = root.appendingPathComponent("autopilot-run-" + suffix, isDirectory: true)
+      var activeStat = stat()
+      if lstat(activeDir.path, &activeStat) == 0 || errno != ENOENT { continue }
+      let candidate = cacheRoot.appendingPathComponent(name, isDirectory: true)
+      var info = stat()
+      guard lstat(candidate.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR,
+        info.st_uid == getuid()
+      else { continue }
+      let modified = Date(
+        timeIntervalSince1970: Double(info.st_mtimespec.tv_sec)
+          + Double(info.st_mtimespec.tv_nsec) / 1_000_000_000)
+      guard now.timeIntervalSince(modified) >= graceAge else { continue }
+      if (try? FileManager.default.removeItem(at: candidate)) != nil {
+        removed += 1
+      }
+    }
+    return removed
+  }
+
   /// Runs one sweep in an owned process group. Throws a short reason on failure. Claude's output
   /// streams: what it says and spends reaches `run.events` while it works, and BZ stops it at the
   /// run's limit even before Claude's own check does. Stopping the run ends the whole group.
@@ -477,7 +536,19 @@ public enum AutopilotHarness {
       "autopilot-run-" + UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(
       at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-    defer { try? FileManager.default.removeItem(at: directory) }
+    let claudeCache =
+      c.harness == "claude" ? claudeRunCacheDirectory(for: directory) : nil
+    defer {
+      try? FileManager.default.removeItem(at: directory)
+      if let claudeCache {
+        var info = stat()
+        if lstat(claudeCache.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR,
+          info.st_uid == getuid()
+        {
+          try? FileManager.default.removeItem(at: claudeCache)
+        }
+      }
+    }
     let brief = deep ? deepPrompt : prompt
     let args = try arguments(
       c, directory: directory, root: root, prompt: brief, options: run.options)

@@ -269,6 +269,7 @@ public enum WorktreeInspection {
     var allocated: UInt64 = 0
     var attributeBytes = 0
     var rootPending = true
+    defer { malloc_zone_pressure_relief(nil, 0) }
     while let url = rootPending
       ? {
         rootPending = false
@@ -452,6 +453,7 @@ public enum WorktreeInspection {
       r.gaps = ["Registered directory is missing or its volume is unavailable."]
       return r
     }
+    var consumerChecked = false
     do {
       guard FileManager.default.fileExists(atPath: r.path + "/.git") else {
         throw StoreError.message("Checkout registration unavailable at its recorded path.")
@@ -549,6 +551,18 @@ public enum WorktreeInspection {
       let entries = statusText.split(separator: "\0")
       r.ignored = entries.filter { $0.hasPrefix("!! ") }.count
       r.changes = entries.filter { !$0.hasPrefix("!! ") }.count
+      switch visibility(r.path) {
+      case 0:
+        r.consumer = "none observed"
+        consumerChecked = true
+      case 1:
+        r.consumer = "in use"
+        consumerChecked = true
+      default:
+        r.consumer = "unknown"
+        r.gaps.append(consumerGap)
+        consumerChecked = true
+      }
       let (files, size) = try files(r.path, permitLinks: true)
       r.allocated = size
       r.lastFileChange = files.map {
@@ -565,16 +579,9 @@ public enum WorktreeInspection {
         r.confirmedAt = nil
       }
       r.revision = revision
-      switch visibility(r.path) {
-      case 0: r.consumer = "none observed"
-      case 1: r.consumer = "in use"
-      default:
-        r.consumer = "unknown"
-        r.gaps.append(consumerGap)
-      }
     } catch {
       r.gaps.append(error.localizedDescription)
-      r.consumer = "unknown"
+      if !consumerChecked { r.consumer = "unknown" }
     }
     return r
   }

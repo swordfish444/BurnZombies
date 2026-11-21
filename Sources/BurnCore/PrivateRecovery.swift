@@ -78,6 +78,9 @@ public enum PrivateRecovery {
       _ = try WorktreeGit.run(repository, ["cat-file", "-e", head + "^{commit}"])
     }
     var files = original
+    let scratchCapacity = 1_100_000
+    var encodeScratch = [UInt8](repeating: 0, count: scratchCapacity)
+    defer { malloc_zone_pressure_relief(nil, 0) }
     for i in files.indices where files[i].kind == "file" {
       if committed.contains(files[i].path) { continue }
       uniqueBytes += UInt64(max(0, files[i].size))
@@ -85,45 +88,61 @@ public enum PrivateRecovery {
         throw StoreError.message(
           "Insufficient private recovery capacity; preserve the original without truncation.")
       }
-      let file = URL(fileURLWithPath: path).appendingPathComponent(files[i].path)
-      let fd = open(file.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
-      guard fd >= 0 else {
-        throw StoreError.message("Recovery source unavailable; nothing removed.")
+      try autoreleasepool {
+        let file = URL(fileURLWithPath: path).appendingPathComponent(files[i].path)
+        let fd = open(file.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else {
+          throw StoreError.message("Recovery source unavailable; nothing removed.")
+        }
+        let input = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? input.close() }
+        var before = stat()
+        var after = stat()
+        guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
+          before.st_ino == files[i].inode, before.st_size == files[i].size
+        else {
+          throw StoreError.message("Recovery source changed; nothing removed.")
+        }
+        var hash = SHA256()
+        var size: Int64 = 0
+        var blocks: [String] = []
+        while let data = try input.read(upToCount: 1_048_576), !data.isEmpty {
+          try Task.checkCancellation()
+          try autoreleasepool {
+            hash.update(data: data)
+            size += Int64(data.count)
+            let packed: Data
+            let encodedCount = encodeScratch.withUnsafeMutableBytes { dst in
+              data.withUnsafeBytes { src in
+                compression_encode_buffer(
+                  dst.bindMemory(to: UInt8.self).baseAddress!, scratchCapacity,
+                  src.bindMemory(to: UInt8.self).baseAddress!, data.count, nil, COMPRESSION_LZFSE)
+              }
+            }
+            if encodedCount > 0 {
+              packed = Data(bytes: encodeScratch, count: encodedCount)
+            } else {
+              packed = try (data as NSData).compressed(using: .lzfse) as Data
+            }
+            let name = UUID().uuidString + ".enc"
+            try WorktreeRecovery.write(
+              WorktreeRecovery.seal(
+                packed, key: key, context: id + "|" + files[i].path + "|\(blocks.count)"),
+              to: directory.appendingPathComponent(name))
+            blocks.append(name)
+          }
+        }
+        guard fstat(fd, &after) == 0, size == before.st_size, before.st_size == after.st_size,
+          before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+          before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+          before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+          before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec
+        else {
+          throw StoreError.message("Recovery source changed; nothing removed.")
+        }
+        files[i].blocks = blocks
+        files[i].digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
       }
-      let input = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-      defer { try? input.close() }
-      var before = stat()
-      var after = stat()
-      guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
-        before.st_ino == files[i].inode, before.st_size == files[i].size
-      else {
-        throw StoreError.message("Recovery source changed; nothing removed.")
-      }
-      var hash = SHA256()
-      var size: Int64 = 0
-      var blocks: [String] = []
-      while let data = try input.read(upToCount: 1_048_576), !data.isEmpty {
-        try Task.checkCancellation()
-        hash.update(data: data)
-        size += Int64(data.count)
-        let packed = try (data as NSData).compressed(using: .lzfse) as Data
-        let name = UUID().uuidString + ".enc"
-        try WorktreeRecovery.write(
-          WorktreeRecovery.seal(
-            packed, key: key, context: id + "|" + files[i].path + "|\(blocks.count)"),
-          to: directory.appendingPathComponent(name))
-        blocks.append(name)
-      }
-      guard fstat(fd, &after) == 0, size == before.st_size, before.st_size == after.st_size,
-        before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
-        before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
-        before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
-        before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec
-      else {
-        throw StoreError.message("Recovery source changed; nothing removed.")
-      }
-      files[i].blocks = blocks
-      files[i].digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
     let manifest = try JSONEncoder().encode(
       Manifest(
@@ -179,18 +198,21 @@ public enum PrivateRecovery {
     else {
       throw StoreError.message("Contents changed after recovery; nothing removed.")
     }
+    defer { malloc_zone_pressure_relief(nil, 0) }
     for file in saved.files
     where file.kind == "file" && !(saved.committed ?? []).contains(file.path) {
-      let fd = open(reference.source + "/" + file.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-      guard fd >= 0 else { throw StoreError.message("Recovery source changed.") }
-      let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-      defer { try? handle.close() }
-      var hash = SHA256()
-      while let bytes = try handle.read(upToCount: 1_048_576), !bytes.isEmpty {
-        hash.update(data: bytes)
-      }
-      guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == file.digest else {
-        throw StoreError.message("File contents changed after recovery; nothing removed.")
+      try autoreleasepool {
+        let fd = open(reference.source + "/" + file.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw StoreError.message("Recovery source changed.") }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var hash = SHA256()
+        while let bytes = try handle.read(upToCount: 1_048_576), !bytes.isEmpty {
+          hash.update(data: bytes)
+        }
+        guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == file.digest else {
+          throw StoreError.message("File contents changed after recovery; nothing removed.")
+        }
       }
     }
   }
@@ -198,6 +220,7 @@ public enum PrivateRecovery {
     _ reference: Reference, to path: String, key: SymmetricKey? = nil,
     emptyWorktree: Bool = false, storedOnly: Bool = false
   ) throws {
+    defer { malloc_zone_pressure_relief(nil, 0) }
     let key = try key ?? WorktreeRecoveryKey.load(create: false)
     let saved = try manifest(reference, key: key)
     var kinds: [String: String] = [:]
@@ -245,6 +268,7 @@ public enum PrivateRecovery {
       }.map(\.path)
       try WorktreeGit.checkout(repository, revision: head, to: path, paths: paths)
     }
+    var decodeScratch = [UInt8](repeating: 0, count: 1_048_577)
     for file in saved.files.sorted(by: { $0.path.count < $1.path.count }) where !file.path.isEmpty {
       let target = URL(fileURLWithPath: path).appendingPathComponent(file.path)
       if (saved.committed ?? []).contains(file.path), file.kind == "file" {
@@ -259,38 +283,44 @@ public enum PrivateRecovery {
         guard let link = file.target else { throw StoreError.message("Missing recovery link.") }
         try fm.createSymbolicLink(atPath: target.path, withDestinationPath: link)
       default:
-        let fd = open(target.path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw StoreError.message("Recovery destination already exists.") }
-        let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        defer { try? output.close() }
-        var hash = SHA256()
-        for (index, name) in (file.blocks ?? []).enumerated() {
-          guard name.hasSuffix(".enc"), UUID(uuidString: String(name.dropLast(4))) != nil else {
-            throw StoreError.message("Invalid encrypted block.")
-          }
-          let packed = try WorktreeRecovery.open(
-            WorktreeRecovery.read(
-              URL(fileURLWithPath: reference.directory).appendingPathComponent(name),
-              limit: 1_100_000),
-            key: key, context: reference.id + "|" + file.path + "|\(index)")
-          var data = Data(count: 1_048_577)
-          let count = data.withUnsafeMutableBytes { out in
-            packed.withUnsafeBytes { input in
-              compression_decode_buffer(
-                out.bindMemory(to: UInt8.self).baseAddress!, 1_048_577,
-                input.bindMemory(to: UInt8.self).baseAddress!, packed.count, nil, COMPRESSION_LZFSE)
+        try autoreleasepool {
+          let fd = open(target.path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, 0o600)
+          guard fd >= 0 else { throw StoreError.message("Recovery destination already exists.") }
+          let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+          defer { try? output.close() }
+          var hash = SHA256()
+          for (index, name) in (file.blocks ?? []).enumerated() {
+            try autoreleasepool {
+              guard name.hasSuffix(".enc"), UUID(uuidString: String(name.dropLast(4))) != nil else {
+                throw StoreError.message("Invalid encrypted block.")
+              }
+              let packed = try WorktreeRecovery.open(
+                WorktreeRecovery.read(
+                  URL(fileURLWithPath: reference.directory).appendingPathComponent(name),
+                  limit: 1_100_000),
+                key: key, context: reference.id + "|" + file.path + "|\(index)")
+              let count = decodeScratch.withUnsafeMutableBytes { out in
+                packed.withUnsafeBytes { input in
+                  compression_decode_buffer(
+                    out.bindMemory(to: UInt8.self).baseAddress!, 1_048_577,
+                    input.bindMemory(to: UInt8.self).baseAddress!, packed.count, nil,
+                    COMPRESSION_LZFSE)
+                }
+              }
+              guard count > 0, count <= 1_048_576 else {
+                throw StoreError.message("Invalid compressed recovery block.")
+              }
+              decodeScratch.withUnsafeBytes { raw in
+                let slice = UnsafeRawBufferPointer(rebasing: raw.prefix(count))
+                hash.update(bufferPointer: slice)
+              }
+              try output.write(contentsOf: decodeScratch.prefix(count))
             }
           }
-          guard count > 0, count <= 1_048_576 else {
-            throw StoreError.message("Invalid compressed recovery block.")
+          try output.synchronize()
+          guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == file.digest else {
+            throw StoreError.message("Recovered file integrity failed.")
           }
-          data.count = count
-          hash.update(data: data)
-          try output.write(contentsOf: data)
-        }
-        try output.synchronize()
-        guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == file.digest else {
-          throw StoreError.message("Recovered file integrity failed.")
         }
       }
     }
@@ -320,5 +350,77 @@ public enum PrivateRecovery {
         throw StoreError.message("Cannot restore file dates.")
       }
     }
+  }
+
+  /// Removes one owned archive directory under `<root>/private-recovery/<id>` when a pre-removal
+  /// check refuses after `capture` completed, or when a receipt's retention window has ended.
+  public static func remove(_ reference: Reference, root: URL) {
+    guard UUID(uuidString: reference.id) != nil else { return }
+    let base = WorkspaceSafety.canonical(root.appendingPathComponent("private-recovery").path)
+    guard base.hasPrefix("/"), base != "/" else { return }
+    let expected = base + "/" + reference.id
+    var info = stat()
+    guard lstat(expected, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(),
+      WorkspaceSafety.canonical(reference.directory) == expected
+    else { return }
+    try? FileManager.default.removeItem(atPath: expected)
+  }
+
+  /// Reclaims unreferenced `<root>/private-recovery/<uuid>` archives past `graceAge` so trimmed,
+  /// restored or aborted backups do not leak gigabytes and millions of `.enc` blocks forever.
+  /// Any directory modified within `graceAge` (default 2 hours) stays untouched so an in-flight
+  /// `capture` that has not yet appended its receipt can never race pruning.
+  @discardableResult
+  public static func prune(
+    root: URL, keepingIDs: Set<String>, graceAge: TimeInterval = 2 * 3600, now: Date = Date()
+  ) -> (removed: Int, bytes: UInt64) {
+    let rawBase = root.appendingPathComponent("private-recovery").path
+    var baseStat = stat()
+    guard lstat(rawBase, &baseStat) == 0, baseStat.st_mode & S_IFMT == S_IFDIR,
+      baseStat.st_uid == getuid()
+    else { return (0, 0) }
+    let base = WorkspaceSafety.canonical(rawBase)
+    guard base == rawBase, base.hasPrefix("/"), base != "/",
+      let names = try? FileManager.default.contentsOfDirectory(atPath: base)
+    else { return (0, 0) }
+
+    var removed = 0
+    var reclaimed: UInt64 = 0
+    for name in names where UUID(uuidString: name) != nil && !keepingIDs.contains(name) {
+      let target = base + "/" + name
+      var info = stat()
+      guard lstat(target, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(),
+        WorkspaceSafety.canonical(target) == target
+      else { continue }
+      let modified = Date(
+        timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec)
+          + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9)
+      guard now.timeIntervalSince(modified) >= graceAge else { continue }
+
+      var archiveBytes: UInt64 = 0
+      let restorePath = target + "/restore.json"
+      if let data = try? Data(contentsOf: URL(fileURLWithPath: restorePath)),
+        let restore = try? JSONDecoder().decode(AutopilotRestore.self, from: data)
+      {
+        archiveBytes = restore.recovery?.allocated ?? 0
+        if !restore.repository.isEmpty, restore.ref.hasPrefix("refs/burnzombies/retired/"),
+          FileManager.default.fileExists(atPath: restore.repository)
+        {
+          _ = try? WorktreeGit.run(
+            restore.repository, ["update-ref", "-d", restore.ref], seconds: 5)
+        }
+      }
+      if archiveBytes == 0 {
+        archiveBytes = AutopilotDisk.countedSize(target, deadline: 2) ?? 0
+      }
+      if (try? FileManager.default.removeItem(atPath: target)) != nil,
+        !FileManager.default.fileExists(atPath: target)
+      {
+        removed += 1
+        reclaimed += archiveBytes
+      }
+    }
+    if removed > 0 { malloc_zone_pressure_relief(nil, 0) }
+    return (removed, reclaimed)
   }
 }

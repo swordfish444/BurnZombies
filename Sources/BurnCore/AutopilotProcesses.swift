@@ -38,8 +38,9 @@ public struct AutopilotProcessProbe: Sendable {
 public enum AutopilotProcesses {
   static let protectedNames: Set<String> = [
     "launchd", "kernel_task", "login", "WindowServer", "sshd", "ssh-agent", "gpg-agent",
-    "security", "op", "codex", "claude", "gemini", "agy", "copilot", "cursor-agent", "burnzombies",
-    "burnzombies-mcp", "BurnZombiesApp", "tmux", "screen", "mosh-server", "caffeinate",
+    "security", "op", "codex", "claude", "gemini", "agy", "copilot", "cursor-agent", "windsurf",
+    "zed", "aider", "opencode", "burnzombies", "burnzombies-mcp", "BurnZombiesApp", "tmux",
+    "screen", "mosh-server", "caffeinate",
   ]
   static let systemPrefixes = [
     "/System/", "/usr/libexec/", "/usr/sbin/", "/sbin/", "/Library/Apple/",
@@ -72,16 +73,40 @@ public enum AutopilotProcesses {
   }
 
   /// Binaries inside app, XPC or extension bundles are protected unless the bundle lives
-  /// in a known automation cache (Playwright/Puppeteer browsers, node_modules, temp).
+  /// in a known automation cache (Playwright/Puppeteer browsers, node_modules, temp) or is macOS's
+  /// command-line Python framework launcher shim (`Python.framework/.../Python.app`).
   static func bundled(_ path: String, home: String) -> Bool {
     guard [".app/Contents/", ".xpc/Contents/", ".appex/Contents/"].contains(where: path.contains)
     else { return false }
+    if isCommandLinePythonShim(path, home: home) { return false }
     let automation = [
       home + "/Library/Caches/ms-playwright/", home + "/.cache/ms-playwright/",
       home + "/.cache/puppeteer/", home + "/Library/Caches/puppeteer/", "/private/var/folders/",
       "/private/tmp/", "/tmp/",
     ]
     return !(automation.contains(where: path.hasPrefix) || path.contains("/node_modules/"))
+  }
+
+  /// Homebrew, Xcode Command Line Tools, Python.org and version-manager builds on macOS execute
+  /// CLI Python scripts through `Python.framework/Versions/*/Resources/Python.app/Contents/MacOS/Python`.
+  /// Exempt only standalone framework shims — never a Python framework embedded inside a user `.app`.
+  public static func isCommandLinePythonShim(_ path: String, home: String = NSHomeDirectory())
+    -> Bool
+  {
+    let lower = path.lowercased()
+    guard let fwRange = lower.range(of: ".framework/versions/"),
+      !lower[..<fwRange.lowerBound].contains(".app/"),
+      !lower[..<fwRange.lowerBound].contains(".xpc/"),
+      !lower[..<fwRange.lowerBound].contains(".appex/"),
+      lower[fwRange.upperBound...].contains("/resources/python.app/contents/macos/python")
+    else { return false }
+    let prefixes = [
+      "/opt/homebrew/", "/usr/local/", "/library/frameworks/",
+      "/library/developer/commandlinetools/", "/system/library/frameworks/",
+      home.lowercased() + "/.pyenv/", home.lowercased() + "/.asdf/",
+      home.lowercased() + "/.mise/", home.lowercased() + "/.local/",
+    ]
+    return prefixes.contains(where: lower.hasPrefix)
   }
 
   /// The robot browsers among `members`, by PID, and every process that belongs to one: its
@@ -129,26 +154,33 @@ public enum AutopilotProcesses {
     let name = (path as NSString).lastPathComponent
     if [
       "node", "nodejs", "bun", "deno", "npm", "npx", "pnpm", "yarn", "tsx", "ts-node",
-      "next-server",
+      "next-server", "vite", "vitest", "jest",
     ].contains(name) {
       return "node"
     }
-    if name.hasPrefix("python") || ["uvicorn", "gunicorn", "pytest", "uv", "celery"].contains(name)
+    if name.hasPrefix("python")
+      || ["uvicorn", "gunicorn", "pytest", "uv", "celery", "poetry", "pipenv", "dramatiq", "rq"]
+        .contains(name)
       || name.hasPrefix("jupyter")
     {
       return "python"
     }
     if ["ruby", "rails", "bundle", "puma", "sidekiq"].contains(name) { return "ruby" }
-    if name == "java" || name.hasPrefix("kotlin") || path.contains("/gradle") { return "java" }
+    if name == "java" || name.hasPrefix("kotlin") || ["scala", "sbt", "mvn"].contains(name)
+      || path.contains("/gradle")
+    {
+      return "java"
+    }
     if path.contains("ms-playwright") || path.contains("puppeteer")
       || RobotBrowser.isBrowser(executable) || name.contains("chromium helper")
     {
       return "browser"
     }
     if [
-      "esbuild", "swc", "tsc", "cargo", "rustc", "clang", "swift-frontend", "swift-build",
-      "xcodebuild", "make", "cmake", "ninja", "go", "watchman", "turbo", "sourcekit-lsp",
-      "gopls", "rust-analyzer",
+      "esbuild", "swc", "tsc", "cargo", "rustc", "clang", "clangd", "swift-frontend", "swift-build",
+      "xcodebuild", "make", "cmake", "ninja", "go", "watchman", "turbo", "nx", "biome",
+      "sourcekit-lsp", "gopls", "rust-analyzer", "pyright", "basedpyright", "ruff", "bazel",
+      "buck2",
     ].contains(name) {
       return "build"
     }
@@ -175,11 +207,18 @@ public enum AutopilotProcesses {
   public static func repository(_ path: String, protected: ProtectedLocations = .limited())
     -> String?
   {
+    checkoutRoot(path, protected: protected).map { ($0 as NSString).lastPathComponent }
+  }
+
+  /// Full path of the nearest git checkout containing `path`, or nil.
+  public static func checkoutRoot(_ path: String, protected: ProtectedLocations = .limited())
+    -> String?
+  {
     var directory = path
     for _ in 0..<24 {
       guard directory.hasPrefix("/"), protected.allows(directory) else { return nil }
       if FileManager.default.fileExists(atPath: directory + "/.git") {
-        return (directory as NSString).lastPathComponent
+        return directory
       }
       let parent = (directory as NSString).deletingLastPathComponent
       guard parent != directory else { return nil }
@@ -188,10 +227,12 @@ public enum AutopilotProcesses {
     return nil
   }
 
-  /// Every live descendant of `root`, deepest first.
+  /// Every live (non-zombie) descendant of `root`, deepest first. Exited kernel `<defunct>`
+  /// children carry no live workload, cannot be signaled, and are reaped by `launchd` once their
+  /// orphaned parent exits, so they must never block or taint stopping that parent.
   public static func descendants(of root: Int32, in records: [String: Record]) -> [Record] {
     var children = [Int32: [Record]]()
-    for r in records.values where r.missingSince == nil {
+    for r in records.values where r.missingSince == nil && !r.latest.zombie {
       children[r.latest.parent, default: []].append(r)
     }
     var result = [Record]()
@@ -276,7 +317,11 @@ public enum AutopilotProcesses {
       let robot =
         abandoned ? "abandoned" : robotRoot != nil || !robots.browsers.isEmpty ? "driven" : "no"
       let cwd = probe.cwd(o.identity.pid)
-      let thread = cwd.map { AgentThreads.state(for: $0, threads: threads).thread } ?? "none"
+      let projectRoot = cwd.flatMap { checkoutRoot($0, protected: protected) }
+      let thread =
+        (projectRoot ?? cwd).map {
+          AgentThreads.processState(for: $0, home: home, threads: threads).thread
+        } ?? "none"
       // No chat can reach a pipe browser whose launcher is gone, and it holds the profile that
       // chat's next browser needs.
       if reason == nil, thread == "live", !(abandoned && robotRoot?.control == .pipe) {

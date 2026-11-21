@@ -8,10 +8,14 @@ public final class AutopilotStore: @unchecked Sendable {
   /// on every tick.
   public static let maximumRefusals = 500
   public static let maximumJudgments = 5000
+  public static let restorableWindow: TimeInterval = 30 * 86_400
+  private let root: URL
   private let store: Store
   private let lock = NSLock()
+  private var lastRecoveryPrune: Date?
   public let directory: URL
   public init(root: URL = Store.defaultRoot) throws {
+    self.root = root
     directory = root.appendingPathComponent("autopilot", isDirectory: true)
     store = try Store(root: directory)
     let eraStore = try Store(root: root)
@@ -166,13 +170,18 @@ public final class AutopilotStore: @unchecked Sendable {
       let counted = impact
       impact.count(all)
       // Refusals and everything else are bounded apart, oldest first: a stream of refusals never
-      // pushes out a burn the owner may restore, and a full history of burns never erases the
-      // refusal that keeps a copy from being tried again on every tick.
-      Self.trim(&all, refusals: true, to: Self.maximumRefusals)
-      Self.trim(&all, refusals: false, to: Self.maximumReceipts)
-      impact.prune(keeping: all, now: Date())
+      // pushes out a burn the owner may restore, and non-restorable stops (`process`, regenerable
+      // `disk`, already-restored or >30d expired receipts) yield before live restorable backups.
+      let now = Date()
+      let beforeRecoveryIDs = Set(all.compactMap { $0.restore?.recovery?.id })
+      Self.trim(&all, refusals: true, to: Self.maximumRefusals, now: now)
+      Self.trim(&all, refusals: false, to: Self.maximumReceipts, now: now)
+      let keepingIDs = Set(all.compactMap { $0.restore?.recovery?.id })
+      let evictedRecovery = !beforeRecoveryIDs.subtracting(keepingIDs).isEmpty
+      impact.prune(keeping: all, now: now)
       try save(all, "receipts.json", limit: 8 << 20)
       if impact != counted { try save(impact, "impact.json", limit: 4 << 20) }
+      pruneRecoveryIfNeeded(keepingIDs: keepingIDs, force: evictedRecovery, now: now)
     }
   }
 
@@ -182,19 +191,66 @@ public final class AutopilotStore: @unchecked Sendable {
   /// Counts burns made before the tally existed; later ones are counted as they are written.
   public func refreshImpact() throws {
     try lock.withLock {
+      let now = Date()
       let all = try load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())
       var impact = try load("impact.json", limit: 4 << 20, empty: AutopilotImpact())
       let counted = impact
       impact.count(all)
-      impact.prune(keeping: all, now: Date())
+      impact.prune(keeping: all, now: now)
       if impact != counted { try save(impact, "impact.json", limit: 4 << 20) }
+      let keepingIDs = Set(all.compactMap { $0.restore?.recovery?.id })
+      pruneRecoveryIfNeeded(keepingIDs: keepingIDs, force: false, now: now)
     }
   }
 
-  private static func trim(_ all: inout [AutopilotReceipt], refusals: Bool, to limit: Int) {
+  /// Called with `lock` held; fast-exits when `<root>/private-recovery` does not exist.
+  private func pruneRecoveryIfNeeded(keepingIDs: Set<String>, force: Bool, now: Date) {
+    if !force, let last = lastRecoveryPrune, now.timeIntervalSince(last) < 600 { return }
+    var info = stat()
+    let hasRecovery = lstat(root.appendingPathComponent("private-recovery").path, &info) == 0
+    let isDefaultRoot =
+      WorkspaceSafety.canonical(root.path) == WorkspaceSafety.canonical(Store.defaultRoot.path)
+    guard hasRecovery || isDefaultRoot else { return }
+    lastRecoveryPrune = now
+    if hasRecovery { _ = PrivateRecovery.prune(root: root, keepingIDs: keepingIDs, now: now) }
+    if isDefaultRoot { _ = AutopilotHarness.pruneClaudeRunCaches(root: root, now: now) }
+  }
+
+  private static func isLiveRestorable(_ receipt: AutopilotReceipt, now: Date) -> Bool {
+    guard receipt.restore != nil else { return false }
+    if receipt.outcome == "failed" && receipt.restore?.recovery != nil { return true }
+    guard receipt.outcome == "burned" else { return false }
+    return now.timeIntervalSince(receipt.date) <= restorableWindow
+  }
+
+  private static func trim(
+    _ all: inout [AutopilotReceipt], refusals: Bool, to limit: Int, now: Date = Date()
+  ) {
     var excess = all.count { ($0.outcome == "refused") == refusals } - limit
+    guard excess > 0 else { return }
+    if refusals {
+      all.removeAll { receipt in
+        guard excess > 0, receipt.outcome == "refused" else { return false }
+        excess -= 1
+        return true
+      }
+      return
+    }
+    // Pass 1: trim non-restorable, restored, or >30d expired receipts first so frequent process
+    // and cache cleanups never evict recent restorable worktree backups.
     all.removeAll { receipt in
-      guard excess > 0, (receipt.outcome == "refused") == refusals else { return false }
+      guard excess > 0, receipt.outcome != "refused", !isLiveRestorable(receipt, now: now) else {
+        return false
+      }
+      excess -= 1
+      return true
+    }
+    guard excess > 0 else { return }
+    // Pass 2: if live restorable receipts alone exceed `limit`, trim oldest non-failed ones.
+    all.removeAll { receipt in
+      guard excess > 0, receipt.outcome != "refused",
+        !(receipt.outcome == "failed" && receipt.restore?.recovery != nil)
+      else { return false }
       excess -= 1
       return true
     }
