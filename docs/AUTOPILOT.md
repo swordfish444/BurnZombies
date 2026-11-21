@@ -6,7 +6,7 @@ BurnZombies cleans up on its own. It looks for three kinds of leftovers right aw
 | --- | --- | --- |
 | **Zombies** | Programs whose app or chat is gone: test runners, build watchers, robot browsers, dev servers from finished chats. | A graceful stop (SIGTERM) for the program and everything it started. Never a force-kill. |
 | **Old copies** | Git worktrees you or your agents made and stopped using. | Every commit and local change is saved in a restore point inside the repository, then the folder is removed. **Restore** puts it back. |
-| **Junk folders** | Rebuildable output: `node_modules`, build folders, Xcode DerivedData (including `DerivedData-*`), Gradle caches (including `gradle-home` and local SDK build rings), Playwright browser builds that no installed Playwright uses (never a profile), robot-browser temp folders, and old AI scratch folders. | The folder is deleted. Your tools rebuild it when needed. |
+| **Junk folders** | Rebuildable output: `node_modules`, build folders, Xcode DerivedData (including `DerivedData-*`), Gradle/SwiftPM/pnpm/Electron/Python/JVM caches (including `gradle-home` and local SDK build rings), settled desktop app updater caches (`.ShipIt` and `-updater`), temp JS/TS compile caches (`$TMPDIR/tsx-*` and `node-compile-cache`), Playwright browser builds that no installed Playwright uses (never a profile), robot-browser temp folders, and old AI scratch folders. | The folder is deleted. Your tools rebuild it when needed. |
 | **[Docker's build cache](#dockers-build-cache)** | Old leftovers from Docker builds that nothing uses. | Docker removes them, one exact record at a time, and makes them again when a build needs them. |
 
 ## How it decides

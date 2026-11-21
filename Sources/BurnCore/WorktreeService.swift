@@ -146,8 +146,12 @@ public actor WorktreeService {
         atPath: store.root.appendingPathComponent("disk-policy.json").path)
       ? ((try? DiskPolicy.load(Store(root: store.root)).roots) ?? []) : []
     let known = [
-      ".codex/worktrees", ".claude/worktrees", ".cursor/worktrees", ".claude-worktrees", "git",
-      "Developer", "Projects", "Code", "repos", "src", "workspace",
+      ".codex/worktrees", ".codex/automations", ".codex/source-repos", ".claude/worktrees",
+      ".cursor/worktrees", ".claude-worktrees", ".windsurf/worktrees",
+      ".codeium/windsurf/worktrees", ".zed/worktrees", ".opencode/worktrees",
+      "Conductor", "Library/Application Support/Conductor",
+      "git", "GitHub", "GitLab", "Bitbucket", "Developer", "Development", "Projects", "Code",
+      "repos", "Repos", "src", "Source", "workspace", "workspaces",
     ]
     .map { home.appendingPathComponent($0).path }
     let discovered = dotWorktreeRoots(in: home)
@@ -164,22 +168,29 @@ public actor WorktreeService {
         policy.roots.append(canonical)
       }
     }
-    policy.discoveryVersion = 2
+    policy.discoveryVersion = 3
     try policy.validate()
     if policy.revision != old { try store.put(policy, kind: "policy", id: "current") }
   }
-  /// Any `~/.<tool>/worktrees` store created by an agent harness in the home folder.
+  /// Any `~/.<tool>/worktrees` or `~/.<tool>/workspaces` store created by an agent harness in the home folder.
   private static func dotWorktreeRoots(in home: URL) -> [String] {
-    let skipped: Set<String> = [".trash", ".ssh", ".gnupg", ".git"]
+    let skipped: Set<String> = [
+      ".trash", ".ssh", ".gnupg", ".git", ".local", ".cache", ".npm", ".gradle", ".config",
+      ".cups",
+    ]
     guard let entries = try? FileManager.default.contentsOfDirectory(atPath: home.path) else {
       return []
     }
-    return entries.sorted().compactMap { name in
+    var roots: [String] = []
+    for name in entries.sorted() {
       guard name.hasPrefix("."), name.count > 1, !skipped.contains(name.lowercased()) else {
-        return nil
+        continue
       }
-      return home.appendingPathComponent(name).appendingPathComponent("worktrees").path
+      let base = home.appendingPathComponent(name)
+      roots.append(base.appendingPathComponent("worktrees").path)
+      roots.append(base.appendingPathComponent("workspaces").path)
     }
+    return roots
   }
   func refreshDiscoveryRoots() throws {
     if let home = discoveryHome { try Self.seedRoots(store: store, home: home, protected: scope()) }

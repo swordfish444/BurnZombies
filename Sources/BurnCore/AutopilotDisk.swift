@@ -12,7 +12,9 @@ public enum AutopilotDisk {
     ".build": "build-output", "build": "build-output", "dist": "build-output",
     "target": "build-output", ".next": "build-output", ".nuxt": "build-output",
     ".svelte-kit": "build-output", ".turbo": "build-output", ".parcel-cache": "build-output",
-    ".output": "build-output",
+    ".output": "build-output", ".angular": "build-output", ".docusaurus": "build-output",
+    ".expo": "build-output", ".astro": "build-output", "playwright-report": "build-output",
+    "test-results": "build-output", ".vitest": "build-output", ".jest-cache": "build-output",
     "DerivedData": "xcode-derived",
     ".gradle": "package-cache", ".cache": "package-cache", "Pods": "package-cache",
     ".venv": "python-env", "venv": "python-env", "__pycache__": "python-env",
@@ -24,10 +26,11 @@ public enum AutopilotDisk {
   private static let minimumBytes: UInt64 = 100_000_000
   private static let staleAfter: TimeInterval = 14 * 86_400
   private static let maximumDepth = 3
+  private static let recoveryExclusionDepth = 5
   private static let directoryBudget = 5_000
   private static let candidateLimit = 500
   /// Entries a copy's own walk may look at before its age counts as unknown.
-  private static let entryBudget = 100_000
+  private static let entryBudget = 250_000
   /// Relative to the home folder. Nothing here is ever listed or removed.
   private static let excluded = [
     "Library/Mobile Documents", "Library/Mail", "Library/Messages", "Pictures", ".ssh", ".gnupg",
@@ -42,6 +45,7 @@ public enum AutopilotDisk {
       (".npm/_cacache", "package-cache", "npm", false),
       ("Library/Caches/Yarn", "package-cache", "Yarn", false),
       ("Library/pnpm/store", "package-cache", "pnpm", false),
+      ("Library/Caches/pnpm", "package-cache", "pnpm metadata", false),
       (".local/share/pnpm/store", "package-cache", "pnpm", false),
       (".bun/install/cache", "package-cache", "Bun", false),
       ("Library/Caches/Homebrew", "package-cache", "Homebrew", false),
@@ -49,10 +53,30 @@ public enum AutopilotDisk {
       (".cache/pip", "package-cache", "pip", false),
       ("Library/Caches/uv", "package-cache", "uv", false),
       (".cache/uv", "package-cache", "uv", false),
+      ("Library/Caches/pypoetry", "package-cache", "Poetry", false),
+      ("Library/Caches/pipenv", "package-cache", "Pipenv", false),
+      ("Library/Caches/ruff", "package-cache", "Ruff", false),
+      (".cache/ruff", "package-cache", "Ruff", false),
+      (".cache/mypy", "package-cache", "mypy", false),
+      (".cache/pre-commit", "package-cache", "pre-commit", false),
       (".cargo/registry/cache", "package-cache", "Cargo", false),
+      ("Library/Caches/org.swift.swiftpm", "package-cache", "SwiftPM", false),
       ("Library/Caches/CocoaPods", "package-cache", "CocoaPods", false),
       ("Library/Caches/go-build", "build-output", "Go", false),
       (".cache/go-build", "build-output", "Go", false),
+      ("Library/Caches/electron", "package-cache", "Electron", false),
+      ("Library/Caches/electron-builder", "package-cache", "Electron Builder", false),
+      ("Library/Caches/Cypress", "package-cache", "Cypress", false),
+      (".cache/Cypress", "package-cache", "Cypress", false),
+      ("Library/Caches/deno", "package-cache", "Deno", false),
+      ("Library/Caches/turbo", "build-output", "Turborepo", false),
+      (".cache/turbo", "build-output", "Turborepo", false),
+      ("Library/Caches/node-gyp", "package-cache", "node-gyp", false),
+      (".cache/node", "package-cache", "Node", false),
+      (".cache/prisma", "package-cache", "Prisma", false),
+      ("Library/Caches/Coursier", "package-cache", "Coursier", false),
+      ("Library/Caches/composer", "package-cache", "Composer", false),
+      (".composer/cache", "package-cache", "Composer", false),
       (AutopilotGradleCaches.relativePath, "package-cache", "Gradle", true),
       ("Library/Developer/CoreSimulator/Caches", "xcode-derived", "Simulator", false),
     ]
@@ -350,6 +374,49 @@ public enum AutopilotDisk {
           ], observedAt: now, lastUsed: ringTarget.modified)
         found[item.id] = item
       }
+
+      guard clock() < deadline else { return batch() }
+      let updaters = AutopilotAppUpdaters.discoverUpdaters(
+        home: base, now: now, protected: protected)
+      discarded.formUnion(updaters.discarded)
+      for updater in updaters.targets {
+        if progress.measured.contains(updater.path) || progress.deferred.contains(updater.path) {
+          continue
+        }
+        guard clock() < deadline else { return batch() }
+        guard refusal(updater.path, home: base, protected: protected) == nil else { continue }
+        guard walks?.enter(updater.path) ?? true else {
+          deferCheck(updater.path)
+          continue
+        }
+        defer { walks?.leave(updater.path, early: walks?.wanted(updater.path) ?? false) }
+        guard let bytes = sizer(updater.path), !(walks?.wanted(updater.path) ?? false) else {
+          deferCheck(updater.path)
+          continue
+        }
+        progress.measured.insert(updater.path)
+        measured.insert(updater.path)
+        guard bytes >= minimumBytes else { continue }
+        let item = AutopilotItem(
+          id: "disk:" + AutopilotItem.hash(updater.path), kind: .disk, name: updater.name,
+          detail:
+            "Downloaded update files for \(updater.subject) sitting in your Caches folder. The app downloads a fresh update if needed.",
+          path: updater.path, bytes: bytes,
+          facts: [
+            "folder": "package-cache", "home": "global-cache",
+            "stale": AutopilotPolicy.stale(since: updater.modified, now: now),
+            "size": scale(bytes),
+          ], observedAt: now, lastUsed: updater.modified)
+        found[item.id] = item
+      }
+    }
+
+    if caches, let trail {
+      guard clock() < deadline else { return batch() }
+      let tempCompiler = AutopilotAppUpdaters.tempCompilerItems(
+        in: trail, now: now, minimumBytes: minimumBytes)
+      for item in tempCompiler.items { found[item.id] = item }
+      measured.formUnion(tempCompiler.measured)
     }
 
     // Reuse measured browser and agent scratch leftovers too: a large temp directory must not
@@ -638,10 +705,17 @@ public enum AutopilotDisk {
   ) -> AutopilotReceipt {
     let protected = protected ?? .limited(homes: [home])
     var recovery: PrivateRecovery.Reference?
+    var recoveryCommitted = false
+    defer {
+      if !recoveryCommitted, let captured = recovery {
+        PrivateRecovery.remove(captured, root: root)
+      }
+    }
     func refuse(_ reason: String) -> AutopilotReceipt {
       .refused(item, authority: authority, reason)
     }
     func finish(_ outcome: String, _ detail: String, bytes: UInt64 = 0) -> AutopilotReceipt {
+      recoveryCommitted = true
       var receipt = AutopilotReceipt(
         itemID: item.id, kind: item.kind, name: item.name, authority: authority, outcome: outcome,
         detail: detail, bytes: bytes)
@@ -664,6 +738,10 @@ public enum AutopilotDisk {
       return AutopilotAgentScratch.reclaim(
         item, authority: authority, home: home, authorize: authorize)
     }
+    if AutopilotAppUpdaters.isTempCompileItem(item) {
+      return AutopilotAppUpdaters.reclaimTempCompiler(
+        item, authority: authority, authorize: authorize)
+    }
     let folder = item.facts["folder"] ?? "other"
     let known = kinds.contains(folder)
     guard known || authority.hasPrefix("rule:") || authority == "operator" else {
@@ -678,6 +756,9 @@ public enum AutopilotDisk {
       return refuse(reason)
     }
     if let reason = AutopilotBuildRings.refusal(path, home: base, protected: protected) {
+      return refuse(reason)
+    }
+    if let reason = AutopilotAppUpdaters.updaterRefusal(path, home: base) {
       return refuse(reason)
     }
     var originalIdentity = stat()
@@ -710,6 +791,9 @@ public enum AutopilotDisk {
     // One last look right before removing it.
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
     if let reason = AutopilotBuildRings.refusal(path, home: base, protected: protected) {
+      return refuse(reason)
+    }
+    if let reason = AutopilotAppUpdaters.updaterRefusal(path, home: base) {
       return refuse(reason)
     }
     guard known else {
@@ -752,6 +836,9 @@ public enum AutopilotDisk {
     }
     if let reason = refusal(path, home: base, protected: protected) { return refuse(reason) }
     if let reason = AutopilotBuildRings.refusal(path, home: base, protected: protected) {
+      return refuse(reason)
+    }
+    if let reason = AutopilotAppUpdaters.updaterRefusal(path, home: base) {
       return refuse(reason)
     }
     var currentIdentity = stat()
@@ -898,10 +985,66 @@ public enum AutopilotDisk {
     return names.contains(where: AutopilotGradleCaches.isCacheDirectory)
   }
 
+  /// Project-local `.gradle` directory (`<checkout>/.../.gradle`), which stores versioned
+  /// incremental build state (`8.14.6/executionHistory`, `fileHashes`, `checksums`),
+  /// `buildOutputCleanup`, `configuration-cache`, `nb-cache` or `vcs-1` instead of `caches/`.
+  private static func isProjectGradleCache(_ path: String) -> Bool {
+    guard path == WorkspaceSafety.canonical(path),
+      let names = try? FileManager.default.contentsOfDirectory(atPath: path)
+    else { return false }
+    let knownTop: Set<String> = [
+      "buildOutputCleanup", "configuration-cache", "nb-cache", "vcs-1", "kotlin",
+    ]
+    for name in names {
+      let child = path + "/" + name
+      var info = stat()
+      guard child == WorkspaceSafety.canonical(child), lstat(child, &info) == 0,
+        info.st_mode & S_IFMT == S_IFDIR
+      else { continue }
+      if knownTop.contains(name) { return true }
+      let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+      if (2...3).contains(parts.count),
+        parts.allSatisfy({ !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) } }),
+        let inner = try? FileManager.default.contentsOfDirectory(atPath: child)
+      {
+        let markers: Set<String> = [
+          "executionHistory", "fileHashes", "checksums", "fileChanges", "vcsMetadata",
+          "dependencies-accessors", "gc.properties",
+        ]
+        if inner.contains(where: markers.contains) { return true }
+      }
+    }
+    return false
+  }
+
+  /// Gradle/Android `build/` directory verified by sibling build script and generated subdirectories.
+  private static func isGradleBuildDirectory(_ path: String, parent: String) -> Bool {
+    let scripts = [
+      "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
+    ]
+    guard scripts.contains(where: { exists(parent + "/" + $0) }),
+      let children = try? FileManager.default.contentsOfDirectory(atPath: path)
+    else { return false }
+    let generatedDirs: Set<String> = [
+      "intermediates", "outputs", "generated", "tmp", "kotlin", "classes", "libs", "reports",
+      "test-results",
+    ]
+    return children.contains { child in
+      guard generatedDirs.contains(child) else { return false }
+      let target = path + "/" + child
+      var info = stat()
+      return target == WorkspaceSafety.canonical(target) && lstat(target, &info) == 0
+        && info.st_mode & S_IFMT == S_IFDIR
+    }
+  }
+
   /// The `folder` fact a live path earns by its place (global caches) or by its name inside a
   /// checkout, or nil when it is not a known rebuildable kind. `home` must be canonical.
   private static func recognized(_ path: String, home: String) -> String? {
     if let ringFolder = AutopilotBuildRings.recognized(path, home: home) { return ringFolder }
+    if let updaterFolder = AutopilotAppUpdaters.recognizedUpdater(path, home: home) {
+      return updaterFolder
+    }
     let relative = String(path.dropFirst(home.count + 1))
     for cache in globalCaches {
       let match = cache.children ? (parent(relative) == cache.path) : (relative == cache.path)
@@ -925,6 +1068,7 @@ public enum AutopilotDisk {
   public static func regenerable(_ path: String, home: String = NSHomeDirectory()) -> Bool {
     let base = WorkspaceSafety.canonical(home)
     if AutopilotBuildRings.regenerable(path, home: base) { return true }
+    if AutopilotAppUpdaters.recognizedUpdater(path, home: base) != nil { return true }
     let relative = path.hasPrefix(base + "/") ? String(path.dropFirst(base.count + 1)) : ""
     if globalCaches.contains(where: {
       let matches = $0.children ? parent(relative) == $0.path : relative == $0.path
@@ -941,7 +1085,7 @@ public enum AutopilotDisk {
       return true
     }
     if (folder == ".gradle" || folder == "gradle-home" || folder == ".gradle-home"
-      || folder.hasPrefix(".gradle-")) && isGradleHome(path)
+      || folder.hasPrefix(".gradle-")) && (isGradleHome(path) || isProjectGradleCache(path))
     {
       return true
     }
@@ -952,6 +1096,12 @@ public enum AutopilotDisk {
       return target == WorkspaceSafety.canonical(target) && lstat(target, &info) == 0
         && info.st_mode & S_IFMT == S_IFREG
     }
+    func directory(_ relative: String) -> Bool {
+      let target = path + "/" + relative
+      var info = stat()
+      return target == WorkspaceSafety.canonical(target) && lstat(target, &info) == 0
+        && info.st_mode & S_IFMT == S_IFDIR
+    }
     switch folder {
     case "node_modules":
       let metadata: Set<String> = [
@@ -960,7 +1110,9 @@ public enum AutopilotDisk {
       ]
       // Beside the packages: the package manager's store and commands, Prisma's generated client,
       // and caches tools keep in an install.
-      let generated: Set<String> = [".bin", ".pnpm", ".prisma", ".vite", ".vite-temp", ".cache"]
+      let generated: Set<String> = [
+        ".bin", ".pnpm", ".prisma", ".vite", ".vite-temp", ".cache", ".staging",
+      ]
       guard metadata.contains(where: regular),
         let entries = try? FileManager.default.contentsOfDirectory(atPath: path),
         entries.count <= 10_000
@@ -986,6 +1138,24 @@ public enum AutopilotDisk {
         return regular(name + "/package.json")
       }
     case ".build": return regular("workspace-state.json") && exists(parentPath + "/Package.swift")
+    case "build":
+      return regular("CACHEDIR.TAG")
+        || (regular("CMakeCache.txt") && directory("CMakeFiles"))
+        || isGradleBuildDirectory(path, parent: parentPath)
+    case "dist":
+      return regular("CACHEDIR.TAG")
+    case ".output":
+      return regular("CACHEDIR.TAG") || regular("nitro.json")
+    case ".cache":
+      if regular("CACHEDIR.TAG") { return true }
+      let knownSubcaches: Set<String> = [
+        "vite", "eslint", "prettier", "babel", "webpack", "storybook", "prisma", "puppeteer",
+        "ms-playwright", "turbo", "tsbuildinfo", "vitest", "jest",
+      ]
+      guard let entries = try? FileManager.default.contentsOfDirectory(atPath: path),
+        !entries.isEmpty, entries.count <= 64
+      else { return false }
+      return entries.allSatisfy { knownSubcaches.contains($0) && directory($0) }
     case "target": return regular("CACHEDIR.TAG") && exists(parentPath + "/Cargo.toml")
     case ".venv", "venv": return regular("pyvenv.cfg")
     case ".pytest_cache", ".mypy_cache", ".ruff_cache": return regular("CACHEDIR.TAG")
@@ -1003,7 +1173,26 @@ public enum AutopilotDisk {
       }
     case ".next": return regular("BUILD_ID") && regular("build-manifest.json")
     case ".nuxt": return regular("nuxt.json")
-    case ".svelte-kit", ".turbo", ".parcel-cache": return regular("CACHEDIR.TAG")
+    case ".svelte-kit", ".turbo", ".parcel-cache", ".astro", ".vitest", ".jest-cache":
+      return regular("CACHEDIR.TAG")
+    case ".angular":
+      return directory("cache") && exists(parentPath + "/angular.json")
+    case ".docusaurus":
+      return exists(parentPath + "/docusaurus.config.js")
+        || exists(parentPath + "/docusaurus.config.ts")
+        || exists(parentPath + "/docusaurus.config.mjs")
+    case ".expo":
+      return regular("README.md") && exists(parentPath + "/package.json")
+    case "playwright-report":
+      return regular("index.html")
+        && (exists(parentPath + "/playwright.config.ts")
+          || exists(parentPath + "/playwright.config.js")
+          || exists(parentPath + "/playwright.config.mjs"))
+    case "test-results":
+      return regular(".last-run.json")
+        && (exists(parentPath + "/playwright.config.ts")
+          || exists(parentPath + "/playwright.config.js")
+          || exists(parentPath + "/playwright.config.mjs"))
     case "Pods": return regular("Manifest.lock") && exists(parentPath + "/Podfile")
     default: return false
     }
@@ -1016,7 +1205,8 @@ public enum AutopilotDisk {
       return []
     }
     return Set(
-      rebuildableFolders(under: path, stop: { false }).filter { folder in
+      rebuildableFolders(under: path, maxDepth: recoveryExclusionDepth, stop: { false }).filter {
+        folder in
         guard regenerable(folder.path, home: home), folder.path.hasPrefix(checkout + "/"),
           let tracked = try? WorktreeGit.run(
             checkout,
@@ -1098,11 +1288,11 @@ public enum AutopilotDisk {
     return (latest, now.timeIntervalSince(latest) > staleAfter)
   }
 
-  /// Rebuildable folders up to three levels below a checkout root. Never enters `.git`, other
+  /// Rebuildable folders up to `maxDepth` levels below a checkout root. Never enters `.git`, other
   /// repositories, links or the folders it finds.
-  private static func rebuildableFolders(under root: String, stop: () -> Bool)
-    -> [(path: String, name: String)]
-  {
+  private static func rebuildableFolders(
+    under root: String, maxDepth: Int = maximumDepth, stop: () -> Bool
+  ) -> [(path: String, name: String)] {
     var found: [(path: String, name: String)] = []
     var queue: [(path: String, depth: Int)] = [(path: root, depth: 0)]
     var listed = 0
@@ -1118,7 +1308,7 @@ public enum AutopilotDisk {
         guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { continue }
         if matchedRebuildable(path: path, name: name) != nil {
           found.append((path: path, name: name))
-        } else if depth + 1 < maximumDepth && !exists(path + "/.git") {
+        } else if depth + 1 < maxDepth && !exists(path + "/.git") {
           queue.append((path: path, depth: depth + 1))
         }
       }

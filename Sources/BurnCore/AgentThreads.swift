@@ -82,6 +82,59 @@ public enum AgentThreads {
     return (matching.contains(where: \.live) ? "live" : "ended", matching.map(\.lastActive).max())
   }
 
+  /// Like `state(for:threads:)`, scoped for an orphaned process's working folder. A daemon or
+  /// emulator started from `$HOME`, `/`, `/tmp` or a parent folder above git repositories must not
+  /// inherit `live` from an unrelated coding chat running inside a nested project folder.
+  public static func processState(
+    for path: String, home: String = NSHomeDirectory(), threads: [AgentThread]
+  ) -> (thread: String, lastActive: Date?) {
+    var clean = path
+    while clean.count > 1 && clean.hasSuffix("/") { clean.removeLast() }
+    var cleanHome = home
+    while cleanHome.count > 1 && cleanHome.hasSuffix("/") { cleanHome.removeLast() }
+    let broadContainers: Set<String> = [
+      "/", "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", cleanHome,
+    ]
+    if broadContainers.contains(clean) {
+      return ("none", nil)
+    }
+    let isCheckout = isGitEntry(clean + "/.git")
+    let prefix = clean + "/"
+    let matching = threads.filter { thread in
+      var threadPath = thread.cwd
+      while threadPath.count > 1 && threadPath.hasSuffix("/") { threadPath.removeLast() }
+      if threadPath == clean { return true }
+      // Process running inside a subdirectory of the chat's checkout (e.g. `packages/api`).
+      if !broadContainers.contains(threadPath), clean.hasPrefix(threadPath + "/") {
+        return !hasNestedGitBoundary(between: threadPath, and: clean)
+      }
+      // Chat running inside a subdirectory of the process's working directory: only inherit if
+      // the process's working directory is itself a checkout, not a broad parent folder like `~/git`.
+      guard isCheckout, threadPath.hasPrefix(prefix) else { return false }
+      return !hasNestedGitBoundary(between: clean, and: threadPath)
+    }
+    guard !matching.isEmpty else { return ("none", nil) }
+    return (matching.contains(where: \.live) ? "live" : "ended", matching.map(\.lastActive).max())
+  }
+
+  /// True when an independent `.git` directory/file sits strictly below `ancestor` at or above `descendant`.
+  private static func hasNestedGitBoundary(between ancestor: String, and descendant: String) -> Bool
+  {
+    var cursor = descendant
+    for _ in 0..<24 where cursor.count > ancestor.count && cursor.hasPrefix(ancestor + "/") {
+      if isGitEntry(cursor + "/.git") { return true }
+      let next = (cursor as NSString).deletingLastPathComponent
+      if next == cursor { break }
+      cursor = next
+    }
+    return false
+  }
+
+  private static func isGitEntry(_ path: String) -> Bool {
+    var info = stat()
+    return lstat(path, &info) == 0
+  }
+
   /// The title of the newest chat that worked inside `path` and has one, which is how people
   /// remember the work. Reads only the threads already indexed.
   public static func chatTitle(for path: String, threads: [AgentThread]) -> String? {

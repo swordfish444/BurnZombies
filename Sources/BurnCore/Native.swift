@@ -73,6 +73,9 @@ public struct Native {
     if mask & 2 != 0 { return "codex" }
     if mask & 4 != 0 { return "cursor" }
     if mask & 8 != 0 { return "antigravity" }
+    if mask & 16 != 0 { return "windsurf" }
+    if mask & 32 != 0 { return "aider" }
+    if mask & 64 != 0 { return "opencode" }
     return "none"
   }
   /// Only allowlisted task-identification facts cross the model boundary, never raw argv.

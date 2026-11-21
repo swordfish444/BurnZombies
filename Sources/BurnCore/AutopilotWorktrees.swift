@@ -155,12 +155,15 @@ public enum AutopilotWorktrees {
 
   private static func placeFact(_ record: WorktreeRecord) -> String {
     let path = record.path.lowercased()
-    if path.contains("/.codex/worktrees/") { return "codex" }
+    if path.contains("/.codex/worktrees/") || path.contains("/.codex/automations/") {
+      return "codex"
+    }
     if path.contains("/.claude/worktrees/") || path.contains("/.claude-worktrees/") {
       return "claude"
     }
     if path.contains("/.cursor/worktrees/") { return "cursor" }
     if path.contains("/conductor/") { return "conductor" }
+    if path.contains("/.codeium/windsurf/worktrees/") { return "agent" }
     if isDotAgentWorktree(path) { return "agent" }
     let parent = (record.path as NSString).deletingLastPathComponent
     let mainParent = (mainCheckout(record) as NSString).deletingLastPathComponent
@@ -174,7 +177,7 @@ public enum AutopilotWorktrees {
     for index in 0..<(parts.count - 2) {
       let folder = parts[index]
       if folder.hasPrefix("."), folder.count > 1, !excluded.contains(folder),
-        parts[index + 1] == "worktrees"
+        parts[index + 1] == "worktrees" || parts[index + 1] == "workspaces"
       {
         return true
       }
@@ -626,10 +629,21 @@ public enum AutopilotWorktrees {
       path, root: root, excluding: excluded, leavingOut: Set(big.map(\.path)),
       gitPointers: try submodulePointers(path, links: links), repository: common, head: head,
       key: key, hardLinks: true)
+    var archiveCommitted = false
+    var refCreated = false
     let snapshot = changes != "none"
     let ref = refPrefix + archive.id.lowercased()
+    defer {
+      if !archiveCommitted {
+        if refCreated {
+          _ = try? WorktreeGit.run(common, ["update-ref", "-d", ref], seconds: 5)
+        }
+        PrivateRecovery.remove(archive, root: root)
+      }
+    }
     step = Step.commit
     _ = try WorktreeGit.run(common, ["update-ref", ref, head])
+    refCreated = true
     guard try line(common, ["rev-parse", "--verify", ref + "^{commit}"]) == head else {
       throw Refusal("I could not preserve the commit, so I left it alone.")
     }
@@ -674,6 +688,7 @@ public enum AutopilotWorktrees {
       throw Refusal("Permissions changed while preserving it, so I left it alone.")
     }
     // Point of no return: the encrypted backup is restored, verified and durably discoverable.
+    archiveCommitted = true
     _ = try? WorktreeGit.run(common, ["worktree", "remove", "--force", "--", path], seconds: 120)
     let folderGone = !entryExists(path)
     let registrationGone = !entryExists(gitDir) && !registered(common, path)

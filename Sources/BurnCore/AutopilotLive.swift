@@ -270,6 +270,7 @@ public final class AutopilotJunkCache: @unchecked Sendable {
         worktrees: context.records, home: context.home,
         sizer: { folder in sizer(folder) { walks.wanted(folder) } }, protected: context.protected,
         walks: walks, trail: context.trail, progress: &next, budget: scanBudget, clock: clock)
+      malloc_zone_pressure_relief(nil, 0)
       // Self-continue only when the scan genuinely paused because its slice budget expired, not
       // when a finished round politely stepped out of a folder currently being burned.
       let hitBudget = !next.roundFinished

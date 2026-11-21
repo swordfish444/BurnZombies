@@ -58,7 +58,11 @@ public enum WorktreeDiscovery {
     return result
   }
   public static func ownerManaged(_ path: String) -> Bool {
-    ["/.codex/worktrees/", "/.claude/worktrees/", "/.cursor/worktrees/"].contains {
+    [
+      "/.codex/worktrees/", "/.codex/automations/", "/.claude/worktrees/", "/.cursor/worktrees/",
+      "/.windsurf/worktrees/", "/.codeium/windsurf/worktrees/", "/.zed/worktrees/",
+      "/.opencode/worktrees/",
+    ].contains {
       path.contains($0)
     }
   }

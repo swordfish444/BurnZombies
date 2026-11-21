@@ -137,6 +137,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       ("--autopilot-recovery-key", "Autopilot backup key", autopilotRecoveryKeyProof),
       ("--autopilot-docker", "Docker's build cache", autopilotDockerProof),
       ("--agent-session-environment", "Agent session environment", agentSessionEnvironmentProof),
+      (
+        "--universal-macos", "Universal macOS & recovery lifecycle", universalMacOSImprovementsProof
+      ),
     ] as [(String, String, () async throws -> Void)] where CommandLine.arguments.contains(flag) {
       do { try await proof() } catch { failTest("\(name): \(error)") }
       if failures == 0 { print("PASS \(name)") }
@@ -217,7 +220,16 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       let beforeReview = failures
       do { try await questionReviewProof() } catch { failTest("Questions stay true: \(error)") }
       if failures == beforeReview {
-        print("PASS Questions stay true: running time, unknown programs by name, checked before shown")
+        print(
+          "PASS Questions stay true: running time, unknown programs by name, checked before shown")
+      }
+      let beforeUniversal = failures
+      do { try await universalMacOSImprovementsProof() } catch {
+        failTest("Universal macOS & recovery lifecycle: \(error)")
+      }
+      if failures == beforeUniversal {
+        print(
+          "PASS Universal macOS caches, recovery pruning, process precision & worktree consumer")
       }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
@@ -640,6 +652,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await autopilotLearningProof() } catch { failTest("Autopilot learning: \(error)") }
     do { try await burnLogSnapshotProof() } catch { failTest("Burn Log: \(error)") }
     do { try await lookOnlyProof() } catch { failTest("Autopilot look-only: \(error)") }
+    do { try await universalMacOSImprovementsProof() } catch {
+      failTest("Universal macOS & recovery lifecycle: \(error)")
+    }
     for lookOnly in [false, true] {
       do {
         let newcomer = FileManager.default.temporaryDirectory.appendingPathComponent(
