@@ -75,7 +75,7 @@ curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/insta
 
 To install somewhere other than `~/Applications`, set `BURNZOMBIES_INSTALL_DIR`: `curl … | BURNZOMBIES_INSTALL_DIR=/path/to/folder bash`.
 
-From v0.13.0, releases are signed with BurnZombies' own certificate (not an Apple Developer ID) and are not notarized. The installer never disables Gatekeeper, removes quarantine flags or bypasses permissions. If your Mac's policy blocks the app, [build from source](../CONTRIBUTING.md).
+Starting with v0.21.0, the release app and disk image use Apple Developer ID signing and Apple notarization. If you use v0.20.0 or earlier, run the installer once to move to the new identity. macOS may ask you to grant Full Disk Access again. The installer preserves Gatekeeper and quarantine settings.
 
 ## The first minutes
 

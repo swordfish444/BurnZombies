@@ -4,7 +4,7 @@
   "display_name": "BurnZombies",
   "version": "0.21.0",
   "description": "Computer-wide observation and guarded cleanup of abandoned agent helpers on macOS.",
-  "long_description": "Computer-wide process evidence, guarded graceful stops and verified impact through MCP. Use the single-command installer to enable the independent background observer and its selected harness reviewer; this MCP bundle alone provides interactive tools. Native macOS 14+, Apple Silicon/Intel. Signed with BurnZombies' own certificate, not notarized.",
+  "long_description": "Computer-wide process evidence, guarded graceful stops and verified impact through MCP. Use the single-command installer to enable the independent background observer and its selected harness reviewer; this MCP bundle alone provides interactive tools. Native macOS 14+, Apple Silicon/Intel. The release bundle contains the Apple-notarized app signed with the maintainer's Developer ID.",
   "author": {
     "name": "swordfish444",
     "url": "https://github.com/swordfish444"
