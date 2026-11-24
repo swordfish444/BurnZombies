@@ -2,11 +2,12 @@
 set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
-version="0.20.0"
-release_certificate="F6EE40DDEBB01F056DE8FC7910091F4FAC3D7B49"
+version="0.21.0"
+release_requirement='anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7K3GR5QJRH"'
 client="auto"
 launch=true
 look_only=false
+extra_setup=false
 setup_options=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -14,7 +15,16 @@ while [[ $# -gt 0 ]]; do
     --no-open) launch=false; shift ;;
     --observe-only) setup_options+=(--observe-only); shift ;;
     --look-only) look_only=true; setup_options+=(--look-only); shift ;;
-    --help) echo 'Install BurnZombies: install.sh [--mcp auto|codex|claude|none] [--observe-only] [--look-only] [--no-open]'; exit 0 ;;
+    --no-login-item) extra_setup=true; setup_options+=(--no-login-item); shift ;;
+    --no-failover) extra_setup=true; setup_options+=(--no-failover); shift ;;
+    --allow-failover) extra_setup=true; setup_options+=(--allow-failover); shift ;;
+    --never-touch) extra_setup=true; setup_options+=(--never-touch "${2:?Pass a folder path}"); shift 2 ;;
+    --disable-starter) extra_setup=true; setup_options+=(--disable-starter "${2:?Pass a starter rule ID}"); shift 2 ;;
+    --backup-days) extra_setup=true; setup_options+=(--backup-days "${2:?Pass retention days (0..365)}"); shift 2 ;;
+    --use-at-your-own-risk) extra_setup=true; setup_options+=(--use-at-your-own-risk); shift ;;
+    --help)
+      echo 'Install BurnZombies: install.sh [--mcp auto|codex|claude|none] [--observe-only] [--look-only] [--no-login-item] [--no-failover] [--never-touch PATH] [--disable-starter ID] [--backup-days N] [--no-open]'
+      exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -71,7 +81,7 @@ fi
 tar -xzf "$work/$asset" -C "$work"
 # A valid signature alone also accepts ad-hoc code. Apple's certificate requirement
 # authenticates the release identity across every universal architecture, before code runs.
-codesign --verify --deep --strict -R "=certificate leaf = H\"$release_certificate\"" "$work/BurnZombies.app"
+codesign --verify --deep --strict -R "=$release_requirement" "$work/BurnZombies.app"
 identity="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$work/BurnZombies.app/Contents/Info.plist")"
 [[ "$identity" == io.burnzombies.app ]] || { echo 'Unexpected app identity.' >&2; exit 1; }
 
@@ -105,6 +115,11 @@ if [[ "$client" != none ]]; then
      ! "$app/Contents/MacOS/burnzombies" setup --harness "$client" ${setup_options[@]+"${setup_options[@]}"} ||
      ! "$app/Contents/MacOS/burnzombies" retire-skill; then
     echo 'Harness configuration failed; rolling back. Configurations were preserved.' >&2
+    exit 1
+  fi
+elif $extra_setup; then
+  if ! "$app/Contents/MacOS/burnzombies" setup --harness none ${setup_options[@]+"${setup_options[@]}"}; then
+    echo 'Setup failed; rolling back.' >&2
     exit 1
   fi
 elif $look_only && ! "$app/Contents/MacOS/burnzombies" autopilot look-only; then

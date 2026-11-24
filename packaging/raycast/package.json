@@ -1,0 +1,51 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "burnzombies",
+  "title": "BurnZombies",
+  "description": "Audit AI agent leftovers, view reclaimed space, toggle Look-Only mode, and trigger BurnZombies hunts directly from Raycast.",
+  "icon": "icon.png",
+  "author": "swordfish444",
+  "categories": ["Developer Tools", "System"],
+  "license": "MIT",
+  "platforms": ["macOS"],
+  "commands": [
+    {
+      "name": "audit",
+      "title": "Audit Agent Leftovers",
+      "description": "Run a fast read-only BurnZombies audit of orphaned processes, worktrees, and caches.",
+      "mode": "view"
+    },
+    {
+      "name": "status",
+      "title": "Autopilot Status",
+      "description": "View current BurnZombies findings, open Teach BZ questions, and Look-Only state.",
+      "mode": "view"
+    },
+    {
+      "name": "hunt",
+      "title": "Hunt Zombies Now",
+      "description": "Trigger an immediate BurnZombies sweep.",
+      "mode": "no-view"
+    },
+    {
+      "name": "toggle-look-only",
+      "title": "Toggle Look-Only Mode",
+      "description": "Hold or resume automatic burns in BurnZombies.",
+      "mode": "no-view"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.92.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.7.0"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "lint": "ray lint"
+  }
+}

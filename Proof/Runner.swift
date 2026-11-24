@@ -140,6 +140,10 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       (
         "--universal-macos", "Universal macOS & recovery lifecycle", universalMacOSImprovementsProof
       ),
+      (
+        "--brad-feld-safety", "Worktree pools, lock rail, configurable backups & AI attribution",
+        bradFeldSafetyAndBackupsProof
+      ),
     ] as [(String, String, () async throws -> Void)] where CommandLine.arguments.contains(flag) {
       do { try await proof() } catch { failTest("\(name): \(error)") }
       if failures == 0 { print("PASS \(name)") }
@@ -230,6 +234,15 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
       if failures == beforeUniversal {
         print(
           "PASS Universal macOS caches, recovery pruning, process precision & worktree consumer")
+      }
+      let beforeBrad = failures
+      do { try await bradFeldSafetyAndBackupsProof() } catch {
+        failTest("Worktree pools, lock rail, configurable backups & AI attribution: \(error)")
+      }
+      if failures == beforeBrad {
+        print(
+          "PASS Worktree pools, locked worktree node_modules rail, claude-<uid> scratch, configurable 7d/off backups & AI attribution"
+        )
       }
       print("Quick checks completed; \(failures) failures")
       exit(failures == 0 ? 0 : 1)
@@ -654,6 +667,9 @@ func throwsError<T>(_ expression: @autoclosure () throws -> T) {
     do { try await lookOnlyProof() } catch { failTest("Autopilot look-only: \(error)") }
     do { try await universalMacOSImprovementsProof() } catch {
       failTest("Universal macOS & recovery lifecycle: \(error)")
+    }
+    do { try await bradFeldSafetyAndBackupsProof() } catch {
+      failTest("Worktree pools, lock rail, configurable backups & AI attribution: \(error)")
     }
     for lookOnly in [false, true] {
       do {

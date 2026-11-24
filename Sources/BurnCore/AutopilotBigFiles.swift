@@ -279,7 +279,8 @@ extension AutopilotPolicy {
   /// Docker's build cache is one too. It is listed with folders, but a Yes about folders never
   /// reaches it, nor a starter rule: only a Yes to its own card.
   static let namedRisks: [AutopilotKind: [(fact: String, risky: String, clear: String)]] = [
-    .worktree: AutopilotWorktrees.bigFileRisks.map { (fact: $0.fact, risky: "yes", clear: "no") },
+    .worktree: AutopilotWorktrees.bigFileRisks.map { (fact: $0.fact, risky: "yes", clear: "no") }
+      + [(fact: AutopilotWorktrees.poolRisk, risky: "yes", clear: "no")],
     .disk: [(fact: AutopilotDockerCache.risk, risky: "yes", clear: "no")],
   ]
 
@@ -391,8 +392,9 @@ extension AutopilotPolicy {
   /// What a Yes costs, before anything is pressed: "A Yes deletes its 914 MB of big unsaved files
   /// for good. Undo won't bring these back; everything else in it is backed up first."
   public static func bigFilesCost(_ question: AutopilotQuestion) -> String? {
+    let bigRiskNames = Set(AutopilotWorktrees.bigFileRisks.map { $0.fact + "=yes" })
     guard question.kind == .worktree,
-      !risks(of: question).isDisjoint(with: namedRisks(question.kind))
+      !risks(of: question).isDisjoint(with: bigRiskNames)
     else { return nil }
     let one: Bool = question.count == 1
     let bytes: UInt64 = question.bigBytes ?? 0

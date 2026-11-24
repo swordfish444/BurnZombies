@@ -206,7 +206,7 @@ struct TeachView: View {
     let drawn =
       state.overrides.isEmpty
       ? question : AutopilotPolicy.sparing(question, details: listed, changed: true)
-    let card = AutopilotPolicy.card(drawn)
+    let card = AutopilotPolicy.card(drawn, backupsEnabled: snapshot.sweep.backupsEnabled)
     let spared = listed.filter(\.spared).count
     let allSpared = drawn.count == 0 && spared > 0
     // With nothing listed (the things aren't in the snapshot), the details are the question's rows.

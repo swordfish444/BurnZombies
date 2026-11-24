@@ -296,6 +296,7 @@ extension AutopilotPolicy {
     case "cursor": return "Cursor worktree"
     case "agent": return "Agent worktree"
     case "conductor": return "Conductor workspace"
+    case "pool": return "Reusable worktree pool"
     case "sibling": return "Next to its project"
     default: return "Elsewhere on this Mac"
     }

@@ -27,7 +27,7 @@ enum AutopilotLevel: String, CaseIterable, Identifiable {
 }
 
 enum SettingsPage: Equatable {
-  case home, burns, never, aiUse, access
+  case home, burns, never, backups, aiUse, access
 }
 
 /// One thing on Never touches, wherever the owner said it.
@@ -182,7 +182,7 @@ private struct SettingsRow<Trailing: View>: View {
         Text(title).font(.callout)
         Spacer(minLength: 8)
         trailing
-      }.padding(.horizontal, 12).frame(height: 33)
+      }.padding(.horizontal, 12).frame(height: 30)
       if divider { Divider().padding(.leading, 12) }
     }
   }
@@ -255,8 +255,8 @@ struct SettingsHome: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      VStack(alignment: .leading, spacing: 7) {
+    VStack(alignment: .leading, spacing: 11) {
+      VStack(alignment: .leading, spacing: 6) {
         Text("How much can BZ do on its own?").font(.callout.weight(.semibold))
         Picker("How much can BZ do on its own?", selection: level) {
           ForEach(AutopilotLevel.allCases) { Text($0.label).tag($0) }
@@ -279,8 +279,11 @@ struct SettingsHome: View {
         SettingsLink(title: "Burns without asking", value: "\(burnCount) rules") {
           model.settingsPage = .burns
         }
-        SettingsLink(title: "Never touches", value: neverValue, divider: false) {
+        SettingsLink(title: "Never touches", value: neverValue) {
           model.settingsPage = .never
+        }
+        SettingsLink(title: "Backups", value: model.backupRetentionLabel, divider: false) {
+          model.settingsPage = .backups
         }
       }
       SettingsCard(title: "AI") {
@@ -381,7 +384,7 @@ struct SettingsWindow: View {
       }
       if model.settingsPage == .home {
         ScrollView {
-          SettingsHome(model: model, ai: ai).padding(.horizontal, 20).padding(.vertical, 14)
+          SettingsHome(model: model, ai: ai).padding(.horizontal, 20).padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
       } else {
@@ -403,6 +406,9 @@ struct SettingsSubpage: View {
   @ObservedObject var model: AppModel
   @ObservedObject var ai: AISettingsModel
   @State private var confirmReset = false
+  @State private var confirmDisableBackups = false
+  @State private var confirmPurgeBackups = false
+  @State private var customBackupDays = ""
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -420,6 +426,7 @@ struct SettingsSubpage: View {
           switch model.settingsPage {
           case .burns: burns
           case .never: never
+          case .backups: backups
           case .aiUse: aiUse
           case .access: FullDiskAccessView(model: model)
           case .home: EmptyView()
@@ -434,6 +441,103 @@ struct SettingsSubpage: View {
     } message: {
       Text("BZ forgets what you taught it. The starter rules stay.")
     }
+    .alert("Turn off backups? Use at your own risk.", isPresented: $confirmDisableBackups) {
+      Button("Turn off backups", role: .destructive) { model.setBackupRetention(days: 0) }
+      Button("Keep backups on", role: .cancel) {}
+    } message: {
+      Text(
+        "Burned project copies and uncertain build folders will be deleted permanently with no Restore button and no Git safety ref. Existing backups stay until they expire or you clear them."
+      )
+    }
+    .alert("Delete saved backups now?", isPresented: $confirmPurgeBackups) {
+      Button("Delete backups", role: .destructive) { model.purgeBackups() }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "Removes saved encrypted worktree backups and their retired Git refs immediately. This can't be undone."
+      )
+    }
+  }
+
+  private var backups: some View {
+    let days = model.backupRetentionDays
+    let presets: [(days: Int, label: String)] = [
+      (1, "1 day"),
+      (3, "3 days"),
+      (7, "7 days (default)"),
+      (14, "14 days"),
+      (30, "30 days"),
+    ]
+    return Group {
+      heading(
+        "Backups",
+        "How long BZ keeps encrypted restore points for burned project copies before pruning them."
+      )
+      if days == 0 {
+        HStack(alignment: .top, spacing: 8) {
+          Image(systemName: "exclamationmark.triangle.fill").font(.caption)
+            .foregroundStyle(BurnTheme.orange)
+          Text(
+            "Backups are off — use at your own risk. Burned project copies and uncertain build folders are deleted permanently with no Restore and no Git safety ref."
+          ).font(.caption).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(BurnTheme.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityIdentifier("backups-disabled-warning")
+      }
+      SettingsCard(title: "Keep backups for") {
+        ForEach(presets, id: \.days) { preset in
+          Button {
+            model.setBackupRetention(days: preset.days)
+            customBackupDays = "\(preset.days)"
+          } label: {
+            SettingsRow(title: preset.label) {
+              if days == preset.days {
+                Image(systemName: "checkmark").font(.caption.weight(.semibold))
+                  .foregroundStyle(BurnTheme.orange)
+              }
+            }.contentShape(Rectangle())
+          }.buttonStyle(.plain).clickPointer()
+        }
+        Button {
+          if days != 0 { confirmDisableBackups = true }
+        } label: {
+          SettingsRow(title: "Off (use at your own risk)", divider: false) {
+            if days == 0 {
+              Image(systemName: "exclamationmark.triangle.fill").font(.caption)
+                .foregroundStyle(BurnTheme.orange)
+            }
+          }.contentShape(Rectangle())
+        }.buttonStyle(.plain).clickPointer()
+      }
+      SettingsCard(title: "Custom retention (1–\(AutopilotSweepState.maximumBackupRetentionDays) days)") {
+        HStack(spacing: 8) {
+          TextField("Days (e.g. 5)", text: $customBackupDays)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 110)
+          Button("Apply") {
+            if let parsed = Int(customBackupDays.trimmingCharacters(in: .whitespaces)),
+              (1...AutopilotSweepState.maximumBackupRetentionDays).contains(parsed)
+            {
+              model.setBackupRetention(days: parsed)
+            }
+          }
+          .buttonStyle(.bordered).controlSize(.small).clickPointer()
+          Spacer()
+          Text("Current: \(model.backupRetentionLabel)").font(.caption).foregroundStyle(.secondary)
+        }.padding(.horizontal, 12).padding(.vertical, 9)
+      }
+      HStack {
+        Button("Delete existing backups now", role: .destructive) {
+          confirmPurgeBackups = true
+        }.buttonStyle(.bordered).controlSize(.small).clickPointer()
+        Spacer()
+      }.padding(.top, 2)
+      Text(
+        "Expired encrypted archives and their retired Git refs are pruned automatically once past your retention window."
+      ).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+    .onAppear { customBackupDays = days > 0 ? "\(days)" : "" }
   }
 
   private func heading(_ title: String, _ sentence: String) -> some View {

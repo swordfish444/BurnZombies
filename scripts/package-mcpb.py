@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package a verified universal app with the official, pinned MCPB toolchain."""
+"""Validate the MCPB manifest and package the signed universal app with macOS file modes."""
 import argparse
 import hashlib
 import json
@@ -41,7 +41,10 @@ def main():
         shutil.copy2(ROOT / "docs/MCP.md", stage / "README.md")
         command = ["npx", "--yes", "@anthropic-ai/mcpb@2.1.2"]
         subprocess.run(command + ["validate", str(stage / "manifest.json")], check=True)
-        subprocess.run(command + ["pack", str(stage), str(artifact)], check=True)
+        # The MCPB packer omits the Unix file type in ZIP entries. macOS ditto then
+        # extracts Mach-O entry points without their executable bit.
+        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--norsrc", "--noextattr",
+                        str(stage), str(artifact)], check=True)
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     (output / "MCPB-SHA256SUMS").write_text(f"{digest}  {artifact.name}\n")
     metadata = {

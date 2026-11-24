@@ -8,12 +8,12 @@ Requires macOS 14+, Apple Silicon or Intel. Claude Code or Codex is optional: wi
 
 - Install and configure only what the operator asked for. Setup is not cleanup: never start a sweep (Hunt Zombies, `autopilot sweep`), answer a question, burn, restore or stop anything as an installation test. Never turn look-only off: Start burning is the operator's decision.
 - Do not change credentials, account routing, global MCP configuration, chat hooks or shell profiles. Preserve the operator's tool, model and thinking choices.
-- If a login, usage limit or permission is refused, stop and report it. Never fall back to another tool or account.
+- If a login, usage limit or permission is refused during setup, stop and report it (do not switch tools during setup). Note that background Autopilot AI sweeps fail over automatically between Claude Code and Codex by default when both are installed and the primary hits a usage/login limit; pass `--no-failover` if the operator wants sweeps pinned to one tool.
 - Never disable Gatekeeper, remove quarantine metadata or grant macOS permissions yourself. Report steps that need the human.
 
 ## Install
 
-Check `sw_vers -productVersion` (14 or later), then `claude --version` and `codex --version`. A CLI being present doesn't prove it is signed in. Download, inspect, then run the installer:
+Check `sw_vers -productVersion` (14 or later), then `claude --version` and `codex --version`. A CLI being present doesn't prove it is signed in. Prefer Homebrew (`brew install --cask swordfish444/tap/burnzombies`) or download, inspect, then run the installer (pin a release tag like `v0.21.0` instead of `main` if desired):
 
 ```sh
 installer="$(mktemp -t burnzombies-installer)"
@@ -24,8 +24,13 @@ rm "$installer"
 
 - Default (`--mcp auto`): Claude Code if installed, otherwise Codex. If the operator named one, add `--mcp claude` or `--mcp codex`.
 - Neither installed: run the same command. AI judging stays off. Once the operator installs and signs in to one, run `"$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies" setup`.
-- `--look-only`: BZ finds, sizes and asks as usual but burns nothing until the operator chooses Start burning in the menu (or picks another level in Settings). Add it if the operator wants to see what BZ would burn first. Works with every `--mcp` choice.
+- `--look-only`: BZ finds, sizes and asks as usual but burns nothing until the operator chooses Start burning in the menu (or `burnzombies autopilot start-burning`, or picks another level in Settings). Add it if the operator wants to see what BZ would burn first. Works with every `--mcp` choice.
 - `--observe-only`: AI judging off. Not a dry run: the starter rules and the operator's answers still burn. Add it only if the operator asks; `burnzombies setup --with-ai` turns it back on.
+- `--no-login-item`: skip registering BurnZombies in macOS Login Items during initial setup.
+- `--no-failover` / `--allow-failover`: disable or enable default-on `claude ↔ codex` quota/login failover.
+- `--never-touch <path>`: add a protected path before the first look (repeatable).
+- `--disable-starter <id>`: disable a starter rule before the first look (repeatable).
+- `--backup-days <N>`: set worktree backup retention (`1–365`, default `7`; pass `0 --use-at-your-own-risk` only if the operator explicitly asks to disable backups).
 - `--no-open`: install without starting the app.
 
 The installer checks the release checksum, archive paths and bundle signature, installs `~/Applications/BurnZombies.app` (or `$BURNZOMBIES_INSTALL_DIR`; substitute that path below if the operator set it) and starts it in the menu bar. No account, API key or sudo. Releases are not notarized; if macOS blocks opening, report the exact prompt.
@@ -48,15 +53,20 @@ bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
 
 - BZ looks right away and every minute for its first half hour. Within about a minute the menu-bar panel (the skull) shows how much it found, and "BZ has N quick questions" when something needs a decision.
 - Installed with `--look-only`, nothing burns on its own (not the rules below, not yes answers, not the AI) until the operator chooses Start burning in the menu-bar panel; then BZ starts burning what waited right away. The panel says "Look-only · nothing burns" and how much it would burn.
-- Otherwise, from the first minute, starter rules burn on their own (each can be switched off in Settings → Burns without asking):
-  - programs whose app or chat is gone, idle 6+ hours, with no open port (a program that has barely used the CPU since it started counts as idle from its start);
-  - old project copies (git worktrees) already merged, unchanged and untouched for a month, always backed up first;
-  - rebuildable folders (node_modules, build output) inside copies untouched for two weeks.
+- Otherwise, from the first minute, eight switchable starter rules burn on their own (each can be switched off in Settings → Burns without asking or via `--disable-starter`):
+  - abandoned robot browsers idle 10+ minutes;
+  - programs still driving a robot browser 1+ hour after their chat ended;
+  - orphaned programs from finished chats idle 1+ hour with no open port;
+  - orphaned programs idle 6+ hours with no open port (a program that barely used CPU counts as idle from its start);
+  - old project copies (git worktrees) already merged, unchanged and untouched for a month, always backed up first (never Claude Code, Codex, Conductor, Cursor, sibling checkouts beside the main repo, or reusable worktree pools);
+  - rebuildable folders (`node_modules`, build output) inside non-locked, non-pool copies untouched for two weeks;
+  - throwaway robot-browser temp profiles and recordings idle 1+ hour;
+  - settled AI scratch (`$TMPDIR/claude-<uid>` 2+ days, `~/.codex/*artifacts` 3+ days, Antigravity `scratch`/`browser_sandbox` 14+ days; transcripts untouched).
 - Everything else becomes a one-tap yes/no question. Yes burns all the matches now and later; No keeps them.
-- With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. After that, sweeps run when there is something new to judge, at most every 30 minutes, rechecking every 4 hours, each capped at 15 minutes. The AI may burn on its own only an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor.
-- A new install starts at login, so a restart doesn't stop BZ; macOS shows a notice when BZ adds itself to login items. Settings → Start at login turns that off, and updates keep that choice. An install updated from v0.13.0 or earlier keeps its old setting: off unless the operator turned it on.
-- Never asked about or touched: macOS, apps, anything a running chat is working in, main project folders.
-- Undo: old copies restore from Findings for 30 days (restore points are `refs/burnzombies/retired/…` in each repository; ignored files over 5 MB aren't saved). Junk folders are rebuilt by the operator's tools. Programs get SIGTERM, which can't be undone.
+- With Claude Code or Codex, the first AI sweep starts about 10 minutes after install. After that, sweeps run when there is something new to judge, at most every 30 minutes, rechecking every 4 hours, each capped at 15 minutes. The AI may burn on its own only an orphaned program with no open port, a known junk folder, or an eligible copy nothing uses (never Claude Code, Codex, Conductor, Cursor, sibling checkouts, or reusable worktree pools).
+- A new install starts at login unless `--no-login-item` was passed, so a restart doesn't stop BZ; macOS shows a notice when BZ adds itself to login items. Settings → Start at login turns that off, and updates keep that choice. An install updated from v0.13.0 or earlier keeps its old setting: off unless the operator turned it on.
+- Never asked about or touched: macOS, apps, anything a running chat is working in, main project folders, and anything locked with `git worktree lock` (including its inner `node_modules` and build folders).
+- Undo: old copies restore from Findings for **7 days by default** (configurable `1–365` days, or Off at the owner's risk, in Settings → Backups). Restore points save committed HEAD in `refs/burnzombies/retired/…` and local/untracked/ignored files up to 512 MB in encrypted local recovery (browser profiles and rebuildable caches aren't saved). Junk folders are rebuilt by the operator's tools. Programs get SIGTERM, which can't be undone.
 
 ## Cost
 
@@ -82,9 +92,9 @@ Setup writes only BZ's private configuration, keeps unspecified settings and nev
 
 ## How each tool runs
 
-- Claude Code: each sweep runs the installed CLI with its existing login, a private MCP config, read-only file tools (no shell, no edits), no hooks, no CLAUDE.md files and no saved session. No edits to ~/.claude.json or ~/.claude/settings.json.
-- Codex: each sweep runs an owned, bounded Codex session with only BZ's MCP tools; apps, plugins, memories, shell and web search are off. No global Codex config edits.
-- Only Claude Code and Codex run AI sweeps. Do not run the legacy `install` or `install-skill` commands for normal setup.
+- Claude Code: each sweep runs the installed CLI with its existing login, a private MCP config, read-only file tools (no shell, no edits), no hooks, no CLAUDE.md files, no saved session, and attribution tags (`BURNZOMBIES_SWEEP=1`, `BURNZOMBIES_CALLER=burnzombies`, `BURNZOMBIES_RUN_KIND=...`, `--append-system-prompt`). No edits to ~/.claude.json or ~/.claude/settings.json.
+- Codex: each sweep runs an owned, bounded Codex session with only BZ's MCP tools and the same attribution tags; apps, plugins, memories, shell and web search are off. No global Codex config edits.
+- Only Claude Code and Codex run AI sweeps. Do not run the legacy `install` or `install-skill` commands for normal setup (they require `--legacy-edit-harness-config` and fail closed without it).
 
 ## Uninstall
 
@@ -98,6 +108,7 @@ Restore points stay in each repository and are the only way back for burned copi
 
 ## More read-only commands
 
+- `audit [--json]`: zero-persistence diagnostic (starts no daemon, writes no state files, measures free space, orphans, worktrees, and dev caches).
 - `findings [OFFSET]`: the advanced findings inbox; blocked or unknown is not zero.
 - `evidence PID [PID ...]`: up to 16 exact process identities; sends no signals.
 - `status`: saved totals; does not prove the app is running.

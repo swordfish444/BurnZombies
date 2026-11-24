@@ -402,7 +402,7 @@ func autopilotSweepProof() async throws {
     AutopilotItem(
       id: "worktree:" + name, kind: .worktree, name: name, bytes: bytes,
       facts: [
-        "place": "sibling", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+        "place": "agent", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
         "thread": "none",
       ])
   }
@@ -600,7 +600,7 @@ func autopilotSweepProof() async throws {
     AutopilotItem(
       id: "worktree:r\(n)", kind: .worktree, name: "copy-\(n)", bytes: 1 << 30,
       facts: [
-        "place": "sibling", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+        "place": "agent", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
         "thread": "none",
       ])
   }
@@ -632,8 +632,8 @@ func autopilotSweepProof() async throws {
   try AutopilotStore(root: directory.appendingPathComponent("refusals")).updateMemory {
     $0.rules.append(
       AutopilotRule(
-        kind: .worktree, match: ["place": ["sibling"]], verdict: .burn, source: .operator,
-        title: "Burn sibling copies"))
+        kind: .worktree, match: ["place": ["agent"]], verdict: .burn, source: .operator,
+        title: "Burn agent copies"))
   }
   _ = await refusing.tick(now: now.addingTimeInterval(1800))
   equal(attempts.all.count, firstAttempts * 2 - 1, "a new answer is tried right away")
@@ -691,7 +691,7 @@ func autopilotSweepProof() async throws {
     AutopilotItem(
       id: "worktree:stuck", kind: .worktree, name: "stuck", bytes: 1 << 30,
       facts: [
-        "place": "sibling", "saved": "merged", "changes": "none", "stale": stale, "inUse": "no",
+        "place": "agent", "saved": "merged", "changes": "none", "stale": stale, "inUse": "no",
         "thread": "none",
       ])
   }
@@ -737,8 +737,8 @@ func autopilotSweepProof() async throws {
   try waitStore.updateMemory {
     $0.rules.append(
       AutopilotRule(
-        kind: .worktree, match: ["place": ["sibling"]], verdict: .burn, source: .operator,
-        title: "Burn sibling copies"))
+        kind: .worktree, match: ["place": ["agent"]], verdict: .burn, source: .operator,
+        title: "Burn agent copies"))
   }
   _ = await waiting.burn(["worktree:stuck"])
   equal(stuckAttempts.all.count, 3, "so is one a new answer allows")
@@ -769,7 +769,7 @@ func autopilotSweepProof() async throws {
   let busyCopy = AutopilotItem(
     id: "worktree:busy", kind: .worktree, name: "busy", bytes: 1 << 30,
     facts: [
-      "place": "sibling", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+      "place": "agent", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
       "thread": "none",
     ])
   let busyRetires = Calls()
@@ -823,7 +823,7 @@ func autopilotSweepProof() async throws {
   let plainCopy = AutopilotItem(
     id: "worktree:plain", kind: .worktree, name: "plain", bytes: 1 << 30,
     facts: [
-      "place": "sibling", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
+      "place": "agent", "saved": "merged", "changes": "none", "stale": "older", "inUse": "no",
       "thread": "none",
     ])
   let causeRoot = directory.appendingPathComponent("cause")

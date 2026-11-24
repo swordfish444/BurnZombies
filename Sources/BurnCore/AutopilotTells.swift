@@ -107,7 +107,7 @@ extension AutopilotPolicy {
     ]
     let big: [(fact: String, values: [String])] = AutopilotWorktrees.bigFileRisks.map {
       (fact: $0.fact, values: ["yes", "no"])
-    }
+    } + [(fact: AutopilotWorktrees.poolRisk, values: ["yes", "no"])]
     return [
       .worktree: copies + big, .process: [(fact: "listening", values: ["unknown", "yes", "no"])],
       .disk: [(fact: AutopilotDockerCache.risk, values: ["yes", "no"])],

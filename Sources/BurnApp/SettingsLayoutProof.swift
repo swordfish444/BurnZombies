@@ -171,8 +171,8 @@
 
     // Each page opens, shows its rows, and comes back.
     for (page, name) in [
-      (SettingsPage.burns, "page-burns"), (.never, "page-never"), (.aiUse, "page-ai-use"),
-      (.access, "page-access"),
+      (SettingsPage.burns, "page-burns"), (.never, "page-never"), (.backups, "page-backups"),
+      (.aiUse, "page-ai-use"), (.access, "page-access"),
     ] {
       model.settingsPage = page
       try render(name)

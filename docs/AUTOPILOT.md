@@ -23,14 +23,14 @@ Each item gets a few plain facts ("orphaned: yes", "saved: merged", "folder: nod
    - programs still driving a robot browser (a Playwright CLI daemon, an MCP server, a test runner) an hour after the chat that worked in their folder ended, when they serve no network port;
    - programs whose chat is finished, idle for 1+ hour, with no open port;
    - programs whose app or chat is gone, idle for 6+ hours, with no open port. A program that has barely used the CPU since it started counts as idle from its start, so old leftovers go right away;
-   - old copies already merged, unchanged and untouched for a month (not ones made by Codex, Claude or Conductor). They are always backed up first;
-   - rebuildable folders (`node_modules`, build output, Xcode build folders) inside copies untouched for two weeks;
+   - old copies already merged, unchanged and untouched for a month (never ones made by Codex, Claude, Conductor or Cursor, and never sibling checkouts beside your main repo or reusable worktree pools). They are always backed up first unless you explicitly turned backups off;
+   - rebuildable folders (`node_modules`, build output, Xcode build folders) inside non-locked, non-pool copies untouched for two weeks;
    - the throwaway profiles and recordings robot browsers leave in your temp folder (`playwright_chromiumdev_profile-…`, `playwright-artifacts-…`, `puppeteer_dev_chrome_profile-…`, chromedriver's `.org.chromium.Chromium.…`), once they add up to 100 MB. Each must be untouched for an hour, unlocked by a running browser and unused by any program when it is removed;
-   - old AI scratch leftovers (`$TMPDIR/claude-*` untouched for 2+ days, `~/.codex/{artifacts,session-artifacts,task-artifacts}` untouched for 3+ days, `~/.*` developer dot-store `task-artifacts` untouched for a week, and `scratch` / `browser_sandbox` inside finished Antigravity chats untouched for 2+ weeks; transcripts and conversation files stay untouched).
-5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude or Conductor. Docker's build cache is never its call.
+   - old AI scratch leftovers (`$TMPDIR/claude-<uid>` matching numeric UID suffixes only, untouched for 2+ days; `~/.codex/{artifacts,session-artifacts,task-artifacts}` untouched for 3+ days; `~/.*` developer dot-store `task-artifacts` untouched for a week; and `scratch` / `browser_sandbox` inside finished Antigravity chats untouched for 2+ weeks; transcripts and conversation files stay untouched).
+5. **The AI** may burn on its own only when it is at least 85% sure *and* the item is low-risk: an orphaned program with no open port, a known junk folder, or a copy nothing uses that wasn't made by Codex, Claude, Conductor or Cursor and isn't a sibling checkout or reusable worktree pool. Docker's build cache is never its call.
 6. Everything else is **unsure** and becomes a question.
 
-Copies made by Codex, Claude or Conductor are checked like any other copy, so your yes answers cover them too; the starter rules and the AI never burn them on their own. A copy whose files BurnZombies never finished reading (a hard-linked file, a project inside it or a special file stops that walk) gets its age from a second look instead: the newest of its last commit, Git's index and everything in it except what is inside its junk folders, a few copies at each look. Until then, or when that look can't finish either (a folder it can't open, too many files), it has no age, so no rule about how long things sat unused matches it; the same goes for a copy outside the folders you selected, whose unsaved changes BurnZombies never reads. Junk inside such a copy counts as inside an old copy only once a second look, which skips the junk and Git's own files, finds nothing in the copy changed for two weeks; an old last commit alone never makes a copy old. Clearing a junk folder inside a copy doesn't count as using the copy.
+Copies made by Codex, Claude, Conductor or Cursor, sibling checkouts beside a main repo, and reusable worktree pools (like `magic1..N` or checkouts parked on `available-N`) are checked like any other copy, so your yes answers cover them too; the starter rules and the AI never burn them on their own. Reusable worktree pools are also isolated as a named risk so a Yes to ordinary non-pool copies never generalizes onto a slot pool, and `git worktree lock` protects both the worktree and its inner `node_modules` / build folders mechanically. A copy whose files BurnZombies never finished reading (a hard-linked file, a project inside it or a special file stops that walk) gets its age from a second look instead: the newest of its last commit, Git's index and everything in it except what is inside its junk folders, a few copies at each look. Until then, or when that look can't finish either (a folder it can't open, too many files), it has no age, so no rule about how long things sat unused matches it; the same goes for a copy outside the folders you selected, whose unsaved changes BurnZombies never reads. Junk inside such a copy counts as inside an old copy only once a second look, which skips the junk and Git's own files, finds nothing in the copy changed for two weeks; an old last commit alone never makes a copy old. Clearing a junk folder inside a copy doesn't count as using the copy.
 
 ## Look-only
 
@@ -111,8 +111,9 @@ When BZ is about to ask a question it is sure of, it answers yes itself, burns, 
 
 - it has earned trust on the subject;
 - you have said yes on that subject before, and yes is what you usually say there;
-- every risk on the question (work only on this Mac, unsaved changes, each kind of big unsaved files, a running server, something it couldn't check) was on a card you said yes to on that subject;
-- no keep lesson of yours on that subject touches it.
+- every risk on the question (work only on this Mac, unsaved changes, each kind of big unsaved files, a reusable worktree pool, a running server, something it couldn't check) was on a card you said yes to on that subject;
+- no keep lesson of yours on that subject touches it;
+- for old copies, backups are enabled (when backups are disabled, BZ asks instead of acting on its own).
 
 So it never acts on a subject you haven't answered, on a risk you haven't said yes to, or against a No. What it learns from its own call stays within the risks you approved: a later copy with a risk you never saw isn't burned under it.
 
@@ -150,7 +151,8 @@ Native code catalogs and applies rules without any model. With Claude Code or Co
 - **What it uses.** Claude Code uses Sonnet at medium thinking by default, whatever your own Claude Code settings say; Codex uses its own default. Change it with **How smart** in **Settings**.
 - **What it can do.** Six tools (catalog, inspect, decide, burn, ask, report), plus reading project files to understand what something is. It has no shell, and the app re-checks every burn.
 - **How long.** A few minutes, capped at 15. A sweep that runs out of time after judging things counts as done, and the next picks up the rest.
-- **Failures** back off 15 → 30 → 60 → 120 minutes (at least an hour after a login or usage-limit problem). When both Claude Code and Codex are installed and the primary hits a usage or login limit, background sweeps automatically fail over to the other AI until the limit resets, then switch back. The loop never stops for good, and your rules keep working while the AI is unavailable.
+- **Failures** back off 15 → 30 → 60 → 120 minutes (at least an hour after a login or usage-limit problem). When both Claude Code and Codex are installed and the primary hits a usage or login limit, background sweeps fail over automatically to the other AI until the limit resets, then switch back (pass `--no-failover` to disable failover). The loop never stops for good, and your rules keep working while the AI is unavailable.
+- **Usage attribution.** Each sweep stamps its child environment (`BURNZOMBIES_SWEEP=1`, `BURNZOMBIES_CALLER=burnzombies`, `BURNZOMBIES_RUN_KIND=autopilot-sweep|deep-hunt`) and appends `[burnzombies:caller=burnzombies kind=... version=...]` via `--append-system-prompt` (Claude) or instructions (Codex) so external usage ledgers can account for BZ separately.
 - **Cost and token efficiency.** Roughly $0.30–$1.20 a sweep on API pricing; on a Claude or ChatGPT subscription it uses plan usage instead. **Settings → Used this week** shows what sweeps used alongside **Token efficiency**: space freed by rules for 0 tokens, space freed by AI sweeps, noisy sweeps skipped, and whether Lean mode is active.
 
 Without Claude Code or Codex, or after installing with `--observe-only`, BurnZombies still burns what the starter rules and your answers cover; to burn nothing until you say so, use [look-only](#look-only). The switch beside **Autopilot on** in the menu, or **Off** in **Settings**, turns Autopilot, AI included, off. **Which AI → Off** in **Settings** turns off only the AI.
@@ -170,7 +172,7 @@ Your next build may take a little longer, since Docker has to make those leftove
 
 ## Undo
 
-- **Old copies:** **Restore** in **Findings** for 30 days. The restore point lives in the repository as `refs/burnzombies/retired/…` and holds every commit and local change. Ignored files over 5 MB, anything inside rebuildable folders, and browser profiles that test runs leave in a copy (a Chrome-style profile folder), ignored or not, aren't saved. A copy with more than 512 MB of other unsaved files is left alone until you say its big files can go ([The question card](#the-question-card)). Then those files are deleted for good: the receipt names them, and Restore brings the copy back without them.
+- **Old copies:** **Restore** in **Findings** for **7 days by default** (customize to `1d`, `3d`, `7d`, `14d`, `30d` or any `1–365` days in **Settings → Backups**, or turn backups off behind an explicit *use at your own risk* warning). When backups are enabled, committed HEAD is saved in the repository as `refs/burnzombies/retired/…` and local, untracked and ignored files up to 512 MB are preserved in encrypted local recovery; rebuildable folders and browser profiles that test runs leave in a copy (a Chrome-style profile folder), ignored or not, aren't saved. A copy with more than 512 MB of other unsaved files is left alone until you say its big files can go ([The question card](#the-question-card)). Then those files are deleted for good: the receipt names them, and Restore brings the copy back without them. Expired backups and their retired Git refs prune automatically after your retention window (or right away via **Delete existing backups now** / `burnzombies autopilot backups purge`).
 - **Backup key:** backups are encrypted with BZ's own key, kept in a private file. Earlier versions kept it in your login keychain. The first time a newer BZ needs that key, macOS may ask for your password to hand it over. BZ doesn't wait on that dialog: old copies wait, and the menu shows **Allow**. Click it and enter your password when macOS asks, and they burn right away. The key then lives in BZ's private file, and nothing asks again.
 - **Junk folders:** your tools rebuild them.
 - **Docker's build cache:** Docker makes it again when a build needs it.
@@ -185,7 +187,7 @@ Uninstalling leaves restore points in place; [Uninstall](INSTALL.md#uninstall) s
 - Something the app refused backs off progressively (`6h → 24h → 7d`) instead of retrying unchanged items forever, and retries right away whenever the item, the answer that allows it, or BurnZombies itself updates. AI sweeps wait too, so they don't repeat checks the app already refused. If BZ couldn't finish checking whether a program is using it, the next look tries once more first.
 - A refusal says why in plain words. A junk folder that has to be backed up first and can't be says what stopped it: a project, a pipe or hard links inside it, or too many files. When a check failed rather than refused, its receipt and the burn log also name the step and what failed (a Git command and its status or time limit, the backup's file limit, free space, a file that changed), never with a path or a name.
 - One burn per item at a time: while a copy is being backed up and removed, a second burn of it, from the AI or from **Burn now**, is turned away.
-- Old copies are only removed after their restore point verifies; submodules with unsaved work, locked copies, in-progress merges/rebases and copies a program is using are refused. BZ's own measuring of junk folders steps out of whatever is burning, so it never counts as that program.
+- Old copies are only removed after their restore point verifies (unless the operator explicitly disabled backups); submodules with unsaved work, locked copies (`git worktree lock`, including their inner `node_modules` and build folders), in-progress merges/rebases and copies a program is using are refused. BZ's own measuring of junk folders steps out of whatever is burning, so it never counts as that program.
 - Unsaved files too big for a restore point are deleted only under a lesson from your Yes to a card that showed that kind of them, or BZ's own call on a kind you said yes to. **Burn now**, the AI and the starter rules never delete them. A copy holding them waits instead of being tried every 6 hours.
 - Junk folders must be a known rebuildable kind, untracked by git, outside private areas (iCloud, Mail, Messages, Photos, `.ssh`, Keychains), and unused by any program. A `node_modules` counts only when a package manager made it and it holds nothing but packages, the links pnpm makes to them, and the caches tools keep there (`.cache`, `.vite`, `.prisma`).
 - Without Full Disk Access, nothing in a place macOS protects is read, sized, judged or burned, and neither is a copy whose project lives in one.
@@ -198,13 +200,20 @@ The command isn't on your PATH; call it from the app:
 
 ```sh
 bz="$HOME/Applications/BurnZombies.app/Contents/MacOS/burnzombies"
-"$bz" autopilot              # snapshot: counts, questions, lessons, how it's doing, rules
-"$bz" autopilot catalog      # items, unsure first
-"$bz" autopilot inspect ID   # live detail for one item
-"$bz" autopilot sweep        # run an AI sweep now
-"$bz" autopilot look-only    # hold every burn until you choose Start burning
-"$bz" autopilot eval         # replay your answers: a line each, then a summary
-"$bz" autopilot eval --json  # the same replay as JSON
+"$bz" audit                                # read-only check: zero files written, no daemon started
+"$bz" audit --json                         # machine-readable read-only audit
+"$bz" autopilot                            # snapshot: counts, questions, lessons, how it's doing, rules
+"$bz" autopilot catalog                    # items, unsure first
+"$bz" autopilot inspect ID                 # live detail for one item
+"$bz" autopilot sweep                      # run an AI sweep now
+"$bz" autopilot look-only                  # hold every burn until you choose Start burning
+"$bz" autopilot start-burning              # leave look-only and start burning
+"$bz" autopilot never-touch add /path       # protect a folder or app
+"$bz" autopilot starter disable ID         # turn off a starter rule (enable turns it back on)
+"$bz" autopilot backups 7                  # set backup retention days (1–365, or off --use-at-your-own-risk)
+"$bz" autopilot backups purge              # delete existing saved backups now
+"$bz" autopilot eval                       # replay your answers: a line each, then a summary
+"$bz" autopilot eval --json                # the same replay as JSON
 ```
 
 `eval` replays your Yes and No answers in order and says what BZ would have done with each: settled by an earlier lesson, acted on because it was sure, or asked, with its guess and whether it matched. The summary counts each, the guesses it got right, and how much it would have handled without asking:

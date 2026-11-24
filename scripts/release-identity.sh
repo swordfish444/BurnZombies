@@ -4,9 +4,9 @@
 # certificate, and macOS ties Full Disk Access to it, so releases keep using that same key: a new
 # identity (scripts/ensure-signing-identity.sh) would make every user allow BurnZombies again.
 #
-#   scripts/release-identity.sh load   On a Mac without the identity: installs it from 1Password
+#   scripts/release-identity.sh --legacy load   On a Mac without the identity: installs it from 1Password
 #                                      into the login keychain, then signs a test file with it.
-#   scripts/release-identity.sh save   On the Mac that has the identity: copies it into
+#   scripts/release-identity.sh --legacy save   On the Mac that has the identity: copies it into
 #                                      1Password and reads it back. macOS asks once to allow the
 #                                      export.
 #
@@ -19,6 +19,12 @@
 # marked trusted: codesign and Full Disk Access don't need that. On disk the identity exists only
 # in a private temporary folder while this script runs.
 set -euo pipefail
+
+# Legacy releases used the self-signed PEM below. Keep that backup available by explicit choice.
+if [[ "${1:-}" != --legacy ]]; then
+  exec python3 "$(dirname "$0")/developer_id_keychain.py" "$@"
+fi
+shift
 
 name="${BURNZOMBIES_SIGNING_IDENTITY:-BurnZombies Local Signing}"
 pin="${BURNZOMBIES_RELEASE_CERT_SHA256:-dbe8297fd599efa4bb942d0ebb5487e3bc27c15d7b71fadc8253da8ab1d697b9}"

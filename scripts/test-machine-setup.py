@@ -162,4 +162,40 @@ with tempfile.TemporaryDirectory(prefix='bz-machine-setup-') as temporary:
     assert 'still burns' not in looked.stdout, looked.stdout
     assert json.loads((state/'autopilot/sweep.json').read_text())['lookOnly'] is True
     assert not (state/'machine-review.json').exists()
-print('PASS five-provider setup, model/effort subprocess arguments, reinstall persistence, defaults, private config, owned cancellation, setup without a harness and look-only')
+    # Safe-trial setup flags: --no-login-item, --no-failover, --never-touch, --disable-starter, --backup-days (+ risk gate).
+    safe = root/'safe-trial'
+    prot = root/'protected-slot'; prot.mkdir()
+    bad_off = subprocess.run(
+        [str(cli), 'setup', '--harness', 'claude', '--backup-days', '0', '--root', str(safe)],
+        env=env, capture_output=True, text=True)
+    assert bad_off.returncode != 0 and 'use-at-your-own-risk' in bad_off.stderr, bad_off.stdout + bad_off.stderr
+    trial = subprocess.run(
+        [str(cli), 'setup', '--harness', 'claude', '--look-only', '--no-login-item', '--no-failover',
+         '--never-touch', str(prot), '--disable-starter', 'starter-finished-copies',
+         '--backup-days', '3', '--root', str(safe)],
+        env=env, capture_output=True, text=True)
+    assert trial.returncode == 0, trial.stdout + trial.stderr
+    assert json.loads((safe/'machine-review.json').read_text()).get('allowFailover') is False
+    assert json.loads((safe/'start-at-login.json').read_text())['enabled'] is False
+    sweep_cfg = json.loads((safe/'autopilot/sweep.json').read_text())
+    assert sweep_cfg['lookOnly'] is True and sweep_cfg['backupRetentionDays'] == 3
+    mem = json.loads((safe/'autopilot/memory.json').read_text())
+    assert 'starter-finished-copies' in mem.get('starterDisabled', []), mem
+    assert str(prot.resolve()) in mem.get('neverTouch', []), mem
+    # Disabling backups via --backup-days 0 works only with --use-at-your-own-risk.
+    off_ok = subprocess.run(
+        [str(cli), 'setup', '--harness', 'claude', '--backup-days', '0', '--use-at-your-own-risk', '--root', str(safe)],
+        env=env, capture_output=True, text=True)
+    assert off_ok.returncode == 0, off_ok.stdout + off_ok.stderr
+    assert json.loads((safe/'autopilot/sweep.json').read_text())['backupRetentionDays'] == 0
+    # CLI autopilot start-burning, backups, starter, never-touch, and --allow-failover.
+    subprocess.run([str(cli), 'setup', '--harness', 'claude', '--allow-failover', '--root', str(safe)], env=env, check=True, capture_output=True)
+    assert json.loads((safe/'machine-review.json').read_text()).get('allowFailover') is True
+    safe_env = dict(env, BURNZOMBIES_HOME=str(safe))
+    subprocess.run([str(cli), 'autopilot', 'start-burning'], env=safe_env, check=True, capture_output=True)
+    assert not json.loads((safe/'autopilot/sweep.json').read_text()).get('lookOnly', False)
+    subprocess.run([str(cli), 'autopilot', 'backups', '14'], env=safe_env, check=True, capture_output=True)
+    assert json.loads((safe/'autopilot/sweep.json').read_text())['backupRetentionDays'] == 14
+    subprocess.run([str(cli), 'autopilot', 'starter', 'enable', 'starter-finished-copies'], env=safe_env, check=True, capture_output=True)
+    assert 'starter-finished-copies' not in json.loads((safe/'autopilot/memory.json').read_text()).get('starterDisabled', [])
+print('PASS five-provider setup, model/effort subprocess arguments, reinstall persistence, defaults, private config, owned cancellation, setup without a harness, look-only and safe-trial controls')

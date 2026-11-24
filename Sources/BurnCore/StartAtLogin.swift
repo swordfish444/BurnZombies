@@ -67,7 +67,7 @@ public enum StartAtLogin {
     bundle.pathExtension == "app" && environment["BURNZOMBIES_HOME"] == nil
   }
 
-  static func record(_ enabled: Bool, root: URL) throws {
+  public static func record(_ enabled: Bool, root: URL) throws {
     let data = try JSONEncoder().encode(Choice(enabled: enabled))
     try Store(root: root).write(data, to: url(root), limit: 4096)
   }

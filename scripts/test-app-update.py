@@ -15,7 +15,9 @@ import tempfile
 import time
 import uuid
 
-CERTIFICATE = "F6EE40DDEBB01F056DE8FC7910091F4FAC3D7B49"
+from installer_signing_fixture import RELEASE_REQUIREMENT
+
+CERTIFICATE = "Developer ID Application: skylar graika (7K3GR5QJRH)"
 repo = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("app", type=Path, help="A current signed debug or release app containing the update helper")
@@ -32,7 +34,7 @@ def run(*arguments, **keywords):
     return result.stdout
 
 
-run("codesign", "--verify", "--strict", "-R", f'=certificate leaf = H"{CERTIFICATE}"', str(source_helper))
+run("codesign", "--verify", "--strict", "-R", "=" + RELEASE_REQUIREMENT, str(source_helper))
 # macOS UNIX-domain socket paths are limited to 104 bytes. Keep the private
 # fixture root short, rather than using Python's long per-user temporary path.
 if options.artifacts:

@@ -7,6 +7,11 @@ enum HarnessInstall {
   static let clients = ["codex", "claude", "cursor", "copilot", "gemini"]
   static func quoted(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
   static func run(_ args: [String]) throws {
+    guard args.contains("--legacy-edit-harness-config") else {
+      throw StoreError.message(
+        "Legacy command refused: 'burnzombies install' edits global harness files (~/.claude.json, ~/.claude/settings.json, ~/.codex/config.toml). Use 'burnzombies setup' for normal setup (which leaves global harness configs untouched), or pass --legacy-edit-harness-config if you intentionally want the legacy chat integration."
+      )
+    }
     func option(_ name: String, fallback: String) throws -> String {
       guard let i = args.firstIndex(of: name) else { return fallback }
       guard i + 1 < args.count else { throw NSError(domain: "Missing \(name)", code: 1) }

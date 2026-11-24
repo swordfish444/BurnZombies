@@ -585,6 +585,20 @@ public struct AutopilotSweepState: Codable, Sendable, Equatable {
   public var requested: Bool?
   /// A deep hunt asked for from the command line, with its spending limit in US dollars.
   public var requestedDeep: Double?
+  /// Default number of days to retain encrypted backups and retired Git safety refs.
+  public static let defaultBackupRetentionDays = 7
+  /// Maximum configurable backup retention in days.
+  public static let maximumBackupRetentionDays = 365
+  /// Quick presets offered in Settings. Any integer in `1...365` is also valid, or `0` to disable.
+  public static let backupRetentionPresets = [1, 3, 7, 14, 30]
+  /// Days to retain encrypted backups and retired Git refs (`nil` = default 7 days, `0` = backups
+  /// disabled at owner's risk, `1...365` = custom day window).
+  public var backupRetentionDays: Int?
+  public var effectiveBackupRetentionDays: Int {
+    guard let value = backupRetentionDays else { return Self.defaultBackupRetentionDays }
+    return min(Self.maximumBackupRetentionDays, max(0, value))
+  }
+  public var backupsEnabled: Bool { effectiveBackupRetentionDays > 0 }
   public var log: [AutopilotLogEntry] = []
   public init() {}
   public mutating func append(_ message: String, date: Date = Date()) {
@@ -760,4 +774,8 @@ public enum AutopilotCommand: Codable, Sendable, Equatable {
   case deepHunt(limitUSD: Double)
   /// Ends the hunt under way. What it burned stays burned.
   case stopHunt
+  /// Sets backup retention in days (`0` disables backups at the owner's risk; `1...365` retains).
+  case setBackupRetention(days: Int)
+  /// Deletes existing restorable backups and retired Git refs (leaving unresolved failures untouched).
+  case purgeBackups
 }
