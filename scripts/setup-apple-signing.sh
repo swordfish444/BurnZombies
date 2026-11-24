@@ -9,7 +9,7 @@ echo "==> Checking local code-signing identities..."
 identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
 echo "$identities"
 
-dev_id="$(printf '%s\n' "$identities" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1 || true)"
+dev_id="$(printf '%s\n' "$identities" | sed -n 's/.*"\(Developer ID Application: [^"]* (7K3GR5QJRH)\)".*/\1/p' | head -n 1 || true)"
 if [[ -z "$dev_id" ]]; then
   cat <<'EOF'
 

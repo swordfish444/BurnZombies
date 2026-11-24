@@ -2,12 +2,11 @@
 from contextlib import contextmanager
 import hashlib
 from pathlib import Path
-import re
 import secrets
 import shlex
 import subprocess
 
-RELEASE_CERTIFICATE = "F6EE40DDEBB01F056DE8FC7910091F4FAC3D7B49"
+RELEASE_REQUIREMENT = 'anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7K3GR5QJRH"'
 
 
 def keychains():
@@ -88,10 +87,10 @@ subjectKeyIdentifier=hash
     def installer(self, source, destination):
         """Change one literal anchor in a private test copy; production has no override."""
         text = Path(source).read_text()
-        pin = f'release_certificate="{RELEASE_CERTIFICATE}"'
-        assert text.count(pin) == 1, "Production trust anchor changed; review the fixture"
+        pin = production_pin(source)
         destination = Path(destination)
-        destination.write_text(text.replace(pin, f'release_certificate="{self.fingerprint}"'))
+        fixture_requirement = f'certificate leaf = H"{self.fingerprint}"'
+        destination.write_text(text.replace(pin, f"release_requirement='{fixture_requirement}'"))
         return destination
 
 
@@ -113,5 +112,6 @@ def signing_fixture(root):
 
 
 def production_pin(source):
-    values = re.findall(r'^release_certificate="([0-9A-F]{40})"$', Path(source).read_text(), re.M)
-    assert values == [RELEASE_CERTIFICATE], "Installer must keep one fixed release trust anchor"
+    pin = f"release_requirement='{RELEASE_REQUIREMENT}'"
+    assert Path(source).read_text().splitlines().count(pin) == 1, "Unexpected installer trust anchor"
+    return pin

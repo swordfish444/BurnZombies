@@ -1,30 +1,17 @@
 #!/bin/bash
-# Keeps the release signing identity in 1Password, so the maintainer's Macs can build releases
-# without anyone at the keyboard. Every release since v0.13.0 is signed with one self-signed
-# certificate, and macOS ties Full Disk Access to it, so releases keep using that same key: a new
-# identity (scripts/ensure-signing-identity.sh) would make every user allow BurnZombies again.
-#
-#   scripts/release-identity.sh load   On a Mac without the identity: installs it from 1Password
-#                                      into the login keychain, then signs a test file with it.
-#   scripts/release-identity.sh save   On the Mac that has the identity: copies it into
-#                                      1Password and reads it back. macOS asks once to allow the
-#                                      export.
-#
-# The identity is the Document "BurnZombies release signing identity" (certificate and private
-# key, PEM) in the 1Password vault BURNZOMBIES_OP_VAULT (default skylar). The 1Password CLI (op)
-# reads it with a service account, so nobody has to approve it: OP_SERVICE_ACCOUNT_TOKEN, or else
-# the token the maintainer's 1Password MCP keeps in the keychain item BURNZOMBIES_OP_TOKEN_ITEM
-# (default codex-1password-service-account-token). Without a token, op asks the 1Password app,
-# which wants Touch ID; BURNZOMBIES_OP_ACCOUNT then picks the account. The certificate is not
-# marked trusted: codesign and Full Disk Access don't need that. On disk the identity exists only
-# in a private temporary folder while this script runs.
+# Save and restore the maintainer's Apple Developer ID identity in the personal 1Password
+# vault. The historical BurnZombies Local Signing backup has a separate document title.
+# Usage: scripts/release-identity.sh save | load
 set -euo pipefail
+umask 077
 
-name="${BURNZOMBIES_SIGNING_IDENTITY:-BurnZombies Local Signing}"
-pin="${BURNZOMBIES_RELEASE_CERT_SHA256:-dbe8297fd599efa4bb942d0ebb5487e3bc27c15d7b71fadc8253da8ab1d697b9}"
-keychain="${BURNZOMBIES_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
+name="${BURNZOMBIES_SIGNING_IDENTITY:-Developer ID Application: skylar graika (7K3GR5QJRH)}"
+pin="${BURNZOMBIES_RELEASE_CERT_SHA256:-c68cfaf7b2157bd1be74d4d6e60398f720372936bd03a1ac7dea2eb0d6beea03}"
+preferred_keychain="$HOME/Library/Keychains/BurnZombies-Developer-ID.keychain-db"
+[[ -f "$preferred_keychain" ]] || preferred_keychain="$HOME/Library/Keychains/login.keychain-db"
+keychain="${BURNZOMBIES_KEYCHAIN:-$preferred_keychain}"
 vault="${BURNZOMBIES_OP_VAULT:-skylar}"
-title="BurnZombies release signing identity"
+title="BurnZombies Developer ID Application signing identity"
 ssl=/usr/bin/openssl # macOS's LibreSSL reads and writes the PKCS#12 algorithms the keychain uses.
 sha1=""
 
@@ -76,6 +63,8 @@ func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
     exit(1)
 }
+// Unattended execution must report an authorization failure without showing a system prompt.
+SecKeychainSetUserInteractionAllowed(false)
 let arguments = CommandLine.arguments
 guard arguments.count == 4, let passphrase = ProcessInfo.processInfo.environment["BZ_P12_PASSPHRASE"] else {
     fail("usage: export.swift KEYCHAIN CERTIFICATE_SHA256 OUTPUT, with the passphrase in BZ_P12_PASSPHRASE")
@@ -116,7 +105,7 @@ fail("No identity in \(arguments[1]) has the release certificate \(arguments[2])
 SWIFT
   local passphrase
   passphrase="$("$ssl" rand -hex 16)"
-  echo "Exporting \"$name\". If macOS asks to allow the export, enter your login password and choose Allow." >&2
+  echo "Backing up the selected Developer ID identity." >&2
   BZ_P12_PASSPHRASE="$passphrase" swift -swift-version 5 -suppress-warnings "$work/export.swift" "$keychain" "$pin" "$work/export.p12"
   BZ_P12_PASSPHRASE="$passphrase" "$ssl" pkcs12 -in "$work/export.p12" -passin env:BZ_P12_PASSPHRASE -nodes \
     -out "$work/export.pem" 2>/dev/null || die "Cannot read the exported identity."
@@ -145,6 +134,7 @@ prove_signing() {
   local signed
   signed="$(codesign --force --sign "$sha1" --keychain "$keychain" "$work/probe" 2>&1)" ||
     die "codesign cannot sign with \"$name\": $signed"
+  codesign --verify --strict -R '=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7K3GR5QJRH"' "$work/probe"
   codesign -d --extract-certificates="$work/probe-cert" "$work/probe" 2>/dev/null
   [[ "$(shasum -a 256 "$work/probe-cert0" | awk '{print $1}')" == "$pin" ]] ||
     die "The test file was not signed with the release certificate."

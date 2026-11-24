@@ -38,7 +38,7 @@ die() { echo "FAIL: $*" >&2; exit 1; }
 dev_id="${BURNZOMBIES_SIGNING_IDENTITY:-}"
 if [[ -z "$dev_id" ]]; then
   dev_id="$(security find-identity -v -p codesigning 2>/dev/null \
-    | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1 || true)"
+    | sed -n 's/.*"\(Developer ID Application: [^"]* (7K3GR5QJRH)\)".*/\1/p' | head -n 1 || true)"
 fi
 is_developer_id=false
 if [[ "$dev_id" == "Developer ID Application:"* ]]; then
@@ -51,6 +51,10 @@ elif $allow_self_signed; then
   echo "WARNING: Building with non-Developer-ID identity: $BURNZOMBIES_SIGNING_IDENTITY (skipping Apple notarization)."
 else
   die "No 'Developer ID Application' certificate found in Keychain. Run scripts/setup-apple-signing.sh first (or pass --allow-self-signed for local dry runs)."
+fi
+
+if $publish && ! $is_developer_id; then
+  die "Publishing requires an Apple Developer ID Application identity."
 fi
 
 # 2. Run full local verification suite.
@@ -73,6 +77,9 @@ app="dist/BurnZombies.app"
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 
 codesign --verify --deep --strict --verbose=2 "$app"
+if $is_developer_id; then
+  codesign --verify --strict -R '=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7K3GR5QJRH"' "$app"
+fi
 
 # 5. Notarize & staple BurnZombies.app before packing .tar.gz and .mcpb.
 if $is_developer_id; then
@@ -116,11 +123,13 @@ dmg_sha="$(shasum -a 256 "$dmg" | awk '{print $1}')"
 # 7. Run release install & app-update proofs.
 echo "==> Running release install & updater proofs..."
 if $is_developer_id; then
-  python3 scripts/test-install.py "$tarball" --fixture-signer
-else
   python3 scripts/test-install.py "$tarball"
+else
+  python3 scripts/test-install.py "$tarball" --fixture-signer
 fi
-python3 scripts/test-app-update.py "$app"
+if $is_developer_id; then
+  python3 scripts/test-app-update.py "$app"
+fi
 
 # 8. Render updated Homebrew Cask and release manifest summary inside dist/release.
 python3 - "$version" "$dmg_sha" "$tar_sha" "$release/burnzombies.rb" <<'PY'

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Public installer: no sudo, package manager, compiler, or shell-profile changes.
 version="0.21.0"
-release_certificate="F6EE40DDEBB01F056DE8FC7910091F4FAC3D7B49"
+release_requirement='anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7K3GR5QJRH"'
 client="auto"
 launch=true
 look_only=false
@@ -81,7 +81,7 @@ fi
 tar -xzf "$work/$asset" -C "$work"
 # A valid signature alone also accepts ad-hoc code. Apple's certificate requirement
 # authenticates the release identity across every universal architecture, before code runs.
-codesign --verify --deep --strict -R "=certificate leaf = H\"$release_certificate\"" "$work/BurnZombies.app"
+codesign --verify --deep --strict -R "=$release_requirement" "$work/BurnZombies.app"
 identity="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$work/BurnZombies.app/Contents/Info.plist")"
 [[ "$identity" == io.burnzombies.app ]] || { echo 'Unexpected app identity.' >&2; exit 1; }
 

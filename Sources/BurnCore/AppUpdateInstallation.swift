@@ -45,12 +45,13 @@ public struct AppUpdateBundle: Codable, Sendable, Equatable {
 }
 
 public enum AppUpdateVerification {
-  public static let certificate = "F6EE40DDEBB01F056DE8FC7910091F4FAC3D7B49"
+  private static let releaseRequirement =
+    #"anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7K3GR5QJRH""#
   public static func verifySignature(_ url: URL, deep: Bool = false) throws {
     try tool(
       "/usr/bin/codesign",
       ["--verify", "--strict"] + (deep ? ["--deep"] : [])
-        + ["-R", "=certificate leaf = H\"\(certificate)\"", url.path])
+        + ["-R", "=\(releaseRequirement)", url.path])
   }
   public static func verify(_ app: URL, version: String) throws -> AppUpdateBundle {
     let info = try AppUpdateBundle.read(app)
