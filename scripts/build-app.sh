@@ -91,6 +91,8 @@ else
   signer="-"
   signature="local ad-hoc signature: macOS asks for Full Disk Access again after every update until you run scripts/ensure-signing-identity.sh once"
 fi
+# A maintainer's private umask must not make the distributed app owner-only.
+chmod -R u+rwX,go+rX,go-w "$bundle"
 codesign "${sign_flags[@]}" --sign "$signer" "$bundle/Contents/MacOS/burnzombies"
 codesign "${sign_flags[@]}" --sign "$signer" "$bundle/Contents/MacOS/burnzombies-mcp"
 codesign "${sign_flags[@]}" --sign "$signer" "$bundle"
