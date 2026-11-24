@@ -65,21 +65,23 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
   // An agent-heavy project: three copies merged long ago, two merged this week, one with work
   // only on this Mac from last week and one paused for weeks, each holding rebuildable packages.
   let git = home.appendingPathComponent("git")
+  let worktrees = git.appendingPathComponent("worktrees")
   try fm.createDirectory(at: git, withIntermediateDirectories: true)
+  try fm.createDirectory(at: worktrees, withIntermediateDirectories: true)
   try sh("git init -q --bare acme-web.git", in: remote)
   try sh(
     "git clone -q \(remote.path)/acme-web.git acme-web && cd acme-web && git checkout -q -b main && echo app > app.txt && printf 'node_modules/\\n' > .gitignore && git add . && git commit -q -m init && git push -q origin main && git remote set-head origin main",
     in: git, age: 60 * day)
   let main = git.appendingPathComponent("acme-web")
   let copies: [(name: String, age: TimeInterval, megabytes: Int, merged: Bool)] = [
-    ("acme-old-1", 40 * day, 300, true), ("acme-old-2", 45 * day, 300, true),
-    ("acme-old-3", 50 * day, 300, true), ("acme-recent-1", 2 * day, 600, true),
+    ("acme-old-auth", 40 * day, 300, true), ("acme-old-billing", 45 * day, 300, true),
+    ("acme-old-search", 50 * day, 300, true), ("acme-recent-1", 2 * day, 600, true),
     ("acme-recent-2", 3 * day, 600, true), ("acme-wip", 10 * day, 200, false),
     ("acme-paused", 20 * day, 400, false),
   ]
   for copy in copies {
-    try sh("git worktree add -q -b \(copy.name) ../\(copy.name) main", in: main, age: copy.age)
-    let folder = git.appendingPathComponent(copy.name)
+    let folder = worktrees.appendingPathComponent(copy.name)
+    try sh("git worktree add -q -b \(copy.name) \(folder.path) main", in: main, age: copy.age)
     try sh(
       "echo \(copy.name) > \(copy.name).txt && git add . && git commit -q -m \(copy.name)",
       in: folder, age: copy.age)
@@ -162,7 +164,7 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
   var junkCleared: Int?
   var finishedBurned: Int?
   let finished = Set(copies.filter { $0.merged && $0.age >= 30 * day }.map(\.name))
-  let paused = git.appendingPathComponent("acme-paused")
+  let paused = worktrees.appendingPathComponent("acme-paused")
   var previous = ""
   for minute in 0...31 {
     let now = start.addingTimeInterval(Double(minute) * 60)
@@ -215,7 +217,7 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
     try await lookOnlyAfterward(
       firstFound: firstFound, firstQuestion: firstQuestion, firstBurn: firstBurn,
       firstNumber: firstNumber, junkCleared: junkCleared, receipts: receipts, last: last,
-      engine: engine, store: store, git: git, helper: helper,
+      engine: engine, store: store, worktrees: worktrees, helper: helper,
       at: start.addingTimeInterval(32 * 60), started: start)
     return
   }
@@ -234,21 +236,21 @@ func newcomerProof(root: URL, lookOnly: Bool = false) async throws {
     fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path),
     "the paused copy's work stays")
   check(
-    fm.fileExists(atPath: git.appendingPathComponent("acme-wip/acme-wip.txt").path),
+    fm.fileExists(atPath: worktrees.appendingPathComponent("acme-wip/acme-wip.txt").path),
     "work only on this Mac stays")
 }
 /// The look-only half of the newcomer proof: the first half hour found and asked but burned and
 /// wrote nothing; then Start burning (the panel's tap or Settings) burns what waited right away.
 private func lookOnlyAfterward(
   firstFound: Int?, firstQuestion: Int?, firstBurn: Int?, firstNumber: Int?, junkCleared: Int?,
-  receipts: Int, last: AutopilotSnapshot, engine: Autopilot, store: AutopilotStore, git: URL,
+  receipts: Int, last: AutopilotSnapshot, engine: Autopilot, store: AutopilotStore, worktrees: URL,
   helper: Int32, at now: Date, started: Date
 ) async throws {
   let fm = FileManager.default
-  let paused = git.appendingPathComponent("acme-paused")
+  let paused = worktrees.appendingPathComponent("acme-paused")
   let copies = [
-    "acme-old-1", "acme-old-2", "acme-old-3", "acme-recent-1", "acme-recent-2", "acme-wip",
-    "acme-paused",
+    "acme-old-auth", "acme-old-billing", "acme-old-search", "acme-recent-1", "acme-recent-2",
+    "acme-wip", "acme-paused",
   ]
   let wouldBurn = last.bytes[AutopilotStatus.burn.rawValue] ?? 0
   print(
@@ -262,11 +264,11 @@ private func lookOnlyAfterward(
   check(firstNumber == nil, "look-only: the panel's totals stay at zero")
   check(junkCleared == nil, "look-only: junk inside the paused copy stays")
   check(
-    copies.allSatisfy { fm.fileExists(atPath: git.appendingPathComponent($0).path) },
+    copies.allSatisfy { fm.fileExists(atPath: worktrees.appendingPathComponent($0).path) },
     "look-only: every copy stays")
   check(kill(helper, 0) == 0, "look-only: the helper keeps running")
   check(last.count(.burn) > 0, "look-only: BZ shows what it would burn")
-  let names: Set<String> = ["acme-old-1", "acme-old-2", "acme-old-3"]
+  let names: Set<String> = ["acme-old-auth", "acme-old-billing", "acme-old-search"]
   check(
     names.isSubset(
       of: Set(
@@ -282,7 +284,7 @@ private func lookOnlyAfterward(
   // Start burning: what waited burns right away, without waiting for the next look.
   let switched = Date()
   _ = try await engine.apply(.setLookOnly(false), now: now)
-  let merged = names.map { git.appendingPathComponent($0).path }
+  let merged = names.map { worktrees.appendingPathComponent($0).path }
   // A copy's receipt is written just after its folder goes, so wait for the receipts too.
   var burned = [AutopilotReceipt]()
   let deadline = Date().addingTimeInterval(180)
@@ -308,6 +310,6 @@ private func lookOnlyAfterward(
     fm.fileExists(atPath: paused.appendingPathComponent("acme-paused.txt").path),
     "the paused copy's work stays")
   check(
-    fm.fileExists(atPath: git.appendingPathComponent("acme-wip/acme-wip.txt").path),
+    fm.fileExists(atPath: worktrees.appendingPathComponent("acme-wip/acme-wip.txt").path),
     "work only on this Mac stays")
 }

@@ -68,14 +68,21 @@ public enum AutopilotWorktrees {
 
   // MARK: Catalog
 
+  /// Named risk fact carried by linked worktrees belonging to a persistent reusable slot pool
+  /// (e.g., `~/Code/magic1..11` parked on `available-N`). Never burned by starter rules, AI
+  /// sweeps, or lessons learned from non-pool worktrees.
+  public static let poolRisk = "pool"
+
   /// `delivery` caches Git delivery state by worktree record id; `budget` bounds how many
   /// fresh Git lookups one call may spend.
   public static func items(
     _ records: [WorktreeRecord], threads: [AgentThread],
-    delivery cache: inout [String: AutopilotDelivery], now: Date = Date(), budget: Int = 100
+    delivery cache: inout [String: AutopilotDelivery], now: Date = Date(), budget: Int = 100,
+    protected: ProtectedLocations = .limited()
   ) -> [AutopilotItem] {
     var remaining = budget
     var result: [AutopilotItem] = []
+    let poolIDs = poolWorktreeIDs(records, protected: protected)
     for record in records where !record.missing && !record.retired && !record.bare {
       let chat = AgentThreads.state(for: record.path, threads: threads)
       let saved = savedFact(record, cache: &cache, now: now, budget: &remaining)
@@ -90,11 +97,14 @@ public enum AutopilotWorktrees {
       let task: String? =
         AgentThreads.chatTitle(for: record.path, threads: threads)
         ?? branch.flatMap { AutopilotPolicy.humanize(branch: $0) }
-      let facts: [String: String] = [
-        "place": placeFact(record), "repo": repo, "saved": saved, "changes": changes,
+      let isPool = !record.main && poolIDs.contains(record.id)
+      var facts: [String: String] = [
+        "place": placeFact(record, isPool: isPool), "repo": repo, "saved": saved,
+        "changes": changes,
         "stale": newest.map { AutopilotPolicy.stale(since: $0, now: now) } ?? "unknown",
         "thread": chat.thread, "inUse": inUseFact(record), "size": sizeFact(record.allocated),
       ]
+      if isPool { facts[poolRisk] = "yes" }
       let sentence = detail(
         repo: repo, branch: branch, saved: saved, changes: changes, newest: newest, now: now)
       result.append(
@@ -153,7 +163,7 @@ public enum AutopilotWorktrees {
     return name.isEmpty ? "unknown" : name
   }
 
-  private static func placeFact(_ record: WorktreeRecord) -> String {
+  private static func placeFact(_ record: WorktreeRecord, isPool: Bool = false) -> String {
     let path = record.path.lowercased()
     if path.contains("/.codex/worktrees/") || path.contains("/.codex/automations/") {
       return "codex"
@@ -165,9 +175,213 @@ public enum AutopilotWorktrees {
     if path.contains("/conductor/") { return "conductor" }
     if path.contains("/.codeium/windsurf/worktrees/") { return "agent" }
     if isDotAgentWorktree(path) { return "agent" }
+    if isPool { return "pool" }
     let parent = (record.path as NSString).deletingLastPathComponent
     let mainParent = (mainCheckout(record) as NSString).deletingLastPathComponent
     return parent == mainParent ? "sibling" : "other"
+  }
+
+  /// Linked worktrees that behave like a persistent reusable slot pool:
+  /// 1. parked on a pool/slot branch (`available-1`, `parked`, `slot-3`, `pool/2`, `standby`, …),
+  /// 2. part of a numerically indexed sibling cluster of the same repo (`magic0` + `magic1..11`),
+  /// 3. reused across multiple branch checkouts in its own `logs/HEAD` reflog.
+  public static func poolWorktreeIDs(
+    _ records: [WorktreeRecord], protected: ProtectedLocations = .limited()
+  ) -> Set<String> {
+    let live = records.filter { !$0.missing && !$0.retired && !$0.bare }
+    var ids = Set<String>()
+
+    // 1. Numerically indexed clusters sharing a repository and parent folder (including main).
+    struct ClusterKey: Hashable {
+      var repository: String
+      var parent: String
+      var stem: String
+    }
+    var clusters: [ClusterKey: [WorktreeRecord]] = [:]
+    var includedMains = Set<String>()
+    for record in live {
+      let parent = (record.path as NSString).deletingLastPathComponent
+      let name = (record.path as NSString).lastPathComponent
+      if let stem = indexedSlotStem(name) {
+        clusters[ClusterKey(repository: record.repository, parent: parent, stem: stem), default: []]
+          .append(record)
+      }
+      if record.main { includedMains.insert(record.repository + "|" + record.path) }
+    }
+    // Count an implicit main checkout beside linked slots (e.g., `magic0` beside `magic1..N`) even
+    // when the main checkout record isn't present in `records`.
+    var repoMainStems: [ClusterKey: Bool] = [:]
+    for record in live where !record.main {
+      let mainPath = mainCheckout(record)
+      let mainKey = record.repository + "|" + mainPath
+      guard !includedMains.contains(mainKey) else { continue }
+      let mainParent = (mainPath as NSString).deletingLastPathComponent
+      let mainName = (mainPath as NSString).lastPathComponent
+      if let stem = indexedSlotStem(mainName) {
+        repoMainStems[ClusterKey(repository: record.repository, parent: mainParent, stem: stem)] =
+          true
+      }
+    }
+    for (key, members) in clusters {
+      let total = members.count + (repoMainStems[key] == true ? 1 : 0)
+      guard total >= 3 else { continue }
+      for member in members where !member.main { ids.insert(member.id) }
+    }
+
+    // 2. Parking branch names and multi-branch checkout reuse in the worktree's own HEAD reflog.
+    for record in live where !record.main {
+      if isParkingBranch(branchName(record)) {
+        ids.insert(record.id)
+        continue
+      }
+      if record.protectedPlace == nil, protected.allows(record.path),
+        protected.allows(record.repository),
+        hasReusedHeadReflog(record, protected: protected)
+      {
+        ids.insert(record.id)
+      }
+    }
+    return ids
+  }
+
+  private static let parkingPrefixes: [String] = [
+    "available", "parked", "idle", "slot", "pool", "standby", "reserve", "worker",
+  ]
+
+  static func isParkingBranch(_ branch: String?) -> Bool {
+    guard let raw = branch?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+      !raw.isEmpty
+    else { return false }
+    let leaf = raw.split(separator: "/").last.map(String.init) ?? raw
+    return parkingPrefixes.contains { prefix in
+      if raw == prefix || leaf == prefix { return true }
+      for candidate in [raw, leaf] where candidate.hasPrefix(prefix) {
+        let rest = candidate.dropFirst(prefix.count)
+        guard let next = rest.first else { return true }
+        if next == "-" || next == "_" || next == "/" || (next.isASCII && next.isNumber) {
+          return true
+        }
+      }
+      return false
+    }
+  }
+
+  /// Stem for a numerically indexed slot folder: `magic1` → `magic`, `app-slot-02` → `app-slot`.
+  /// Requires at least two non-digit stem characters so commit hashes or dates are never matched.
+  static func indexedSlotStem(_ name: String) -> String? {
+    let lower = name.lowercased()
+    var end = lower.endIndex
+    var digits = 0
+    while end > lower.startIndex {
+      let prev = lower.index(before: end)
+      let ch = lower[prev]
+      if ch.isASCII && ch.isNumber {
+        digits += 1
+        end = prev
+      } else {
+        break
+      }
+    }
+    guard digits >= 1, digits <= 4 else { return nil }
+    var stem = String(lower[..<end])
+    while let last = stem.last, last == "-" || last == "_" { stem.removeLast() }
+    guard stem.count >= 2, stem.contains(where: { $0.isLetter }) else { return nil }
+    return stem
+  }
+
+  /// Reads the linked worktree's own `<gitDir>/logs/HEAD` (bounded, no symlinks, no subprocesses)
+  /// to spot long-lived slot checkouts reused across multiple branches.
+  private static func hasReusedHeadReflog(
+    _ record: WorktreeRecord, protected: ProtectedLocations
+  ) -> Bool {
+    guard
+      let gitDir = worktreeGitDir(
+        for: record.path, known: record.identity?.administration, protected: protected),
+      protected.allows(gitDir)
+    else { return false }
+    let logPath = gitDir + "/logs/HEAD"
+    guard protected.allows(logPath) else { return false }
+    var info = stat()
+    guard lstat(logPath, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size > 0 else {
+      return false
+    }
+    let fd = open(logPath, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    guard let data = try? FileHandle(fileDescriptor: fd, closeOnDealloc: false).read(upToCount: 65_536),
+      let text = String(data: data, encoding: .utf8)
+    else { return false }
+    var moves = 0
+    var branches = Set<String>()
+    let marker = "checkout: moving from "
+    for line in text.split(separator: "\n") {
+      guard let range = line.range(of: marker) else { continue }
+      let rest = line[range.upperBound...]
+      guard let toRange = rest.range(of: " to ") else { continue }
+      let from = String(rest[..<toRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+      let to = String(rest[toRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+      guard !from.isEmpty, !to.isEmpty, from != to else { continue }
+      moves += 1
+      if !looksLikeCommitHash(from) { branches.insert(from) }
+      if !looksLikeCommitHash(to) { branches.insert(to) }
+      if moves >= 3 && branches.count >= 2 { return true }
+    }
+    return false
+  }
+
+  private static func looksLikeCommitHash(_ value: String) -> Bool {
+    value.count >= 32 && value.count <= 64
+      && value.unicodeScalars.allSatisfy {
+        (48...57).contains($0.value) || (97...102).contains($0.value)
+          || (65...70).contains($0.value)
+      }
+  }
+
+  /// Resolves a linked checkout's Git administration directory from `<checkout>/.git` without
+  /// invoking Git or following symlinks on `.git`. Returns nil for main checkouts (`.git` dir)
+  /// or any path inside a macOS-protected folder when Full Disk Access is off.
+  public static func worktreeGitDir(
+    for checkout: String, known: String? = nil, protected: ProtectedLocations = .limited()
+  ) -> String? {
+    if let known, !known.isEmpty, protected.allows(known) {
+      var info = stat()
+      if lstat(known, &info) == 0, info.st_mode & S_IFMT == S_IFDIR { return known }
+    }
+    guard protected.allows(checkout) else { return nil }
+    let dotGit = checkout + "/.git"
+    guard protected.allows(dotGit) else { return nil }
+    var info = stat()
+    guard lstat(dotGit, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size > 0,
+      info.st_size <= 4096
+    else { return nil }
+    let fd = open(dotGit, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    guard fd >= 0 else { return nil }
+    defer { close(fd) }
+    guard let data = try? FileHandle(fileDescriptor: fd, closeOnDealloc: false).read(upToCount: 4096),
+      let line = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+      line.hasPrefix("gitdir:")
+    else { return nil }
+    let raw = String(line.dropFirst("gitdir:".count)).trimmingCharacters(in: .whitespaces)
+    guard !raw.isEmpty else { return nil }
+    let resolved =
+      raw.hasPrefix("/")
+      ? raw
+      : URL(fileURLWithPath: checkout, isDirectory: true).appendingPathComponent(raw).standardizedFileURL.path
+    guard protected.allows(resolved) else { return nil }
+    let canonical = WorkspaceSafety.canonical(resolved)
+    return protected.allows(canonical) ? canonical : nil
+  }
+
+  /// Whether `checkout` is a linked Git worktree locked with `git worktree lock`.
+  public static func isLockedCheckout(
+    _ checkout: String, protected: ProtectedLocations = .limited()
+  ) -> Bool {
+    guard protected.allows(checkout),
+      let gitDir = worktreeGitDir(for: checkout, protected: protected),
+      protected.allows(gitDir)
+    else { return false }
+    var marker = stat()
+    return lstat(gitDir + "/locked", &marker) == 0
   }
 
   private static func isDotAgentWorktree(_ lowercasedPath: String) -> Bool {
@@ -305,7 +519,7 @@ public enum AutopilotWorktrees {
     _ item: AutopilotItem, authority: String, root: URL,
     inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil,
     recoveryKey: SymmetricKey? = nil, authorize: () -> Bool = { true },
-    keys: AutopilotRecoveryKey = .shared
+    keys: AutopilotRecoveryKey = .shared, backupsEnabled: Bool = true
   ) -> AutopilotReceipt {
     guard item.kind == .worktree, item.id.hasPrefix("worktree:"), let path = item.path else {
       return .refused(item, authority: authority, "This is not an old copy I can retire.")
@@ -319,7 +533,7 @@ public enum AutopilotWorktrees {
     do {
       return try perform(
         item, path: path, authority: authority, root: root, inUse: inUse, recoveryKey: recoveryKey,
-        authorize: authorize, keys: keys, step: &step)
+        authorize: authorize, keys: keys, backupsEnabled: backupsEnabled, step: &step)
     } catch let refusal as Refusal {
       var receipt: AutopilotReceipt
       if let big = refusal.bigFiles {
@@ -520,7 +734,7 @@ public enum AutopilotWorktrees {
   private static func perform(
     _ item: AutopilotItem, path: String, authority: String, root: URL, inUse: (String) -> Int32,
     recoveryKey: SymmetricKey?, authorize: () -> Bool, keys: AutopilotRecoveryKey,
-    step: inout String
+    backupsEnabled: Bool, step: inout String
   ) throws -> AutopilotReceipt {
     // A real, linked worktree that is not locked, mid-operation or in use.
     var folder = stat()
@@ -573,6 +787,45 @@ public enum AutopilotWorktrees {
     let links = try gitlinks(path, environment: [:])
     if let reason = try submoduleRefusal(path, links: links, common: common, depth: 0) {
       throw Refusal(reason)
+    }
+
+    // When the owner explicitly disabled backups (use at your own risk), skip encrypted recovery
+    // and retired Git refs while keeping every mechanical safety rail above and re-checking live
+    // identity, lock state, consumers and authorization immediately before removal.
+    if !backupsEnabled {
+      step = Step.last
+      guard try line(path, ["rev-parse", "--verify", "HEAD^{commit}"]) == head else {
+        throw Refusal("It changed while I was checking it, so I left it alone.")
+      }
+      try unused(path, inUse, else: "Something started using it, so I left it alone.")
+      var finalFolder = stat()
+      guard lstat(path, &finalFolder) == 0, finalFolder.st_ino == folder.st_ino,
+        finalFolder.st_dev == folder.st_dev,
+        WorkspaceSafety.canonical(try line(path, ["rev-parse", "--absolute-git-dir"])) == gitDir
+      else {
+        throw Refusal("This copy changed while checking it, so I left it alone.")
+      }
+      for name in stateFiles {
+        var state = stat()
+        if lstat(gitDir + "/" + name, &state) == 0 || errno != ENOENT {
+          throw Refusal("Git started using this copy while checking it, so I left it alone.")
+        }
+      }
+      guard authorize() else {
+        throw Refusal("Permissions changed while checking it, so I left it alone.")
+      }
+      _ = try? WorktreeGit.run(common, ["worktree", "remove", "--force", "--", path], seconds: 120)
+      let folderGone = !entryExists(path)
+      let registrationGone = !entryExists(gitDir) && !registered(common, path)
+      guard folderGone, registrationGone else {
+        return AutopilotReceipt(
+          itemID: item.id, kind: .worktree, name: item.name, authority: authority,
+          outcome: "failed",
+          detail: "I could not finish removing the copy.")
+      }
+      return AutopilotReceipt(
+        itemID: item.id, kind: .worktree, name: item.name, authority: authority, outcome: "burned",
+        detail: "Removed permanently (backups disabled; use at your own risk).", bytes: item.bytes)
     }
 
     // Unsaved files too big for the backup would only move into BZ's own storage instead of

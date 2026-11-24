@@ -166,6 +166,10 @@ public enum AutopilotDisk {
   private struct Checkout {
     var path: String
     var linked: Bool
+    /// Locked with `git worktree lock`: hard rail protects both the copy and folders inside it.
+    var locked: Bool = false
+    /// Part of a reusable worktree slot pool: never classified as `stale-worktree`.
+    var pool: Bool = false
     /// The newest date its inventory record holds: last file change or last commit.
     var activity: Date?
     /// Whether that record's latest inspection walked every file in it.
@@ -583,13 +587,17 @@ public enum AutopilotDisk {
         var name = folder.name + " in " + place
         if !inside.isEmpty { name += "/" + inside }
         let newest = prepared.worked.date.map { max($0, touched) } ?? touched
+        let protectedReason: String? =
+          checkout.locked ? "It is inside a locked worktree, so I will leave it alone." : nil
         let item = AutopilotItem(
           id: "disk:" + AutopilotItem.hash(folder.path), kind: .disk, name: name,
           detail: sentence(fact, subject: place), path: folder.path, bytes: bytes,
           facts: [
-            "folder": fact, "home": prepared.worked.old ? "stale-worktree" : "repo",
+            "folder": fact,
+            "home": (prepared.worked.old && !checkout.locked && !checkout.pool)
+              ? "stale-worktree" : "repo",
             "stale": AutopilotPolicy.stale(since: newest, now: now), "size": scale(bytes),
-          ], observedAt: now, lastUsed: newest)
+          ], protectedReason: protectedReason, observedAt: now, lastUsed: newest)
         found[item.id] = item
       }
       if !early && prepared.folders.allSatisfy({ progress.measured.contains($0.path) }) {
@@ -701,7 +709,8 @@ public enum AutopilotDisk {
     _ item: AutopilotItem, authority: String, home: String = NSHomeDirectory(),
     inUse: (String) -> Int32 = { bz_path_in_use($0) }, protected: ProtectedLocations? = nil,
     root: URL = Store.defaultRoot, recoveryKey: SymmetricKey? = nil,
-    authorize: () -> Bool = { true }, keys: AutopilotRecoveryKey = .shared
+    authorize: () -> Bool = { true }, keys: AutopilotRecoveryKey = .shared,
+    backupsEnabled: Bool = true
   ) -> AutopilotReceipt {
     let protected = protected ?? .limited(homes: [home])
     var recovery: PrivateRecovery.Reference?
@@ -773,6 +782,11 @@ public enum AutopilotDisk {
       if let place = protected.pointerPlace(root) {
         return refuse(Self.protectedRefusal(place))
       }
+      if authority != "operator",
+        AutopilotWorktrees.isLockedCheckout(root, protected: protected)
+      {
+        return refuse("That folder is inside a locked worktree, so I left it alone.")
+      }
       let relative = String(path.dropFirst(root.count + 1))
       guard
         let listing = try? WorktreeGit.run(
@@ -812,7 +826,8 @@ public enum AutopilotDisk {
         "burned", "Moved \(item.name) to the Trash. Empty the Trash to get the space back.")
     }
     let bytes = allocatedSize(path) ?? item.bytes
-    if !regenerable(path, home: base) {
+    let provenRegenerable = regenerable(path, home: base)
+    if !provenRegenerable && backupsEnabled {
       // As retire does: no keychain question, and a dialog nobody answered refuses the folder.
       let key: SymmetricKey
       do { key = try recoveryKey ?? keys.forBurn() } catch {
@@ -869,12 +884,17 @@ public enum AutopilotDisk {
       return finish("failed", "\(item.name) is still there, so I'm not counting it as burned.")
     }
     let retained = recovery.map { allocatedSize($0.directory) ?? $0.allocated } ?? 0
+    let suffix: String
+    if recovery != nil {
+      suffix = " " + backedUpWords
+    } else if !provenRegenerable && !backupsEnabled {
+      suffix = " Removed permanently (backups disabled; use at your own risk)."
+    } else {
+      suffix = " Your tools will rebuild it when they need it."
+    }
     var receipt = finish(
       "burned",
-      "Cleared \(item.name)."
-        + (recovery == nil
-          ? " Your tools will rebuild it when they need it."
-          : " " + backedUpWords),
+      "Cleared \(item.name)." + suffix,
       bytes: bytes > retained ? bytes - retained : 0)
     if let recovery {
       var restore = AutopilotRestore(
@@ -1239,13 +1259,19 @@ public enum AutopilotDisk {
     _ worktrees: [WorktreeRecord], home: String, mains: Bool, protected: ProtectedLocations
   ) -> [Checkout] {
     var byPath: [String: Checkout] = [:]
-    func consider(_ path: String, linked: Bool, activity: Date?, walked: Bool) {
+    let poolIDs = AutopilotWorktrees.poolWorktreeIDs(worktrees, protected: protected)
+    func consider(
+      _ path: String, linked: Bool, locked: Bool, pool: Bool, activity: Date?, walked: Bool
+    ) {
       // A checkout in a place macOS protects is not even resolved without Full Disk Access.
       guard let real = protected.resolve(path), real.hasPrefix(home + "/") else { return }
-      var checkout = Checkout(path: real, linked: linked, activity: activity, walked: walked)
+      var checkout = Checkout(
+        path: real, linked: linked, locked: locked, pool: pool, activity: activity, walked: walked)
       if let known = byPath[real] {
         if known.activity != nil { checkout = known }
         checkout.linked = known.linked && linked
+        checkout.locked = known.locked || locked
+        checkout.pool = known.pool || pool
       }
       byPath[real] = checkout
     }
@@ -1254,9 +1280,17 @@ public enum AutopilotDisk {
       // Any gap means the latest inspection may have stopped before its file walk finished, so a
       // file date the record holds could be from an earlier one.
       let walked = record.lastFileChange != nil && record.gaps.isEmpty
-      consider(record.path, linked: !record.main, activity: activity, walked: walked)
+      let isLocked =
+        !record.main
+        && (record.locked || record.blockers.contains("Git worktree lock is set."))
+      let isPool = !record.main && poolIDs.contains(record.id)
+      consider(
+        record.path, linked: !record.main, locked: isLocked, pool: isPool, activity: activity,
+        walked: walked)
       if mains, record.repository.hasSuffix("/.git") {
-        consider(String(record.repository.dropLast(5)), linked: false, activity: nil, walked: false)
+        consider(
+          String(record.repository.dropLast(5)), linked: false, locked: false, pool: false,
+          activity: nil, walked: false)
       }
     }
     // The scan is time-bounded, so the stalest checkouts (likeliest junk) go first.
@@ -1270,12 +1304,15 @@ public enum AutopilotDisk {
   /// When a linked copy was last worked in, and whether that was over two weeks ago. An old commit
   /// can hide newer edits, so the copy is old only when its files say so too: its inventory
   /// record's complete walk or, when that walk couldn't finish, a walk here past its junk. A copy
-  /// that walk can't finish either has an unknown age, which is never old.
+  /// that walk can't finish either has an unknown age, which is never old. Locked worktrees and
+  /// reusable worktree pools are never marked stale.
   private static func lastWorked(
     _ checkout: Checkout, skipping junk: Set<String>, now: Date, until deadline: Date,
     stop: () -> Bool
   ) -> (date: Date?, old: Bool) {
-    guard checkout.linked, let known = checkout.activity else { return (nil, false) }
+    guard checkout.linked, !checkout.locked, !checkout.pool, let known = checkout.activity else {
+      return (checkout.activity, false)
+    }
     let stale = now.timeIntervalSince(known) > staleAfter
     // No walk makes a recent copy older.
     if !stale || checkout.walked { return (known, stale) }

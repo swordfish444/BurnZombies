@@ -8,7 +8,10 @@ with tempfile.TemporaryDirectory(prefix='bz-skill-') as tmp:
     configs = {'.codex/config.toml':b'[features]\nkeep=true\n', '.claude/settings.json':b'{"keep":true}\n'}
     for name, content in configs.items():
         p=home/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(content)
-    command=[str(cli),'install-skill','--home',str(home),'--skill-file',str(repo/'skills/burnzombies/SKILL.md')]
+    ungated=[str(cli),'install-skill','--home',str(home),'--skill-file',str(repo/'skills/burnzombies/SKILL.md')]
+    refused=subprocess.run(ungated,capture_output=True,text=True)
+    assert refused.returncode!=0 and '--legacy-edit-harness-config' in refused.stderr, refused.stderr
+    command=ungated+['--legacy-edit-harness-config']
     def install(ok=True):
         r=subprocess.run(command,capture_output=True,text=True)
         assert (r.returncode==0)==ok,r.stdout+r.stderr

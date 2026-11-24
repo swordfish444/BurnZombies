@@ -967,6 +967,23 @@ import UserNotifications
   func setLookOnly(_ on: Bool) {
     sendAutopilot(.setLookOnly(on)) { $0.sweep.lookOnly = on ? true : nil }
   }
+  var backupRetentionDays: Int { autopilot.sweep.effectiveBackupRetentionDays }
+  var backupRetentionLabel: String {
+    let days = backupRetentionDays
+    if days == 0 { return "Off" }
+    return days == 1 ? "1 day" : "\(days) days"
+  }
+  func setBackupRetention(days: Int) {
+    let clamped = min(AutopilotSweepState.maximumBackupRetentionDays, max(0, days))
+    sendAutopilot(.setBackupRetention(days: clamped)) { $0.sweep.backupRetentionDays = clamped }
+  }
+  func purgeBackups() {
+    sendAutopilot(.purgeBackups) { snapshot in
+      for i in snapshot.receipts.indices where snapshot.receipts[i].outcome != "failed" {
+        snapshot.receipts[i].restore = nil
+      }
+    }
+  }
   func resetTraining() {
     sendAutopilot(.resetTraining) { AutopilotLocal.reset(&$0) }
   }

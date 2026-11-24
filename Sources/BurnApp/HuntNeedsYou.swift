@@ -167,7 +167,7 @@ struct HuntNeedsYou: View {
   @ViewBuilder private func face(_ card: Card) -> some View {
     switch card {
     case .question(let question):
-      let made = AutopilotPolicy.card(question)
+      let made = AutopilotPolicy.card(question, backupsEnabled: model.autopilot.sweep.backupsEnabled)
       layout(
         Face(
           emoji: AutopilotLook.emoji(question.kind), headline: made.headline, name: nil,

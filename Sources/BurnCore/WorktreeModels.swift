@@ -96,12 +96,12 @@ public struct WorktreePolicy: Codable, Sendable {
   public var staleDays = 14
   public var releaseGraceHours = 24
   public var maximumPerDay = 3
-  public var archiveRetentionDays = 30
+  public var archiveRetentionDays = 7
   public init() {}
   public func validate() throws {
     guard roots.count <= 32, automaticRepositories.count <= 1000, (1...365).contains(staleDays),
       (0...168).contains(releaseGraceHours), (1...20).contains(maximumPerDay),
-      (30...3650).contains(archiveRetentionDays),
+      (0...3650).contains(archiveRetentionDays),
       roots.allSatisfy({
         $0.hasPrefix("/") && $0.utf8.count < 4096 && $0 != "/" && $0 != NSHomeDirectory()
       }),

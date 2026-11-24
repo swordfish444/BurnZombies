@@ -54,7 +54,7 @@ public enum AutopilotPolicy {
       id: "starter-finished-copies", kind: .worktree,
       match: [
         "saved": ["merged"], "changes": ["none"], "stale": ["month", "older"], "inUse": ["no"],
-        "thread": ["ended", "none"], "place": ["agent", "sibling", "other"],
+        "thread": ["ended", "none"], "place": ["agent", "other"],
       ], verdict: .burn, source: .starter,
       title: "Old copies already merged, with no changes, untouched for a month",
       created: Date(timeIntervalSinceReferenceDate: 0)),
@@ -157,6 +157,10 @@ public enum AutopilotPolicy {
       if let place = f["place"], ownerManagedPlaces.contains(place) {
         return "Made by " + place.prefix(1).uppercased() + place.dropFirst()
       }
+      if f[AutopilotWorktrees.poolRisk] == "yes" || f["place"] == "pool" {
+        return "Part of a reusable worktree pool"
+      }
+      if f["place"] == "sibling" { return "Next to your main project" }
       if f["thread"] == "live" { return "A chat is working in it" }
       if f["inUse"] != "no" { return "Might be in use" }
       return "Needs your OK"
@@ -174,7 +178,10 @@ public enum AutopilotPolicy {
         && (f["orphaned"] == "yes" || f["thread"] == "ended")
     case .worktree:
       // Big unsaved files go for good when a copy burns: only the owner's Yes lets them.
-      return !ownerManagedPlaces.contains(f["place"] ?? "") && f["inUse"] == "no"
+      // Sibling checkouts beside the main repo and persistent slot pools are always ask-only.
+      let place = f["place"] ?? ""
+      return !ownerManagedPlaces.contains(place) && place != "sibling" && place != "pool"
+        && f[AutopilotWorktrees.poolRisk] != "yes" && f["inUse"] == "no"
         && f["thread"] != "live" && !AutopilotWorktrees.holdsBigFiles(item)
     case .disk:
       return (f["folder"] ?? "other") != "other" && !AutopilotDockerCache.isCache(item)
@@ -457,6 +464,10 @@ public enum AutopilotPolicy {
         found.append(
           count({ $0.facts[risk.fact] == "yes" }, "has " + risk.words, "have " + risk.words))
       }
+      found.append(
+        count(
+          { $0.facts[AutopilotWorktrees.poolRisk] == "yes" },
+          "is a reusable worktree slot", "are reusable worktree slots"))
     case .process:
       found = [
         count(
@@ -506,7 +517,8 @@ public enum AutopilotPolicy {
       if let place = [
         "agent": "made by background agents", "codex": "made by Codex",
         "claude": "made by Claude", "cursor": "made by Cursor",
-        "conductor": "made by Conductor", "sibling": "next to your main projects",
+        "conductor": "made by Conductor", "pool": "in a reusable worktree pool",
+        "sibling": "next to your main projects",
       ][value("place") ?? ""] {
         parts.append(place)
       }
@@ -571,12 +583,16 @@ public enum AutopilotPolicy {
   }
 
   /// "If I burn it" in kid-simple language.
-  public static func consequence(_ item: AutopilotItem) -> String {
+  public static func consequence(_ item: AutopilotItem, backupsEnabled: Bool = true) -> String {
     switch item.kind {
     case .process:
       return
         "It just stops. If something needs it again, a fresh one starts. Nothing you're working on uses it."
     case .worktree:
+      if !backupsEnabled {
+        return
+          "Backups are off (use at your own risk): the folder is deleted permanently with no Restore and no Git safety ref."
+      }
       if AutopilotWorktrees.holdsBigFiles(item) {
         return
           "The folder goes away. Its code and smaller unsaved files are backed up so you can restore it, but its big unsaved files are deleted for good."
@@ -776,7 +792,7 @@ extension AutopilotPolicy {
       ]
       let big: [(fact: String, words: [String: String])] = AutopilotWorktrees.bigFileRisks.map {
         risk in (fact: risk.fact, words: ["yes": "Has " + risk.words])
-      }
+      } + [(fact: AutopilotWorktrees.poolRisk, words: ["yes": "Reusable worktree slot"])]
       let rest: [(fact: String, words: [String: String])] = [
         ("stale", stalePhrases),
         (
@@ -784,7 +800,7 @@ extension AutopilotPolicy {
           [
             "agent": "Made by background agents", "codex": "Made by Codex",
             "claude": "Made by Claude", "cursor": "Made by Cursor",
-            "conductor": "Made by Conductor",
+            "conductor": "Made by Conductor", "pool": "Reusable worktree pool",
           ]
         ),
         ("thread", ["ended": "Its chat is finished"]),
@@ -918,7 +934,7 @@ extension AutopilotPolicy {
     let named: [String] = AutopilotWorktrees.bigFileRisks.map { "Has " + $0.words }
     let others: Set<String> = [
       "Work only on this Mac", "Has unsaved changes", "Has lots of unsaved changes",
-      "Still running a server", "Still busy", "Idle 10+ minutes",
+      "Reusable worktree slot", "Still running a server", "Still busy", "Idle 10+ minutes",
     ]
     return others.union(named)
   }()
@@ -928,20 +944,31 @@ extension AutopilotPolicy {
   /// for `calendar`, so the same question reads differently tomorrow. Programs say how long they
   /// have been running instead: "Burn 2 leftover Node programs running for 3 hours?".
   public static func card(
-    _ question: AutopilotQuestion, now: Date = Date(), calendar: Calendar = .current
+    _ question: AutopilotQuestion, now: Date = Date(), calendar: Calendar = .current,
+    backupsEnabled: Bool = true
   ) -> AutopilotCard {
     let one = question.count == 1
     let (single, plural) = cardNoun(question.kind, match: question.match)
-    let cost: String? = bigFilesCost(question)
+    let cost: String?
+    if question.kind == .worktree && !backupsEnabled {
+      cost =
+        "Backups are off (use at your own risk). A Yes deletes permanently with no Restore button and no Git safety ref."
+    } else {
+      cost = bigFilesCost(question)
+    }
     let note: String
     switch question.kind {
     case .worktree:
-      // What a Yes deletes for good comes first; it is never "you can undo it".
-      note =
-        cost
-        ?? (one
-          ? "It's backed up first, so you can undo it."
-          : "Each one is backed up first, so you can undo it.")
+      if !backupsEnabled {
+        note = "Backups are off — a Yes deletes permanently with no Undo (use at your own risk)."
+      } else {
+        // What a Yes deletes for good comes first; it is never "you can undo it".
+        note =
+          cost
+          ?? (one
+            ? "It's backed up first, so you can undo it."
+            : "Each one is backed up first, so you can undo it.")
+      }
     case .process: note = one ? "It just gets asked to quit." : "They just get asked to quit."
     case .disk:
       note =

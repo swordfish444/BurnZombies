@@ -273,7 +273,7 @@ extension AutopilotPolicy {
   /// Canonical `place` values emitted by `AutopilotWorktrees`. Any retired custom-harness tag saved
   /// in earlier `memory.json` files maps to `"agent"` while keeping `formerIDs` and tallies intact.
   static let knownPlaces: Set<String> = [
-    "agent", "codex", "claude", "cursor", "conductor", "sibling", "other", "unknown",
+    "agent", "codex", "claude", "cursor", "conductor", "pool", "sibling", "other", "unknown",
   ]
 
   static func canonicalPlaces(_ values: [String]) -> [String] {

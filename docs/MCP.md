@@ -1,5 +1,7 @@
 # One computer-wide observer. Your harness supplies the intelligence.
 
+> **Normal setup never edits your agent configs:** `install.sh` and `burnzombies setup` write only to `~/Library/Application Support/BurnZombies` and never touch `~/.claude.json`, `~/.claude/settings.json`, or `~/.codex/config.toml`. The legacy `burnzombies install` and `burnzombies install-skill` commands are for optional direct interactive MCP registration only and require `--legacy-edit-harness-config` before modifying any harness config.
+
 The native observer watches all visible processes owned by the logged-in macOS user. It is not scoped to a conversation, repository, terminal or agent process tree. It continues sampling and verifying cleanup while chats are idle or closed.
 
 A small native coordinator requests a bounded review from one selected, installed harness. The harness uses MCP for live evidence, exact-identity previews and guarded cleanup. No chat lifecycle event is required. The coordinator does not classify processes or decide what to kill.

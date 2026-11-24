@@ -16,6 +16,10 @@ public struct MachineReviewConfiguration: Codable, Sendable {
   public var launcher: String
   public var server: String
   public var enabled = true
+  /// Automatically fail over between installed Claude Code and Codex CLIs on quota/login limits
+  /// (default on; opt out with `--no-failover` or Settings).
+  public var allowFailover: Bool?
+  public var effectiveAllowFailover: Bool { allowFailover ?? true }
   public var model: String?
   public var reasoningEffort: String?
   public var huntIntervalHours: Int?

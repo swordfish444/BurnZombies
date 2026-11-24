@@ -1,12 +1,24 @@
 # Install once. Watch the whole Mac.
 
+**Homebrew (recommended):**
+
+```sh
+brew install --cask swordfish444/tap/burnzombies
+```
+
+**Or direct installer script** (pin a release tag like `v0.21.0` instead of `main` if preferred):
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-macOS 14+, Apple Silicon or Intel. The installer checks the download's checksum and signature, puts **BurnZombies.app** in `~/Applications` and starts it in the menu bar: look for the skull. No account, no API key, no sudo, no package manager and no restart.
+**Or download the `.dmg`** from [GitHub Releases](https://github.com/swordfish444/BurnZombies/releases), or run read-only first with Nix (`nix run github:swordfish444/BurnZombies -- audit`).
 
-BZ keeps running with no chat open, and a new install starts at login, so it comes back after you restart your Mac. macOS shows a notice when BZ adds itself to your login items. To stop that, switch off **Start at login** in Settings; updates keep your choice. Updating from v0.13.0 or earlier keeps the switch as it was; if it's off, turn it on in Settings. To remove BZ, see [Uninstall](#uninstall).
+macOS 14+, Apple Silicon or Intel. The installer checks the download's checksum and signature, puts **BurnZombies.app** in `~/Applications` and starts it in the menu bar: look for the skull. No account, no API key, no sudo, and no restart.
+
+Want to measure whether you even need BurnZombies first? Run `burnzombies audit` (or `burnzombies audit --json`): zero files written, zero daemon started, zero signals sent.
+
+BZ keeps running with no chat open, and a new install starts at login by default (pass `--no-login-item` to skip registering a Login Item during setup). macOS shows a notice when BZ adds itself to your login items. To stop that later, switch off **Start at login** in Settings; updates keep your choice. Updating from v0.13.0 or earlier keeps the switch as it was; if it's off, turn it on in Settings. To remove BZ, see [Uninstall](#uninstall).
 
 ## Updates and About
 
@@ -38,20 +50,25 @@ upgrade, then use Settings for later releases.
 ~/Applications/BurnZombies.app/Contents/MacOS/burnzombies setup
 ```
 
-Only Claude Code and Codex run AI sweeps. BZ reuses your login without copying or changing it, and never switches to another tool or account on its own. It adds nothing to your chats: no hooks, no reminders, no always-on tools and no edits to your Claude Code or Codex settings. Each AI sweep gets its own private connection to BZ.
+Only Claude Code and Codex run AI sweeps. BZ reuses your existing login without copying or changing it. When both Claude Code and Codex are installed and the primary hits a usage or login limit, background AI sweeps fail over automatically to the other tool by default until the limit resets, then switch back — pass `--no-failover` to `install.sh` or `burnzombies setup` if you want sweeps strictly pinned to your chosen harness. BZ adds nothing to your chats: no hooks, no reminders, no always-on tools and no edits to your Claude Code or Codex settings. Each AI sweep gets its own private connection to BZ.
 
 ## Installer options
 
 Options pass through the pipe:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash -s -- --look-only
+curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash -s -- --look-only --no-login-item
 ```
 
 | Option | What it does |
 | --- | --- |
-| `--look-only` | Look first. BZ finds, sizes and asks as usual but burns nothing until you choose **Start burning** in the menu, or choose another level in **Settings**. Works with every `--mcp` choice, `none` included. |
+| `--look-only` | Look first. BZ finds, sizes and asks as usual but burns nothing until you choose **Start burning** in the menu (or `burnzombies autopilot start-burning`), or choose another level in **Settings**. Works with every `--mcp` choice, `none` included. |
 | `--observe-only` | AI judging off. It isn't a dry run: BZ still burns what its starter rules and your answers cover. Turn AI on later with `burnzombies setup --with-ai`. |
+| `--no-login-item` | Skips registering BurnZombies in macOS Login Items during initial setup. |
+| `--no-failover` / `--allow-failover` | Disables or re-enables automatic `claude ↔ codex` quota/login failover (default: enabled). |
+| `--never-touch <path>` | Adds a folder or app to **Never touches** before the first look (repeatable). |
+| `--disable-starter <id>` | Turns off a starter rule before the first look (repeatable, e.g. `starter-finished-copies`, `starter-rebuildable-junk`). |
+| `--backup-days <N>` | Sets worktree backup retention (`1–365`, default `7`). Pass `--backup-days 0 --use-at-your-own-risk` to disable backups explicitly. |
 | `--no-open` | Installs without starting the app. |
 | `--mcp claude` or `--mcp codex` | Uses that tool for AI judging. The default, `auto`, picks Claude Code, then Codex. |
 | `--mcp none` | Skips AI setup. |
@@ -109,6 +126,8 @@ On its own, BZ starts an AI sweep when there's something new to judge, at most e
 Claude Code uses Sonnet at **Medium** thinking by default; Codex uses its own default. BZ sets Claude Code's thinking level for each sweep, so an effort level in your own Claude Code settings (such as max) can't make every sweep think for minutes. To change it, choose **How smart** in **Settings**: Quick, Smart or Smartest. It saves at once. The change applies to the next sweep; a running one finishes as it started. **Use defaults** goes back to these defaults.
 
 On API pricing a sweep costs roughly $0.30–$1.20. On a Claude or ChatGPT subscription it uses plan usage instead. Looking around between sweeps uses no AI. **Settings → Used this week** shows what it would cost if you paid per use: today, this week and this month. Unknown prices are left out, never guessed.
+
+**Usage attribution for local ledgers & account rotators:** Every AI sweep subprocess sets `BURNZOMBIES_SWEEP=1`, `BURNZOMBIES_CALLER=burnzombies`, and `BURNZOMBIES_RUN_KIND=autopilot-sweep` (or `deep-hunt`) in its child environment (and inside Claude `--settings.env`), and prefixes/appends `[burnzombies:caller=burnzombies kind=... version=...]` via `--append-system-prompt` (Claude) or instructions (Codex). Scripts that track subscription usage can separate BurnZombies sweeps cleanly from interactive sessions.
 
 An agent can set the model without opening a window:
 

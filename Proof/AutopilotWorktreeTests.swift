@@ -286,15 +286,22 @@ private func apDirectProof() {
     isNil(AgentThreads.chatTitle(for: path, threads: [beside]))
   }
 
-  // The finished-copies starter rule promises "untouched for a month".
-  func starter(_ days: Double) -> AutopilotStatus {
+  // The finished-copies starter rule promises "untouched for a month" for non-sibling/non-pool
+  // copies; sibling checkouts beside the main repo remain ask-only.
+  func starter(_ days: Double, path: String? = nil) -> AutopilotStatus {
     var r = record("m")
+    if let path { r.path = path }
     r.lastFileChange = now.addingTimeInterval(-days * 86_400)
     r.lastCommitAt = r.lastFileChange
     return AutopilotPolicy.decide(one(r), memory: AutopilotMemory()).status
   }
-  equal(starter(9), .unsure, "a finished copy left 9 days waits for an answer")
-  equal(starter(40), .burn, "a finished copy left 40 days burns")
+  equal(starter(40), .unsure, "a sibling copy beside the main repo waits for an answer")
+  equal(
+    starter(9, path: "/bz-test/worktrees/project-m"), .unsure,
+    "a finished copy left 9 days waits for an answer")
+  equal(
+    starter(40, path: "/bz-test/worktrees/project-m"), .burn,
+    "a non-sibling finished copy left 40 days burns")
 
   func size(_ bytes: UInt64) -> String? {
     var r = record("z")

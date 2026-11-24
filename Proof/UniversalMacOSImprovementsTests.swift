@@ -146,7 +146,7 @@ private func recoveryLifecycleAndMemoryProof() throws {
       AutopilotReceipt(
         itemID: "worktree:\(idx)", kind: .worktree, name: "orbit-copy-\(idx)",
         authority: "rule:w", outcome: "burned", detail: "Retired copy.", bytes: 50_000_000,
-        date: now.addingTimeInterval(-Double(10 - idx) * 86_400), restore: restore))
+        date: now.addingTimeInterval(-Double(idx + 1) * 18 * 3600), restore: restore))
   }
   try store.updateReceipts { all in
     for idx in 0..<520 {

@@ -40,6 +40,11 @@ enum LifecycleSkillInstall {
     }
   }
   static func run(_ args: [String]) throws {
+    guard args.contains("--legacy-edit-harness-config") else {
+      throw StoreError.message(
+        "Legacy command refused: 'burnzombies install-skill' writes global per-chat skill files into ~/.claude/skills and ~/.agents/skills. Use 'burnzombies setup' instead, or pass --legacy-edit-harness-config if you intentionally want legacy per-chat instructions."
+      )
+    }
     func option(_ flag: String) throws -> String? {
       guard let i = args.firstIndex(of: flag) else { return nil }
       guard i + 1 < args.count else { throw StoreError.message("Missing \(flag).") }

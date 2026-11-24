@@ -301,7 +301,7 @@ public enum AutopilotHarness {
 
     What the app enforces:
     - Owner rules (earlier answers) and starter rules already burn their matches before you run. Never second-guess an owner's answer.
-    - Your burn verdict with confidence >= 0.85 authorizes a burn only for: zombie programs that are orphaned or whose chat ended and that are not serving a port; old copies not made by Codex, Claude or Conductor that nothing is using and that hold no big unsaved files; known junk folders. Everything else needs an owner rule, so ask.
+    - Your burn verdict with confidence >= 0.85 authorizes a burn only for: zombie programs that are orphaned or whose chat ended and that are not serving a port; old copies not made by Codex, Claude, Cursor or Conductor and not sitting beside the main project or in a reusable worktree pool, that nothing is using and that hold no big unsaved files; known junk folders. Everything else needs an owner rule, so ask.
     - A confident keep verdict blocks burning. Protected items are never burned.
     - Look-only: when the catalog summary says lookOnly, the owner is previewing. Judge and ask as usual but skip autopilot_burn: nothing burns until the owner turns burning on, and your confident verdicts burn then.
 
@@ -373,11 +373,24 @@ public enum AutopilotHarness {
     return ["opus", "fable", "mythos"].contains(where: lower.contains) ? chosen : deepModel
   }
 
+  /// Deterministic attribution marker appended to AI sweep system prompts so external usage ledgers
+  /// (`cc-usage-ledger`, wrapper shims, etc.) can cleanly identify BurnZombies spend.
+  public static func attributionTag(deep: Bool) -> String {
+    let kind = deep ? "deep-hunt" : "autopilot-sweep"
+    return "[burnzombies:caller=burnzombies kind=\(kind) version=\(BuildIdentity.version)]"
+  }
+
   public static func arguments(
     _ c: MachineReviewConfiguration, directory: URL, root: URL, prompt: String = prompt,
     options: HuntOptions = HuntOptions()
   ) throws -> [String] {
-    let env = ["BURNZOMBIES_HOME": root.path, "BURNZOMBIES_AUTOPILOT": "1"]
+    let runKind = options.deep ? "deep-hunt" : "autopilot-sweep"
+    let tag = attributionTag(deep: options.deep)
+    let env = [
+      "BURNZOMBIES_HOME": root.path, "BURNZOMBIES_AUTOPILOT": "1",
+      "BURNZOMBIES_SWEEP": "1", "BURNZOMBIES_CALLER": "burnzombies",
+      "BURNZOMBIES_RUN_KIND": runKind,
+    ]
     switch c.harness {
     case "claude":
       func encoded(_ object: Any) throws -> String {
@@ -398,6 +411,9 @@ public enum AutopilotHarness {
       let settings: [String: Any] = [
         "disableAllHooks": true,
         "env": [
+          "BURNZOMBIES_SWEEP": "1",
+          "BURNZOMBIES_CALLER": "burnzombies",
+          "BURNZOMBIES_RUN_KIND": runKind,
           "CLAUDE_CODE_EFFORT_LEVEL": effort,
           "MCP_TOOL_TIMEOUT": String(Int(AutopilotSweeper.aiTimeout) * 1000),
         ],
@@ -414,6 +430,7 @@ public enum AutopilotHarness {
         ["-p", prompt] + selection + [
           // Streamed, so the Hunt window shows what the AI says and spends while it works.
           "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+          "--append-system-prompt", tag,
           "--strict-mcp-config", "--mcp-config", try encoded(config), "--settings",
           try encoded(settings), "--disable-slash-commands", "--permission-mode", "dontAsk",
           "--permission-prompts", "none", "--tools", "", "--allowedTools",
@@ -433,7 +450,7 @@ public enum AutopilotHarness {
         ).dropFirst().dropLast().description
       }
       let instructions = directory.appendingPathComponent("autopilot-instructions.md")
-      try Store(root: root).write(Data(prompt.utf8), to: instructions, limit: 32768)
+      try Store(root: root).write(Data((tag + "\n\n" + prompt).utf8), to: instructions, limit: 32768)
       return [
         "features.apps=false", "features.plugins=false", "features.memories=false",
         "memories.use_memories=false", "memories.generate_memories=false",
@@ -444,6 +461,9 @@ public enum AutopilotHarness {
         "mcp_servers.burnzombies.command=" + quoted(c.server),
         "mcp_servers.burnzombies.env.BURNZOMBIES_HOME=" + quoted(root.path),
         "mcp_servers.burnzombies.env.BURNZOMBIES_AUTOPILOT=\"1\"",
+        "mcp_servers.burnzombies.env.BURNZOMBIES_SWEEP=\"1\"",
+        "mcp_servers.burnzombies.env.BURNZOMBIES_CALLER=\"burnzombies\"",
+        "mcp_servers.burnzombies.env.BURNZOMBIES_RUN_KIND=" + quoted(runKind),
         "mcp_servers.burnzombies.enabled=true",
       ]
     default:
@@ -573,6 +593,9 @@ public enum AutopilotHarness {
     // Never the session of whoever started BZ: an agent that installed it, say.
     var env = AgentSessionEnvironment.harness(ProcessInfo.processInfo.environment)
     env["BURNZOMBIES_HOME"] = root.path
+    env["BURNZOMBIES_SWEEP"] = "1"
+    env["BURNZOMBIES_CALLER"] = "burnzombies"
+    env["BURNZOMBIES_RUN_KIND"] = deep ? "deep-hunt" : "autopilot-sweep"
     env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
     env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     env["PATH"] =
@@ -800,7 +823,7 @@ public actor AutopilotCoordinator {
     }
     let primary = configuration()
     if let fh = current.failoverHarness {
-      if fh == primary?.harness || detectHarness(fh) == nil {
+      if fh == primary?.harness || primary?.effectiveAllowFailover == false || detectHarness(fh) == nil {
         await engine.updateSweep {
           $0.failoverHarness = nil
           $0.primaryBlockedUntil = nil
@@ -808,7 +831,8 @@ public actor AutopilotCoordinator {
       }
       return
     }
-    guard !deep, let primary, primary.enabled || current.requested == true,
+    guard !deep, let primary, primary.effectiveAllowFailover,
+      primary.enabled || current.requested == true,
       let alt = alternateConfiguration(for: primary),
       let retry = current.retryAfter, retry > now,
       (current.limitResetsAt ?? .distantPast) > now
@@ -980,7 +1004,8 @@ public actor AutopilotCoordinator {
     let options = wired.run.options
     let sweepBefore = await engine.sweepState()
     let (config, isFailover): (MachineReviewConfiguration, Bool) = {
-      guard !options.deep, let fh = sweepBefore.failoverHarness,
+      guard !options.deep, primaryConfig.effectiveAllowFailover,
+        let fh = sweepBefore.failoverHarness,
         (sweepBefore.primaryBlockedUntil ?? .distantPast) > now, fh != primaryConfig.harness,
         let exe = detectHarness(fh)
       else { return (primaryConfig, false) }
@@ -992,7 +1017,8 @@ public actor AutopilotCoordinator {
       return (alt, true)
     }()
     let fallback =
-      (!isFailover && !options.deep) ? alternateConfiguration(for: primaryConfig) : nil
+      (!isFailover && !options.deep && primaryConfig.effectiveAllowFailover)
+      ? alternateConfiguration(for: primaryConfig) : nil
     let waiting = await engine.startLanes()
     await engine.noteHunt(
       "scanning",

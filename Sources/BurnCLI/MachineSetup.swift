@@ -8,6 +8,38 @@ enum MachineSetup {
   static func run(_ args: [String]) throws {
     let root = try value("--root", in: args).map { URL(fileURLWithPath: $0) } ?? Store.defaultRoot
     try setUpAI(args, root: root)
+    if args.contains("--no-login-item") {
+      try StartAtLogin.record(false, root: root)
+      print("Start at login disabled.")
+    }
+    for path in try values("--never-touch", in: args) {
+      let expanded = (path as NSString).expandingTildeInPath
+      try Autopilot.addNeverTouch(path: expanded, root: root)
+      print("Never touches: \(WorkspaceSafety.canonical(expanded))")
+    }
+    for ruleID in try values("--disable-starter", in: args) {
+      try Autopilot.setStarter(ruleID: ruleID, enabled: false, root: root)
+      print("Disabled starter rule: \(ruleID)")
+    }
+    if let rawDays = try value("--backup-days", in: args) {
+      guard let days = Int(rawDays),
+        (0...AutopilotSweepState.maximumBackupRetentionDays).contains(days)
+      else {
+        throw StoreError.message(
+          "Choose --backup-days 0 (with --use-at-your-own-risk) or 1–\(AutopilotSweepState.maximumBackupRetentionDays)."
+        )
+      }
+      if days == 0 && !args.contains("--use-at-your-own-risk") {
+        throw StoreError.message(
+          "Disabling backups deletes burned project copies permanently with no Undo. Pass --use-at-your-own-risk to confirm."
+        )
+      }
+      try Autopilot.setBackupRetention(days: days, root: root)
+      print(
+        days == 0
+          ? "Backups disabled (use at your own risk — deletions are permanent)."
+          : "Backup retention set to \(days) day\(days == 1 ? "" : "s").")
+    }
     // Look-only belongs to Autopilot, not the AI: it holds every burn with or without AI judging,
     // and only once the AI step went through, so a failed setup changes nothing.
     guard args.contains("--look-only") else { return }
@@ -19,6 +51,21 @@ enum MachineSetup {
     guard let i = args.firstIndex(of: flag) else { return nil }
     guard i + 1 < args.count else { throw StoreError.message("Missing \(flag) value.") }
     return args[i + 1]
+  }
+
+  static func values(_ flag: String, in args: [String]) throws -> [String] {
+    var result: [String] = []
+    var index = 0
+    while index < args.count {
+      if args[index] == flag {
+        guard index + 1 < args.count else { throw StoreError.message("Missing \(flag) value.") }
+        result.append(args[index + 1])
+        index += 2
+      } else {
+        index += 1
+      }
+    }
+    return result
   }
 
   /// Chooses the AI that judges what BZ isn't sure about, or turns AI judging off.
@@ -71,11 +118,17 @@ enum MachineSetup {
       server: launcher.deletingLastPathComponent().appendingPathComponent("burnzombies-mcp").path)
     if let old {
       config.enabled = old.enabled
+      config.allowFailover = old.allowFailover
       config.huntIntervalHours = old.huntIntervalHours
       if old.harness == harness {
         config.model = old.model
         config.reasoningEffort = old.reasoningEffort
       }
+    }
+    if args.contains("--no-failover") {
+      config.allowFailover = false
+    } else if args.contains("--allow-failover") {
+      config.allowFailover = true
     }
     if let model = try value("--model") {
       config.model = MachineReviewConfiguration.selectionValue(model)

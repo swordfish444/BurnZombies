@@ -48,7 +48,7 @@ public enum AutopilotAgentScratch {
       if baseTemp.hasPrefix("/"), baseTemp != "/",
         let names = try? FileManager.default.contentsOfDirectory(atPath: baseTemp)
       {
-        for name in names.sorted().prefix(entryLimit) where name.hasPrefix("claude-") {
+        for name in names.sorted().prefix(entryLimit) where isClaudeTempDirectoryName(name) {
           let path = baseTemp + "/" + name
           let entries = claudeLeftovers(at: path, now: now, sizer: sizer)
           measured.insert(path)
@@ -191,7 +191,7 @@ public enum AutopilotAgentScratch {
         WorkspaceSafety.canonical)
       let parent = (path as NSString).deletingLastPathComponent
       let name = (path as NSString).lastPathComponent
-      guard let resolvedTemp, parent == resolvedTemp, name.hasPrefix("claude-") else {
+      guard let resolvedTemp, parent == resolvedTemp, isClaudeTempDirectoryName(name) else {
         return refuse("That isn't an AI scratch folder I recognize, so I left it alone.")
       }
       settle = tempSettle
@@ -262,6 +262,14 @@ public enum AutopilotAgentScratch {
   }
 
   // MARK: - Discovery Helpers
+
+  /// Claude Code's per-user scratch folder is strictly `$TMPDIR/claude-<uid>` (digits only).
+  /// Custom folders like `$TMPDIR/claude-federation/` or hook marker files are never matched.
+  static func isClaudeTempDirectoryName(_ name: String) -> Bool {
+    guard name.hasPrefix("claude-") else { return false }
+    let suffix = name.dropFirst("claude-".count)
+    return !suffix.isEmpty && suffix.allSatisfy { $0.isASCII && $0.isNumber }
+  }
 
   private static func claudeLeftovers(
     at path: String, now: Date,

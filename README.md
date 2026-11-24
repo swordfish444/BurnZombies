@@ -6,13 +6,17 @@ https://github.com/user-attachments/assets/d56b8996-09ee-49c4-8125-85eba52c32e0
   It stops the processes they orphan and deletes the worktrees and rebuildable junk they leave behind, saving each worktree's commits and changes first. On the author's Mac, which had about 1,000 agent worktrees, its first two days freed <b>685.6 GB</b> and cleared <b>453</b> stale worktrees, most of them under rules learned from 19 one-tap answers.
 </p>
 
-<p align="center">On your Mac, paste this into Terminal:</p>
+<p align="center">On your Mac, install with Homebrew or paste into Terminal:</p>
+
+```sh
+brew install --cask swordfish444/tap/burnzombies
+```
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/swordfish444/BurnZombies/main/install.sh | bash
 ```
 
-<p align="center"><sub>macOS 14+ · no account, API key or sudo · free and open source (MIT) · signed, not yet notarized by Apple · <a href="install.sh">read the script first</a><br>Want to look first? Use <code>| bash -s -- --look-only</code> instead of <code>| bash</code>: BZ finds and asks but burns nothing until you choose <b>Start burning</b>.<br>If Claude Code or Codex is signed in, BZ also runs AI sweeps on your login, about $0.30–$1.20 each at API prices. To skip them, add <code>--observe-only</code> the same way.</sub></p>
+<p align="center"><sub>macOS 14+ · no account, API key or sudo · free and open source (MIT) · <a href="install.sh">read the script first</a> · <a href="docs/PRIVACY.md">privacy</a><br>Want to look first? Use <code>| bash -s -- --look-only --no-login-item</code>: BZ finds and asks but burns nothing until you choose <b>Start burning</b>.<br>Want a zero-persistence check first? Run <code>burnzombies audit</code> (touches nothing, starts no daemon).<br>If Claude Code or Codex is signed in, BZ also runs AI sweeps on your login, about $0.30–$1.20 each at API prices. To skip them, add <code>--observe-only</code>.</sub></p>
 
 ## How it works
 
@@ -41,32 +45,33 @@ To BZ, burning means stopping a program or deleting a folder.
 - 🧟 **Zombie processes**: robot browsers that Playwright, Puppeteer or an MCP server left open (often 1–3 GB each), plus Node workers and build watchers left running after their app or chat is gone.<br>
   **Safety net:** a polite `SIGTERM`, sent only after an exact identity check.
 - 📁 **Stale worktrees** nothing is using.<br>
-  **Safety net:** first, a Git ref inside the repo saves every commit, uncommitted change and untracked file, plus small ignored files. Browser profiles that test runs leave behind aren't kept. If BZ can't verify that backup, the worktree stays. Branches are kept. Restore in one click from **Findings** for 30 days; the ref stays in the repo after that.
+  **Safety net:** first, a Git ref inside the repo saves committed HEAD and encrypted recovery saves uncommitted, untracked and ignored files up to 512 MB (browser profiles left by test runs aren't kept). If BZ can't verify that backup, the worktree stays. Branches are kept. Restore in one click from **Findings** for **7 days by default** (configurable from 1–365 days, or off with a warning, in **Settings → Backups**).
 - 🗑️ **Rebuildable junk**: `node_modules`, build output, DerivedData.<br>
   **Safety net:** your tools rebuild it when needed.
 
 ## Safe by default
 
 - **Hands off what's in use:** never macOS, your apps, your AI tools, your main project folders, or anything a program or an open chat is using.
-- **Your agents' worktrees wait for your yes,** and **No** or **Keep forever** always wins.
-- **Every worktree is backed up** to a Git ref first; restore it in one click or by hand.
+- **`git worktree lock` is a hard rail:** locked worktrees are never removed and their inner `node_modules` / build folders are never stripped.
+- **Agent worktrees, siblings and slot pools wait for your yes:** Claude Code, Codex, Conductor and Cursor worktrees, sibling checkouts beside your main repo, and reusable worktree pools (like `slot1..N`) are ask-only by default, and **No** or **Keep forever** always wins.
+- **Every worktree is backed up** before removal (7 days by default, customizable or opt-out in Settings); restore it in one click or by hand.
 
 <details>
 <summary><b>Exactly what it burns on its own</b></summary>
 
-- **Starter rules** (switch each off in **Settings → Burns without asking**):
+- **Starter rules** (switch each off in **Settings → Burns without asking** or via `--disable-starter`):
   - robot browsers nothing can drive anymore, once idle 10+ minutes;
   - programs still driving a robot browser, an hour after their chat ended;
   - orphaned programs from finished chats, once idle 1+ hour with no open port;
   - orphaned programs that have barely used the CPU for 6+ hours and have no open port;
-  - merged worktrees with no local changes untouched for a month;
-  - junk inside worktrees untouched for two weeks;
+  - merged worktrees with no local changes untouched for a month (never agent-owned, sibling or reusable pool worktrees);
+  - junk inside non-locked, non-pool worktrees untouched for two weeks;
   - the throwaway profiles and recordings that robot browsers leave in your temp folder;
-  - settled scratch folders finished AI chats left behind (`$TMPDIR/claude-*`, `~/.codex/*artifacts`, and Antigravity `scratch` / `browser_sandbox`, while keeping transcripts and conversation files).
+  - settled scratch folders finished AI chats left behind (`$TMPDIR/claude-<uid>` untouched 2+ days, `~/.codex/*artifacts` untouched 3+ days, and Antigravity `scratch` / `browser_sandbox` untouched 2+ weeks, while keeping transcripts and conversation files).
 - **Robot browsers** are browsers a tool started with automation flags: a control pipe, or a debugging port plus headless mode, a fake keychain or a throwaway profile. The browser you use has none of these, so it is never touched, and neither are logged-in profiles a tool keeps.
-- **The AI,** if on, may burn a low-risk item only when it rates itself at least 85% sure: an orphaned program with no open port, a known junk folder, or a worktree nothing uses. Every burn it asks for passes BZ's own checks.
-- **Never on its own:** worktrees made by Claude Code, Codex or the Conductor app. Other worktrees, such as ones Cursor or your scripts make, follow the two rules above.
-- **Your yes answers:** a question says what it covers, like "Burn 5 tool caches?", and **Yes** also covers new matches later. Switch any rule off in **Settings → Burns without asking**. **Settings → Never touches** lists what BZ leaves alone, and you can add any folder or app.
+- **The AI,** if on, may burn a low-risk item only when it rates itself at least 85% sure: an orphaned program with no open port, a known junk folder, or an eligible non-agent, non-sibling, non-pool worktree nothing uses. Every burn it asks for passes BZ's own checks.
+- **Never on its own:** worktrees made by Claude Code, Codex, Conductor or Cursor, sibling checkouts beside your main repo, reusable worktree pools, and anything locked with `git worktree lock`.
+- **Your yes answers:** a question says what it covers, like "Burn 5 tool caches?", and **Yes** also covers new matches later. Switch any rule off in **Settings → Burns without asking**. **Settings → Never touches** lists what BZ leaves alone, and you can add any folder or app (or pass `--never-touch` at setup).
 - **Limits:** at most 20 worktrees, 20 junk folders and 50 programs per look. BZ knows an idle Claude Code, Codex or Antigravity chat is still open from the session records those tools keep.
 
 The [tests](Proof) check these rules on every code change. [How cleanup stays safe →](docs/SAFETY.md)
@@ -101,7 +106,7 @@ Already installed? Choose **Look only** in **Settings**. `--observe-only` is not
 <details>
 <summary><b>Can I undo a burn?</b></summary>
 
-Worktrees, yes: **Restore** in **Findings** for 30 days. The restore point is a Git ref in the repo that holds every commit and local change, small ignored files such as `.env` included; ignored files over 5 MB, anything inside rebuildable folders and browser profiles left by test runs aren't kept. A copy with more than 512 MB of other unsaved files waits for a question that names them; a Yes deletes those for good. The ref stays local unless you push `refs/burnzombies/*` yourself, for example with `git push --mirror`. It stays after 30 days, so you can also restore by hand, without the app:
+Worktrees, yes: **Restore** in **Findings** for **7 days by default** (customize to `1d`, `3d`, `7d`, `14d`, `30d`, or any `1–365` days in **Settings → Backups**, or turn backups off with an explicit *use at your own risk* warning). Before burning a copy, BZ saves committed HEAD in a local Git ref (`refs/burnzombies/retired/<id>`) and preserves uncommitted, untracked and ignored files (such as `.env`) up to 512 MB in encrypted local recovery; rebuildable caches and browser profiles left by test runs aren't kept. A copy with more than 512 MB of other unsaved files waits for a question that names them; a Yes deletes those for good. Expired recovery archives and their Git refs prune automatically after your retention window, or you can restore by hand while kept:
 
 ```sh
 git for-each-ref refs/burnzombies/retired          # list restore points
@@ -130,7 +135,7 @@ No. Without it, BZ skips the places macOS protects (Desktop, Documents, Download
 <details>
 <summary><b>What does the install script do?</b></summary>
 
-It downloads the release it pins, checks it against that release's SHA-256 checksums, checks the archive's paths and the app's code signature, and puts BurnZombies.app in `~/Applications`. No sudo. Releases are signed with BurnZombies' own certificate but aren't notarized by Apple yet. Prefer a fixed version? Swap `main` in the URL for a release tag, such as `v0.14.0`. [Read install.sh](install.sh) · [Installer options →](docs/INSTALL.md#installer-options)
+It downloads the release it pins, checks it against that release's SHA-256 checksums, checks the archive's paths and the app's code signature, and puts BurnZombies.app in `~/Applications`. No sudo. Prefer a fixed version? Swap `main` in the URL for a release tag, such as `v0.21.0`, or install via Homebrew (`brew install --cask swordfish444/tap/burnzombies`) or the `.dmg` on [Releases](https://github.com/swordfish444/BurnZombies/releases). Safe-trial flags like `--look-only`, `--observe-only`, `--no-login-item`, `--no-failover`, `--never-touch`, `--disable-starter`, and `--backup-days` pass straight through. [Read install.sh](install.sh) · [Installer options →](docs/INSTALL.md#installer-options)
 
 </details>
 
@@ -161,6 +166,6 @@ Switch off **Start at login** and stop BZ, then delete the app and its data fold
 
 ## Learn more
 
-[User guide](docs/USER_GUIDE.md) · [How Autopilot decides](docs/AUTOPILOT.md) · [Safety](docs/SAFETY.md) · [Install options](docs/INSTALL.md) · [MCP server](docs/MCP.md) · [Feedback](https://github.com/swordfish444/BurnZombies/issues/new?template=feedback.yml)
+[User guide](docs/USER_GUIDE.md) · [How Autopilot decides](docs/AUTOPILOT.md) · [Safety](docs/SAFETY.md) · [Privacy](docs/PRIVACY.md) · [Install options](docs/INSTALL.md) · [MCP server](docs/MCP.md) · [Feedback](https://github.com/swordfish444/BurnZombies/issues/new?template=feedback.yml)
 
 <p align="center"><b>You build. We burn.</b></p>

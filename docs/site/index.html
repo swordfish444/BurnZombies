@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BurnZombies — Clean up after your AI coding agents on macOS</title>
+  <meta name="description" content="Free, open-source, Apple-notarized macOS menu-bar app that stops orphaned AI agent processes and clears stale Git worktrees and build junk — with encrypted 1-click Restore.">
+  <meta property="og:title" content="BurnZombies — You build. We burn.">
+  <meta property="og:description" content="Reclaim gigabytes of stale Git worktrees, orphaned robot browsers, and build caches left behind by Claude Code, Codex, Cursor, and Antigravity.">
+  <meta property="og:image" content="https://raw.githubusercontent.com/swordfish444/BurnZombies/main/docs/media/social-card.jpg">
+  <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/swordfish444/BurnZombies/main/packaging/artwork/AppIcon.png">
+  <style>
+    :root {
+      --bg: #131214;
+      --surface: #1b191d;
+      --surface-2: #232026;
+      --border: rgba(255, 244, 232, 0.10);
+      --cream: #f8f2e7;
+      --muted: #b5aca2;
+      --ember: #ff5c21;
+      --ember-soft: rgba(255, 92, 33, 0.15);
+      --green: #4ade80;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      background: radial-gradient(900px 420px at 50% -80px, rgba(255, 92, 33, 0.16), transparent 65%), var(--bg);
+      color: var(--cream);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 24px 0; }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 18px; color: var(--cream); text-decoration: none; }
+    .brand img { width: 36px; height: 36px; border-radius: 9px; }
+    nav { display: flex; gap: 20px; font-size: 14px; }
+    nav a { color: var(--muted); text-decoration: none; }
+    nav a:hover { color: var(--cream); }
+    .hero { text-align: center; padding: 48px 0 36px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 14px; border-radius: 999px;
+      background: var(--ember-soft); border: 1px solid rgba(255, 92, 33, 0.35);
+      color: #ff9a73; font-size: 13px; font-weight: 600; margin-bottom: 20px;
+    }
+    h1 { font-size: clamp(36px, 6vw, 56px); line-height: 1.06; letter-spacing: -0.03em; margin: 0 0 18px; }
+    .lead { font-size: 19px; color: var(--muted); max-width: 680px; margin: 0 auto 30px; }
+    .cta-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; margin-bottom: 24px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 13px 22px; border-radius: 12px; font-weight: 600; font-size: 15px;
+      text-decoration: none; cursor: pointer; border: 1px solid transparent; transition: transform .12s ease;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary { background: var(--ember); color: #fff; }
+    .btn-secondary { background: var(--surface-2); color: var(--cream); border-color: var(--border); }
+    .code-box {
+      max-width: 660px; margin: 0 auto 14px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; text-align: left;
+    }
+    .code-box code { overflow-x: auto; white-space: nowrap; color: #ffd9c7; }
+    .copy-btn {
+      background: var(--surface-2); color: var(--cream); border: 1px solid var(--border);
+      border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+    }
+    .submeta { font-size: 13px; color: var(--muted); margin-top: 10px; }
+    .visuals {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px; margin: 44px 0 56px; align-items: center;
+    }
+    .visuals img { width: 100%; border-radius: 16px; border: 1px solid var(--border); box-shadow: 0 24px 60px rgba(0,0,0,.45); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin: 28px 0 56px; }
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 22px;
+    }
+    .card h3 { margin: 0 0 8px; font-size: 17px; }
+    .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+    .section-title { font-size: 26px; letter-spacing: -0.02em; margin: 0 0 10px; }
+    .section-sub { color: var(--muted); margin: 0 0 20px; }
+    .trust-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin: 16px 0 56px; }
+    .trust-item {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px 16px; font-size: 14px; color: var(--muted);
+    }
+    .trust-item strong { color: var(--cream); display: block; margin-bottom: 4px; }
+    footer {
+      border-top: 1px solid var(--border); padding: 28px 0 44px;
+      display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px;
+      font-size: 13px; color: var(--muted);
+    }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--cream); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="#">
+        <img src="https://raw.githubusercontent.com/swordfish444/BurnZombies/main/packaging/artwork/AppIcon.png" alt="BurnZombies icon">
+        BurnZombies
+      </a>
+      <nav>
+        <a href="#how">How it works</a>
+        <a href="#safety">Safety</a>
+        <a href="https://github.com/swordfish444/BurnZombies/blob/main/docs/SAFETY.md">Safety Doc</a>
+        <a href="https://github.com/swordfish444/BurnZombies">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="pill">v0.21.0 · macOS 14+ Universal · Free &amp; MIT Open Source</div>
+      <h1>Clean up after your AI coding agents, automatically.</h1>
+      <p class="lead">
+        BurnZombies stops orphaned robot browsers and helpers, and clears stale Git worktrees and rebuildable build junk left behind by Claude Code, Codex, Cursor, and Antigravity — backing up every worktree first.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/swordfish444/BurnZombies/releases/download/v0.21.0/BurnZombies-macOS-universal.dmg">Download DMG (macOS 14+)</a>
+        <a class="btn btn-secondary" href="https://github.com/swordfish444/BurnZombies">View Source on GitHub</a>
+      </div>
+
+      <div class="code-box">
+        <code id="brew-cmd">brew install --cask swordfish444/tap/burnzombies</code>
+        <button class="copy-btn" onclick="copyText('brew-cmd', this)">Copy</button>
+      </div>
+      <div class="code-box">
+        <code id="audit-cmd">burnzombies audit</code>
+        <button class="copy-btn" onclick="copyText('audit-cmd', this)">Copy</button>
+      </div>
+      <div class="submeta">
+        Zero telemetry · No account or API key · Works standalone with built-in rules (optional AI sweeps via your Claude Code or Codex login)
+      </div>
+    </section>
+
+    <section class="visuals" id="how">
+      <img src="https://raw.githubusercontent.com/swordfish444/BurnZombies/main/docs/media/panel-real.png" alt="BurnZombies menu bar panel showing 685.6 GB reclaimed and 453 worktrees cleaned">
+      <img src="https://raw.githubusercontent.com/swordfish444/BurnZombies/main/docs/media/readme-question.jpg" alt="Teach BZ one-tap question card">
+    </section>
+
+    <h2 class="section-title">Three kinds of agent exhaust, handled cleanly</h2>
+    <p class="section-sub">On the author's Mac (~1,000 agent worktrees), BurnZombies reclaimed 685.6 GB in its first two days.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>Zombie Processes &amp; Robot Browsers</h3>
+        <p>Stops abandoned Playwright/Puppeteer browsers (often 1–3 GB each), leftover Node workers, and build watchers after their chat closes — polite <code>SIGTERM</code> only after exact PID/start-time/path verification.</p>
+      </div>
+      <div class="card">
+        <h3>Stale Git Worktrees</h3>
+        <p>Removes old agent worktrees after preserving committed HEAD in a local Git ref and local/ignored changes in an encrypted recovery archive. One-click Restore (configurable retention, 7 days default).</p>
+      </div>
+      <div class="card">
+        <h3>Rebuildable Junk &amp; AI Scratch</h3>
+        <p>Clears <code>node_modules</code>, DerivedData, Gradle caches, unused Playwright browser builds, and settled AI temp folders — never touching live chats, main checkouts, or locked worktrees.</p>
+      </div>
+    </div>
+
+    <h2 class="section-title" id="safety">Built to pass a security audit</h2>
+    <p class="section-sub">Zero telemetry. 77+ native proof suites. Honest about every boundary.</p>
+    <div class="trust-list">
+      <div class="trust-item"><strong>Complete <code>git worktree lock</code> rail</strong>Locked worktrees — and the <code>node_modules</code> inside them — are never touched.</div>
+      <div class="trust-item"><strong>Persistent worktree pools protected</strong>Sibling checkouts and reusable slot pools (<code>repo1..N</code>, <code>available-*</code>) stay ask-only and never inherit rules from agent worktrees.</div>
+      <div class="trust-item"><strong>Look-only &amp; read-only audit</strong>Measure your Mac first with <code>burnzombies audit</code> or <code>--look-only --observe-only --no-login-item</code> before allowing a single burn.</div>
+      <div class="trust-item"><strong>Configurable backups (7d default)</strong>Keep encrypted backups for 1, 3, 7, 14, or any number of days — or turn them off with an explicit warning.</div>
+      <div class="trust-item"><strong>No global agent config edits</strong>Never touches <code>~/.claude.json</code>, <code>~/.claude/settings.json</code>, or <code>~/.codex/config.toml</code>. AI sweeps carry <code>BURNZOMBIES_SWEEP=1</code> attribution tags.</div>
+      <div class="trust-item"><strong>Verify every release</strong>Signed with Apple Developer ID, notarized by Apple, and published with SHA-256 checksums and Homebrew Cask.</div>
+    </div>
+
+    <footer>
+      <div><strong>You build. We burn.</strong> · MIT License</div>
+      <div>
+        <a href="https://github.com/swordfish444/BurnZombies/blob/main/docs/SAFETY.md">Safety</a> ·
+        <a href="https://github.com/swordfish444/BurnZombies/blob/main/docs/PRIVACY.md">Privacy</a> ·
+        <a href="https://github.com/swordfish444/BurnZombies/blob/main/docs/INSTALL.md">Install Guide</a> ·
+        <a href="https://github.com/swordfish444/BurnZombies/blob/main/llms.txt">llms.txt</a>
+      </div>
+    </footer>
+  </div>
+  <script>
+    function copyText(id, btn) {
+      navigator.clipboard.writeText(document.getElementById(id).textContent);
+      const prev = btn.textContent;
+      btn.textContent = "Copied";
+      setTimeout(() => { btn.textContent = prev; }, 1400);
+    }
+  </script>
+</body>
+</html>

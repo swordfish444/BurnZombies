@@ -160,15 +160,102 @@ do {
         "Observer launch was acknowledged but its private connection did not become ready. No cleanup was requested."
       )
     }
+  case "audit":
+    try Audit.run(Array(args.dropFirst()))
   case "autopilot":
     // `burnzombies autopilot [snapshot|catalog|inspect ID|burn ID...|sweep|deep [LIMIT]|stop|eval
-    // [--json]|look-only]`,
-    // or one AutopilotRequest JSON object on stdin with `burnzombies autopilot -`. Every one but
-    // look-only is answered by the running app; none starts a tick.
+    // [--json]|look-only|start-burning|never-touch|starter|backups]`,
+    // or one AutopilotRequest JSON object on stdin with `burnzombies autopilot -`.
     if args.count == 2, args[1] == "look-only" {
       // Works with the app stopped too, so the installer can use it without AI setup.
       try Autopilot.setLookOnly(true)
       print(MachineSetup.lookOnlyLine)
+      break
+    }
+    if args.count == 2, args[1] == "start-burning" {
+      try Autopilot.setLookOnly(false)
+      print("Look-only is off: BurnZombies will burn what your rules cover.")
+      break
+    }
+    if args.count >= 2, args[1] == "never-touch" {
+      let sub = args.count >= 3 ? args[2] : "list"
+      switch sub {
+      case "list":
+        let memory = try AutopilotStore().memory()
+        if memory.neverTouch.isEmpty {
+          print("Never touches is empty.")
+        } else {
+          for path in memory.neverTouch { print(path) }
+        }
+      case "add":
+        guard args.count == 4 else { fail("Use: burnzombies autopilot never-touch add <PATH>") }
+        let expanded = (args[3] as NSString).expandingTildeInPath
+        try Autopilot.addNeverTouch(path: expanded)
+        print("Added to Never touches: \(WorkspaceSafety.canonical(expanded))")
+      case "remove":
+        guard args.count == 4 else { fail("Use: burnzombies autopilot never-touch remove <PATH>") }
+        let expanded = (args[3] as NSString).expandingTildeInPath
+        try Autopilot.removeNeverTouch(path: expanded)
+        print("Removed from Never touches: \(WorkspaceSafety.canonical(expanded))")
+      default:
+        fail("Use: burnzombies autopilot never-touch [list|add <PATH>|remove <PATH>]")
+      }
+      break
+    }
+    if args.count >= 2, args[1] == "starter" {
+      let sub = args.count >= 3 ? args[2] : "list"
+      switch sub {
+      case "list":
+        let disabled = try AutopilotStore().memory().starterDisabled
+        for rule in AutopilotPolicy.starterRules {
+          let state = disabled.contains(rule.id) ? "off" : "on "
+          print("\(state)  \(rule.id)  \(rule.title)")
+        }
+      case "disable", "enable":
+        guard args.count == 4 else {
+          fail("Use: burnzombies autopilot starter \(sub) <RULE_ID>")
+        }
+        try Autopilot.setStarter(ruleID: args[3], enabled: sub == "enable")
+        print("\(sub == "enable" ? "Enabled" : "Disabled") starter rule: \(args[3])")
+      default:
+        fail("Use: burnzombies autopilot starter [list|disable <RULE_ID>|enable <RULE_ID>]")
+      }
+      break
+    }
+    if args.count >= 2, args[1] == "backups" {
+      if args.count == 2 {
+        let days = try AutopilotStore().sweep().effectiveBackupRetentionDays
+        print(
+          days == 0
+            ? "Backups: off (use at your own risk — deletions are permanent)."
+            : "Backups: retained for \(days) day\(days == 1 ? "" : "s").")
+        break
+      }
+      let target = args[2]
+      if target == "purge" {
+        try Autopilot.purgeBackups()
+        print("Cleared saved backups.")
+        break
+      }
+      if target == "off" || target == "0" {
+        guard args.contains("--use-at-your-own-risk") else {
+          fail(
+            "Disabling backups deletes burned project copies permanently with no Restore button and no Git safety ref. Pass --use-at-your-own-risk to confirm."
+          )
+        }
+        try Autopilot.setBackupRetention(days: 0)
+        print("Backups disabled (use at your own risk — deletions are permanent).")
+        break
+      }
+      guard let days = Int(target),
+        (1...AutopilotSweepState.maximumBackupRetentionDays).contains(days)
+      else {
+        fail(
+          "Use: burnzombies autopilot backups [<1..\(AutopilotSweepState.maximumBackupRetentionDays)> | off --use-at-your-own-risk | purge]"
+        )
+      }
+      try Autopilot.setBackupRetention(days: days)
+      print("Backup retention set to \(days) day\(days == 1 ? "" : "s").")
       break
     }
     var request = AutopilotRequest(tool: args.count > 1 ? args[1] : "snapshot")
@@ -273,17 +360,21 @@ do {
       """
       BurnZombies \(BuildIdentity.version) (build \(BuildIdentity.build))
       version   Print this binary's version and build.
+      audit [--json]   Fast read-only audit of disk space, orphans, worktrees, and caches; no daemon or state written.
       doctor    Read setup, selected harness and app connectivity; never requests cleanup.
       findings [OFFSET]   Read the running app's durable findings inbox; no cleanup or grants.
       evidence PID [PID ...]   Read exact helper identities; no process is stopped.
       workspace   Read one create/release/retain JSON object; manage disposable worktree ownership.
       lifecycle   Read one register/release/retain JSON object from stdin; never stops processes.
-      install-skill [--home PATH] [--skill-file PATH]   Optional legacy lifecycle instructions (adds working-chat overhead).
-      setup [--harness auto|codex|claude|none] [--model ID|default] [--thinking LEVEL|default] [--observe-only|--with-ai] [--look-only]
-        Enable computer-wide background reviews. No chat hooks or live config edits.
+      setup [--harness auto|codex|claude|none] [--model ID|default] [--thinking LEVEL|default]
+            [--observe-only|--with-ai] [--look-only] [--no-login-item]
+            [--allow-failover|--no-failover] [--never-touch PATH] [--disable-starter ID]
+            [--backup-days N [--use-at-your-own-risk]]
+        Enable computer-wide background reviews. No chat hooks or live global harness config edits.
         --look-only holds every burn until you choose Start burning in the menu.
-      install [--harness auto|all|codex|claude|cursor|copilot|gemini] [--mcp-only]
-        Connect installed harnesses. MCP-only mode preserves hooks and permissions.
+      autopilot [snapshot|catalog|inspect ID|burn ID...|sweep|deep [LIMIT]|stop|eval [--json]|
+                 look-only|start-burning|never-touch|starter|backups]
+        Inspect or configure Autopilot rules, Never touches, starter rules, and backup retention (default 7 days).
       hook --client NAME --event EVENT
         Native lifecycle adapter. Emits context only; never stops processes.
       run --label NAME [--allow-cleanup] -- /absolute/command [arguments]
@@ -297,6 +388,10 @@ do {
       fixture-tree orphan|detached|hung
         Sacrificial 48 MiB helper, hard lifetime 20 minutes. Tests only.
       BURNZOMBIES_HOME overrides the private state directory for isolated tests.
+
+      Legacy commands (do NOT use for normal setup — edits global harness config/skills):
+        install --legacy-edit-harness-config [--harness auto|all|codex|claude|cursor|copilot|gemini] [--mcp-only]
+        install-skill --legacy-edit-harness-config [--home PATH] [--skill-file PATH]
       """)
   case "install":
     try HarnessInstall.run(Array(args.dropFirst()))

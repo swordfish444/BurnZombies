@@ -8,7 +8,16 @@ public final class AutopilotStore: @unchecked Sendable {
   /// on every tick.
   public static let maximumRefusals = 500
   public static let maximumJudgments = 5000
-  public static let restorableWindow: TimeInterval = 30 * 86_400
+  public static let restorableWindow: TimeInterval =
+    TimeInterval(AutopilotSweepState.defaultBackupRetentionDays) * 86_400
+
+  public static func restorableWindow(for sweep: AutopilotSweepState?) -> TimeInterval {
+    let days = sweep?.effectiveBackupRetentionDays ?? AutopilotSweepState.defaultBackupRetentionDays
+    // When backups are disabled (`0`), keep any previously captured backups restorable for the
+    // default 7-day window until they expire or the owner explicitly purges them.
+    let effective = days == 0 ? AutopilotSweepState.defaultBackupRetentionDays : days
+    return TimeInterval(effective) * 86_400
+  }
   private let root: URL
   private let store: Store
   private let lock = NSLock()
@@ -173,10 +182,16 @@ public final class AutopilotStore: @unchecked Sendable {
       // pushes out a burn the owner may restore, and non-restorable stops (`process`, regenerable
       // `disk`, already-restored or >30d expired receipts) yield before live restorable backups.
       let now = Date()
-      let beforeRecoveryIDs = Set(all.compactMap { $0.restore?.recovery?.id })
-      Self.trim(&all, refusals: true, to: Self.maximumRefusals, now: now)
-      Self.trim(&all, refusals: false, to: Self.maximumReceipts, now: now)
-      let keepingIDs = Set(all.compactMap { $0.restore?.recovery?.id })
+      let currentSweep = try? load("sweep.json", limit: 1 << 20, empty: AutopilotSweepState())
+      let window = Self.restorableWindow(for: currentSweep)
+      let beforeRecoveryIDs = Set(
+        all.filter { Self.isLiveRestorable($0, window: window, now: now) }
+          .compactMap { $0.restore?.recovery?.id })
+      Self.trim(&all, refusals: true, to: Self.maximumRefusals, window: window, now: now)
+      Self.trim(&all, refusals: false, to: Self.maximumReceipts, window: window, now: now)
+      let keepingIDs = Set(
+        all.filter { Self.isLiveRestorable($0, window: window, now: now) }
+          .compactMap { $0.restore?.recovery?.id })
       let evictedRecovery = !beforeRecoveryIDs.subtracting(keepingIDs).isEmpty
       impact.prune(keeping: all, now: now)
       try save(all, "receipts.json", limit: 8 << 20)
@@ -189,17 +204,50 @@ public final class AutopilotStore: @unchecked Sendable {
     try lock.withLock { try load("impact.json", limit: 4 << 20, empty: AutopilotImpact()) }
   }
   /// Counts burns made before the tally existed; later ones are counted as they are written.
-  public func refreshImpact() throws {
+  public func refreshImpact(forcePrune: Bool = false, now: Date = Date()) throws {
     try lock.withLock {
-      let now = Date()
       let all = try load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())
+      let currentSweep = try? load("sweep.json", limit: 1 << 20, empty: AutopilotSweepState())
+      let window = Self.restorableWindow(for: currentSweep)
       var impact = try load("impact.json", limit: 4 << 20, empty: AutopilotImpact())
       let counted = impact
       impact.count(all)
       impact.prune(keeping: all, now: now)
       if impact != counted { try save(impact, "impact.json", limit: 4 << 20) }
-      let keepingIDs = Set(all.compactMap { $0.restore?.recovery?.id })
-      pruneRecoveryIfNeeded(keepingIDs: keepingIDs, force: false, now: now)
+      let keepingIDs = Set(
+        all.filter { Self.isLiveRestorable($0, window: window, now: now) }
+          .compactMap { $0.restore?.recovery?.id })
+      pruneRecoveryIfNeeded(keepingIDs: keepingIDs, force: forcePrune, now: now)
+    }
+  }
+
+  /// Explicitly deletes all restorable private-recovery archives and retired Git refs while
+  /// preserving unresolved `failed` recoveries and Burn Log history.
+  @discardableResult
+  public func purgeBackups(now: Date = Date()) throws -> (removed: Int, bytes: UInt64) {
+    try lock.withLock {
+      var all = try load("receipts.json", limit: 8 << 20, empty: [AutopilotReceipt]())
+      var keepingIDs = Set<String>()
+      var changed = false
+      for i in all.indices {
+        if all[i].outcome == "failed", let id = all[i].restore?.recovery?.id {
+          keepingIDs.insert(id)
+          continue
+        }
+        if let restore = all[i].restore {
+          if !restore.repository.isEmpty, restore.ref.hasPrefix("refs/burnzombies/retired/"),
+            FileManager.default.fileExists(atPath: restore.repository)
+          {
+            _ = try? WorktreeGit.run(
+              restore.repository, ["update-ref", "-d", restore.ref], seconds: 5)
+          }
+          all[i].restore = nil
+          changed = true
+        }
+      }
+      if changed { try save(all, "receipts.json", limit: 8 << 20) }
+      lastRecoveryPrune = now
+      return PrivateRecovery.prune(root: root, keepingIDs: keepingIDs, graceAge: 0, now: now)
     }
   }
 
@@ -216,15 +264,18 @@ public final class AutopilotStore: @unchecked Sendable {
     if isDefaultRoot { _ = AutopilotHarness.pruneClaudeRunCaches(root: root, now: now) }
   }
 
-  private static func isLiveRestorable(_ receipt: AutopilotReceipt, now: Date) -> Bool {
+  private static func isLiveRestorable(
+    _ receipt: AutopilotReceipt, window: TimeInterval = restorableWindow, now: Date
+  ) -> Bool {
     guard receipt.restore != nil else { return false }
     if receipt.outcome == "failed" && receipt.restore?.recovery != nil { return true }
     guard receipt.outcome == "burned" else { return false }
-    return now.timeIntervalSince(receipt.date) <= restorableWindow
+    return now.timeIntervalSince(receipt.date) <= window
   }
 
   private static func trim(
-    _ all: inout [AutopilotReceipt], refusals: Bool, to limit: Int, now: Date = Date()
+    _ all: inout [AutopilotReceipt], refusals: Bool, to limit: Int,
+    window: TimeInterval = restorableWindow, now: Date = Date()
   ) {
     var excess = all.count { ($0.outcome == "refused") == refusals } - limit
     guard excess > 0 else { return }
@@ -236,10 +287,12 @@ public final class AutopilotStore: @unchecked Sendable {
       }
       return
     }
-    // Pass 1: trim non-restorable, restored, or >30d expired receipts first so frequent process
-    // and cache cleanups never evict recent restorable worktree backups.
+    // Pass 1: trim non-restorable, restored, or expired receipts first so frequent process
+    // and cache cleanups never evict live restorable worktree backups.
     all.removeAll { receipt in
-      guard excess > 0, receipt.outcome != "refused", !isLiveRestorable(receipt, now: now) else {
+      guard excess > 0, receipt.outcome != "refused",
+        !isLiveRestorable(receipt, window: window, now: now)
+      else {
         return false
       }
       excess -= 1

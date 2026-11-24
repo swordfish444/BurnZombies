@@ -564,6 +564,7 @@ public actor Autopilot {
   /// made, so the caller burns what their lessons authorize. Open tells close after a week.
   @discardableResult func refreshQuestions(now: Date, acting: Bool) -> Set<String> {
     guard let items = catalog?.items else { return [] }
+    let backupsOn = sweepState().backupsEnabled
     let acted = try? store.updateMemory { memory -> Set<String> in
       AutopilotPolicy.expireTells(&memory, now: now)
       let unsure = items.filter {
@@ -573,7 +574,9 @@ public actor Autopilot {
       var acted = Set<String>()
       for var question in AutopilotPolicy.proposeQuestions(unsure, memory: memory, now: now) {
         question.guess = AutopilotPolicy.guess(question, memory: memory, reaching: unsure)
-        if acting, memory.actsOnItsOwn, let guess = question.guess, guess.sure {
+        // Without backups, Act-then-tell cannot undo a burned worktree, so ask explicitly instead.
+        let canActOnKind = backupsOn || question.kind != .worktree
+        if acting, canActOnKind, memory.actsOnItsOwn, let guess = question.guess, guess.sure {
           // The tell carries the moment BZ acted, not when the look began.
           let made = AutopilotPolicy.act(question, guess: guess, memory: &memory, at: Date())
           acted.insert(made.tell.id)
@@ -699,6 +702,7 @@ public actor Autopilot {
     var result = AutopilotSnapshot()
     result.recoveryKey = sources.recoveryKeyWait()
     var seen = Set<String>()
+    let backupsOn = sweepState().backupsEnabled
     for item in catalog?.items ?? [] {
       seen.insert(item.id)
       let decision = AutopilotPolicy.decide(item, memory: memory, now: now)
@@ -712,7 +716,7 @@ public actor Autopilot {
       var entry = AutopilotEntry(
         item: item, status: status, authority: decision.authority,
         label: judgment?.label ?? item.name, why: why(item, decision, memory),
-        consequence: AutopilotPolicy.consequence(item), receipt: receipt)
+        consequence: AutopilotPolicy.consequence(item, backupsEnabled: backupsOn), receipt: receipt)
       entry.judged = judgment != nil
       // The AI is sure but may not burn this one itself. Copies with big unsaved files are left
       // to their own card, which says a Yes deletes them for good, and Docker's build cache to its.
@@ -740,7 +744,7 @@ public actor Autopilot {
           why: receipt.outcome == "burned"
             ? "Burned \(receipt.date.formatted(date: .abbreviated, time: .shortened))."
             : "You restored it.",
-          consequence: AutopilotPolicy.consequence(item), receipt: receipt))
+          consequence: AutopilotPolicy.consequence(item, backupsEnabled: backupsOn), receipt: receipt))
     }
     for entry in result.entries {
       result.counts[entry.status.rawValue, default: 0] += 1
@@ -947,6 +951,29 @@ public actor Autopilot {
         for id in ids { memory.keptItems.remove(id) }
       }
       refreshQuestions(now: now, acting: false)
+    case .setBackupRetention(let days):
+      guard (0...AutopilotSweepState.maximumBackupRetentionDays).contains(days) else {
+        throw StoreError.message(
+          "Choose 0 (off) or 1–\(AutopilotSweepState.maximumBackupRetentionDays) days.")
+      }
+      try store.updateSweep {
+        $0.backupRetentionDays = days
+        $0.append(
+          days == 0
+            ? "Backups disabled (use at your own risk)."
+            : "Backup retention set to \(days) day\(days == 1 ? "" : "s").",
+          date: now)
+      }
+      if days > 0 { try? store.refreshImpact(forcePrune: true, now: now) }
+    case .purgeBackups:
+      let purged = try store.purgeBackups(now: now)
+      try? store.updateSweep {
+        $0.append(
+          purged.removed == 0
+            ? "No saved backups to clear."
+            : "Cleared \(purged.removed) saved backup\(purged.removed == 1 ? "" : "s") (\(AutopilotPolicy.format(purged.bytes))).",
+          date: now)
+      }
     }
     return snapshot(now: now)
   }
@@ -1519,21 +1546,87 @@ extension Autopilot {
     }
   }
 
-  /// Look-only from setup or the installer. A running app takes the change itself, so its next
-  /// tick can't write over it; with no app running it goes straight to the state folder.
-  public static func setLookOnly(_ on: Bool, root: URL = Store.defaultRoot) throws {
+  /// Applies a command live when the app is running, or mutates state directly when stopped.
+  private static func sendOrStore(
+    _ command: AutopilotCommand, root: URL, offline: () throws -> Void
+  ) throws {
     guard AgentConnection.isAvailable(root: root) else {
-      try AutopilotStore(root: root).updateSweep { $0.lookOnly = on ? true : nil }
+      try offline()
       return
     }
     var request = AutopilotRequest(tool: "command")
-    request.command = .setLookOnly(on)
+    request.command = command
     let body = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
     let raw = try AgentConnection.call(AgentRequest("autopilot", payload: body), root: root)
     let reply = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
     guard reply?["ok"] as? Bool == true else {
+      let message = (reply?["error"] as? String)
+        ?? "BurnZombies is running but didn't take the change. Use Settings instead."
+      throw StoreError.message(message)
+    }
+  }
+
+  /// Look-only from setup or the installer. A running app takes the change itself, so its next
+  /// tick can't write over it; with no app running it goes straight to the state folder.
+  public static func setLookOnly(_ on: Bool, root: URL = Store.defaultRoot) throws {
+    try sendOrStore(.setLookOnly(on), root: root) {
+      try AutopilotStore(root: root).updateSweep { $0.lookOnly = on ? true : nil }
+    }
+  }
+
+  public static func setBackupRetention(days: Int, root: URL = Store.defaultRoot) throws {
+    guard (0...AutopilotSweepState.maximumBackupRetentionDays).contains(days) else {
       throw StoreError.message(
-        "BurnZombies is running but didn't take the change. Use Settings → Autopilot instead.")
+        "Choose 0 (off) or 1–\(AutopilotSweepState.maximumBackupRetentionDays) days.")
+    }
+    try sendOrStore(.setBackupRetention(days: days), root: root) {
+      let store = try AutopilotStore(root: root)
+      try store.updateSweep { $0.backupRetentionDays = days }
+      if days > 0 { try? store.refreshImpact(forcePrune: true) }
+    }
+  }
+
+  public static func purgeBackups(root: URL = Store.defaultRoot) throws {
+    try sendOrStore(.purgeBackups, root: root) {
+      _ = try AutopilotStore(root: root).purgeBackups()
+    }
+  }
+
+  public static func addNeverTouch(path: String, root: URL = Store.defaultRoot) throws {
+    let canonical = WorkspaceSafety.canonical(path)
+    guard canonical.hasPrefix("/") else {
+      throw StoreError.message("Pass an absolute path (or ~-expanded path) to never-touch.")
+    }
+    try sendOrStore(.neverTouch(path: canonical), root: root) {
+      try AutopilotStore(root: root).updateMemory { memory in
+        memory.neverTouch = Array(Set(memory.neverTouch).union([canonical])).sorted()
+      }
+    }
+  }
+
+  public static func removeNeverTouch(path: String, root: URL = Store.defaultRoot) throws {
+    let canonical = WorkspaceSafety.canonical(path)
+    try sendOrStore(.allowTouch(path: canonical), root: root) {
+      try AutopilotStore(root: root).updateMemory { memory in
+        memory.neverTouch.removeAll { $0 == canonical || $0 == path }
+        memory.keptItems.remove("path:" + canonical)
+      }
+    }
+  }
+
+  public static func setStarter(ruleID: String, enabled: Bool, root: URL = Store.defaultRoot) throws {
+    guard AutopilotPolicy.starterRules.contains(where: { $0.id == ruleID }) else {
+      let known = AutopilotPolicy.starterRules.map(\.id).joined(separator: ", ")
+      throw StoreError.message("Unknown starter rule '\(ruleID)'. Valid IDs: \(known)")
+    }
+    try sendOrStore(.setStarter(ruleID: ruleID, enabled: enabled), root: root) {
+      try AutopilotStore(root: root).updateMemory { memory in
+        if enabled {
+          memory.starterDisabled.remove(ruleID)
+        } else {
+          memory.starterDisabled.insert(ruleID)
+        }
+      }
     }
   }
 }

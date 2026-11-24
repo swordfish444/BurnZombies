@@ -51,7 +51,7 @@ extension AutopilotSources {
         // Git checks go only to copies big enough to be worth assessing.
         let worth = sizes.fill(records).filter { $0.allocated >= AutopilotPolicy.worthBytes }
         let items = AutopilotWorktrees.items(
-          ages.fill(worth), threads: threads, delivery: &delivery, budget: 150)
+          ages.fill(worth), threads: threads, delivery: &delivery, budget: 150, protected: scope())
         return (items, delivery)
       },
       disk: { records in
@@ -73,11 +73,12 @@ extension AutopilotSources {
         {
           return .refused(item, authority: authority, AutopilotDisk.protectedRefusal(place))
         }
+        let backupsOn = (try? store?.sweep().backupsEnabled) ?? true
         let receipt = junk.clearing(item.path) {
           AutopilotWorktrees.retire(
             item, authority: authority, root: root, protected: scope(), recoveryKey: recoveryKey,
             authorize: { Autopilot.executorAllowed(item, authority: authority, root: root) },
-            keys: keys)
+            keys: keys, backupsEnabled: backupsOn)
         }
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt
@@ -97,12 +98,13 @@ extension AutopilotSources {
         if let path = item.path, let place = protected.resolution(path).place {
           return .refused(item, authority: authority, AutopilotDisk.protectedRefusal(place))
         }
+        let backupsOn = (try? store?.sweep().backupsEnabled) ?? true
         let receipt = junk.clearing(item.path) {
           AutopilotDisk.reclaim(
             item, authority: authority, home: home, protected: scope(), root: root,
             recoveryKey: recoveryKey,
             authorize: { Autopilot.executorAllowed(item, authority: authority, root: root) },
-            keys: keys)
+            keys: keys, backupsEnabled: backupsOn)
         }
         if receipt.outcome == "burned" { junk.forget(under: item.path) }
         return receipt

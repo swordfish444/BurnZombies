@@ -32,6 +32,10 @@ for executable in BurnZombiesApp burnzombies burnzombies-mcp; do
 done
 cp -R "$built/BurnZombies_BurnApp.bundle" "$bundle/Contents/Resources/"
 cp -R "$built/BurnZombies_BurnCore.bundle" "$bundle/Contents/Resources/"
+if [[ ! -f packaging/artwork/AppIcon.icns ]]; then
+  swift scripts/generate-artwork.swift >/dev/null
+fi
+cp packaging/artwork/AppIcon.icns "$bundle/Contents/Resources/AppIcon.icns"
 mkdir -p "$bundle/Contents/Resources/burnzombies"
 cp skills/burnzombies/SKILL.md "$bundle/Contents/Resources/burnzombies/SKILL.md"
 mkdir -p "$bundle/Contents/Resources/ThirdPartyNotices"
@@ -52,27 +56,42 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>io.burnzombies.app</string>
 <key>CFBundleName</key><string>BurnZombies</string>
+<key>CFBundleDisplayName</key><string>BurnZombies</string>
 <key>CFBundleExecutable</key><string>BurnZombiesApp</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.20.0</string>
-<key>CFBundleVersion</key><string>95</string>
+<key>CFBundleShortVersionString</key><string>0.21.0</string>
+<key>CFBundleVersion</key><string>96</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSHumanReadableCopyright</key><string>Copyright © 2026 BurnZombies contributors. MIT License.</string>
 </dict></plist>
 PLIST
 # macOS keys privacy grants such as Full Disk Access to the signer. One stable identity keeps
 # them across updates; an ad-hoc signature makes every build a new app that must be allowed again.
-# The certificate need not be trusted on this Mac: codesign and Full Disk Access don't check that.
+# When a Developer ID Application certificate is selected, enable Hardened Runtime + secure timestamp.
 identity="${BURNZOMBIES_SIGNING_IDENTITY:-BurnZombies Local Signing}"
+sign_flags=(--force)
+notary_note="not notarized"
 if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
   signer="$identity"
-  signature="signed by \"$identity\", so macOS keeps Full Disk Access across updates"
+  if [[ "$identity" == "Developer ID Application:"* || "${BURNZOMBIES_HARDENED_RUNTIME:-}" == "1" ]]; then
+    sign_flags+=(--options runtime --timestamp)
+    if [[ -f packaging/direct/entitlements.plist ]]; then
+      sign_flags+=(--entitlements packaging/direct/entitlements.plist)
+    fi
+    signature="signed by \"$identity\" with Hardened Runtime"
+    notary_note="ready for Apple notarization"
+  else
+    signature="signed by \"$identity\", so macOS keeps Full Disk Access across updates"
+  fi
 else
   signer="-"
   signature="local ad-hoc signature: macOS asks for Full Disk Access again after every update until you run scripts/ensure-signing-identity.sh once"
 fi
-codesign --force --sign "$signer" "$bundle/Contents/MacOS/burnzombies"
-codesign --force --sign "$signer" "$bundle/Contents/MacOS/burnzombies-mcp"
-codesign --force --sign "$signer" "$bundle"
-echo "Built $bundle ($signature; not notarized)."
+codesign "${sign_flags[@]}" --sign "$signer" "$bundle/Contents/MacOS/burnzombies"
+codesign "${sign_flags[@]}" --sign "$signer" "$bundle/Contents/MacOS/burnzombies-mcp"
+codesign "${sign_flags[@]}" --sign "$signer" "$bundle"
+echo "Built $bundle ($signature; $notary_note)."
