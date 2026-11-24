@@ -1,6 +1,6 @@
 #!/bin/bash
 # Checks and guides one-time setup of Apple Developer ID Application signing & notarization
-# for BurnZombies on a local Mac (Apple account: riptidez55@hotmail.com).
+# for BurnZombies on a local Mac.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,7 +14,7 @@ if [[ -z "$dev_id" ]]; then
   cat <<'EOF'
 
 NEXT STEP 1 — Install your Apple "Developer ID Application" certificate on this Mac:
-  1. Open Xcode → Settings → Accounts → Sign in with riptidez55@hotmail.com.
+  1. Open Xcode → Settings → Accounts → Sign in with the release team's Apple Account.
   2. Select your Apple Developer Team → Manage Certificates… → click "+" → choose "Developer ID Application".
   3. Verify it appears by re-running: scripts/setup-apple-signing.sh
 
@@ -38,7 +38,7 @@ NEXT STEP 2 — Store your Apple Notarization credentials once in Keychain:
 
   Option B (Apple ID + App-Specific Password from https://account.apple.com):
     xcrun notarytool store-credentials "$notary_profile" \\
-      --apple-id riptidez55@hotmail.com --team-id "${team_id:-YOUR_TEAM_ID}"
+      --apple-id YOUR_APPLE_ID --team-id "${team_id:-YOUR_TEAM_ID}"
 
 Then re-run: scripts/setup-apple-signing.sh
 EOF
