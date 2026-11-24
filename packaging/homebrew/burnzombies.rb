@@ -1,6 +1,6 @@
 cask "burnzombies" do
   version "0.21.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  sha256 "3e57c82edb6bc7602d2a0679a0a12e04b70522138afd7ce3aa5dc2ca7320c65e"
 
   url "https://github.com/swordfish444/BurnZombies/releases/download/v#{version}/BurnZombies-macOS-universal.dmg"
   name "BurnZombies"

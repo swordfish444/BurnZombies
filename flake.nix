@@ -8,7 +8,7 @@
   outputs = { self, nixpkgs }:
     let
       version = "0.21.0";
-      releaseSha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+      releaseSha256 = "2c666052decf6686ce4a8a0bb6e55b58007d85065a271511d4717f7ce89097c5";
       systems = [ "aarch64-darwin" "x86_64-darwin" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
